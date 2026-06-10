@@ -890,9 +890,20 @@ def _build_system_prompt(
 
     # Current date/time for every agent request. This is user-local when the
     # browser provided timezone headers, with a server-local fallback.
+    #
+    # IMPORTANT: this is intentionally NOT prepended into agent_prompt (the
+    # system message) anymore. Its text changes every minute, and local
+    # OpenAI-compatible backends (llama.cpp / LM Studio) key their KV-cache
+    # prefix off the system message byte-for-byte — mixing ever-changing
+    # timestamp text into the (already large, tool-laden) agent system prompt
+    # would invalidate the cached prefix on every single request, forcing a
+    # full prompt re-evaluation each turn (issue #2927). It's built here as a
+    # standalone *user*-role message and inserted near the end of the array,
+    # right alongside _doc_message / _skills_message, below.
+    _datetime_message = None
     try:
-        from src.user_time import current_datetime_prompt
-        agent_prompt = current_datetime_prompt() + agent_prompt
+        from src.user_time import current_datetime_context_message
+        _datetime_message = current_datetime_context_message()
     except Exception:
         pass
 
@@ -1229,6 +1240,9 @@ def _build_system_prompt(
         last_user_idx += 1  # the document message is now at last_user_idx
     if _skills_message:
         merged.insert(last_user_idx, _skills_message)
+        last_user_idx += 1
+    if _datetime_message:
+        merged.insert(last_user_idx, _datetime_message)
 
     return merged, mcp_schemas
 
@@ -2158,6 +2172,7 @@ async def stream_agent_loop(
             prompt_type=prompt_type if round_num == 1 else None,
             tools=all_tool_schemas if all_tool_schemas else None,
             timeout=agent_stream_timeout,
+            session_id=session_id,
         ):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")
