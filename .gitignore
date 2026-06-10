@@ -89,3 +89,4 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+/odysseus/

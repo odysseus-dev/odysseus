@@ -15,7 +15,6 @@ import uuid
 import pytest
 
 import core.database as cdb
-from core.database import Session as DbSession
 from core.models import ChatMessage
 from tests.helpers.sqlite_db import make_temp_sqlite
 
@@ -34,9 +33,9 @@ def manager(monkeypatch):
 def _make_session(sid, owner="alice"):
     db = _TS()
     try:
-        db.add(DbSession(id=sid, owner=owner, name="chat", model="gpt-4o",
-                         endpoint_url="http://localhost:11434",
-                         archived=False, message_count=1))
+        db.add(cdb.Session(id=sid, owner=owner, name="chat", model="gpt-4o",
+                           endpoint_url="http://localhost:11434",
+                           archived=False, message_count=1))
         db.commit()
     finally:
         db.close()
@@ -69,3 +68,16 @@ def test_plain_string_content_still_round_trips(manager):
     manager.sessions.clear()
     reloaded = manager.get_session(sid)
     assert reloaded.history[0].content == "just text"
+
+
+def test_replace_messages_keeps_history_alias_for_context_messages(manager):
+    sid = "sess-" + uuid.uuid4().hex[:8]
+    _make_session(sid)
+    msgs = [ChatMessage(role="user", content="original")]
+    assert manager.replace_messages(sid, msgs) is True
+
+    session = manager.sessions[sid]
+    assert session.history is session._history
+
+    session.history.append(ChatMessage(role="user", content="after direct mutation"))
+    assert session.get_context_messages()[-1]["content"] == "after direct mutation"
