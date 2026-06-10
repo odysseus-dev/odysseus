@@ -56,6 +56,9 @@ class TestDetectProviderRealHosts:
         # Groq's base carries an /openai/v1 path; detection must still see the host.
         assert llm_core._detect_provider("https://api.groq.com/openai/v1") == "groq"
 
+    def test_perplexity(self):
+        assert llm_core._detect_provider("https://api.perplexity.ai") == "perplexity"
+
     def test_ollama_native_unchanged(self):
         assert llm_core._detect_provider("https://ollama.com/api") == "ollama"
 

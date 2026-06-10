@@ -171,7 +171,7 @@ async def auto_name_session(session_manager, sess):
         owner = getattr(sess, "owner", None)
         if is_local_llm_router_auto_model(sess.model):
             if not is_local_llm_router_active(sess):
-                logger.debug("[auto-name] Auto stack inactive, skipping")
+                logger.debug("[auto-name] Auto (Local LLMs) inactive, skipping")
                 return
             try:
                 res = resolve_local_llm_router(
@@ -183,7 +183,7 @@ async def auto_name_session(session_manager, sess):
                 )
                 t_url, t_model, t_headers = res.endpoint_url, res.model, res.headers
             except (LocalLlmRouterNotReady, ValueError, RuntimeError) as exc:
-                logger.debug("[auto-name] Auto stack resolve failed, skipping: %s", exc)
+                logger.debug("[auto-name] Auto (Local LLMs) resolve failed, skipping: %s", exc)
                 return
         else:
             t_url, t_model, t_headers = resolve_task_endpoint(

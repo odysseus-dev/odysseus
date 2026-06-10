@@ -2041,6 +2041,60 @@
           </div>
 
           <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>Privacy</h2>
+            <div class="settings-row" style="align-items:flex-start;gap:12px;">
+              <label class="admin-switch" style="margin-top:2px"><input type="checkbox" id="set-email-ai-local-only"><span class="admin-slider"></span></label>
+              <div>
+                <div style="font-size:12px;font-weight:600">Email AI: local models only</div>
+                <div class="admin-toggle-sub" style="margin-top:4px">When enabled, summarize, reply, triage, and style extraction only use local LLM endpoints. Remote APIs never receive mail content.</div>
+              </div>
+            </div>
+            <div class="settings-row" style="align-items:flex-start;gap:12px;margin-top:12px;">
+              <label class="admin-switch" style="margin-top:2px"><input type="checkbox" id="set-email-block-remote-images" checked><span class="admin-slider"></span></label>
+              <div>
+                <div style="font-size:12px;font-weight:600">Block remote images</div>
+                <div class="admin-toggle-sub" style="margin-top:4px">Remote images in HTML mail are blocked until you click to load them.</div>
+              </div>
+            </div>
+            <div class="settings-row" style="align-items:center;gap:12px;margin-top:12px;">
+              <label for="set-email-cache-retention" style="font-size:12px;font-weight:600;min-width:140px;">AI cache retention</label>
+              <input type="number" id="set-email-cache-retention" class="settings-select" min="0" max="3650" step="1" style="width:80px" placeholder="0">
+              <span class="admin-toggle-sub">days (0 = keep forever)</span>
+            </div>
+            <div class="settings-row" style="margin-top:12px;">
+              <button type="button" class="admin-btn-sm" id="set-email-clear-ai-cache">Clear my email AI data</button>
+              <span id="set-email-clear-ai-cache-msg" style="font-size:11px;margin-left:8px;"></span>
+            </div>
+          </div>
+
+          <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>Privacy</h2>
+            <div class="settings-row" style="align-items:flex-start;gap:12px;">
+              <label class="admin-switch" style="margin-top:2px"><input type="checkbox" id="set-email-ai-local-only"><span class="admin-slider"></span></label>
+              <div>
+                <div style="font-size:12px;font-weight:600">Email AI: local models only</div>
+                <div class="admin-toggle-sub" style="margin-top:4px">When enabled, summarize, reply, triage, and style extraction only use local LLM endpoints. Remote APIs never receive mail content.</div>
+              </div>
+            </div>
+            <div class="settings-row" style="align-items:flex-start;gap:12px;margin-top:12px;">
+              <label class="admin-switch" style="margin-top:2px"><input type="checkbox" id="set-email-block-remote-images" checked><span class="admin-slider"></span></label>
+              <div>
+                <div style="font-size:12px;font-weight:600">Block remote images</div>
+                <div class="admin-toggle-sub" style="margin-top:4px">Remote images in HTML mail are blocked until you click to load them.</div>
+              </div>
+            </div>
+            <div class="settings-row" style="align-items:center;gap:12px;margin-top:12px;">
+              <label for="set-email-cache-retention" style="font-size:12px;font-weight:600;min-width:140px;">AI cache retention</label>
+              <input type="number" id="set-email-cache-retention" class="settings-select" min="0" max="3650" step="1" style="width:80px" placeholder="0">
+              <span class="admin-toggle-sub">days (0 = keep forever)</span>
+            </div>
+            <div class="settings-row" style="margin-top:12px;">
+              <button type="button" class="admin-btn-sm" id="set-email-clear-ai-cache">Clear my email AI data</button>
+              <span id="set-email-clear-ai-cache-msg" style="font-size:11px;margin-left:8px;"></span>
+            </div>
+          </div>
+
+          <div class="admin-card">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Writing Style</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">AI-extracted from your sent emails. Used when AI drafts replies.</div>
             <div class="settings-col">
@@ -2517,7 +2571,7 @@
   <!-- Search overlay (Ctrl+K command palette) -->
   <div class="search-overlay hidden" id="search-overlay">
     <div class="search-popup">
-      <input type="text" id="search-input" placeholder="Search conversations..." autocomplete="off" />
+      <input type="text" id="search-input" class="search-palette-input" placeholder="Search conversations..." autocomplete="off" />
       <div class="search-results" id="search-results"></div>
     </div>
   </div>

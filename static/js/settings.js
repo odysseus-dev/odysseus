@@ -394,6 +394,22 @@ function _bindFallbackWidget(opts) {
   };
 }
 
+const AUTO_SELECT_MODEL_ID = '__auto_stack__';
+const AUTO_SELECT_LABEL = 'Auto (Local LLMs)';
+const LOCAL_LLM_ROUTER_NAME = 'Local-LLM-Router';
+const LOCAL_LLM_ROUTER_PIP = 'local-llm-router[ollama]';
+
+function _isLocalEndpoint(ep) {
+  if (!ep) return false;
+  if (ep.category === 'local' || ep.endpoint_kind === 'local') return true;
+  var url = String(ep.base_url || ep.url || '').toLowerCase();
+  return /localhost|127\.0\.0\.1|0\.0\.0\.0:11434|:11434/.test(url);
+}
+
+function _localRouterEligible(ep) {
+  return _isLocalEndpoint(ep) && (ep.models || []).length >= 2;
+}
+
 /* ── Default Chat Model ── */
 async function initDefaultChat() {
   var epSel = el('set-defaultEpSelect');
@@ -401,17 +417,37 @@ async function initDefaultChat() {
   var msg = el('set-defaultChatMsg');
   var fbContainer = el('set-defaultFallbacks');
   var addFbBtn = el('set-defaultAddFallback');
+  var installWrap = el('set-localAutoRouterInstall');
+  var installBtn = el('set-localAutoRouterInstallBtn');
   var _endpoints = [];
   var _fallbacks = []; // [{endpoint_id, model}] — tried in order if primary fails
+  var _localLlmRouterAvailable = true;
 
   function enabledEndpoints() {
     return _endpoints.filter(function(e) { return e.is_enabled; });
+  }
+
+  function syncLocalRouterInstallUi() {
+    if (!installWrap) return;
+    var ep = _endpoints.find(function(e) { return e.id === epSel.value; });
+    var show = modelSel.value === AUTO_SELECT_MODEL_ID
+      && _localRouterEligible(ep)
+      && !_localLlmRouterAvailable;
+    installWrap.classList.toggle('hidden', !show);
   }
 
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
     var ep = _endpoints.find(function(e) { return e.id === epId; });
     _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
+    if (_localRouterEligible(ep)) {
+      var opt = document.createElement('option');
+      opt.value = AUTO_SELECT_MODEL_ID;
+      opt.textContent = AUTO_SELECT_LABEL;
+      selectEl.insertBefore(opt, selectEl.firstChild);
+      if (selected === AUTO_SELECT_MODEL_ID) selectEl.value = AUTO_SELECT_MODEL_ID;
+    }
+    syncLocalRouterInstallUi();
   }
 
   try {
@@ -486,6 +522,7 @@ async function initDefaultChat() {
   try {
     var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await res.json();
+    _localLlmRouterAvailable = settings.local_llm_router_available !== false;
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
     _fallbacks = Array.isArray(settings.default_model_fallbacks)
@@ -512,8 +549,47 @@ async function initDefaultChat() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
-  epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
-  modelSel.addEventListener('change', saveDefault);
+  epSel.addEventListener('change', function() {
+    if (modelSel.value === AUTO_SELECT_MODEL_ID) {
+      var ep = _endpoints.find(function(e) { return e.id === epSel.value; });
+      if (!_localRouterEligible(ep)) refreshModels('');
+    } else {
+      refreshModels(modelSel.value);
+    }
+    saveDefault();
+  });
+  modelSel.addEventListener('change', function() { syncLocalRouterInstallUi(); saveDefault(); });
+
+  async function installLocalLlmRouter() {
+    if (!installBtn) return;
+    installBtn.disabled = true;
+    if (msg) { msg.textContent = 'Installing ' + LOCAL_LLM_ROUTER_NAME + '...'; msg.style.color = 'var(--fg)'; }
+    try {
+      var r = await fetch('/api/cookbook/packages/install', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pip: LOCAL_LLM_ROUTER_PIP }),
+      });
+      var data = await r.json();
+      if (data.ok) {
+        _localLlmRouterAvailable = true;
+        syncLocalRouterInstallUi();
+        if (msg) { msg.textContent = LOCAL_LLM_ROUTER_NAME + ' installed'; }
+        try { document.dispatchEvent(new CustomEvent('odysseus:local-llm-router-installed')); } catch (_) {}
+      } else if (msg) {
+        msg.textContent = data.error || 'Install failed (admin only)';
+        msg.style.color = 'var(--red)';
+      }
+    } catch (e) {
+      if (msg) { msg.textContent = 'Install failed'; msg.style.color = 'var(--red)'; }
+    } finally {
+      installBtn.disabled = false;
+      setTimeout(function() { if (msg) msg.textContent = ''; }, 4000);
+    }
+  }
+  if (installBtn) installBtn.addEventListener('click', installLocalLlmRouter);
+
   if (addFbBtn) addFbBtn.addEventListener('click', function() {
     var first = enabledEndpoints()[0];
     _fallbacks.push({ endpoint_id: first ? first.id : '', model: '' });
@@ -3299,6 +3375,11 @@ async function initEmailSettings() {
         body: JSON.stringify(data),
       });
       const result = await res.json();
+      if (result.success) {
+        try {
+          localStorage.setItem('email_block_remote_images', data.email_block_remote_images ? '1' : '0');
+        } catch (_) {}
+      }
       if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {

@@ -23,6 +23,7 @@ import pytest
 
 from src.llm_core import (
     _detect_provider,
+    _provider_headers,
     _provider_label,
     _format_upstream_error,
     _uses_max_completion_tokens,
@@ -40,7 +41,11 @@ class TestDetectProvider:
         ("https://anthropic.com/v1", "anthropic"),
         ("https://openrouter.ai/api/v1", "openrouter"),
         ("https://api.groq.com/openai/v1", "groq"),
+<<<<<<< ours
         ("https://integrate.api.nvidia.com/v1", "nvidia"),
+=======
+        ("https://api.perplexity.ai", "perplexity"),
+>>>>>>> theirs
         ("http://localhost:11434/api", "ollama"),
         ("https://ollama.com", "ollama"),
         # xAI, DeepSeek and Gemini's OpenAI-compatible surface are NOT
@@ -85,7 +90,11 @@ class TestProviderLabel:
         ("https://api.openai.com/v1", "OpenAI"),
         ("https://openrouter.ai/api/v1", "OpenRouter"),
         ("https://api.groq.com/openai/v1", "Groq"),
+<<<<<<< ours
         ("https://integrate.api.nvidia.com/v1", "NVIDIA"),
+=======
+        ("https://api.perplexity.ai", "Perplexity"),
+>>>>>>> theirs
         ("https://api.mistral.ai/v1", "Mistral"),
         ("https://api.deepseek.com", "DeepSeek"),
         ("https://generativelanguage.googleapis.com/v1beta/openai", "Google"),
@@ -108,6 +117,26 @@ class TestProviderLabel:
     @pytest.mark.parametrize("url", ["", None])
     def test_empty_returns_generic(self, url):
         assert _provider_label(url) == "provider"
+
+
+# ── _provider_headers ──
+# Per-provider default headers (auth-attribution / routing), merged over the
+# caller's headers with setdefault so explicit values always win.
+
+class TestProviderHeaders:
+    def test_perplexity_sends_integration_header(self):
+        # Perplexity gets the X-Pplx-Integration attribution header, mirroring
+        # the X-OpenRouter-Title convention for OpenRouter.
+        h = _provider_headers("perplexity")
+        assert h.get("X-Pplx-Integration", "").startswith("odysseus/")
+
+    def test_perplexity_does_not_clobber_caller_header(self):
+        h = _provider_headers("perplexity", {"X-Pplx-Integration": "custom/1"})
+        assert h["X-Pplx-Integration"] == "custom/1"
+
+    def test_openai_has_no_integration_header(self):
+        # Generic OpenAI-compatible endpoints must stay clean.
+        assert "X-Pplx-Integration" not in _provider_headers("openai")
 
 
 # ── _format_upstream_error ──

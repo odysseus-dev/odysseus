@@ -5891,7 +5891,6 @@ function _showCardMenu(em, anchor) {
   cancelItem.addEventListener('click', (e) => {
     e.stopPropagation();
     dropdown.remove();
-    anchor.classList.remove('reader-more-active');
   });
   dropdown.appendChild(cancelItem);
 
@@ -5900,7 +5899,6 @@ function _showCardMenu(em, anchor) {
   const close = (ev) => {
     if (!dropdown.contains(ev.target) && ev.target !== anchor) {
       dropdown.remove();
-      anchor.classList.remove('reader-more-active');
       document.removeEventListener('click', close, true);
     }
   };
@@ -6294,6 +6292,371 @@ async function _createEmailReplyReminder(em, dueDate) {
   } catch (e) {
     const { showError } = await import('./ui.js');
     showError('Failed to create reminder');
+  }
+}
+
+async function _toggleEmailFlag(em) {
+  if (!em) return;
+  const flagged = !em.is_flagged;
+  em.is_flagged = flagged;
+  _renderGrid();
+  try {
+    const path = flagged ? 'flag' : 'unflag';
+    await fetch(
+      `${API_BASE}/api/email/${path}/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct(em)}`,
+      { method: 'POST', credentials: 'same-origin' },
+    );
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function _snoozeEmail(em, hours = 24) {
+  if (!em) return;
+  const wake = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+  try {
+    await fetch(
+      `${API_BASE}/api/email/snooze/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct(em)}`,
+      {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wake_at: wake, message_id: em.message_id || '' }),
+      },
+    );
+    const { showToast } = await import('./ui.js');
+    showToast(`Snoozed until ${new Date(wake).toLocaleString()}`);
+    _deleteEmailAndAdvance(em, document.querySelector(`#email-lib-modal .doclib-card[data-uid="${em.uid}"]`));
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function _moveFolderChoices() {
+  const current = state._libFolder || 'INBOX';
+  const folders = (state._libFolders || []).filter((f) => f && f !== '__scheduled__' && f !== current);
+  const { priority, others } = sortedFolders(folders);
+  return [...priority, ...others];
+}
+
+async function _moveEmailToFolder(em, destFolder, { expanded = null, removeFromList = true } = {}) {
+  if (!em || !destFolder) return false;
+  const src = state._libFolder || 'INBOX';
+  if (destFolder === src) return false;
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/email/move/${em.uid}?folder=${encodeURIComponent(src)}&dest=${encodeURIComponent(destFolder)}${_acct(em)}`,
+      { method: 'POST', credentials: 'same-origin' },
+    );
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Move failed');
+    if (removeFromList) {
+      if (expanded) await _deleteEmailAndAdvance(em, expanded);
+      else {
+        await _animateEmailCardRemoval([em.uid]);
+        state._libEmails = state._libEmails.filter((x) => String(x.uid) !== String(em.uid));
+        _renderGrid();
+        _libCacheWriteBack();
+      }
+    }
+    showToast(`Moved to ${folderDisplayName(destFolder)}`);
+    return true;
+  } catch (e) {
+    console.error(e);
+    showToast('Failed to move message');
+    return false;
+  }
+}
+
+async function _bulkMoveEmailsToFolder(destFolder) {
+  const emails = state._libEmails.filter((e) => state._selectedUids.has(e.uid));
+  if (!emails.length || !destFolder) return;
+  let moved = 0;
+  for (const em of emails) {
+    const ok = await _moveEmailToFolder(em, destFolder, { removeFromList: false });
+    if (ok) moved++;
+  }
+  if (moved > 0) {
+    const uids = emails.map((e) => e.uid);
+    await _animateEmailCardRemoval(uids);
+    state._libEmails = state._libEmails.filter((e) => !state._selectedUids.has(e.uid));
+    state._selectMode = false;
+    state._selectedUids.clear();
+    _updateBulkBar();
+    _renderGrid();
+    _libCacheWriteBack();
+    showToast(`Moved ${moved} message${moved === 1 ? '' : 's'} to ${folderDisplayName(destFolder)}`);
+  }
+}
+
+function _showMoveToFolderSubmenu(em, parentDropdown, { expanded = null, bulk = false } = {}) {
+  parentDropdown.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'dropdown-item-compact';
+  header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
+  header.innerHTML = '<span>Move to</span>';
+  parentDropdown.appendChild(header);
+
+  const folders = _moveFolderChoices();
+  if (!folders.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dropdown-item-compact';
+    empty.style.opacity = '0.55';
+    empty.textContent = 'No other folders';
+    parentDropdown.appendChild(empty);
+    return;
+  }
+
+  for (const f of folders) {
+    const item = document.createElement('div');
+    item.className = 'dropdown-item-compact';
+    item.innerHTML = `<span>${_esc(folderDisplayName(f))}</span><span style="margin-left:auto;opacity:0.45;font-size:10px;">${_esc(f)}</span>`;
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      parentDropdown.remove();
+      if (bulk) await _bulkMoveEmailsToFolder(f);
+      else await _moveEmailToFolder(em, f, { expanded });
+    });
+    parentDropdown.appendChild(item);
+  }
+}
+
+function _openEmailMovePicker({ emails = [], expanded = null } = {}) {
+  let overlay = document.getElementById('email-move-picker');
+  if (overlay) overlay.remove();
+  if (!state._libFolders?.length) void _loadFolders();
+
+  const countLabel = emails.length > 1 ? `Move ${emails.length} messages` : 'Move message';
+  const fromLabel = folderDisplayName(state._libFolder || 'INBOX');
+  const { overlay: pal, input: inp, results: list } = createCommandPaletteOverlay('email-move-picker', {
+    headerText: `${countLabel} from ${fromLabel}`,
+    inputId: 'email-move-input',
+    resultsId: 'email-move-list',
+    placeholder: 'Filter folders…',
+  });
+  overlay = pal;
+  document.body.appendChild(overlay);
+  let detachMoveKeys = () => {};
+  const close = () => {
+    detachMoveKeys();
+    overlay.remove();
+  };
+  wireCommandPaletteDismiss(overlay, close);
+
+  const render = () => {
+    const ql = (inp.value || '').trim().toLowerCase();
+    const folders = _moveFolderChoices().filter((f) => {
+      if (!ql) return true;
+      const name = folderDisplayName(f).toLowerCase();
+      return name.includes(ql) || String(f).toLowerCase().includes(ql);
+    });
+    if (!folders.length) {
+      setCommandPaletteEmpty(list, 'No folders found');
+    } else {
+      renderCommandPaletteItems(list, folders.map((f) => ({
+        label: _esc(folderDisplayName(f)),
+        meta: _esc(f),
+        onSelect: async () => {
+          close();
+          if (emails.length > 1) await _bulkMoveEmailsToFolder(f);
+          else if (emails[0]) await _moveEmailToFolder(emails[0], f, { expanded });
+        },
+      })));
+    }
+    resetEmailListPickerHighlight(overlay);
+  };
+
+  detachMoveKeys = bindEmailListPickerKeys(overlay, inp, { onEscape: close });
+  inp.addEventListener('input', render);
+  render();
+  inp.focus();
+}
+
+function _toggleEmailShortcutOverlay() {
+  let el = document.getElementById('email-shortcuts-overlay');
+  if (el) { _closeEmailShortcutsOverlay(); return; }
+  const rows = EMAIL_SHORTCUT_OVERLAY_KEYS.map((action) => {
+    const keys = formatEmailKeyCaps(emailKeybind(action));
+    const label = EMAIL_SHORTCUT_LABELS[action] || action;
+    return `<div style="display:contents">${keys}<span>${_esc(label)}</span></div>`;
+  }).join('');
+  const helpCombo = formatEmailKeyCaps(emailKeybind('email_shortcuts_help'));
+  el = document.createElement('div');
+  el.id = 'email-shortcuts-overlay';
+  el.className = 'search-overlay';
+  el.style.zIndex = '10060';
+  el.innerHTML = `<div class="search-popup" style="max-width:420px;padding:16px 20px;font-size:12px;line-height:1.6;">
+    <strong style="font-size:13px;">Email shortcuts</strong>
+    <div style="margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;align-items:center;">
+      ${rows}
+    </div>
+    <div style="margin-top:10px;opacity:0.6;font-size:10px;">Press ${helpCombo} or Esc to close · customize in Settings → Shortcuts</div>
+  </div>`;
+  const onKey = (e) => {
+    const combo = emailKeybind('email_shortcuts_help');
+    if (e.key === 'Escape' || (combo && _matchesCombo(e, combo))) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      _closeEmailShortcutsOverlay();
+    }
+  };
+  el._shortcutsKeyDetach = () => document.removeEventListener('keydown', onKey, true);
+  document.addEventListener('keydown', onKey, true);
+  el.addEventListener('click', (ev) => { if (ev.target === el) _closeEmailShortcutsOverlay(); });
+  document.body.appendChild(el);
+}
+
+function _openEmailCommandPalette() {
+  let overlay = document.getElementById('email-cmd-palette');
+  if (overlay) overlay.remove();
+  const { overlay: pal, input: inp, results: list } = createCommandPaletteOverlay('email-cmd-palette', {
+    inputId: 'email-cmd-input',
+    resultsId: 'email-cmd-list',
+    placeholder: 'Search actions…',
+  });
+  overlay = pal;
+  document.body.appendChild(overlay);
+  let detachCmdKeys = () => {};
+  const close = () => {
+    detachCmdKeys();
+    overlay.remove();
+  };
+  wireCommandPaletteDismiss(overlay, close);
+  const cmds = _buildEmailCommandPaletteCommands(close);
+  const render = (q) => {
+    const filtered = _filterEmailPaletteCmds(cmds, q);
+    if (!filtered.length) {
+      setCommandPaletteEmpty(list, 'No actions found');
+    } else {
+      renderCommandPaletteItems(list, filtered.map((c) => ({
+        label: _esc(c.label),
+        meta: c.meta || '',
+        onSelect: c.run,
+      })));
+    }
+    resetEmailListPickerHighlight(overlay);
+  };
+
+  detachCmdKeys = bindEmailListPickerKeys(overlay, inp, { onEscape: close });
+  render('');
+  inp.addEventListener('input', () => render(inp.value));
+  requestAnimationFrame(() => { inp.focus(); inp.select(); });
+}
+
+function _focusEmailSearch() {
+  const inp = document.getElementById('email-lib-search');
+  if (inp) { inp.focus(); inp.select(); }
+}
+
+async function _showEmailSourcePanel(em) {
+  if (!em) return;
+  let overlay = document.getElementById('email-source-overlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'email-source-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+  overlay.innerHTML = `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;width:min(900px,96vw);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,0.35);">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);">
+        <strong style="font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Message source</strong>
+        <button type="button" id="email-source-close" class="admin-btn-add" style="opacity:0.8">Close</button>
+      </div>
+      <div id="email-source-tabs" style="display:flex;gap:4px;padding:8px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;"></div>
+      <div id="email-source-body" style="flex:1;overflow:auto;padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word;">Loading…</div>
+      <div style="display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--border);">
+        <button type="button" id="email-source-copy" class="admin-btn-add">Copy</button>
+        <a id="email-source-download" class="admin-btn-add" style="text-decoration:none;display:inline-flex;align-items:center;" download>Download .eml</a>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
+  overlay.querySelector('#email-source-close')?.addEventListener('click', close);
+  const bodyEl = overlay.querySelector('#email-source-body');
+  const tabsEl = overlay.querySelector('#email-source-tabs');
+  let active = 'headers';
+  let payload = null;
+  const render = () => {
+    if (!payload || payload.error) {
+      bodyEl.textContent = payload?.error || 'Failed to load source';
+      return;
+    }
+    if (active === 'headers') {
+      bodyEl.textContent = (payload.headers || []).map(h => `${h.name}: ${h.value}`).join('\n');
+    } else if (active === 'full') {
+      try {
+        const raw = atob(payload.raw_rfc822 || '');
+        bodyEl.textContent = raw;
+      } catch (_) {
+        bodyEl.textContent = '(binary message — use Download .eml)';
+      }
+    } else if (active.startsWith('part:')) {
+      const idx = parseInt(active.split(':')[1], 10);
+      const part = (payload.parts || [])[idx];
+      bodyEl.textContent = part?.body || `(attachment metadata only — ${part?.content_type || 'unknown'}, ${part?.size || 0} bytes)`;
+    }
+  };
+  const setTab = (id, label) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'admin-btn-add';
+    btn.textContent = label;
+    btn.style.opacity = active === id ? '1' : '0.65';
+    btn.addEventListener('click', () => {
+      active = id;
+      tabsEl.querySelectorAll('button').forEach(b => { b.style.opacity = '0.65'; });
+      btn.style.opacity = '1';
+      render();
+    });
+    tabsEl.appendChild(btn);
+  };
+  try {
+    const res = await fetch(
+      `${API_BASE}/api/email/source/${encodeURIComponent(em.uid)}?folder=${encodeURIComponent(state._libFolder)}${_acct(em)}`,
+      { credentials: 'same-origin' },
+    );
+    payload = await res.json();
+    const dl = overlay.querySelector('#email-source-download');
+    const dlUrl = `${API_BASE}/api/email/source/${encodeURIComponent(em.uid)}/download?folder=${encodeURIComponent(state._libFolder)}${_acct(em)}`;
+    if (dl) {
+      dl.href = dlUrl;
+      dl.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        try {
+          const dres = await fetch(dlUrl, { credentials: 'same-origin' });
+          if (!dres.ok) throw new Error(`Download failed (${dres.status})`);
+          const blob = await dres.blob();
+          const cd = dres.headers.get('Content-Disposition') || '';
+          const m = cd.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i);
+          const fname = decodeURIComponent(m?.[1] || m?.[2] || `message-${em.uid}.eml`);
+          const objUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = objUrl;
+          a.download = fname;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(objUrl);
+        } catch (e) {
+          const { showError } = await import('./ui.js');
+          showError(e?.message || 'Download failed');
+        }
+      });
+    }
+    setTab('headers', 'Headers');
+    (payload.parts || []).forEach((p, i) => {
+      if (p.body) setTab(`part:${i}`, p.content_type === 'text/html' ? 'HTML' : (p.content_type === 'text/plain' ? 'Plain' : p.filename || p.content_type));
+      else if (p.disposition === 'attachment' || p.download_index != null) {
+        setTab(`part:${i}`, p.filename || 'Attachment');
+      }
+    });
+    setTab('full', 'Full message');
+    render();
+    overlay.querySelector('#email-source-copy')?.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(bodyEl.textContent || ''); showToast('Copied'); } catch (_) {}
+    });
+  } catch (err) {
+    bodyEl.textContent = String(err);
   }
 }
 

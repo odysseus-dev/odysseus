@@ -555,6 +555,17 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
       }
     }
 
+    const _sendModel = sessionModule.getCurrentModel?.() || '';
+    if (_sendModel === LOCAL_LLM_ROUTER_AUTO_MODEL_ID) {
+      const readiness = getLocalLlmRouterReadiness();
+      if (!readiness.ok) {
+        if (uiModule.showToast) uiModule.showToast(readiness.message);
+        else if (uiModule.showError) uiModule.showError(readiness.message);
+        _releaseSendFlag();
+        return;
+      }
+    }
+
     // --- API key guard: warn if message looks like an API key ---
     if (API_KEY_RE.test(msg.trim())) {
       if (!await window.styledConfirm('This looks like an API key. Sending it to the AI could expose it.\n\nDid you mean to use /setup instead?', { confirmText: 'Send anyway', danger: true })) {
@@ -909,6 +920,7 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
       holder._researchQuery = msg; // Store query for notification text
       
       const modelName = sessionModule.getCurrentModel() || null;
+      const _isAutoStack = modelName === LOCAL_LLM_ROUTER_AUTO_MODEL_ID;
 
       let loadingText = 'Initializing...';
 
@@ -921,10 +933,10 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
       } else if (el('research-toggle').checked) {
         loadingText = 'Deep research mode active...';
       } else {
-        loadingText = 'Processing request...';
+        loadingText = _isAutoStack ? 'Selecting model...' : 'Processing request...';
       }
 
-      var roleLabel = _modelRouteLabel(modelName, modelName);
+      var roleLabel = _isAutoStack ? AUTO_SELECTING_LABEL : _modelRouteLabel(modelName, modelName);
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -1605,10 +1617,11 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
                       .replace(/<\|channel>response\s*\n?/gi, '')
                       .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
-                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    // Keep thinking box scrolled to bottom
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
-                    if (thinkBox) thinkBox.scrollTop = thinkBox.scrollHeight;
+                    var previousThinkScrollTop = thinkBox ? thinkBox.scrollTop : 0;
+                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
+                    // Preserve the user's position while reasoning tokens stream in.
+                    if (thinkBox) thinkBox.scrollTop = previousThinkScrollTop;
                   }
                   uiModule.scrollHistory();
                   continue;
@@ -1839,21 +1852,27 @@ import { wireArrowUpRecall,getUserMessagesFromChatHistory } from './composerArro
                   sessionModule.updateModelPicker();
                 }
                 continue;
-              } else if (json.type === 'model_info') {
-                // Update role label with model name as soon as we know it
+              } else if (json.type === 'model_info' || json.type === 'model_resolved') {
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
                   if (roleEl) {
                     holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
                     holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
                     if (json.suffix) holder._roleSuffix = json.suffix;
-                    // Prepend character name if sent by server or set locally
                     var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
                     if (_charName) holder._characterName = _charName;
                     _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
                       suffix: holder._roleSuffix,
                       characterName: holder._characterName,
                     });
+                    if (json.local_llm_router) {
+                      noteAutoResolvedModel(json.model, json.route_reasons);
+                    }
+                    if (json.local_llm_router && json.model && spinner) {
+                      spinner.updateMessage(_shortModel(json.model) + ' - Generating');
+                    } else if (json.type === 'model_info' && spinner) {
+                      spinner.updateMessage('Generating response');
+                    }
                   }
                 }
               } else if (json.type === 'fallback') {

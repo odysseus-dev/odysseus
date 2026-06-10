@@ -21,10 +21,21 @@ body:
       options:
         - label: I searched [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues?q=is%3Aissue+is%3Aopen) and [discussions](https://github.com/pewdiepie-archdaemon/odysseus/discussions) and did not find an existing report of this bug.
           required: true
+        - label: This is a bug in **Odysseus itself** — not an error returned by my model backend (Ollama, vLLM, OpenAI, Anthropic, etc.), my API provider, or my local configuration. (If an AI agent is filing this on your behalf, confirm this before submitting.)
+          required: true
         - label: This is **not** a security vulnerability. (Vulnerabilities go to [GitHub Security Advisories](https://github.com/pewdiepie-archdaemon/odysseus/security/advisories/new) — see [SECURITY.md](https://github.com/pewdiepie-archdaemon/odysseus/blob/main/SECURITY.md).)
           required: true
         - label: I am running the latest code from the `dev` branch (the default branch you get on clone, where fixes land first) and the bug still reproduces there. Please `git pull` the latest `dev` before filing.
           required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit SHA
+      description: "The commit your build is on — the most reliable way to tell whether a fix has already landed. Run `git rev-parse --short HEAD` in your install directory and paste the result."
+      placeholder: "a1b2c3d"
+    validations:
+      required: true
 
   - type: dropdown
     id: install-method

@@ -1,14 +1,30 @@
-// Model Picker — chatbox model selector dropdown
+// Model Picker ??? chatbox model selector dropdown
 // Extracted from sessions.js
 
 import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
-import { sortModelObjects } from './modelSort.js';
+import { sortModelObjects, compareModelObjects } from './modelSort.js';
 
 const API_BASE = window.location.origin;
+const LOCAL_LLM_ROUTER_AUTO_MODEL_ID = '__auto_stack__';
+const AUTO_SELECT_LABEL = 'Auto (Local LLMs)';
+const LOCAL_LLM_ROUTER_NAME = 'Local-LLM-Router';
+const LOCAL_LLM_ROUTER_PIP = 'local-llm-router[ollama]';
+const AUTO_SELECT_TOOLTIP =
+  'Auto (Local LLMs) ??? routes each message to the best local model by complexity (Local-LLM-Router). Fast small models for lookups; larger ones for design, code, and agent steps.';
+const AUTO_SELECT_NEEDS_MODELS =
+  'Auto (Local LLMs) needs 2+ models on a local endpoint. Open Cookbook to download models, then refresh endpoints.';
+const AUTO_SELECT_NEEDS_ENDPOINT =
+  'Auto (Local LLMs) needs a local endpoint (Ollama, etc.). Add one in Settings or Cookbook.';
+const AUTO_SELECT_NEEDS_ONE_MORE =
+  (n, name) => `Auto needs 2+ local models (you have ${n}${name ? `: ${name}` : ''}). Open Cookbook to add another.`;
+const AUTO_SELECT_NEEDS_ROUTER =
+  `Auto (Local LLMs) needs ${LOCAL_LLM_ROUTER_NAME}. Click Install or run pip install ${LOCAL_LLM_ROUTER_PIP}.`;
+const AUTO_ICON_SVG =
+  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h6"/></svg>';
 
-// ── Recent + Favorites persistence ──
+// ?????? Recent + Favorites persistence ??????
 // Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
 // own key. Favorites is the SAME key the sidebar Models section uses, so a
 // favorite toggled here shows up there and vice-versa.
@@ -16,7 +32,7 @@ const RECENT_KEY = 'odysseus-model-recent';
 const FAVORITES_KEY = 'odysseus-model-favorites';
 const RECENT_MAX = 5;
 // Catalogs at or below this size are small enough that hiding everything
-// behind search would be a regression — keep listing them in browse mode.
+// behind search would be a regression ??? keep listing them in browse mode.
 const BROWSE_ALL_LIMIT = 12;
 
 function _loadList(key) {
@@ -56,7 +72,7 @@ function _toggleFavorite(mid) {
   return i < 0; // true when now favorited
 }
 
-// ── Shared keyboard nav for model pickers ──
+// ?????? Shared keyboard nav for model pickers ??????
 function _handlePickerKeydown(e, listEl, itemSelector, closeFn) {
   if (e.key === 'Escape') { closeFn(); return; }
   if (e.key === 'Enter') {
@@ -142,8 +158,14 @@ function _modelExists(modelId, url) {
  */
 export function initModelPicker(deps) {
   _deps = deps;
+  _refreshLocalLlmRouterStatus();
   _initModelPickerDropdown();
 }
+
+document.addEventListener('odysseus:local-llm-router-installed', () => {
+  _localLlmRouterAvailable = true;
+  updateModelPicker();
+});
 
 function _initModelPickerDropdown() {
   const wrap = document.getElementById('model-picker-wrap');
@@ -197,7 +219,7 @@ function _initModelPickerDropdown() {
     } catch (_) {}
   }
 
-  // Local endpoint health — only probed for LOCAL endpoints, since
+  // Local endpoint health ??? only probed for LOCAL endpoints, since
   // cloud APIs are essentially always up. Cached briefly on the
   // server side too (8s TTL). Picker opens trigger a refresh.
   let _localProbe = {};            // {endpoint_id: {alive, latency_ms, error}}
@@ -220,7 +242,7 @@ function _initModelPickerDropdown() {
     const seen = new Set();
     items.forEach(item => {
       // Previously: offline endpoints were skipped entirely, so a server
-      // that briefly went down disappeared from the picker — confusing
+      // that briefly went down disappeared from the picker ??? confusing
       // when the user can still see it (offline-tagged) in Settings.
       // Now: include offline-endpoint models too but flag them
       // `stale: true` so the row renderer dims them + shows the offline
@@ -259,10 +281,14 @@ function _initModelPickerDropdown() {
         });
       });
     });
+    const autoEntry = _localLlmRouterPickerEntry();
+    if (autoEntry && !seen.has(autoEntry.mid)) {
+      result.push(autoEntry);
+    }
     return sortModelObjects(result);
   }
 
-  // ── Provider display names and grouping ──
+  // ?????? Provider display names and grouping ??????
   const _PROVIDER_NAMES = {
     '01-ai': 'Yi', 'abacusai': 'Abacus AI', 'adept': 'Adept',
     'ai21': 'AI21 Labs', 'ai21labs': 'AI21 Labs', 'aion-labs': 'Aion Labs',
@@ -273,7 +299,7 @@ function _initModelPickerDropdown() {
     'bytedance-seed': 'ByteDance', 'cognitivecomputations': 'Cognitive Computations',
     'cohere': 'Cohere', 'databricks': 'Databricks', 'deepcogito': 'DeepCogito',
     'deepseek': 'DeepSeek', 'deepseek-ai': 'DeepSeek', 'essentialai': 'Essential AI',
-    'google': 'Google', 'gryphe': 'Gryphe', 'ibm': 'IBM',
+    'google': 'Google', 'gryphe': 'Gryphe', 'ibm': 'IBM', 'other': 'Other',
     'ibm-granite': 'IBM Granite', 'inception': 'Inception',
     'inclusionai': 'Inclusion AI', 'inflection': 'Inflection',
     'kwaipilot': 'KwaiPilot', 'liquid': 'Liquid AI', 'mancer': 'Mancer',
@@ -318,13 +344,13 @@ function _initModelPickerDropdown() {
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
     if (search) {
-      search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
+      search.placeholder = hasAnyModel ? 'Search models???' : 'No models connected';
     }
     if (searchRow) {
       searchRow.classList.toggle('searching', !!q);
     }
 
-    if (!hasAnyModel) return; // collapsed empty list — nothing to render
+    if (!hasAnyModel) return; // collapsed empty list ??? nothing to render
 
     // Unique lookup so Recent/Favorites (stored as bare model IDs) can be
     // resolved back to full model objects; drops anything no longer offered.
@@ -465,7 +491,7 @@ function _initModelPickerDropdown() {
       const recentModels = _loadRecent()
         .map(id => byId.get(id))
         .filter(Boolean)
-        .filter(m => !shown.has(m.mid))
+        .filter(m => !shown.has(m.mid) && !_isAutoEntry(m))
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
         _addSection('Recent');
@@ -482,9 +508,15 @@ function _initModelPickerDropdown() {
     // Small catalogs: still list everything so users aren't forced to search.
     if (all.length <= BROWSE_ALL_LIMIT) {
       const rest = all.filter(m => !shown.has(m.mid));
-      if (rest.length) {
+      const autoEntry = rest.find(_isAutoEntry);
+      const restModels = rest.filter(m => !_isAutoEntry(m));
+      if (restModels.length) {
         if (shown.size) _addSection('All models');
-        rest.forEach(_addRow);
+        restModels.forEach(_addRow);
+      }
+      if (autoEntry) {
+        _addSection('Other');
+        _addRow(autoEntry);
       }
     } else {
       // Large catalog: show provider groups with collapsible sections.
@@ -499,7 +531,11 @@ function _initModelPickerDropdown() {
         _providerDisplayName(a).localeCompare(_providerDisplayName(b)));
 
       sorted.forEach(provider => {
-        const models = groups.get(provider);
+        const models = groups.get(provider).slice().sort((a, b) => {
+          if (_isAutoEntry(a)) return 1;
+          if (_isAutoEntry(b)) return -1;
+          return compareModelObjects(a, b);
+        });
         const isCollapsed = _collapsedProviders.has(provider);
         const header = document.createElement('div');
         header.className = 'mp-provider-header';
@@ -538,12 +574,20 @@ function _initModelPickerDropdown() {
   }
 
   async function _pick(m) {
+    const target = _resolvePickTarget(m);
+    if (target.error) {
+      if (uiModule && uiModule.showError) uiModule.showError(target.error);
+      else if (uiModule && uiModule.showToast) uiModule.showToast(target.error);
+      return;
+    }
+    m = target;
+
     const currentSessionId = _deps.getCurrentSessionId();
     const _pendingChat = _deps.getPendingChat();
 
     // Remember this pick so it surfaces under "Recent" next time the picker
-    // opens — the whole point of quick-switch.
-    if (m && m.mid) _pushRecent(m.mid);
+    // opens ??? the whole point of quick-switch.
+    if (m && m.mid && m.mid !== LOCAL_LLM_ROUTER_AUTO_MODEL_ID) _pushRecent(m.mid);
 
     // Broadcast immediately so listeners (e.g. the tour) can advance without
     // waiting for the async session-create/PATCH that follows.
@@ -552,43 +596,41 @@ function _initModelPickerDropdown() {
     // Blur search input before closing to dismiss keyboard on mobile
     if (document.activeElement) document.activeElement.blur();
     _close();
-    // Refocus main textarea — skip on mobile to avoid keyboard bounce
+    // Refocus main textarea ??? skip on mobile to avoid keyboard bounce
     if (window.innerWidth >= 768) {
       const _ta = document.getElementById('message');
       if (_ta) setTimeout(() => _ta.focus(), 50);
     }
     if (!currentSessionId && _pendingChat) {
-      // Already have a deferred session — just update the model
+      // Already have a deferred session ??? just update the model
       _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
-      // Header stays as session name — model switch only updates picker
+      // Header stays as session name ??? model switch only updates picker
       updateModelPicker();
       uiModule.showToast(`Using ${m.display}`);
       return;
     } else if (!currentSessionId) {
-      // No session yet — create one with this model
+      // No session yet ??? create one with this model
       await _deps.createDirectChat(m.url, m.mid, m.endpointId);
     } else {
-      // Existing session with no model — PATCH it
-      const fd = new FormData();
-      fd.append('model', m.mid);
-      fd.append('endpoint_url', m.url);
-      if (m.endpointId) fd.append('endpoint_id', m.endpointId);
+      // Existing session ??? PATCH model + endpoint
       try {
-        const res = await fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd });
-        if (!res.ok) {
-          uiModule.showError('Failed to set model');
+        const patched = await _patchSessionModel(currentSessionId, m);
+        if (!patched.ok) {
+          if (uiModule && uiModule.showError) uiModule.showError(patched.error);
           return;
         }
         const sessions = _deps.getSessions();
         const s = sessions.find(x => x.id === currentSessionId);
-        if (s) { s.model = m.mid; s.endpoint_url = m.url; }
-        // Header stays as session name — model info shown in picker only
+        if (s) {
+          s.model = m.mid;
+          s.endpoint_url = m.url || s.endpoint_url;
+        }
       } catch (e) {
-        uiModule.showError('Failed to set model: ' + e);
+        if (uiModule && uiModule.showError) uiModule.showError('Failed to set model: ' + e);
         return;
       }
     }
-    // Update picker visibility — model is now set
+    // Update picker visibility ??? model is now set
     updateModelPicker();
     uiModule.showToast(`Using ${m.display}`);
   }
@@ -646,14 +688,14 @@ function _initModelPickerDropdown() {
     if (menu.classList.contains('hidden') || menu.classList.contains('closing')) {
       // Force-clear any in-progress close animation
       menu.classList.remove('closing', 'hidden');
-      _populate('');
+      _refreshLocalLlmRouterStatus().finally(() => _populate(''));
       if (window.modelsModule && window.modelsModule.refreshModels) {
         window.modelsModule.refreshModels().then(() => {
           if (!menu.classList.contains('hidden')) _populate(search.value || '');
           updateModelPicker();
         }).catch(() => {});
       }
-      // Kick off a local-endpoint probe — when it returns, re-render
+      // Kick off a local-endpoint probe ??? when it returns, re-render
       // the list so stale local servers get dimmed. Cloud entries
       // aren't probed; they stay visible.
       _refreshLocalProbe().then(() => {
@@ -689,7 +731,7 @@ function _initModelPickerDropdown() {
 
 /**
  * Update the model picker label to show the current model.
- * Always visible — shows current model name or "Select model" if none.
+ * Always visible ??? shows current model name or "Select model" if none.
  * Called after selectSession, createDirectChat, and model switch.
  */
 export function updateModelPicker() {
@@ -732,9 +774,9 @@ export function updateModelPicker() {
   // we have no session model and no pending-chat pick, fall through to
   // the "Select model" placeholder below.
 
-  // Check if selected model is still available — fall back ONLY for pending chats with no user selection
-  // Never override an existing session's model — the user explicitly chose it
-  if (modelId && !currentSessionId && _pendingChat && window.modelsModule && window.modelsModule.getCachedItems) {
+  // Check if selected model is still available ??? fall back ONLY for pending chats with no user selection
+  // Never override an existing session's model ??? the user explicitly chose it
+  if (modelId && modelId !== LOCAL_LLM_ROUTER_AUTO_MODEL_ID && !currentSessionId && _pendingChat && window.modelsModule && window.modelsModule.getCachedItems) {
     const items = window.modelsModule.getCachedItems();
     const allAvailable = [];
     items.forEach(item => {
