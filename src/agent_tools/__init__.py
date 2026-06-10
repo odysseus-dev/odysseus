@@ -29,6 +29,7 @@ from .memory_tools import ManageMemoryTool
 from .rag_tools import ManageRagTool
 from .pipeline_tools import PipelineTool
 from .ui_tools import UIControlTool
+from .vault_tools import VaultSearchTool, VaultGetTool, VaultUnlockTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -53,6 +54,9 @@ TOOL_HANDLERS = {
     "manage_rag": ManageRagTool().execute,
     "pipeline": PipelineTool().execute,
     "ui_control": UIControlTool().execute,
+    "vault_search": VaultSearchTool().execute,
+    "vault_get": VaultGetTool().execute,
+    "vault_unlock": VaultUnlockTool().execute,
 }
 
 # ---------------------------------------------------------------------------
