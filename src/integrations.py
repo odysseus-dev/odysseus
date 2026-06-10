@@ -114,6 +114,24 @@ INTEGRATION_PRESETS: Dict[str, Dict[str, Any]] = {
             "  Embed:   {\"embeds\": [{\"title\": \"{{title}}\", \"description\": \"{{message}}\", \"color\": 5793266}]}"
         ),
     },
+    "slack_webhook": {
+        "name": "Slack Webhook",
+        "auth_type": "none",
+        "description": (
+            "Slack Incoming Webhook. URL format: https://hooks.slack.com/services/T.../B.../...\n"
+            "The secret is embedded in the URL — leave auth type as None. Do not share the URL publicly.\n\n"
+            "Setup: Slack workspace -> Your Apps -> Create/select app -> Features -> Incoming Webhooks ->\n"
+            "  Enable -> Add New Webhook to Workspace -> select channel -> Copy Webhook URL.\n\n"
+            "Use this integration as the target in Settings -> Reminders -> Webhook channel.\n"
+            "The 'text' field is required — Slack returns no_text if omitted.\n"
+            "Channel, username, and icon cannot be overridden via webhooks.\n\n"
+            "Payload template examples:\n"
+            "  Simple:    {\"text\": \"{{title}}: {{message}}\"}\n"
+            "  Block Kit: {\"text\": \"{{title}}\", \"blocks\": [{\"type\": \"section\", \"text\": {\"type\": \"mrkdwn\", \"text\": \"*{{title}}*\\n{{message}}\"}}]}\n\n"
+            "Common errors: no_text (missing text field), invalid_payload (bad JSON),\n"
+            "  invalid_token / channel_not_found (bad URL), channel_is_archived, too_many_attachments."
+        ),
+    },
     "vaultwarden": {
         "name": "Vaultwarden",
         "auth_type": "header",

@@ -2812,6 +2812,7 @@ async function initReminderSettings() {
   // handler can reference it.
   const WEBHOOK_PRESET_TEMPLATES = {
     discord_webhook: '{"embeds": [{"title": "{{title}}", "description": "{{message}}", "color": 5793266}]}',
+    slack_webhook:   '{"text": "{{title}}: {{message}}"}',
   };
 
   try {
@@ -2888,9 +2889,10 @@ async function initReminderSettings() {
   if (webhookIntgSel) {
     webhookIntgSel.addEventListener('change', () => {
       save({ reminder_webhook_integration_id: webhookIntgSel.value || '' });
-      // If the template is empty and we recognise the integration's preset,
-      // pre-fill with a sensible default so users can test immediately.
-      if (webhookTemplateIn && !webhookTemplateIn.value.trim()) {
+      // Always apply the preset's default template when switching integrations
+      // so switching from Discord to Slack (or vice versa) gets the correct
+      // payload format rather than keeping the previous preset's template.
+      if (webhookTemplateIn) {
         const intg = allIntegrations.find(i => i.id === webhookIntgSel.value);
         const tpl = WEBHOOK_PRESET_TEMPLATES[intg?.preset] || '';
         if (tpl) {
@@ -3481,7 +3483,7 @@ async function initIntegrations() {
 
   // Presets where the secret is embedded in the URL — no separate key or
   // auth header is used, so hiding those fields avoids confusion.
-  const URL_AUTH_PRESETS = ['discord_webhook'];
+  const URL_AUTH_PRESETS = ['discord_webhook', 'slack_webhook'];
 
   // Toggle auth header + key row visibility based on auth type and preset.
   function syncAuthRow() {
@@ -3949,6 +3951,8 @@ async function initUnifiedIntegrations() {
       ntfy:            _apiLetter('n', '#317f43'),
       vaultwarden:     _apiLetter('V', '#175ddc'),
       freshrss:        _apiLetter('R', '#ef6c00'),
+      discord_webhook: _apiLetter('D', '#5865f2'),
+      slack_webhook:   _apiLetter('S', '#4a154b'),
     };
     const _apiIconFor = (k) => {
       if (!k) return _apiCustomIco;
@@ -4037,10 +4041,13 @@ async function initUnifiedIntegrations() {
     }
     // Native <select>: the option `value` is the preset key directly, so
     // no typed-name → key lookup is needed (datalist-era leftover).
+    // Presets where the secret is embedded in the URL — defined locally so
+    // showApiForm is self-contained regardless of outer-scope availability.
+    const _URL_AUTH_PRESETS = ['discord_webhook', 'slack_webhook'];
     const _applyPreset = () => {
       const p = presets[preset.value];
       const isNtfy = preset.value === 'ntfy' || (p && (p.name || '').toLowerCase() === 'ntfy');
-      const isUrlAuth = preset.value === 'discord_webhook'; // secret embedded in URL — no key/auth fields needed
+      const isUrlAuth = _URL_AUTH_PRESETS.includes(preset.value); // secret embedded in URL — no key/auth fields needed
       if (ntfyHint) {
         ntfyHint.style.display = isNtfy ? 'block' : 'none';
         if (isNtfy) {
@@ -4048,7 +4055,8 @@ async function initUnifiedIntegrations() {
         }
       }
       if (url) {
-        url.placeholder = isNtfy ? 'http://127.0.0.1:8091' : isUrlAuth ? 'https://discord.com/api/webhooks/...' : 'http://localhost:8080';
+        const _urlHints = { discord_webhook: 'https://discord.com/api/webhooks/...', slack_webhook: 'https://hooks.slack.com/services/...' };
+        url.placeholder = isNtfy ? 'http://127.0.0.1:8091' : (_urlHints[preset.value] || 'http://localhost:8080');
       }
       // For presets that embed the secret in the URL, hide auth/key/header rows
       // so users aren't confused into thinking they need to fill them in.

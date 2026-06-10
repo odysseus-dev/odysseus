@@ -780,6 +780,40 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             except Exception as e:
                 return {"ok": False, "message": f"Request failed: {e}"[:400]}
 
+        if preset == "slack_webhook":
+            import httpx
+            webhook_url = (integ.get("base_url") or "").strip()
+            if not webhook_url:
+                return {"ok": False, "message": "No webhook URL set — paste the full Slack webhook URL into the Base URL field."}
+            payload = {"text": "Odysseus connectivity test — if you see this, your Slack Webhook integration is wired up correctly."}
+            # Slack-specific error code hints to surface actionable guidance
+            _SLACK_HINTS = {
+                "no_text": "Payload is missing the required 'text' field.",
+                "invalid_payload": "Malformed JSON payload.",
+                "invalid_token": "Webhook URL is invalid or revoked — regenerate it in your Slack app settings.",
+                "no_service": "Webhook URL is invalid or revoked — regenerate it in your Slack app settings.",
+                "channel_not_found": "The target channel no longer exists or the app lost access to it.",
+                "channel_is_archived": "The target channel is archived — unarchive it or create a new webhook for another channel.",
+                "action_prohibited": "Posting is prohibited in this channel.",
+                "posting_to_general_channel_denied": "Posting to #general is disabled in this workspace.",
+                "too_many_attachments": "Too many attachments — maximum is 100 per message.",
+                "team_disabled": "This Slack workspace has been disabled.",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.post(webhook_url, json=payload)
+                # Slack returns HTTP 200 with plain text "ok" on success
+                if r.is_success and r.text.strip() == "ok":
+                    return {"ok": True, "message": "Test message sent — check your Slack channel to confirm it arrived."}
+                error_code = r.text.strip()
+                hint = _SLACK_HINTS.get(error_code, "")
+                msg = f"Slack returned HTTP {r.status_code}: {error_code}"
+                if hint:
+                    msg += f" — {hint}"
+                return {"ok": False, "message": msg[:400]}
+            except Exception as e:
+                return {"ok": False, "message": f"Request failed: {e}"[:400]}
+
         # All other presets: GET against a known health endpoint.
         # Fall back to detecting from name if preset is missing.
         health_paths = {
