@@ -195,6 +195,29 @@ unless you opt in.
 serve engines live in `./data/local` (`~/.local` in the container), so they
 survive container recreation.
 
+**Cookbook dependency install cache/temp directories.** Dependency installs use
+pip's normal cache and temp directories in the app environment. If those default
+under a small home partition, redirect them before starting Odysseus:
+
+```bash
+# native launch
+export PIP_CACHE_DIR=/path/with/space/pip-cache
+export TMPDIR=/path/with/space/tmp
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
+```
+
+For Docker Compose, add the same variables to `.env` so they are passed into the
+container, for example:
+
+```bash
+PIP_CACHE_DIR=/app/data/pip-cache
+TMPDIR=/app/data/tmp
+```
+
+Create those directories first if needed. This is especially helpful when a
+Cookbook dependency install fails with `No space left on device` while pip is
+building wheels under `~/.cache/pip` or `/tmp`.
+
 **Remote servers.** In **Cookbook -> Settings -> Servers**, generate the
 Odysseus SSH key and add the public key to the remote server's
 `~/.ssh/authorized_keys`. From the host you can also run:
