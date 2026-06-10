@@ -190,6 +190,23 @@ ntfy. Odysseus and the bundled service ports bind to `127.0.0.1` by default, so
 they are reachable from the host but not exposed to your LAN/public internet
 unless you opt in.
 
+**DGX Spark / ARM64 Linux.** Odysseus can run on ARM64/aarch64 Linux using the
+native Python path above. The Docker Compose path depends on every service image
+publishing an ARM64 manifest; the current stack was checked against
+`python:3.12-slim`, `chromadb/chroma:latest`,
+`searxng/searxng:2026.5.31-7159b8aed`, and `binwiederhier/ntfy`, all of which
+advertise `linux/arm64` manifests. Re-check manifests when bumping image tags.
+
+For DGX Spark-style systems, the safest setup is to run Odysseus as the
+UI/orchestration layer and point it at a host-side or remote OpenAI-compatible
+model server such as vLLM, Ollama, llama.cpp, or SGLang. GPU access is usually
+required by that model server, not by the Odysseus web app itself. Enable the
+NVIDIA Compose overlay only when you want Cookbook-launched serve engines inside
+the Odysseus container to see the GPU; NVIDIA Container Toolkit, host drivers,
+and ARM64-compatible CUDA/runtime packages are still host responsibilities. Some
+serve engines or Python packages may require local builds if ARM64 wheels are
+not published.
+
 **Cookbook storage in Docker.** Downloads live in `./data/huggingface`
 (`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and
 serve engines live in `./data/local` (`~/.local` in the container), so they
