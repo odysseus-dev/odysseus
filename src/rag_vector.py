@@ -316,7 +316,17 @@ class VectorRAG:
             if not self._active_collections():
                 return []
 
-            query_words = query.lower().split()
+            # Match on word boundaries, not substring containment. The old
+            # ``w in doc_lower`` let a short query word like "ai" match inside
+            # unrelated words ("maintain", "available"), surfacing irrelevant
+            # docs whenever the vector path errored into this fallback. ``\b``
+            # still matches a word next to punctuation ("safety" in "safety.")
+            # — the same idiom used in topic_analyzer / tool_index / search
+            # ranking — which a naive str.split() set would miss.
+            query_res = [
+                re.compile(rf"\b{re.escape(w)}\b")
+                for w in dict.fromkeys(query.lower().split())
+            ]
             scored = []
             for lane_name, collection in self._active_collections():
                 if collection.count() == 0:
@@ -329,7 +339,7 @@ class VectorRAG:
                     if owner and meta.get("owner") != owner:
                         continue
                     doc_lower = doc.lower()
-                    score = sum(1 for w in query_words if w in doc_lower)
+                    score = sum(1 for rx in query_res if rx.search(doc_lower))
                     if score > 0:
                         scored.append({
                             "id": all_docs["ids"][i],
