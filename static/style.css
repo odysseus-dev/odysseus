@@ -14949,6 +14949,87 @@ body.right-dock-active .chat-container,
 body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   margin-right: var(--right-dock-w, 0px);
 }
+.edge-dock-switcher {
+  position: fixed;
+  top: 18px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  max-height: calc(100dvh - 36px);
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  pointer-events: auto;
+}
+.edge-dock-switcher[hidden] {
+  display: none !important;
+}
+.edge-dock-switcher-right {
+  right: calc(var(--right-dock-w, 0px) - 1px);
+}
+.edge-dock-switcher-left {
+  left: calc(48px + var(--left-dock-w, 0px) - 1px);
+}
+.edge-dock-switcher-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 124px;
+  overflow: hidden;
+  padding: 0;
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+}
+.edge-dock-switcher-right .edge-dock-switcher-tab {
+  border-right-color: color-mix(in srgb, var(--panel) 85%, var(--bg));
+  border-radius: 6px 0 0 6px;
+}
+.edge-dock-switcher-left .edge-dock-switcher-tab {
+  border-left-color: color-mix(in srgb, var(--panel) 85%, var(--bg));
+  border-radius: 0 6px 6px 0;
+}
+.edge-dock-switcher-tab-label {
+  display: block;
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.edge-dock-switcher-right .edge-dock-switcher-tab-label {
+  transform: rotate(-90deg);
+}
+.edge-dock-switcher-left .edge-dock-switcher-tab-label {
+  transform: rotate(90deg);
+}
+.edge-dock-switcher-tab:hover {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 9%, var(--panel));
+}
+.edge-dock-switcher-tab.active {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 65%, var(--border));
+  background: color-mix(in srgb, var(--accent, var(--red)) 16%, var(--panel));
+}
+.edge-dock-switcher-right .edge-dock-switcher-tab.active {
+  border-right-color: color-mix(in srgb, var(--panel) 85%, var(--bg));
+}
+.edge-dock-switcher-left .edge-dock-switcher-tab.active {
+  border-left-color: color-mix(in srgb, var(--panel) 85%, var(--bg));
+}
 .modal.modal-right-docked {
   align-items: stretch;
   justify-content: flex-end;
