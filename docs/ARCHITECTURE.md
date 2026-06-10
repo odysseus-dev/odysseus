@@ -56,9 +56,23 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   └── gpu.nvidia.yml
     ├── docs/
     │   ├── ARCHITECTURE.md
+    │   ├── bg.webm
+    │   ├── chat.gif
+    │   ├── chat.webm
+    │   ├── compare.gif
+    │   ├── compare.webm
+    │   ├── document.gif
+    │   ├── document.webm
     │   ├── email-outlook.md
+    │   ├── gallery.webm
     │   ├── index.html
-    │   └── pr-blocker-audit.md
+    │   ├── notes.gif
+    │   ├── notes.webm
+    │   ├── odysseus.jpg
+    │   ├── pr-blocker-audit.md
+    │   ├── research.gif
+    │   ├── research.webm
+    │   └── theme.webm
     ├── integrations/
     │   ├── claude/
     │   │   ├── skills/
@@ -235,8 +249,8 @@ This document serves as a comprehensive overview of the system's architecture, i
     ├── src/
     │   ├── agent_tools/
     │   │   ├── __init__.py
-    │   │   ├── filesystem_tools.py
     │   │   ├── document_tools.py
+    │   │   ├── filesystem_tools.py
     │   │   ├── subprocess_tools.py
     │   │   └── web_tools.py
     │   ├── search/
@@ -341,7 +355,14 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   └── youtube_handler.py
     ├── static/
     │   ├── fonts/
-    │   │   └── custom/
+    │   │   ├── custom/
+    │   │   │   └── GohuFont.ttf
+    │   │   ├── FiraCode-Light.woff2
+    │   │   ├── FiraCode-Regular.woff2
+    │   │   ├── FiraCode-SemiBold.woff2
+    │   │   ├── Inter-Medium.woff2
+    │   │   ├── Inter-Regular.woff2
+    │   │   └── Inter-SemiBold.woff2
     │   ├── js/
     │   │   ├── calendar/
     │   │   │   ├── reminders.js
@@ -512,15 +533,6 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   │   ├── mammoth.browser.min.js
     │   │   ├── qrcode.min.js
     │   │   └── xlsx.full.min.js
-    │   ├── fonts/
-    │   │   ├── FiraCode-Light.woff2
-    │   │   ├── FiraCode-Regular.woff2
-    │   │   ├── FiraCode-SemiBold.woff2
-    │   │   ├── Inter-Medium.woff2
-    │   │   ├── Inter-Regular.woff2
-    │   │   ├── Inter-SemiBold.woff2
-    │   │   └── custom/
-    │   │       └── GohuFont.ttf
     │   ├── app.js
     │   ├── index.html
     │   ├── login.html
@@ -594,6 +606,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_caldav_url_nonstring.py
     │   ├── test_caldav_writeback.py
     │   ├── test_caldav_writeback_route.py
+    │   ├── test_calendar_batch_events.py
     │   ├── test_calendar_cli_name.py
     │   ├── test_calendar_event_contrast.py
     │   ├── test_calendar_list_range_aliases.py
@@ -620,6 +633,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_check_outbound_url_nonstring.py
     │   ├── test_chroma_client.py
     │   ├── test_claim_ownerless_json.py
+    │   ├── test_classify_events_memory_text.py
     │   ├── test_cleanup_owner_scope.py
     │   ├── test_cleanup_service_utcnow.py
     │   ├── test_code_nav_tools.py
@@ -636,6 +650,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_contacts_add_null_name.py
     │   ├── test_contacts_carddav_security.py
     │   ├── test_contacts_cli_rows.py
+    │   ├── test_contacts_import_nonstring.py
     │   ├── test_contacts_vcard_parse.py
     │   ├── test_context_budget.py
     │   ├── test_context_cache_per_endpoint.py
@@ -655,6 +670,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_cookbook_same_host_server_profiles_js.py
     │   ├── test_copilot.py
     │   ├── test_copilot_routes.py
+    │   ├── test_copy_message_strips_thinking_js.py
     │   ├── test_cors_preflight.py
     │   ├── test_database_utcnow.py
     │   ├── test_db_stubs_helper.py
@@ -909,6 +925,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_research_cli_status_filter.py
     │   ├── test_research_cli_store.py
     │   ├── test_research_endpoint_owner_scope.py
+    │   ├── test_research_handler_analyzed_urls.py
     │   ├── test_research_handler_path_confinement.py
     │   ├── test_research_handler_raw_nondict.py
     │   ├── test_research_handler_sources_nondict.py
@@ -919,6 +936,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_research_service.py
     │   ├── test_research_session_id_validation.py
     │   ├── test_research_source_link_xss.py
+    │   ├── test_research_status_avg_duration.py
     │   ├── test_research_utils.py
     │   ├── test_research_utils_low_quality_nonstring.py
     │   ├── test_reserved_username_admin_escalation.py
@@ -1054,7 +1072,9 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── test_visual_report.py
     │   ├── test_visual_report_icon_url.py
     │   ├── test_visual_report_nonstring.py
+    │   ├── test_warmup_ping_urls.py
     │   ├── test_web_search_time_filter.py
+    │   ├── test_web_search_tool_icon_js.py
     │   ├── test_webhook_cli_mask.py
     │   ├── test_webhook_sanitize_error_ipv6.py
     │   ├── test_webhook_ssrf_resilience.py
@@ -2664,7 +2684,7 @@ graph TD
 - **Taxonomy Tags ([`tests/_taxonomy.py`](../tests/_taxonomy.py))**: Tests are categorized (e.g., `security`, `routes`, `cli`, `js`) during collection based on filename conventions.
 - **Pytest Suite ([`tests/`](../tests/))**: High-coverage Python testing logic isolating the agent, session, search, and uploading modules.
 - **Determinism & Isolation ([`tests/helpers/import_state.py`](../tests/helpers/import_state.py))**: Tests are heavily isolated. `sys.modules`, `os.environ`, and `cwd` are strictly guarded against cross-test leakage, preventing order-dependent execution failures.
-- **In-memory Default ([`tests/conftest.py`](../tests/conftest.py))**: Pytest initiates with a fallback in-memory SQLite database to prevent collection-time side-effects within the user's [`data/`](../data/) directory.
+- **In-memory Default ([`tests/conftest.py`](../tests/conftest.py))**: Pytest initiates with a fallback in-memory SQLite database to prevent collection-time side-effects within the user's `data/` directory.
 - **Behavior-First Validation**: The testing philosophy strongly discourages `read_text()` or `ast.parse` style source code checks. Tests are required to exercise routing, database interactions, and module calls directly, prioritizing real-world execution state over text inspection.
 - **Streaming Invariant Tests ([`tests/streaming/`](../tests/streaming/))**: Node.js harness scripts ensuring the Server-Sent Event boundary ([`streamingSegmenter.js`](../static/js/streamingSegmenter.js)) accurately matches equivalent static Markdown rendering paths without leaking mid-generation tags. Testing streamed server-sent events mathematically ensures the frontend markdown parsing never tears or flashes mid-stream.
   - **[`invariant.test.mjs`](../tests/streaming/invariant.test.mjs)** feeds a known Markdown corpus into the segmenter character-by-character.
