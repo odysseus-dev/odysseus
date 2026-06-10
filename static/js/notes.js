@@ -1829,6 +1829,9 @@ function _renderNotes() {
         contentHtml += `<div class="note-checkbox${doneClass}" data-note-id="${note.id}" data-idx="${i}" style="padding-left:${indent * 16}px">
           <span class="note-check-dot" title="Mark done"></span>
           <span class="note-check-text">${_linkify(item.text)}</span>
+          <button class="note-checkbox-agent" data-note-id="${note.id}" data-idx="${i}" title="Solve this todo with the agent">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></svg>
+          </button>
           <button class="note-checkbox-rm" data-note-id="${note.id}" data-idx="${i}" title="Delete item">
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -2180,7 +2183,7 @@ function _bindCardEvents(body) {
   // Click empty area of checklist preview (not on checkbox/X) — edit
   body.querySelectorAll('.note-checklist-preview').forEach(el => {
     el.addEventListener('click', (e) => {
-      if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-cl-quickadd, input')) return;
+      if (e.target.closest('.note-checkbox, .note-checkbox-rm, .note-checkbox-agent, .note-cl-quickadd, input')) return;
       e.stopPropagation();
       tapToEditOrSelect(el.closest('.note-card'));
     });
@@ -2206,7 +2209,7 @@ function _bindCardEvents(body) {
   // title / content preview triggered edit, so padding + empty gutters were
   // dead zones that felt broken on mobile.
   if (_isNotesMobileMode() && !_selectMode) {
-    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
+    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-checkbox-agent, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
     body.querySelectorAll('.note-card').forEach(card => {
       card.addEventListener('click', (e) => {
         if (e.target.closest(_INTERACTIVE)) return;
@@ -2523,6 +2526,19 @@ function _bindCardEvents(body) {
         _renderNotes();
         uiModule.showError('Failed to remove item');
       });
+    });
+  });
+
+  // Per-item agent solve (hover button next to the X). Scoped to one todo
+  // item — uses the note title as context if present, but only the single
+  // item's text as the work. Mirrors the per-note _agentSolveNote pattern.
+  body.querySelectorAll('.note-checkbox-agent').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (_selectMode) return;
+      const noteId = btn.dataset.noteId;
+      const idx = parseInt(btn.dataset.idx);
+      _agentSolveTodoItem(noteId, idx);
     });
   });
 
@@ -4411,6 +4427,66 @@ async function _agentSolveNote(id) {
       .catch(() => {});
 
     uiModule.showToast('Agent working in background — tap the Agent tag when ready');
+  } catch (e) {
+    uiModule.showError('Agent failed: ' + (e.message || e));
+  }
+}
+
+// Per-item version of _agentSolveNote. Scoped to a single checklist item;
+// the note title (if any) is included as context, but only this one item's
+// text is the work the agent is asked to do. agent_session_id is set on the
+// PARENT note (latest-wins) so the Agent tag still surfaces the most recent
+// run from this note — same UX as a per-note solve.
+async function _agentSolveTodoItem(noteId, idx) {
+  const note = _notes.find(n => n.id === noteId);
+  if (!note || !Array.isArray(note.items)) return;
+  const item = note.items[idx];
+  const itemText = (item && (item.text || '').trim()) || '';
+  if (!itemText) {
+    uiModule.showToast('Nothing to solve — item is empty');
+    return;
+  }
+  const titleCtx = (note.title || '').trim();
+  const prompt = titleCtx
+    ? `Context (from note "${titleCtx}").\n\nHelp me with this todo: ${itemText}`
+    : `Help me with this todo: ${itemText}`;
+  try {
+    const dc = await (await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' })).json();
+    if (!dc.endpoint_url || !dc.model) { uiModule.showError('No default chat model configured'); return; }
+
+    const label = itemText.slice(0, 40);
+    const csFd = new FormData();
+    csFd.append('name', 'Agent: ' + label);
+    csFd.append('endpoint_url', dc.endpoint_url);
+    csFd.append('model', dc.model);
+    if (dc.endpoint_id) csFd.append('endpoint_id', dc.endpoint_id);
+    csFd.append('skip_validation', 'true');
+    const csRes = await fetch(`${API_BASE}/api/session`, { method: 'POST', credentials: 'same-origin', body: csFd });
+    if (!csRes.ok) { uiModule.showError('Could not create agent session'); return; }
+    const sess = await csRes.json();
+    const sid = sess.id;
+
+    const n = _notes.find(x => x.id === noteId);
+    if (n) n.agent_session_id = sid;
+    _renderNotes();
+    _patchNote(noteId, { agent_session_id: sid }).catch(() => {});
+
+    const fd = new FormData();
+    fd.append('message', prompt);
+    fd.append('session', sid);
+    fd.append('mode', 'agent');
+    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
+      .then(async (res) => {
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        while (true) { const { done } = await reader.read(); if (done) break; }
+        if (window.sessionModule && window.sessionModule.markStreamComplete) {
+          try { window.sessionModule.markStreamComplete(sid); } catch {}
+        }
+      })
+      .catch(() => {});
+
+    uiModule.showToast('Agent working on this item — tap the Agent tag when ready');
   } catch (e) {
     uiModule.showError('Agent failed: ' + (e.message || e));
   }

@@ -33150,6 +33150,30 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-checkbox:hover .note-checkbox-rm { opacity: 0.55; }
 .note-checkbox-rm:hover { opacity: 1 !important; color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
 .note-card-selectmode .note-checkbox-rm { display: none; }
+
+/* Per-item "solve with agent" button — mirrors .note-checkbox-rm visually
+   so the two hover-actions on a todo item read as a pair. Sits to the left
+   of the X (DOM order = agent then X), both pushed to the right via the
+   shared margin-left:auto pattern. */
+.note-checkbox-agent {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  opacity: 0;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  margin-right: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.note-checkbox:hover .note-checkbox-agent { opacity: 0.55; }
+.note-checkbox-agent:hover { opacity: 1 !important; color: var(--red); background: color-mix(in srgb, var(--red) 12%, transparent); }
+.note-card-selectmode .note-checkbox-agent { display: none; }
 .note-check-dot {
   width: 16px;
   height: 16px;
