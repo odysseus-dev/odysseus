@@ -3,6 +3,7 @@ import sys
 import types
 
 from src import tool_implementations as tools
+from src.agent_tools import document_tools as newtools
 
 
 class _Column:
@@ -115,7 +116,7 @@ def test_update_document_active_id_filters_to_calling_owner(monkeypatch):
     _install_database_stub(monkeypatch, "src.database", query)
     tools.set_active_document("doc-bob")
     try:
-        result = asyncio.run(tools.do_update_document("new content", owner="alice"))
+        result = asyncio.run(newtools.update_document("new content", owner="alice"))
     finally:
         tools.set_active_document(None)
 
@@ -144,7 +145,7 @@ def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):
 def test_document_tool_dispatch_forwards_owner():
     source = open("src/tool_execution.py", encoding="utf-8").read()
 
-    assert "do_create_document(content, session_id=session_id, owner=owner)" in source
-    assert "do_update_document(content, owner=owner)" in source
+    assert "create_document(content, session_id=session_id, owner=owner)" in source
+    assert "update_document(content, owner=owner)" in source
     assert "do_edit_document(content, owner=owner)" in source
     assert "do_suggest_document(content, owner=owner)" in source

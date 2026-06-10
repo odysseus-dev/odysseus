@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool
+from .document_tools import create_document, update_document
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -33,6 +34,8 @@ TOOL_HANDLERS = {
     "ls": LsTool().execute,
     "glob": GlobTool().execute,
     "grep": GrepTool().execute,
+    "create_document": create_document,
+    "update_document": update_document,
 }
 
 # ---------------------------------------------------------------------------
@@ -114,8 +117,6 @@ from src.tool_implementations import (  # noqa: E402, F401
     set_active_document,
     set_active_model,
     get_active_document,
-    do_create_document,
-    do_update_document,
     do_edit_document,
     do_suggest_document,
     do_search_chats,

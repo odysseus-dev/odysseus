@@ -439,7 +439,7 @@ async def execute_tool_block(
     events while the command is in flight. Ignored by other tools.
     """
     from src.tool_implementations import (
-        do_create_document, do_update_document, do_edit_document,
+        do_edit_document,
         do_suggest_document, do_search_chats, do_manage_tasks,
         do_manage_skills, do_api_call, do_manage_endpoints,
         do_manage_mcp, do_manage_webhooks, do_manage_tokens,
@@ -640,10 +640,10 @@ async def execute_tool_block(
     elif tool == "create_document":
         title = content.split("\n")[0].strip()[:60]
         desc = f"create_document: {title}"
-        result = await do_create_document(content, session_id=session_id, owner=owner)
+        result = await create_document(content, session_id=session_id, owner=owner)
     elif tool == "update_document":
         desc = f"update_document: {content.split(chr(10))[0][:60]}"
-        result = await do_update_document(content, owner=owner)
+        result = await update_document(content, owner=owner)
     elif tool == "edit_document":
         result = await do_edit_document(content, owner=owner)
         desc = f"edit_document: {result.get('title', '')}"
