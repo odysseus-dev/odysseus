@@ -173,7 +173,10 @@ class ModelDiscovery:
             if not r.is_success:
                 return None
             data = r.json() or {}
-            ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
+            data_list = data.get("data") or []
+            if not isinstance(data_list, list):
+                data_list = []
+            ids = [m.get("id") for m in data_list if isinstance(m, dict) and m.get("id")]
             if ids:
                 return {
                     "host": host,
