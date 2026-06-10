@@ -1,0 +1,101 @@
+# Container security
+#
+# Purpose: the Docker image is how most people run Odysseus, so it is part of
+# the attack surface. Two checks:
+#
+#   - hadolint: lints the Dockerfile for mistakes and insecure patterns
+#     (running as root longer than needed, unpinned base image, bad apt usage).
+#     Blocking.
+#   - Trivy: builds the image and scans it for known-vulnerable OS and Python
+#     packages. Advisory only -- it reports findings to the repo's Security tab
+#     without blocking a merge, because the image inevitably contains
+#     already-known CVEs in upstream packages that are not this project's bug.
+#
+# Note: a separate open PR (#120) proposes a local `scripts/scan_image.py`.
+# This job is complementary -- it is a CI gate plus Security-tab integration,
+# not a script a contributor has to remember to run.
+
+name: Container scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: container-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hadolint:
+    name: hadolint (Dockerfile lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5  # v3.3.0
+        with:
+          dockerfile: Dockerfile
+          # DL3008: pinning apt package versions is impractical on a -slim base
+          # image. Debian purges old package versions from its repos, so a
+          # pinned version breaks future rebuilds. The base image itself is
+          # what should be pinned (tracked by Dependabot's docker ecosystem).
+          ignore: DL3008
+
+  trivy:
+    name: Trivy (image scan, advisory)
+    runs-on: ubuntu-latest
+    # Advisory: a CVE in an upstream package must not block unrelated PRs.
+    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write  # upload SARIF to the Security tab (push only)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
+
+      # Build without pushing so a broken Dockerfile is caught here, and the
+      # exact image we ship is what gets scanned.
+      - name: Build image
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: odysseus:ci
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
+        with:
+          image-ref: odysseus:ci
+          format: sarif
+          output: trivy-results.sarif
+          ignore-unfixed: true
+        env:
+          # Pin the vuln DB source to GHCR to avoid rate-limited Docker Hub
+          # mirrors that flake on shared runners.
+          TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2
+
+      # Upload only on push to main. Pull requests from forks get a read-only
+      # token that cannot write to the Security tab, so skipping there avoids a
+      # confusing failure; the main-branch scan keeps the tab populated.
+      - name: Upload Trivy results
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@03e4368ac7daa2bd82b3e85262f3bf87ee112f57  # v3.36.0
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-image

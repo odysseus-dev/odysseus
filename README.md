@@ -440,6 +440,8 @@ Key settings:
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
 | `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
+| `SEARXNG_BIND` | `127.0.0.1` | Docker Compose host bind address for bundled SearXNG. |
+| `SEARXNG_PORT` | `8080` | Docker Compose host port for bundled SearXNG. Change this if another local service already uses 8080. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
 | `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |

@@ -1,0 +1,16 @@
+http:
+  routers:
+    odysseus:
+      rule: Host(`odysseus.example.com`)
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+      service: odysseus
+
+  services:
+    odysseus:
+      loadBalancer:
+        servers:
+          - url: http://192.168.2.42:7000
+        passHostHeader: true

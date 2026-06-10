@@ -1,0 +1,13 @@
+# SOPS encryption configuration for Odysseus secrets at rest.
+#
+# Before encrypting, copy this file to .sops.yaml.local (or edit in place)
+# and replace the placeholder below with your own age public key.
+#
+# Generate a key with:
+#   age-keygen -o ~/.config/sops/age/keys.txt
+#   age-keygen -y < ~/.config/sops/age/keys.txt   # prints the public key
+#
+# See SECURITY.md ("Encrypting Secrets At Rest") for the full workflow.
+creation_rules:
+  - path_regex: secrets\.env(\.enc)?$
+    age: age1REPLACE_WITH_YOUR_AGE_PUBLIC_KEY
