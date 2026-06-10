@@ -779,9 +779,16 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("documents")
     if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
         domains.add("documents")
-    if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
+    if has(
+        r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b",
+        # FR / non-URL web-search intent (mirrors tool_index._WEB_SEARCH_RE):
+        # "cherche/recherche ... (sur le) web/internet/en ligne", "sur le web", "recherche internet".
+        r"\b(?:cherche|recherche|chercher|rechercher)\b(?:\s+[\w'-]+){0,5}?\s+(?:sur\s+(?:le\s+)?)?(?:web|internet|en\s+ligne)\b",
+        r"\bsur\s+(?:le\s+)?(?:web|internet)\b",
+        r"\brecherche\s+(?:web|internet|en\s+ligne)\b",
+    ):
         domains.add("web")
-    if has(r"\b(research|deep dive|investigate|look into)\b"):
+    if has(r"\b(research|deep dive|investigate|look into|recherche approfondie)\b"):
         domains.add("web")
     if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
         domains.add("ui")

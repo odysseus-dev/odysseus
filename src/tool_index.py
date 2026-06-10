@@ -336,6 +336,24 @@ class ToolIndex:
         r"https?://|www\.|\b(?:visit|open|fetch|check|read)\s+(?:this\s+)?(?:url|link|site|website|page)\b",
         re.I,
     )
+    # Explicit web-SEARCH intent (not just URLs). Requires a search verb AND a
+    # web noun co-occurring, in EN or FR, so trivial prompts ("test", "yo") and
+    # talking *about* the web ("Google released a model") never fire. Without
+    # this, "search the web for X" / "cherche sur le web X" have no deterministic
+    # gate and depend entirely on the top-k embedding retrieval, which silently
+    # drops web_search whenever that budget is crowded (e.g. an open document is
+    # injected into the agent context).
+    _WEB_SEARCH_RE = re.compile(
+        # EN: search-verb ... web-noun
+        r"\b(?:search|look\s+up|browse|find)\b(?:\s+[\w'-]+){0,4}?\s+(?:on\s+)?(?:the\s+)?(?:web|internet|online)\b"
+        r"|\b(?:web|internet|online)\s+search\b"
+        r"|\bgoogle\s+(?:it|this|that|for|the)\b"
+        # FR: cherche/recherche ... web-noun
+        r"|\b(?:cherche|recherche|chercher|rechercher|google\w*)\b(?:\s+[\w'-]+){0,5}?\s+(?:sur\s+(?:le\s+)?)?(?:web|internet|en\s+ligne)\b"
+        r"|\bsur\s+(?:le\s+)?(?:web|internet)\b"
+        r"|\brecherche\s+(?:web|internet|en\s+ligne)\b",
+        re.I,
+    )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
@@ -497,10 +515,11 @@ class ToolIndex:
         # the agent can actually create the cron job instead of fumbling.
         if self._SCHEDULE_RE.search(ql):
             base.add("manage_tasks")
-        # URL/site requests need web tools even when embedding retrieval is
-        # stubbed/unavailable. Keep this structural, not always-on, so trivial
-        # prompts do not drag web schemas into the agent context.
-        if self._WEB_RE.search(query):
+        # URL/site requests AND explicit web-search intent (EN/FR) need web tools
+        # even when embedding retrieval is stubbed or its top-k budget is crowded
+        # (e.g. an open document is injected). Keep this structural, not
+        # always-on, so trivial prompts do not drag web schemas into the context.
+        if self._WEB_RE.search(query) or self._WEB_SEARCH_RE.search(query):
             base.update({"web_search", "web_fetch"})
         return base
 
