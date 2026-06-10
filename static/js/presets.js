@@ -4,6 +4,8 @@
  * Preset management
  */
 
+import { t } from './i18n.js';
+
 let API_BASE = '';
 let selectedPreset = null;
 let presets = {};
@@ -122,7 +124,7 @@ function initExpandButton() {
     let spinner = null;
     try {
       const spinnerMod = await import('./spinner.js');
-      spinner = spinnerMod.default.create('Expanding', 'center', 'wave');
+      spinner = spinnerMod.default.create(t('ui.js.presets_expanding', null, 'Expanding'), 'center', 'wave');
       const spinEl = spinner.createElement();
       spinEl.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:2;';
       wrap.appendChild(spinEl);
@@ -130,7 +132,7 @@ function initExpandButton() {
       promptInput.style.opacity = '0.3';
     } catch (e) {}
 
-    btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Expanding...';
+    btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> ' + t('ui.js.presets_expanding_ellipsis', null, 'Expanding...');
 
     try {
       const res = await fetch(`${API_BASE}/api/presets/expand`, {
@@ -175,7 +177,7 @@ function initEnabledToggle() {
   if (tokensSlider && tokensValue) {
     tokensSlider.addEventListener('input', () => {
       const v = parseInt(tokensSlider.value);
-      tokensValue.textContent = v > 8192 ? 'No limit' : v.toLocaleString();
+      tokensValue.textContent = v > 8192 ? t('ui.js.presets_no_limit', null, 'No limit') : v.toLocaleString();
     });
   }
 }
@@ -214,7 +216,7 @@ function initNameDropdown() {
       const nameRow = document.getElementById('char-name-row');
       if (nameRow) nameRow.style.display = '';
       if (tempInput) { tempInput.value = 1.0; if (tempValue) tempValue.textContent = '1.0'; tempInput.dispatchEvent(new Event('input')); }
-      if (tokensInput) { tokensInput.value = 8448; if (tokensValue) tokensValue.textContent = 'No limit'; tokensInput.dispatchEvent(new Event('input')); }
+      if (tokensInput) { tokensInput.value = 8448; if (tokensValue) tokensValue.textContent = t('ui.js.presets_no_limit', null, 'No limit'); tokensInput.dispatchEvent(new Event('input')); }
       if (delBtn) delBtn.style.display = 'none';
       return;
     }
@@ -238,7 +240,7 @@ function initNameDropdown() {
       if (!charName || charName === '__default__') return;
       const match = userTemplates.find(t => t.name === charName);
       const isBuiltin = PROMPT_TEMPLATES.some(t => t.name === charName);
-      if (!await window.styledConfirm(`Delete "${charName}"?\n\nThis will remove the persona and all its memories.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await window.styledConfirm(t('ui.js.presets_delete_persona_confirm', { name: charName }, 'Delete "{name}"?\n\nThis will remove the persona and all its memories.'), { confirmText: t('ui.js.presets_delete', null, 'Delete'), danger: true })) return;
       try {
         // Delete saved template if exists
         if (match) {
@@ -303,7 +305,7 @@ function _tryLoadTemplate(name) {
   if (tokensInput) {
     const v = tmpl.max_tokens || 0;
     tokensInput.value = v === 0 ? 8448 : v;
-    if (tokensValue) tokensValue.textContent = (v === 0 || v > 8192) ? 'No limit' : v.toLocaleString();
+    if (tokensValue) tokensValue.textContent = (v === 0 || v > 8192) ? t('ui.js.presets_no_limit', null, 'No limit') : v.toLocaleString();
     tokensInput.dispatchEvent(new Event('input'));
   }
   const delBtn = document.getElementById('char-delete-template-btn');
@@ -314,12 +316,12 @@ function _populateCharSelect() {
   const select = document.getElementById('char-template-select');
   if (!select) return;
   const currentVal = select.value;
-  select.innerHTML = '<option value="__default__">Default (no persona)</option>';
+  select.innerHTML = '<option value="__default__">' + t('ui.js.presets_default_no_persona', null, 'Default (no persona)') + '</option>';
 
   const savedNames = new Set(userTemplates.map(t => t.name));
   if (userTemplates.length) {
     const group = document.createElement('optgroup');
-    group.label = 'Saved';
+    group.label = t('ui.js.presets_group_saved', null, 'Saved');
     userTemplates.forEach(t => {
       const opt = document.createElement('option');
       opt.value = t.name;
@@ -333,7 +335,7 @@ function _populateCharSelect() {
   const builtins = PROMPT_TEMPLATES.filter(t => !savedNames.has(t.name) && !hiddenPresets.includes(t.name));
   if (builtins.length) {
     const group = document.createElement('optgroup');
-    group.label = 'Presets';
+    group.label = t('ui.js.presets_group_presets', null, 'Presets');
     builtins.forEach(t => {
       const opt = document.createElement('option');
       opt.value = t.name;
@@ -433,12 +435,12 @@ function initPersistentChat() {
       await sessionModule.loadSessions();
       await sessionModule.selectSession(sessionId);
 
-      btn.textContent = 'Created!';
-      setTimeout(() => { btn.textContent = 'Create Persistent Chat'; }, 1500);
+      btn.textContent = t('ui.js.presets_created', null, 'Created!');
+      setTimeout(() => { btn.textContent = t('ui.js.presets_create_persistent_chat', null, 'Create Persistent Chat'); }, 1500);
     } catch (e) {
       console.error('Failed to create persistent chat:', e);
-      btn.textContent = 'Error';
-      setTimeout(() => { btn.textContent = 'Create Persistent Chat'; }, 2000);
+      btn.textContent = t('ui.js.presets_error', null, 'Error');
+      setTimeout(() => { btn.textContent = t('ui.js.presets_create_persistent_chat', null, 'Create Persistent Chat'); }, 2000);
     }
   });
 }
@@ -455,7 +457,7 @@ function initSaveAsTemplate() {
 
     let name = nameInput ? nameInput.value.trim() : '';
     if (!name) {
-      name = prompt('Enter a name for this persona:');
+      name = prompt(t('ui.js.presets_enter_persona_name', null, 'Enter a name for this persona:'));
       if (!name || !name.trim()) return;
       name = name.trim();
       if (nameInput) nameInput.value = name;
@@ -480,17 +482,17 @@ function initSaveAsTemplate() {
       const data = await res.json();
       if (data.success) {
         await loadUserTemplates();
-        btn.textContent = 'Saved!';
-        setTimeout(() => { btn.textContent = 'Save as Template'; }, 1500);
+        btn.textContent = t('ui.js.presets_saved', null, 'Saved!');
+        setTimeout(() => { btn.textContent = t('ui.js.presets_save_as_template', null, 'Save as Template'); }, 1500);
       } else {
-        btn.textContent = 'Error';
-        setTimeout(() => { btn.textContent = 'Save as Template'; }, 2000);
+        btn.textContent = t('ui.js.presets_error', null, 'Error');
+        setTimeout(() => { btn.textContent = t('ui.js.presets_save_as_template', null, 'Save as Template'); }, 2000);
       }
     } catch (e) {
       console.error('Failed to save template:', e);
-      btn.textContent = 'Restart server';
+      btn.textContent = t('ui.js.presets_restart_server', null, 'Restart server');
       btn.style.color = 'var(--color-error)';
-      setTimeout(() => { btn.textContent = 'Save as Template'; btn.style.color = ''; }, 3000);
+      setTimeout(() => { btn.textContent = t('ui.js.presets_save_as_template', null, 'Save as Template'); btn.style.color = ''; }, 3000);
     }
   });
 }
@@ -530,7 +532,7 @@ export async function loadPresets(showError) {
   } catch (error) {
     console.error('Failed to load presets:', error);
     if (showError) {
-      showError('Failed to load presets');
+      showError(t('ui.js.presets_load_failed', null, 'Failed to load presets'));
     }
   }
 }
@@ -595,7 +597,7 @@ export function openCustomPresetModal() {
     const saved = savedConfig.max_tokens || 0;
     tokensInput.value = saved === 0 ? 8448 : saved;
     const tkv = document.getElementById('tokens-value');
-    if (tkv) tkv.textContent = (saved === 0 || saved > 8192) ? 'No limit' : parseInt(saved).toLocaleString();
+    if (tkv) tkv.textContent = (saved === 0 || saved > 8192) ? t('ui.js.presets_no_limit', null, 'No limit') : parseInt(saved).toLocaleString();
   }
   if (promptInput) promptInput.value = savedConfig.system_prompt || '';
 
@@ -626,15 +628,15 @@ export function openCustomPresetModal() {
     const activeTab = document.querySelector('.preset-tab.active')?.dataset.chartab || 'inject';
     let label;
     if (activeTab === 'group') {
-      label = 'Start Group';
+      label = t('ui.js.presets_start_group', null, 'Start Group');
     } else if (activeTab === 'inject') {
       // Inject tab = a plain tuned "prompt" chat (prefix/suffix + temp/tokens),
       // no persona.
-      label = 'Start Prompt';
+      label = t('ui.js.presets_start_prompt', null, 'Start Prompt');
     } else {
       // Character/persona tab. "Save & " prefix when the user edited a template,
       // so it's clear the edit is being saved on start.
-      label = changed ? 'Save & Start Persona' : 'Start Persona';
+      label = changed ? t('ui.js.presets_save_start_persona', null, 'Save & Start Persona') : t('ui.js.presets_start_persona', null, 'Start Persona');
     }
     btn.textContent = label;
     // Show a "Cancel" button next to Start when the active tab's feature is
@@ -645,7 +647,7 @@ export function openCustomPresetModal() {
       const groupOn = !!(window.groupModule && window.groupModule.isActive && window.groupModule.isActive());
       const featOn = activeTab === 'group' ? groupOn : !!(presets.custom && presets.custom.enabled);
       cancelBtn.style.display = featOn ? '' : 'none';
-      cancelBtn.textContent = activeTab === 'group' ? 'Cancel group' : 'Cancel';
+      cancelBtn.textContent = activeTab === 'group' ? t('ui.js.presets_cancel_group', null, 'Cancel group') : t('ui.js.presets_cancel', null, 'Cancel');
     }
     // Reset only makes sense on the character tab (it resets the persona).
     if (resetBtn) resetBtn.style.display = (changed && activeTab === 'character') ? '' : 'none';
@@ -666,8 +668,8 @@ export function openCustomPresetModal() {
   if (_cancelBtn && !_cancelBtn._wired) {
     _cancelBtn._wired = true;
     _cancelBtn.addEventListener('click', () => {
-      const t = document.querySelector('.preset-tab.active')?.dataset.chartab || 'inject';
-      if (t === 'group') {
+      const _tab = document.querySelector('.preset-tab.active')?.dataset.chartab || 'inject';
+      if (_tab === 'group') {
         try { if (window.groupModule && window.groupModule.stopGroup) window.groupModule.stopGroup(); } catch {}
         if (window._syncGroupIndicator) window._syncGroupIndicator(false);
       } else {
@@ -726,7 +728,7 @@ export function openCustomPresetModal() {
       const notice = document.createElement('div');
       notice.id = 'char-lock-notice';
       notice.style.cssText = 'font-size:11px;color:var(--color-muted);text-align:center;padding:6px;margin-bottom:8px;border:1px dashed var(--border);border-radius:6px;';
-      notice.textContent = 'Persistent chat — persona is locked. Style, temperature, and memory can still be changed.';
+      notice.textContent = t('ui.js.presets_persistent_locked', null, 'Persistent chat — persona is locked. Style, temperature, and memory can still be changed.');
       modal.querySelector('.modal-body').prepend(notice);
     }
   } else {
@@ -843,7 +845,7 @@ export async function saveCustomPreset(showToast, showError) {
 
       if (showToast) {
         // The Inject tab is a plain tuned "prompt" chat, not a persona — say so.
-        showToast(_isInjectStart ? 'Prompt saved' : 'Persona saved');
+        showToast(_isInjectStart ? t('ui.js.presets_prompt_saved', null, 'Prompt saved') : t('ui.js.presets_persona_saved', null, 'Persona saved'));
       }
       const modal = document.getElementById('custom-preset-modal');
       if (modal) {
@@ -851,7 +853,7 @@ export async function saveCustomPreset(showToast, showError) {
       }
     } else {
       if (showError) {
-        showError('Failed to save custom preset');
+        showError(t('ui.js.presets_save_custom_failed', null, 'Failed to save custom preset'));
       }
     }
   } catch (error) {
@@ -980,13 +982,13 @@ function _syncCharIndicator() {
     if (hasChar) {
       if (iconEl) iconEl.innerHTML = _AVATAR;
       if (nameSpan) nameSpan.textContent = custom.character_name;
-      btn.title = `Persona: ${custom.character_name} — click to configure`;
+      btn.title = t('ui.js.presets_persona_title', { name: custom.character_name }, 'Persona: {name} — click to configure');
     } else {
       // Inject/tuning chat — syringe tag labeled "Prompt" to match the
       // window identity, no persona name.
       if (iconEl) iconEl.innerHTML = _SYRINGE;
-      if (nameSpan) nameSpan.textContent = 'Prompt';
-      btn.title = 'Custom settings active — click to configure';
+      if (nameSpan) nameSpan.textContent = t('ui.js.presets_prompt_chip', null, 'Prompt');
+      btn.title = t('ui.js.presets_custom_settings_title', null, 'Custom settings active — click to configure');
     }
     // Hide X in persistent chats
     const xIcon = btn.querySelector('.tool-indicator-x');

@@ -8,6 +8,7 @@ import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
+import { t } from './i18n.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -19,6 +20,7 @@ let _viewingRuns = null; // task id when viewing run history
 let _clockInterval = null;
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const _dayName = (i) => t('ui.js.tasks_day_' + i, null, DAYS_OF_WEEK[i] || '');
 
 // ---- API ----
 
@@ -118,12 +120,12 @@ async function _runNow(id, force = false) {
     // Surface the backend's actual reason — 409 means "already running",
     // 404 task missing, etc. Previously every error rendered as the same
     // generic "Failed to trigger task", which hid the cause.
-    let msg = `Failed to trigger task (${res.status})`;
+    let msg = t('ui.js.tasks_err_trigger', { status: res.status }, 'Failed to trigger task ({status})');
     try {
       const data = await res.json();
       if (data && data.detail) msg = data.detail;
     } catch (_) {}
-    if (res.status === 409) msg = 'Task is already running';
+    if (res.status === 409) msg = t('ui.js.tasks_already_running', null, 'Task is already running');
     throw new Error(msg);
   }
 }
@@ -134,7 +136,7 @@ async function _stopTask(id) {
     credentials: 'same-origin',
   });
   if (!res.ok) {
-    let msg = `Failed to stop task (${res.status})`;
+    let msg = t('ui.js.tasks_err_stop', { status: res.status }, 'Failed to stop task ({status})');
     try {
       const data = await res.json();
       if (data && data.detail) msg = data.detail;
@@ -160,7 +162,7 @@ async function _fetchOutputTargets() {
     const data = await res.json();
     _outputTargets = data.targets || [];
   } catch (e) {
-    _outputTargets = [{ value: 'session', label: 'Session' }];
+    _outputTargets = [{ value: 'session', label: t('ui.js.tasks_output_session', null, 'Session') }];
   }
   return _outputTargets;
 }
@@ -225,28 +227,30 @@ function _scheduleLabel(task) {
   if (tt === 'event') {
     const evtName = (task.trigger_event || 'event').replace(/_/g, ' ');
     const n = task.trigger_count || 1;
-    return `Every ${n} ${evtName}${n > 1 ? 's' : ''}`;
+    return n > 1
+      ? t('ui.js.tasks_sched_every_n_events', { n, event: evtName }, 'Every {n} {event}s')
+      : t('ui.js.tasks_sched_every_event', { event: evtName }, 'Every 1 {event}');
   }
-  if (tt === 'webhook') return 'Webhook';
-  const t = task.scheduled_time || '00:00';
-  if (task.schedule === 'cron') return `Cron: ${task.cron_expression || '?'}`;
+  if (tt === 'webhook') return t('ui.js.tasks_trigger_webhook', null, 'Webhook');
+  const tme = task.scheduled_time || '00:00';
+  if (task.schedule === 'cron') return t('ui.js.tasks_sched_cron', { expr: task.cron_expression || '?' }, 'Cron: {expr}');
   if (task.schedule === 'once') {
     if (task.scheduled_date) {
       const d = new Date(task.scheduled_date);
-      return `Once on ${d.toLocaleDateString()} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      return t('ui.js.tasks_sched_once_on', { date: d.toLocaleDateString(), time: d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, 'Once on {date} at {time}');
     }
-    return 'Once';
+    return t('ui.js.tasks_freq_once', null, 'Once');
   }
-  const localTime = _utcTimeToLocal(t);
-  if (task.schedule === 'daily') return `Daily at ${localTime}`;
+  const localTime = _utcTimeToLocal(tme);
+  if (task.schedule === 'daily') return t('ui.js.tasks_sched_daily_at', { time: localTime }, 'Daily at {time}');
   if (task.schedule === 'weekly') {
-    const day = DAYS_OF_WEEK[task.scheduled_day ?? 0];
-    return `Weekly on ${day} at ${localTime}`;
+    const day = _dayName(task.scheduled_day ?? 0);
+    return t('ui.js.tasks_sched_weekly_at', { day, time: localTime }, 'Weekly on {day} at {time}');
   }
   if (task.schedule === 'monthly') {
     const d = task.scheduled_day ?? 1;
     const suffix = ordinalSuffix(d);
-    return `Monthly on ${d}${suffix} at ${localTime}`;
+    return t('ui.js.tasks_sched_monthly_at', { day: `${d}${suffix}`, time: localTime }, 'Monthly on {day} at {time}');
   }
   return task.schedule || '—';
 }
@@ -275,17 +279,17 @@ function _relativeTime(iso) {
   const diff = d - now;
   const abs = Math.abs(diff);
   const past = diff < 0;
-  if (abs < 60000) return past ? 'just now' : 'in a moment';
+  if (abs < 60000) return past ? t('ui.js.tasks_time_just_now', null, 'just now') : t('ui.js.tasks_time_in_moment', null, 'in a moment');
   if (abs < 3600000) {
     const m = Math.round(abs / 60000);
-    return past ? `${m}m ago` : `in ${m}m`;
+    return past ? t('ui.js.tasks_time_m_ago', { n: m }, '{n}m ago') : t('ui.js.tasks_time_in_m', { n: m }, 'in {n}m');
   }
   if (abs < 86400000) {
     const h = Math.round(abs / 3600000);
-    return past ? `${h}h ago` : `in ${h}h`;
+    return past ? t('ui.js.tasks_time_h_ago', { n: h }, '{n}h ago') : t('ui.js.tasks_time_in_h', { n: h }, 'in {n}h');
   }
   const days = Math.round(abs / 86400000);
-  return past ? `${days}d ago` : `in ${days}d`;
+  return past ? t('ui.js.tasks_time_d_ago', { n: days }, '{n}d ago') : t('ui.js.tasks_time_in_d', { n: days }, 'in {n}d');
 }
 
 // Absolute local time — unique per second. Used in run history so clustered
@@ -366,7 +370,8 @@ function _taskAiMark(task) {
   const action = task?.action || '';
   const aiAction = _MODEL_BACKED_ACTIONS.has(action);
   if (!(kind === 'llm' || kind === 'research' || task?.model || task?.endpointUrl || aiAction)) return '';
-  return '<svg class="task-ai-mark" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-label="Uses model" title="Uses model"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>';
+  const um = t('ui.js.tasks_uses_model', null, 'Uses model');
+  return '<svg class="task-ai-mark" width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-label="' + um + '" title="' + um + '"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>';
 }
 
 // ---- Custom pickers ----
@@ -443,7 +448,7 @@ function _buildDatePicker(containerId, initialDate) {
   MONTHS.forEach((name, i) => {
     const opt = document.createElement('option');
     opt.value = i;
-    opt.textContent = name;
+    opt.textContent = t('ui.js.tasks_month_' + i, null, name);
     if (i === month) opt.selected = true;
     monthSel.appendChild(opt);
   });
@@ -542,7 +547,7 @@ function _taskEnterSelect() {
   _taskSelectMode = true; _taskSelected.clear();
   document.getElementById('tasks-bulk-bar')?.classList.remove('hidden');
   const _sb = document.getElementById('tasks-select-btn');
-  if (_sb) { _sb.classList.add('active'); _sb.textContent = 'Cancel'; }
+  if (_sb) { _sb.classList.add('active'); _sb.textContent = t('ui.js.tasks_cancel', null, 'Cancel'); }
   _taskUpdateBulkCount();
   _renderList();
 }
@@ -550,7 +555,7 @@ function _taskExitSelect() {
   _taskSelectMode = false; _taskSelected.clear();
   document.getElementById('tasks-bulk-bar')?.classList.add('hidden');
   const _sb = document.getElementById('tasks-select-btn');
-  if (_sb) { _sb.classList.remove('active'); _sb.textContent = 'Select'; }
+  if (_sb) { _sb.classList.remove('active'); _sb.textContent = t('ui.js.tasks_select', null, 'Select'); }
   const sa = document.getElementById('tasks-select-all'); if (sa) sa.checked = false;
   _renderList();
 }
@@ -563,21 +568,22 @@ function _taskToggleSelectAll() {
 }
 function _taskUpdateBulkCount() {
   const c = document.getElementById('tasks-selected-count');
-  if (c) c.textContent = `${_taskSelected.size} Selected`;
+  if (c) c.textContent = t('ui.js.tasks_n_selected', { n: _taskSelected.size }, '{n} Selected');
   const del = document.getElementById('tasks-bulk-delete');
   if (del) del.disabled = _taskSelected.size === 0;
 }
 async function _taskBulkDelete() {
   const ids = [..._taskSelected];
   if (!ids.length) return;
+  const _delMsg = ids.length === 1 ? t('ui.js.tasks_delete_one_q', null, 'Delete 1 task? This cannot be undone.') : t('ui.js.tasks_delete_n_q', { n: ids.length }, 'Delete {n} tasks? This cannot be undone.');
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm(`Delete ${ids.length} task${ids.length > 1 ? 's' : ''}? This cannot be undone.`, { confirmText: 'Delete', danger: true })
-    : confirm(`Delete ${ids.length} task(s)?`);
+    ? await uiModule.styledConfirm(_delMsg, { confirmText: t('ui.js.tasks_delete', null, 'Delete'), danger: true })
+    : confirm(_delMsg);
   if (!ok) return;
   const results = await Promise.allSettled(ids.map(id => _deleteTask(id)));
   const deletedIds = ids.filter((_, i) => results[i].status === 'fulfilled');
   await _animateTaskRemoval(deletedIds);
-  if (uiModule) uiModule.showToast(`Deleted ${deletedIds.length} task${deletedIds.length > 1 ? 's' : ''}`);
+  if (uiModule) uiModule.showToast(deletedIds.length === 1 ? t('ui.js.tasks_deleted_one', null, 'Deleted 1 task') : t('ui.js.tasks_deleted_n', { n: deletedIds.length }, 'Deleted {n} tasks'));
   await _fetchTasks();
   _taskExitSelect();  // clears selection + re-renders the fresh list
 }
@@ -605,8 +611,8 @@ function _renderTaskChips() {
     b.addEventListener('click', () => { _taskFilter = value; _renderList(); });
     bar.appendChild(b);
   };
-  mkChip(`all (${_tasks.length})`, null, !_taskFilter);
-  for (const c of cats) mkChip(`${c} (${counts[c]})`, c, _taskFilter === c);
+  mkChip(`${t('ui.js.tasks_chip_all', null, 'all')} (${_tasks.length})`, null, !_taskFilter);
+  for (const c of cats) mkChip(`${t('ui.js.tasks_cat_' + c.toLowerCase(), null, c)} (${counts[c]})`, c, _taskFilter === c);
 }
 
 const _TASK_CACHE_LABELS = {
@@ -618,7 +624,9 @@ const _TASK_CACHE_LABELS = {
 };
 
 function _taskClearCacheLabel(taskOrEntry) {
-  return _TASK_CACHE_LABELS[taskOrEntry?.action || ''] || '';
+  const action = taskOrEntry?.action || '';
+  const lbl = _TASK_CACHE_LABELS[action] || '';
+  return lbl ? t('ui.js.tasks_cache_' + action, null, lbl) : '';
 }
 
 function _renderList() {
@@ -629,16 +637,16 @@ function _renderList() {
   const _tabCount = document.getElementById('tasks-tab-count');
   if (_tabCount) _tabCount.textContent = _tasks.length;
   const _headCount = document.getElementById('tasks-head-count');
-  if (_headCount) _headCount.textContent = _tasks.length ? `${_tasks.length} task${_tasks.length !== 1 ? 's' : ''}` : '';
+  if (_headCount) _headCount.textContent = _tasks.length ? (_tasks.length === 1 ? t('ui.js.tasks_count_one', null, '1 task') : t('ui.js.tasks_count_n', { n: _tasks.length }, '{n} tasks')) : '';
 
   if (_tasks.length === 0) {
     // Differentiate "still loading" from "really empty" so the first paint
     // shows the app whirlpool (matching the document library) rather than a
     // misleading "No tasks yet" message before the fetch completes.
     if (!_tasksFetched) {
-      list.appendChild(spinnerModule.createLoadingRow('Loading…'));
+      list.appendChild(spinnerModule.createLoadingRow(t('ui.js.tasks_loading', null, 'Loading…')));
     } else {
-      list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No tasks yet. Create one to get started.</div>';
+      list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">' + t('ui.js.tasks_empty', null, 'No tasks yet. Create one to get started.') + '</div>';
     }
     return;
   }
@@ -667,7 +675,7 @@ function _renderList() {
     return (a.name || '').localeCompare(b.name || '');
   });
   if (visible.length === 0) {
-    list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No matching tasks.</div>';
+    list.innerHTML = '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">' + t('ui.js.tasks_no_matching', null, 'No matching tasks.') + '</div>';
     return;
   }
 
@@ -681,12 +689,12 @@ function _renderList() {
     const titleRow = document.createElement('div');
     titleRow.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
     const statusBadge = task.status === 'paused'
-      ? `<span class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="Paused - click to resume" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">paused</span></span>`
+      ? `<span class="task-status-badge task-state-badge task-paused-badge" data-task-status-action="resume" title="${t('ui.js.tasks_paused_click', null, 'Paused - click to resume')}" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="7 4 19 12 7 20 7 4"/></svg><span class="task-state-label">${t('ui.js.tasks_status_paused', null, 'paused')}</span></span>`
       : task.status === 'active'
-        ? `<span class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="Active - click to pause" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">active</span></span>`
+        ? `<span class="task-status-badge task-state-badge task-active-badge" data-task-status-action="pause" title="${t('ui.js.tasks_active_click', null, 'Active - click to pause')}" style="position:relative;top:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg><span class="task-state-label">${t('ui.js.tasks_status_active', null, 'active')}</span></span>`
         : '';
     const builtinBadge = task.is_builtin
-      ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? 'Built-in task — edited from its default' : 'Built-in task'}">built-in${task.is_modified ? ' · edited' : ''}</span>`
+      ? `<span class="task-builtin-badge${task.is_modified ? ' modified' : ''}" title="${task.is_modified ? t('ui.js.tasks_builtin_edited_title', null, 'Built-in task — edited from its default') : t('ui.js.tasks_builtin_title', null, 'Built-in task')}">${t('ui.js.tasks_builtin', null, 'built-in')}${task.is_modified ? ' · ' + t('ui.js.tasks_edited', null, 'edited') : ''}</span>`
       : '';
     titleRow.innerHTML = `${_taskIcon(task)}<span class="memory-item-title">${_esc(task.name)}</span>${_taskAiMark(task)}${builtinBadge}<span style="flex:1;"></span>${statusBadge}`;
 
@@ -695,7 +703,7 @@ function _renderList() {
     actionsWrap.className = 'memory-item-actions';
     const menuBtn = document.createElement('button');
     menuBtn.className = 'memory-item-btn';
-    menuBtn.title = 'Actions';
+    menuBtn.title = t('ui.js.tasks_actions', null, 'Actions');
     menuBtn.style.position = 'relative';
     menuBtn.style.top = '4px';
     menuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
@@ -704,18 +712,18 @@ function _renderList() {
       const items = [];
       // Run now stays in the kebab too (alongside the new Run button on the
       // card) for users coming from muscle-memory / mobile long-press.
-      if (task.status !== 'completed') items.push({ label: 'Run now', icon: '<polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>', action: () => _doRunNow(task.id) });
-      items.push({ label: 'Edit', icon: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>', action: () => _showForm(task) });
-      if (task.status === 'active') items.push({ label: 'Pause', icon: '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>', action: () => _doPause(task.id) });
-      else if (task.status === 'paused') items.push({ label: 'Resume', icon: '<polygon points="5 3 19 12 5 21 5 3"/>', action: () => _doResume(task.id) });
-      items.push({ label: 'History', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', action: () => _showRunHistory(task.id, task.name) });
+      if (task.status !== 'completed') items.push({ label: t('ui.js.tasks_run_now', null, 'Run now'), icon: '<polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>', action: () => _doRunNow(task.id) });
+      items.push({ label: t('ui.js.tasks_edit', null, 'Edit'), icon: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>', action: () => _showForm(task) });
+      if (task.status === 'active') items.push({ label: t('ui.js.tasks_pause', null, 'Pause'), icon: '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>', action: () => _doPause(task.id) });
+      else if (task.status === 'paused') items.push({ label: t('ui.js.tasks_resume', null, 'Resume'), icon: '<polygon points="5 3 19 12 5 21 5 3"/>', action: () => _doResume(task.id) });
+      items.push({ label: t('ui.js.tasks_history', null, 'History'), icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>', action: () => _showRunHistory(task.id, task.name) });
       if (task.is_builtin && task.is_modified) {
-        items.push({ label: 'Revert to default', icon: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', action: () => _doRevert(task.id) });
+        items.push({ label: t('ui.js.tasks_revert', null, 'Revert to default'), icon: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>', action: () => _doRevert(task.id) });
       }
       if (_taskClearCacheLabel(task)) {
-        items.push({ label: 'Clear cache', icon: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>', action: () => _doClearTaskCache(task.id, _taskClearCacheLabel(task)) });
+        items.push({ label: t('ui.js.tasks_clear_cache', null, 'Clear cache'), icon: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/>', action: () => _doClearTaskCache(task.id, _taskClearCacheLabel(task)) });
       }
-      items.push({ label: 'Delete', icon: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>', action: () => _doDelete(task.id), danger: true });
+      items.push({ label: t('ui.js.tasks_delete', null, 'Delete'), icon: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>', action: () => _doDelete(task.id), danger: true });
       _showTaskDropdown(menuBtn, items);
     });
     actionsWrap.appendChild(menuBtn);
@@ -724,9 +732,9 @@ function _renderList() {
     if (task.status !== 'completed') {
       const runBtn = document.createElement('button');
       runBtn.className = 'task-status-badge task-run-now-badge task-card-run-btn';
-      runBtn.title = 'Run now';
+      runBtn.title = t('ui.js.tasks_run_now', null, 'Run now');
       runBtn.style.cssText = 'position:relative;top:1px;margin-right:4px;';
-      runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Run</span>';
+      runBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>' + t('ui.js.tasks_run', null, 'Run') + '</span>';
       runBtn.addEventListener('click', (e) => { e.stopPropagation(); _doRunNow(task.id); });
       actionsWrap.insertBefore(runBtn, menuBtn);
     }
@@ -740,8 +748,8 @@ function _renderList() {
 
     // Slim meta line (always visible): schedule · next · run count.
     const metaParts = [_scheduleLabel(task)];
-    if (task.next_run && task.status === 'active') metaParts.push('Next: ' + _relativeTime(task.next_run));
-    if (task.run_count > 0) metaParts.push(task.run_count + ' run' + (task.run_count !== 1 ? 's' : ''));
+    if (task.next_run && task.status === 'active') metaParts.push(t('ui.js.tasks_next', null, 'Next:') + ' ' + _relativeTime(task.next_run));
+    if (task.run_count > 0) metaParts.push(task.run_count === 1 ? t('ui.js.tasks_runs_one', null, '1 run') : t('ui.js.tasks_runs_n', { n: task.run_count }, '{n} runs'));
     const meta = document.createElement('div');
     meta.className = 'memory-item-meta';
     meta.style.cssText = 'font-size:10px;opacity:0.4;margin-top:-1px;';
@@ -762,9 +770,9 @@ function _renderList() {
     const detail = document.createElement('div');
     detail.style.cssText = 'display:none;margin-top:7px;padding:8px 0 2px;border-top:1px solid var(--border);';
     const extra = [];
-    if (task.last_run) extra.push('Last: ' + _relativeTime(task.last_run));
+    if (task.last_run) extra.push(t('ui.js.tasks_last', null, 'Last:') + ' ' + _relativeTime(task.last_run));
     if (task.output_target && task.output_target !== 'session') extra.push('→ ' + task.output_target.replace(/^mcp__/, '').replace(/__/g, ' › '));
-    if (task.model) extra.push('model: ' + (task.model.split('/').pop() || task.model));
+    if (task.model) extra.push(t('ui.js.tasks_model_prefix', null, 'model:') + ' ' + (task.model.split('/').pop() || task.model));
     if (extra.length) {
       const ex = document.createElement('div');
       ex.style.cssText = 'font-size:10px;opacity:0.4;margin-bottom:6px;';
@@ -778,8 +786,8 @@ function _renderList() {
       const prev = result.length > 200 ? result.slice(0, 200) + '…' : result;
       const lr = document.createElement('div');
       lr.style.cssText = `font-size:11px;margin-bottom:6px;padding:4px 8px;border-left:2px solid ${color};background:color-mix(in srgb, ${color} 8%, transparent);border-radius:2px;line-height:1.4;cursor:pointer;`;
-      lr.innerHTML = `<span style="font-weight:600;color:${color};">${isErr ? '✗' : '✓'}</span> <span style="opacity:0.9;">${_esc(prev) || (isErr ? 'Failed (no detail)' : 'Success (no output)')}</span>`;
-      lr.title = 'Open full history';
+      lr.innerHTML = `<span style="font-weight:600;color:${color};">${isErr ? '✗' : '✓'}</span> <span style="opacity:0.9;">${_esc(prev) || (isErr ? t('ui.js.tasks_failed_no_detail', null, 'Failed (no detail)') : t('ui.js.tasks_success_no_output', null, 'Success (no output)'))}</span>`;
+      lr.title = t('ui.js.tasks_open_full_history', null, 'Open full history');
       lr.addEventListener('click', (e) => { e.stopPropagation(); _showRunHistory(task.id, task.name); });
       detail.appendChild(lr);
     }
@@ -934,13 +942,13 @@ function _showTaskDropdown(anchor, items) {
 // ---- Presets ----
 
 const _TASK_PRESETS = [
-  { label: 'Prompt on schedule',    desc: 'Run a prompt daily, weekly, etc.',             taskType: 'llm',      triggerType: 'schedule' },
-  { label: 'Prompt on event',       desc: 'Trigger every N sessions or messages',         taskType: 'llm',      triggerType: 'event' },
-  { label: 'Research on schedule',  desc: 'Run deep research on a topic',                 taskType: 'research', triggerType: 'schedule' },
-  { label: 'Research on event',     desc: 'Run deep research after app events',           taskType: 'research', triggerType: 'event' },
-  { label: 'Action on schedule',    desc: 'Run tidy/cleanup on a timer',                  taskType: 'action',   triggerType: 'schedule' },
-  { label: 'Action on event',       desc: 'Run tidy/cleanup every N sessions or messages', taskType: 'action', triggerType: 'event' },
-  { label: 'Webhook triggered',     desc: 'Trigger via external HTTP call',               taskType: 'llm',      triggerType: 'webhook' },
+  { slug: 'prompt_schedule',   label: 'Prompt on schedule',    desc: 'Run a prompt daily, weekly, etc.',             taskType: 'llm',      triggerType: 'schedule' },
+  { slug: 'prompt_event',      label: 'Prompt on event',       desc: 'Trigger every N sessions or messages',         taskType: 'llm',      triggerType: 'event' },
+  { slug: 'research_schedule', label: 'Research on schedule',  desc: 'Run deep research on a topic',                 taskType: 'research', triggerType: 'schedule' },
+  { slug: 'research_event',    label: 'Research on event',     desc: 'Run deep research after app events',           taskType: 'research', triggerType: 'event' },
+  { slug: 'action_schedule',   label: 'Action on schedule',    desc: 'Run tidy/cleanup on a timer',                  taskType: 'action',   triggerType: 'schedule' },
+  { slug: 'action_event',      label: 'Action on event',       desc: 'Run tidy/cleanup every N sessions or messages', taskType: 'action', triggerType: 'event' },
+  { slug: 'webhook',           label: 'Webhook triggered',     desc: 'Trigger via external HTTP call',               taskType: 'llm',      triggerType: 'webhook' },
 ];
 
 // Icon for each preset, keyed off task/trigger type (24x24 stroke SVG).
@@ -960,22 +968,22 @@ function _showPresetPicker() {
   if (!body) return;
 
   let html = '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
-  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;"><h2 style="margin:0;padding:0;line-height:1;">Add Task</h2></div>';
-  html += '<p class="memory-desc" style="position:relative;top:4px;">Describe a task for the AI to draft, or pick a type below to set one up manually.</p>';
+  html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;"><h2 style="margin:0;padding:0;line-height:1;">' + t('ui.js.tasks_add_task', null, 'Add Task') + '</h2></div>';
+  html += '<p class="memory-desc" style="position:relative;top:4px;">' + t('ui.js.tasks_add_desc', null, 'Describe a task for the AI to draft, or pick a type below to set one up manually.') + '</p>';
   // flex-wrap + min-width:0 on the input lets the row collapse cleanly
   // on narrow modal widths instead of pushing the AI button past the
   // right edge. margin-left:-4px nudges the compose row 4px into the
   // description bar above so the input lines up with it visually.
   html += '<div class="task-ai-compose" style="display:flex;gap:6px;margin:6px 0 10px -4px;flex-wrap:wrap;align-items:center;">'
-    + '<input type="text" id="task-ai-input" class="memory-search-input" style="flex:1 1 220px;min-width:0;" placeholder="Describe a task — e.g. &quot;every weekday 7am summarize my unread email&quot;" />'
-    + '<button class="memory-toolbar-btn active" id="task-ai-btn" title="Draft a task with AI" style="white-space:nowrap;height:28px;flex:0 0 auto;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Draft with AI</button>'
+    + '<input type="text" id="task-ai-input" class="memory-search-input" style="flex:1 1 220px;min-width:0;" placeholder="' + t('ui.js.tasks_ai_placeholder', null, 'Describe a task — e.g. “every weekday 7am summarize my unread email”') + '" />'
+    + '<button class="memory-toolbar-btn active" id="task-ai-btn" title="' + t('ui.js.tasks_draft_ai_title', null, 'Draft a task with AI') + '" style="white-space:nowrap;height:28px;flex:0 0 auto;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>' + t('ui.js.tasks_draft_ai', null, 'Draft with AI') + '</button>'
     + '</div>';
   html += '<div class="memory-list" style="max-height:none;flex:1;gap:0px;margin-top:2px;padding-right:8px;">';
   _TASK_PRESETS.forEach((p, i) => {
     html += `<button class="memory-item task-card" data-idx="${i}" style="cursor:pointer;text-align:left;width:100%;font-family:inherit;">
       <div style="flex:1;min-width:0;">
-        <div style="display:flex;align-items:center;gap:6px;">${_presetIcon(p)}<span class="memory-item-title" style="flex:1;position:relative;top:0px;">${p.label}</span></div>
-        <div style="font-size:10px;opacity:0.4;margin-top:-1px;position:relative;top:3px;">${p.desc}</div>
+        <div style="display:flex;align-items:center;gap:6px;">${_presetIcon(p)}<span class="memory-item-title" style="flex:1;position:relative;top:0px;">${t('ui.js.tasks_preset_' + p.slug, null, p.label)}</span></div>
+        <div style="font-size:10px;opacity:0.4;margin-top:-1px;position:relative;top:3px;">${t('ui.js.tasks_preset_' + p.slug + '_desc', null, p.desc)}</div>
       </div>
     </button>`;
   });
@@ -1014,55 +1022,55 @@ function _showForm(existing, initTaskType, initTriggerType) {
   body.innerHTML = `
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-        <h2 style="margin:0;padding:0;line-height:1;">${existing?.id ? 'Edit Task' : 'New Task'}</h2>
+        <h2 style="margin:0;padding:0;line-height:1;">${existing?.id ? t('ui.js.tasks_edit_task', null, 'Edit Task') : t('ui.js.tasks_new_task', null, 'New Task')}</h2>
       </div>
-      <p class="memory-desc">${existing?.id ? 'Update this task’s schedule, prompt, and output.' : 'Configure a prompt, research, or action to run automatically.'}</p>
+      <p class="memory-desc">${existing?.id ? t('ui.js.tasks_form_desc_edit', null, 'Update this task’s schedule, prompt, and output.') : t('ui.js.tasks_form_desc_new', null, 'Configure a prompt, research, or action to run automatically.')}</p>
     <div class="task-form" style="flex:1;overflow-y:auto;min-height:0;">
-      <label class="task-form-label">Name</label>
-      <input type="text" id="task-form-name" class="task-form-input" value="${_esc(existing?.name || '')}" placeholder="${existing ? '' : 'Auto-generated if blank'}" />
+      <label class="task-form-label">${t('ui.js.tasks_form_name', null, 'Name')}</label>
+      <input type="text" id="task-form-name" class="task-form-input" value="${_esc(existing?.name || '')}" placeholder="${existing ? '' : t('ui.js.tasks_auto_name_ph', null, 'Auto-generated if blank')}" />
 
-      <label class="task-form-label">Type</label>
+      <label class="task-form-label">${t('ui.js.tasks_form_type', null, 'Type')}</label>
       <div class="task-form-toggle" id="task-form-type-toggle">
-        <button class="task-toggle-btn ${curTaskType === 'llm' ? 'active' : ''}" data-val="llm" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>Prompt</button>
-        <button class="task-toggle-btn ${curTaskType === 'research' ? 'active' : ''}" data-val="research" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Research</button>
-        <button class="task-toggle-btn ${curTaskType === 'action' ? 'active' : ''}" data-val="action" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Action</button>
+        <button class="task-toggle-btn ${curTaskType === 'llm' ? 'active' : ''}" data-val="llm" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>${t('ui.js.tasks_type_prompt', null, 'Prompt')}</button>
+        <button class="task-toggle-btn ${curTaskType === 'research' ? 'active' : ''}" data-val="research" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>${t('ui.js.tasks_type_research', null, 'Research')}</button>
+        <button class="task-toggle-btn ${curTaskType === 'action' ? 'active' : ''}" data-val="action" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>${t('ui.js.tasks_type_action', null, 'Action')}</button>
       </div>
 
       <div id="task-form-type-opts"></div>
 
-      <label class="task-form-label">Trigger</label>
+      <label class="task-form-label">${t('ui.js.tasks_form_trigger', null, 'Trigger')}</label>
       <div class="task-form-toggle" id="task-form-trigger-toggle">
-        <button class="task-toggle-btn ${curTriggerType === 'schedule' ? 'active' : ''}" data-val="schedule" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Schedule</button>
-        <button class="task-toggle-btn ${curTriggerType === 'event' ? 'active' : ''}" data-val="event" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>Event</button>
-        <button class="task-toggle-btn ${curTriggerType === 'webhook' ? 'active' : ''}" data-val="webhook" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Webhook</button>
+        <button class="task-toggle-btn ${curTriggerType === 'schedule' ? 'active' : ''}" data-val="schedule" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>${t('ui.js.tasks_trigger_schedule', null, 'Schedule')}</button>
+        <button class="task-toggle-btn ${curTriggerType === 'event' ? 'active' : ''}" data-val="event" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>${t('ui.js.tasks_trigger_event', null, 'Event')}</button>
+        <button class="task-toggle-btn ${curTriggerType === 'webhook' ? 'active' : ''}" data-val="webhook" style="position:relative;top:-4px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>${t('ui.js.tasks_trigger_webhook', null, 'Webhook')}</button>
       </div>
 
       <div id="task-form-trigger-opts"></div>
 
-      <label class="task-form-label">Output</label>
+      <label class="task-form-label">${t('ui.js.tasks_form_output', null, 'Output')}</label>
       <select id="task-form-output" class="task-form-input">
-        <option value="session">Session</option>
+        <option value="session">${t('ui.js.tasks_output_session', null, 'Session')}</option>
       </select>
 
-      <label class="task-form-label">Model <span style="opacity:0.5;font-weight:normal;font-size:10px;">(optional — overrides session default)</span></label>
+      <label class="task-form-label">${t('ui.js.tasks_form_model', null, 'Model')} <span style="opacity:0.5;font-weight:normal;font-size:10px;">${t('ui.js.tasks_form_model_hint', null, '(optional — overrides session default)')}</span></label>
       <select id="task-form-model" class="task-form-input">
-        <option value="">Use session default</option>
+        <option value="">${t('ui.js.tasks_use_session_default', null, 'Use session default')}</option>
       </select>
 
-      <label class="task-form-label">Chain</label>
+      <label class="task-form-label">${t('ui.js.tasks_form_chain', null, 'Chain')}</label>
       <select id="task-form-chain" class="task-form-input">
-        <option value="">None</option>
+        <option value="">${t('ui.js.tasks_none', null, 'None')}</option>
       </select>
 
       <label class="task-form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
         <input type="checkbox" id="task-form-notif" ${existing && existing.notifications_enabled === false ? '' : 'checked'} style="margin:0;cursor:pointer;">
-        <span>Notifications</span>
-        <span style="opacity:0.55;font-weight:normal;font-size:10px;">— uncheck to silence completion notifications for this task (helpful for chatty cron jobs)</span>
+        <span>${t('ui.js.tasks_form_notifications', null, 'Notifications')}</span>
+        <span style="opacity:0.55;font-weight:normal;font-size:10px;">${t('ui.js.tasks_notif_hint', null, '— uncheck to silence completion notifications for this task (helpful for chatty cron jobs)')}</span>
       </label>
 
       <div class="task-form-actions">
-        <button id="task-form-cancel" class="memory-toolbar-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button>
-        <button id="task-form-save" class="memory-toolbar-btn active"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>${existing?.id ? 'Save' : 'Create'}</button>
+        <button id="task-form-cancel" class="memory-toolbar-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${t('ui.js.tasks_cancel', null, 'Cancel')}</button>
+        <button id="task-form-save" class="memory-toolbar-btn active"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;"><polyline points="20 6 9 17 4 12"/></svg>${existing?.id ? t('ui.js.tasks_save', null, 'Save') : t('ui.js.tasks_create', null, 'Create')}</button>
       </div>
     </div>
     </div>
@@ -1076,16 +1084,16 @@ function _showForm(existing, initTaskType, initTriggerType) {
   function renderTypeOpts() {
     typeOpts.innerHTML = '';
     if (taskType === 'llm' || taskType === 'research') {
-      const placeholder = taskType === 'research' ? 'What should be researched?' : 'What should the AI do?';
+      const placeholder = taskType === 'research' ? t('ui.js.tasks_research_ph', null, 'What should be researched?') : t('ui.js.tasks_prompt_ph', null, 'What should the AI do?');
       typeOpts.innerHTML = `
-        <label class="task-form-label">${taskType === 'research' ? 'Research question' : 'Prompt'}</label>
+        <label class="task-form-label">${taskType === 'research' ? t('ui.js.tasks_research_question', null, 'Research question') : t('ui.js.tasks_type_prompt', null, 'Prompt')}</label>
         <textarea id="task-form-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="${placeholder}">${existing?.prompt || ''}</textarea>
       `;
     } else {
       typeOpts.innerHTML = `
-        <label class="task-form-label">Action</label>
+        <label class="task-form-label">${t('ui.js.tasks_type_action', null, 'Action')}</label>
         <select id="task-form-action" class="task-form-input">
-          <option value="">Loading…</option>
+          <option value="">${t('ui.js.tasks_loading', null, 'Loading…')}</option>
         </select>
         <div id="task-form-action-extra"></div>
       `;
@@ -1098,9 +1106,9 @@ function _showForm(existing, initTaskType, initTriggerType) {
           return;
         }
         extra.innerHTML = `
-          <label class="task-form-label">Email triage rules</label>
-          <textarea id="task-form-urgent-email-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="What should count as urgent? e.g. deadlines, blockers, people waiting outside."></textarea>
-          <div class="memory-desc" style="font-size:11px;margin-top:4px;">Pause/resume and schedule are controlled by this task. It tags urgent, reply-soon, newsletter, marketing, and spam. Urgent/reply-soon emails use your reminder settings.</div>
+          <label class="task-form-label">${t('ui.js.tasks_email_triage', null, 'Email triage rules')}</label>
+          <textarea id="task-form-urgent-email-prompt" class="task-form-input task-form-textarea" rows="4" placeholder="${t('ui.js.tasks_triage_ph', null, 'What should count as urgent? e.g. deadlines, blockers, people waiting outside.')}"></textarea>
+          <div class="memory-desc" style="font-size:11px;margin-top:4px;">${t('ui.js.tasks_triage_desc', null, 'Pause/resume and schedule are controlled by this task. It tags urgent, reply-soon, newsletter, marketing, and spam. Urgent/reply-soon emails use your reminder settings.')}</div>
         `;
         const settings = await _fetchUrgentEmailSettings();
         const promptEl = document.getElementById('task-form-urgent-email-prompt');
@@ -1146,17 +1154,17 @@ function _showForm(existing, initTaskType, initTriggerType) {
     triggerOpts.innerHTML = '';
     if (triggerType === 'schedule') {
       triggerOpts.innerHTML = `
-        <label class="task-form-label">Frequency</label>
+        <label class="task-form-label">${t('ui.js.tasks_form_frequency', null, 'Frequency')}</label>
         <select id="task-form-schedule" class="task-form-input">
-          <option value="daily" ${(!existing || existing.schedule === 'daily') ? 'selected' : ''}>Daily</option>
-          <option value="weekly" ${existing?.schedule === 'weekly' ? 'selected' : ''}>Weekly</option>
-          <option value="monthly" ${existing?.schedule === 'monthly' ? 'selected' : ''}>Monthly</option>
-          <option value="once" ${existing?.schedule === 'once' ? 'selected' : ''}>Once</option>
-          <option value="cron" ${existing?.schedule === 'cron' ? 'selected' : ''}>Cron</option>
+          <option value="daily" ${(!existing || existing.schedule === 'daily') ? 'selected' : ''}>${t('ui.js.tasks_freq_daily', null, 'Daily')}</option>
+          <option value="weekly" ${existing?.schedule === 'weekly' ? 'selected' : ''}>${t('ui.js.tasks_freq_weekly', null, 'Weekly')}</option>
+          <option value="monthly" ${existing?.schedule === 'monthly' ? 'selected' : ''}>${t('ui.js.tasks_freq_monthly', null, 'Monthly')}</option>
+          <option value="once" ${existing?.schedule === 'once' ? 'selected' : ''}>${t('ui.js.tasks_freq_once', null, 'Once')}</option>
+          <option value="cron" ${existing?.schedule === 'cron' ? 'selected' : ''}>${t('ui.js.tasks_freq_cron', null, 'Cron')}</option>
         </select>
         <div id="task-form-schedule-opts"></div>
         <div id="task-form-time-section">
-          <label class="task-form-label">Time</label>
+          <label class="task-form-label">${t('ui.js.tasks_form_time', null, 'Time')}</label>
           <div class="task-time-picker" id="task-form-time-wrap"></div>
         </div>
       `;
@@ -1183,7 +1191,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         if (sched === 'weekly') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Day of week';
+          label.textContent = t('ui.js.tasks_day_of_week', null, 'Day of week');
           schedOpts.appendChild(label);
           const sel = document.createElement('select');
           sel.id = 'task-form-day';
@@ -1191,7 +1199,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
           DAYS_OF_WEEK.forEach((day, i) => {
             const opt = document.createElement('option');
             opt.value = i;
-            opt.textContent = day;
+            opt.textContent = _dayName(i);
             if (existing && existing.scheduled_day === i) opt.selected = true;
             sel.appendChild(opt);
           });
@@ -1199,7 +1207,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         } else if (sched === 'monthly') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Day of month';
+          label.textContent = t('ui.js.tasks_day_of_month', null, 'Day of month');
           schedOpts.appendChild(label);
           const inp = document.createElement('input');
           inp.type = 'number';
@@ -1211,7 +1219,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         } else if (sched === 'once') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Date';
+          label.textContent = t('ui.js.tasks_form_date', null, 'Date');
           schedOpts.appendChild(label);
           const dateWrap = document.createElement('div');
           dateWrap.className = 'task-date-picker';
@@ -1221,7 +1229,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         } else if (sched === 'cron') {
           const label = document.createElement('label');
           label.className = 'task-form-label';
-          label.textContent = 'Cron expression';
+          label.textContent = t('ui.js.tasks_cron_expr', null, 'Cron expression');
           schedOpts.appendChild(label);
           const inp = document.createElement('input');
           inp.type = 'text';
@@ -1232,7 +1240,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
           schedOpts.appendChild(inp);
           const hint = document.createElement('div');
           hint.style.cssText = 'font-size:10px;opacity:0.4;margin-top:2px;';
-          hint.textContent = 'min hour day month weekday — e.g. "0 */2 * * *" = every 2 hours';
+          hint.textContent = t('ui.js.tasks_cron_hint', null, 'min hour day month weekday — e.g. "0 */2 * * *" = every 2 hours');
           schedOpts.appendChild(hint);
         }
       }
@@ -1241,11 +1249,11 @@ function _showForm(existing, initTaskType, initTriggerType) {
 
     } else if (triggerType === 'event') {
       triggerOpts.innerHTML = `
-        <label class="task-form-label">Event</label>
+        <label class="task-form-label">${t('ui.js.tasks_trigger_event', null, 'Event')}</label>
         <select id="task-form-event" class="task-form-input">
-          <option value="">Loading…</option>
+          <option value="">${t('ui.js.tasks_loading', null, 'Loading…')}</option>
         </select>
-        <label class="task-form-label">Every N occurrences</label>
+        <label class="task-form-label">${t('ui.js.tasks_every_n_occ', null, 'Every N occurrences')}</label>
         <input type="number" id="task-form-trigger-count" class="task-form-input" min="1" max="1000" value="${existing?.trigger_count || 5}" />
       `;
       _fetchEvents().then(events => {
@@ -1264,19 +1272,19 @@ function _showForm(existing, initTaskType, initTriggerType) {
       if (existing?.webhook_token) {
         const url = `${API_BASE}/api/tasks/${existing.id}/webhook/${existing.webhook_token}`;
         triggerOpts.innerHTML = `
-          <label class="task-form-label">Webhook URL</label>
+          <label class="task-form-label">${t('ui.js.tasks_webhook_url', null, 'Webhook URL')}</label>
           <div style="display:flex;gap:4px;align-items:center;">
             <input type="text" class="task-form-input" value="${url}" readonly style="flex:1;font-size:11px;opacity:0.8;" id="task-form-webhook-url" />
-            <button class="task-btn" id="task-form-webhook-copy" style="white-space:nowrap;">Copy</button>
+            <button class="task-btn" id="task-form-webhook-copy" style="white-space:nowrap;">${t('ui.js.tasks_copy', null, 'Copy')}</button>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-top:4px;">POST this URL from any external service to trigger the task. No auth needed.</div>
+          <div style="font-size:10px;opacity:0.4;margin-top:4px;">${t('ui.js.tasks_webhook_hint', null, 'POST this URL from any external service to trigger the task. No auth needed.')}</div>
         `;
         document.getElementById('task-form-webhook-copy')?.addEventListener('click', () => {
           navigator.clipboard.writeText(url);
-          if (uiModule) uiModule.showToast('Copied');
+          if (uiModule) uiModule.showToast(t('ui.js.tasks_copied', null, 'Copied'));
         });
       } else {
-        triggerOpts.innerHTML = '<div style="font-size:11px;opacity:0.5;margin-top:4px;">Webhook URL will be generated when the task is saved.</div>';
+        triggerOpts.innerHTML = '<div style="font-size:11px;opacity:0.5;margin-top:4px;">' + t('ui.js.tasks_webhook_pending', null, 'Webhook URL will be generated when the task is saved.') + '</div>';
       }
     }
   }
@@ -1346,7 +1354,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       if (curKey && modelSel.value !== curKey) {
         const opt = document.createElement('option');
         opt.value = curKey;
-        opt.textContent = `${existing.model} (unlisted endpoint)`;
+        opt.textContent = t('ui.js.tasks_unlisted_endpoint', { model: existing.model }, '{model} (unlisted endpoint)');
         opt.selected = true;
         modelSel.appendChild(opt);
       }
@@ -1433,14 +1441,14 @@ function _showForm(existing, initTaskType, initTriggerType) {
     if (taskType === 'llm' || taskType === 'research') {
       const prompt = document.getElementById('task-form-prompt')?.value?.trim();
       if (!prompt) {
-        if (uiModule) uiModule.showError('Prompt is required');
+        if (uiModule) uiModule.showError(t('ui.js.tasks_prompt_required', null, 'Prompt is required'));
         return;
       }
       payload.prompt = prompt;
     } else {
       const action = document.getElementById('task-form-action')?.value;
       if (!action) {
-        if (uiModule) uiModule.showError('Select an action');
+        if (uiModule) uiModule.showError(t('ui.js.tasks_select_action', null, 'Select an action'));
         return;
       }
       payload.action = action;
@@ -1449,7 +1457,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
         try {
           await _saveUrgentEmailSettings(urgentPrompt);
         } catch (e) {
-          if (uiModule) uiModule.showError('Failed to save urgency rules');
+          if (uiModule) uiModule.showError(t('ui.js.tasks_err_urgency', null, 'Failed to save urgency rules'));
           return;
         }
       }
@@ -1463,7 +1471,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       if (payload.schedule === 'cron') {
         const cronVal = document.getElementById('task-form-cron')?.value?.trim();
         if (!cronVal) {
-          if (uiModule) uiModule.showError('Cron expression is required');
+          if (uiModule) uiModule.showError(t('ui.js.tasks_cron_required', null, 'Cron expression is required'));
           return;
         }
         payload.cron_expression = cronVal;
@@ -1485,7 +1493,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       const evSel = document.getElementById('task-form-event');
       const countInput = document.getElementById('task-form-trigger-count');
       if (!evSel?.value) {
-        if (uiModule) uiModule.showError('Select an event');
+        if (uiModule) uiModule.showError(t('ui.js.tasks_select_event', null, 'Select an event'));
         return;
       }
       payload.trigger_event = evSel.value;
@@ -1498,10 +1506,10 @@ function _showForm(existing, initTaskType, initTriggerType) {
       // object passed for AI pre-fill has no id → create via POST.
       if (existing && existing.id) {
         await _updateTask(existing.id, payload);
-        if (uiModule) uiModule.showToast('Task updated');
+        if (uiModule) uiModule.showToast(t('ui.js.tasks_updated', null, 'Task updated'));
       } else {
         await _createTask(payload);
-        if (uiModule) uiModule.showToast('Task created');
+        if (uiModule) uiModule.showToast(t('ui.js.tasks_created', null, 'Task created'));
       }
       await _fetchTasks();
       _switchTab('tasks');
@@ -1521,17 +1529,17 @@ async function _showRunHistory(taskId, taskName) {
   if (!body) return;
 
   body.innerHTML = '';
-  body.appendChild(spinnerModule.createLoadingRow('Loading…'));
+  body.appendChild(spinnerModule.createLoadingRow(t('ui.js.tasks_loading', null, 'Loading…')));
 
   const runs = await _fetchRuns(taskId);
 
   let html = `<div class="task-history-header">
-    <button id="task-history-back" class="task-btn">← Back</button>
-    <span style="font-size:13px;opacity:0.7;">${_esc(taskName)} — Run history</span>
+    <button id="task-history-back" class="task-btn">← ${t('ui.js.tasks_back', null, 'Back')}</button>
+    <span style="font-size:13px;opacity:0.7;">${_esc(taskName)} — ${t('ui.js.tasks_run_history', null, 'Run history')}</span>
   </div>`;
 
   if (runs.length === 0) {
-    html += '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">No runs yet.</div>';
+    html += '<div style="opacity:0.4;font-size:12px;text-align:center;padding:24px 0;">' + t('ui.js.tasks_no_runs', null, 'No runs yet.') + '</div>';
   } else {
     html += '<div class="task-runs-list">';
     for (const run of runs) {
@@ -1539,7 +1547,7 @@ async function _showRunHistory(taskId, taskName) {
       html += `<div class="task-run-item ${statusClass}">
         <div class="task-run-item-header">
           ${_statusDot(run.status === 'success' ? 'active' : run.status)}
-          <span>${run.status}</span>
+          <span>${t('ui.js.tasks_status_' + run.status, null, run.status)}</span>
           ${run.model ? `<span class="task-run-model" style="font-size:10px;opacity:0.5;">${_esc(run.model.split('/').pop())}</span>` : ''}
           <span class="task-run-time" title="${run.started_at ? _esc(_relativeTime(run.started_at)) : ''}">${run.started_at ? _absoluteTime(run.started_at) : ''}</span>
         </div>
@@ -1575,7 +1583,7 @@ async function _showRunHistory(taskId, taskName) {
 async function _doPause(id) {
   try {
     await _pauseTask(id);
-    if (uiModule) uiModule.showToast('Task paused');
+    if (uiModule) uiModule.showToast(t('ui.js.tasks_paused_toast', null, 'Task paused'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
@@ -1584,7 +1592,7 @@ async function _doPause(id) {
 async function _doResume(id) {
   try {
     await _resumeTask(id);
-    if (uiModule) uiModule.showToast('Task resumed');
+    if (uiModule) uiModule.showToast(t('ui.js.tasks_resumed_toast', null, 'Task resumed'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
@@ -1593,16 +1601,16 @@ async function _doResume(id) {
 async function _doRunNow(id, force = false) {
   try {
     await _runNow(id, force);
-    if (uiModule) uiModule.showToast(force ? 'Task triggered in parallel' : 'Task triggered');
+    if (uiModule) uiModule.showToast(force ? t('ui.js.tasks_triggered_parallel', null, 'Task triggered in parallel') : t('ui.js.tasks_triggered', null, 'Task triggered'));
   } catch (e) {
     // Mirror the polling notification surface so the user sees the same kind
     // of feedback they get for finished/failed tasks — a real browser
     // Notification when permission is granted, toast fallback otherwise.
-    const msg = e.message || 'Failed to trigger task';
+    const msg = e.message || t('ui.js.tasks_err_trigger_generic', null, 'Failed to trigger task');
     let fired = false;
     try {
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-        new Notification('Task', { body: msg, tag: 'task-runnow-' + id, icon: '/static/favicon.ico' });
+        new Notification(t('ui.js.tasks_task', null, 'Task'), { body: msg, tag: 'task-runnow-' + id, icon: '/static/favicon.ico' });
         fired = true;
       }
     } catch (_) {}
@@ -1611,37 +1619,40 @@ async function _doRunNow(id, force = false) {
 }
 
 async function _doDelete(id) {
+  const _q = t('ui.js.tasks_delete_task_q', null, 'Delete this task and all its run history?');
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm('Delete this task and all its run history?', { confirmText: 'Delete', danger: true })
-    : confirm('Delete this task and all its run history?');
+    ? await uiModule.styledConfirm(_q, { confirmText: t('ui.js.tasks_delete', null, 'Delete'), danger: true })
+    : confirm(_q);
   if (!ok) return;
   try {
     await _deleteTask(id);
     await _animateTaskRemoval([id]);
-    if (uiModule) uiModule.showToast('Task deleted');
+    if (uiModule) uiModule.showToast(t('ui.js.tasks_deleted_toast', null, 'Task deleted'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
 }
 
 async function _doRevert(id) {
+  const _q = t('ui.js.tasks_revert_q', null, 'Revert this built-in task to its default schedule and settings?');
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm('Revert this built-in task to its default schedule and settings?', { confirmText: 'Revert' })
-    : confirm('Revert this built-in task to its default?');
+    ? await uiModule.styledConfirm(_q, { confirmText: t('ui.js.tasks_revert_btn', null, 'Revert') })
+    : confirm(_q);
   if (!ok) return;
   try {
     const res = await fetch(`${API_BASE}/api/tasks/${id}/revert`, { method: 'POST', credentials: 'same-origin' });
-    if (!res.ok) throw new Error('Failed to revert task');
-    if (uiModule) uiModule.showToast('Reverted to default');
+    if (!res.ok) throw new Error(t('ui.js.tasks_err_revert', null, 'Failed to revert task'));
+    if (uiModule) uiModule.showToast(t('ui.js.tasks_reverted', null, 'Reverted to default'));
     await _fetchTasks();
     _renderMainView();
   } catch (e) { if (uiModule) uiModule.showError(e.message); }
 }
 
 async function _doClearTaskCache(id, label = 'cache') {
+  const _q = t('ui.js.tasks_clear_cache_q', { label }, 'Clear cached {label} for this task?');
   const ok = uiModule?.styledConfirm
-    ? await uiModule.styledConfirm(`Clear cached ${label} for this task?`, { confirmText: 'Clear' })
-    : confirm(`Clear cached ${label} for this task?`);
+    ? await uiModule.styledConfirm(_q, { confirmText: t('ui.js.tasks_clear', null, 'Clear') })
+    : confirm(_q);
   if (!ok) return;
   try {
     const res = await fetch(`${API_BASE}/api/tasks/${encodeURIComponent(id)}/clear-cache`, {
@@ -1651,9 +1662,9 @@ async function _doClearTaskCache(id, label = 'cache') {
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
     const n = Object.values(data.cleared || {}).reduce((a, b) => a + Number(b || 0), 0) + Number(data.files || 0);
-    if (uiModule) uiModule.showToast(`Cleared ${label}${n ? ` (${n})` : ''}`);
+    if (uiModule) uiModule.showToast(t('ui.js.tasks_cleared', { label }, 'Cleared {label}') + (n ? ` (${n})` : ''));
   } catch (e) {
-    if (uiModule) uiModule.showError(`Clear cache failed: ${e.message || e}`);
+    if (uiModule) uiModule.showError(t('ui.js.tasks_clear_cache_failed', { error: e.message || e }, 'Clear cache failed: {error}'));
   }
 }
 
@@ -1662,33 +1673,41 @@ async function _doToggleAll() {
   const hasActive = _tasks.some(t => t.status === 'active');
   const targets = _tasks.filter(t => t.status === (hasActive ? 'active' : 'paused'));
   if (targets.length === 0) {
-    if (uiModule) uiModule.showToast('No tasks to ' + (hasActive ? 'pause' : 'resume'));
+    if (uiModule) uiModule.showToast(hasActive ? t('ui.js.tasks_none_to_pause', null, 'No tasks to pause') : t('ui.js.tasks_none_to_resume', null, 'No tasks to resume'));
     return;
   }
-  const verb = hasActive ? 'Pause' : 'Resume';
+  const confirmMsg = hasActive
+    ? t('ui.js.tasks_pause_all_q', { n: targets.length }, 'Pause all {n} active task(s)?')
+    : t('ui.js.tasks_resume_all_q', { n: targets.length }, 'Resume all {n} paused task(s)?');
   let confirmed = true;
   if (uiModule?.styledConfirm) {
     confirmed = await uiModule.styledConfirm(
-      `${verb} all ${targets.length} ${hasActive ? 'active' : 'paused'} task(s)?`,
-      { confirmText: verb + ' all' }
+      confirmMsg,
+      { confirmText: hasActive ? t('ui.js.tasks_pause_all', null, 'Pause all') : t('ui.js.tasks_resume_all', null, 'Resume all') }
     );
   } else if (typeof confirm === 'function') {
-    confirmed = confirm(`${verb} ${targets.length} task(s)?`);
+    confirmed = confirm(confirmMsg);
   }
   if (!confirmed) return;
   let ok = 0, fails = [];
-  for (const t of targets) {
+  for (const tk of targets) {
     try {
-      if (hasActive) await _pauseTask(t.id);
-      else await _resumeTask(t.id);
+      if (hasActive) await _pauseTask(tk.id);
+      else await _resumeTask(tk.id);
       ok++;
     } catch (e) {
-      fails.push(t.name || t.id);
+      fails.push(tk.name || tk.id);
     }
   }
   if (uiModule) {
-    if (fails.length === 0) uiModule.showToast(`${verb}d all ${ok} task(s)`);
-    else uiModule.showError(`${verb}d ${ok}/${targets.length} — failed: ${fails.slice(0, 3).join(', ')}`);
+    if (fails.length === 0) {
+      uiModule.showToast(hasActive ? t('ui.js.tasks_paused_all', { n: ok }, 'Paused all {n} task(s)') : t('ui.js.tasks_resumed_all', { n: ok }, 'Resumed all {n} task(s)'));
+    } else {
+      const names = fails.slice(0, 3).join(', ');
+      uiModule.showError(hasActive
+        ? t('ui.js.tasks_paused_partial', { ok, total: targets.length, names }, 'Paused {ok}/{total} — failed: {names}')
+        : t('ui.js.tasks_resumed_partial', { ok, total: targets.length, names }, 'Resumed {ok}/{total} — failed: {names}'));
+    }
   }
   await _fetchTasks();
   _renderMainView();
@@ -1702,17 +1721,17 @@ function _syncPauseAllButton() {
   const hasActive = _tasks.some(t => t.status === 'active');
   const hasPaused = _tasks.some(t => t.status === 'paused');
   if (hasActive) {
-    btn.innerHTML = pauseIco + 'Pause all';
-    btn.title = 'Pause every active task';
+    btn.innerHTML = pauseIco + t('ui.js.tasks_pause_all', null, 'Pause all');
+    btn.title = t('ui.js.tasks_pause_all_title', null, 'Pause every active task');
     btn.style.opacity = '1';
     btn.disabled = false;
   } else if (hasPaused) {
-    btn.innerHTML = playIco + 'Resume all';
-    btn.title = 'Resume every paused task';
+    btn.innerHTML = playIco + t('ui.js.tasks_resume_all', null, 'Resume all');
+    btn.title = t('ui.js.tasks_resume_all_title', null, 'Resume every paused task');
     btn.style.opacity = '1';
     btn.disabled = false;
   } else {
-    btn.innerHTML = pauseIco + 'Pause all';
+    btn.innerHTML = pauseIco + t('ui.js.tasks_pause_all', null, 'Pause all');
     btn.style.opacity = '0.4';
     btn.disabled = true;
   }
@@ -1745,12 +1764,12 @@ async function _renderActivityView() {
   body.innerHTML = `
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-        <h2 style="margin:0;padding:0;line-height:1;">Activity</h2>
-        <button class="memory-toolbar-btn" id="tasks-activity-refresh" title="Refresh" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
+        <h2 style="margin:0;padding:0;line-height:1;">${t('ui.js.tasks_tab_activity', null, 'Activity')}</h2>
+        <button class="memory-toolbar-btn" id="tasks-activity-refresh" title="${t('ui.js.tasks_refresh', null, 'Refresh')}" style="margin-left:auto;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg></button>
       </div>
-      <p class="memory-desc">Recent task runs across all scheduled tasks.</p>
+      <p class="memory-desc">${t('ui.js.tasks_activity_desc', null, 'Recent task runs across all scheduled tasks.')}</p>
       <div style="display:flex;align-items:center;gap:6px;margin:6px 0 8px;">
-        <input type="text" id="tasks-activity-search" placeholder="Filter activity…" class="memory-search-input" style="flex:1;" />
+        <input type="text" id="tasks-activity-search" placeholder="${t('ui.js.tasks_filter_activity_ph', null, 'Filter activity…')}" class="memory-search-input" style="flex:1;" />
       </div>
       <div class="tasks-activity-filters" id="tasks-activity-chips" style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap;"></div>
       <div id="tasks-activity-list" class="memory-list" style="flex:1;overflow:auto;font-size:13px;"></div>
@@ -1792,7 +1811,7 @@ async function _renderActivityView() {
       return true;
     });
     if (filtered.length === 0) {
-      list.innerHTML = '<div style="opacity:0.5;padding:12px;">No matching activity.</div>';
+      list.innerHTML = '<div style="opacity:0.5;padding:12px;">' + t('ui.js.tasks_no_matching_activity', null, 'No matching activity.') + '</div>';
       return;
     }
     list.innerHTML = _stackActivityEntries(filtered).map(_renderActivityEntry).join('');
@@ -1822,15 +1841,15 @@ async function _renderActivityView() {
     // Library-style .memory-cat-chip, with an "all" chip; the active one
     // highlights. Solo-select: clicking shows only that group.
     const cls = (active) => 'memory-cat-chip' + (active ? ' active' : '');
-    let html = `<button class="${cls(!_solo)}" data-key="">all</button>`;
+    let html = `<button class="${cls(!_solo)}" data-key="">${t('ui.js.tasks_chip_all', null, 'all')}</button>`;
     html += cats.map(c =>
-      `<button class="${cls(_solo === 'cat:' + c)}" data-key="cat:${c}">${_escHtml(c)}</button>`
+      `<button class="${cls(_solo === 'cat:' + c)}" data-key="cat:${c}">${_escHtml(t('ui.js.tasks_actcat_' + c.replace(/-/g, '_'), null, c))}</button>`
     ).join('');
     if (hasErrors) {
-      html += `<button class="${cls(_solo === 'status:error')}" data-key="status:error">errors</button>`;
+      html += `<button class="${cls(_solo === 'status:error')}" data-key="status:error">${t('ui.js.tasks_chip_errors', null, 'errors')}</button>`;
     }
     if (notifCount) {
-      html += `<button class="${cls(_solo === 'notifications')}" data-key="notifications">notifications <span style="opacity:0.6;font-weight:normal;">${notifCount}</span></button>`;
+      html += `<button class="${cls(_solo === 'notifications')}" data-key="notifications">${t('ui.js.tasks_chip_notifications', null, 'notifications')} <span style="opacity:0.6;font-weight:normal;">${notifCount}</span></button>`;
     }
     chipBar.innerHTML = html;
     chipBar.querySelectorAll('.memory-cat-chip').forEach(chip => {
@@ -1851,7 +1870,7 @@ async function _renderActivityView() {
     _buildChips();
     _applyFilter();
   } else if (_actList) {
-    _actList.appendChild(spinnerModule.createLoadingRow('Loading…'));
+    _actList.appendChild(spinnerModule.createLoadingRow(t('ui.js.tasks_loading', null, 'Loading…')));
   }
 
   try {
@@ -1862,14 +1881,14 @@ async function _renderActivityView() {
     const list = document.getElementById('tasks-activity-list');
     if (!list) return;
     if (runs.length === 0) {
-      list.innerHTML = '<div style="opacity:0.5;padding:12px;">No activity yet. Scheduled tasks will log here once they run.</div>';
+      list.innerHTML = '<div style="opacity:0.5;padding:12px;">' + t('ui.js.tasks_no_activity', null, 'No activity yet. Scheduled tasks will log here once they run.') + '</div>';
       return;
     }
     _activityEntries = runs.map(r => {
       let resultText = r.result || r.error || '';
       if (!resultText) {
-        if (r.status === 'queued')  resultText = '_Queued — waiting for a free slot…_';
-        if (r.status === 'running') resultText = '_Running…_';
+        if (r.status === 'queued')  resultText = '_' + t('ui.js.tasks_ph_queued', null, 'Queued — waiting for a free slot…') + '_';
+        if (r.status === 'running') resultText = '_' + t('ui.js.tasks_ph_running', null, 'Running…') + '_';
       }
       return {
         // Surface the actual task_type ('llm' | 'research' | 'action') so the
@@ -1877,7 +1896,7 @@ async function _renderActivityView() {
         // in chat" (llm/research) and "Copy log" (action). Was hardcoded
         // 'task', which never matched and made Open-in-chat dead code.
         kind: r.task_type || 'llm',
-        taskName: r.task_name || (r.task_type === 'action' ? (r.action || 'Action') : 'Task'),
+        taskName: r.task_name || (r.task_type === 'action' ? (r.action || t('ui.js.tasks_type_action', null, 'Action')) : t('ui.js.tasks_task', null, 'Task')),
         taskId: r.task_id,
         action: r.action || '',
         result: resultText,
@@ -1895,7 +1914,7 @@ async function _renderActivityView() {
     _applyFilter();
   } catch (e) {
     const list = document.getElementById('tasks-activity-list');
-    if (list) list.innerHTML = `<div style="opacity:0.5;padding:12px;">Failed to load activity: ${_escHtml(e.message || String(e))}</div>`;
+    if (list) list.innerHTML = `<div style="opacity:0.5;padding:12px;">${_escHtml(t('ui.js.tasks_err_load_activity', { error: e.message || String(e) }, 'Failed to load activity: {error}'))}</div>`;
   }
 }
 
@@ -2034,10 +2053,10 @@ function _wireActivityRows(list) {
       if (!entry?.taskId) return;
       try {
         await _stopTask(entry.taskId);
-        uiModule.showToast('Task stopped');
+        uiModule.showToast(t('ui.js.tasks_stopped', null, 'Task stopped'));
         _renderActivityView();
       } catch (err) {
-        uiModule.showError(err.message || 'Failed to stop task');
+        uiModule.showError(err.message || t('ui.js.tasks_err_stop_generic', null, 'Failed to stop task'));
       }
     });
     row.querySelector('.task-log-run-again')?.addEventListener('click', (e) => {
@@ -2054,8 +2073,8 @@ function _wireActivityRows(list) {
       const txt = `${entry.taskName || ''}\n${entry.result || ''}`.trim();
       try {
         uiModule.copyToClipboard(txt);
-        uiModule.showToast('Log copied');
-      } catch (_) { uiModule.showError('Copy failed'); }
+        uiModule.showToast(t('ui.js.tasks_log_copied', null, 'Log copied'));
+      } catch (_) { uiModule.showError(t('ui.js.tasks_copy_failed', null, 'Copy failed')); }
     });
     row.querySelector('.task-log-clear-cache')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2114,24 +2133,24 @@ async function _openResultInChat(entry) {
     }
 
     const fd = new FormData();
-    fd.append('name', `Task: ${entry.taskName}`.slice(0, 60));
+    fd.append('name', t('ui.js.tasks_chat_name', { name: entry.taskName }, 'Task: {name}').slice(0, 60));
     fd.append('skip_validation', 'true');
     if (url) fd.append('endpoint_url', url);
     if (model) fd.append('model', model);
     if (epId) fd.append('endpoint_id', epId);
     const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', credentials: 'same-origin', body: fd });
-    if (!res.ok) { uiModule.showToast(`Couldn't create chat (HTTP ${res.status})`); return; }
+    if (!res.ok) { uiModule.showToast(t('ui.js.tasks_err_create_chat', { status: res.status }, "Couldn't create chat (HTTP {status})")); return; }
     const sess = await res.json();
     const sid = sess.id || sess.session_id;
-    if (!sid) { uiModule.showToast('Chat created but no session id returned'); return; }
+    if (!sid) { uiModule.showToast(t('ui.js.tasks_err_no_session_id', null, 'Chat created but no session id returned')); return; }
 
     // Seed the conversation: a framing user line + the result as assistant.
     await fetch(`${API_BASE}/api/session/${sid}/inject_messages`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ messages: [
-        { role: 'user', content: `Here is the latest run of my scheduled task "${entry.taskName}". Let's review it.` },
-        { role: 'assistant', content: entry.result || '(no output)' },
+        { role: 'user', content: t('ui.js.tasks_chat_seed', { name: entry.taskName }, 'Here is the latest run of my scheduled task "{name}". Let\'s review it.') },
+        { role: 'assistant', content: entry.result || t('ui.js.tasks_no_output', null, '(no output)') },
       ] }),
     });
 
@@ -2141,7 +2160,7 @@ async function _openResultInChat(entry) {
       if (window.sessionModule.selectSession) window.sessionModule.selectSession(sid);
     }
   } catch (e) {
-    uiModule.showToast(`Open in chat failed: ${e.message || e}`);
+    uiModule.showToast(t('ui.js.tasks_open_chat_failed', { error: e.message || e }, 'Open in chat failed: {error}'));
   }
 }
 
@@ -2202,7 +2221,7 @@ function _renderActivityEntry(entry) {
   // index, which would be wrong) — used by the Open-in-chat handler.
   const entryIdx = Number.isInteger(entry.sourceIdx) ? entry.sourceIdx : _activityEntries.indexOf(entry);
   const repeatBadge = entry.repeatCount > 1
-    ? `<span class="task-log-repeat" title="${entry.repeatCount} similar activity rows">+${entry.repeatCount - 1} repeats</span>`
+    ? `<span class="task-log-repeat" title="${t('ui.js.tasks_repeats_title', { n: entry.repeatCount }, '{n} similar activity rows')}">${t('ui.js.tasks_repeats', { n: entry.repeatCount - 1 }, '+{n} repeats')}</span>`
     : '';
   const tsLabel = _relativeTime(entry.ts);
   const tsAbs = entry.ts ? new Date(entry.ts).toLocaleString() : '';
@@ -2219,7 +2238,7 @@ function _renderActivityEntry(entry) {
   } else {
     status = _classifyResult(entry.result);
   }
-  const statusDot = `<span class="task-log-status task-log-status-${status}" title="${status}"></span>`;
+  const statusDot = `<span class="task-log-status task-log-status-${status}" title="${t('ui.js.tasks_status_' + status, null, status)}"></span>`;
   // Render the result through markdown so code blocks, lists, links look right.
   let resultHtml;
   const _isRunning = entry.status === 'running' || entry.status === 'queued';
@@ -2256,12 +2275,15 @@ function _renderActivityEntry(entry) {
   const lineCount = (entry.result || '').split('\n').length;
   const long = (entry.result || '').length > 600 || lineCount > 8;
   const promptHtml = entry.prompt
-    ? `<details class="task-log-prompt"><summary>Prompt</summary><pre>${_escHtml(entry.prompt)}</pre></details>`
+    ? `<details class="task-log-prompt"><summary>${t('ui.js.tasks_type_prompt', null, 'Prompt')}</summary><pre>${_escHtml(entry.prompt)}</pre></details>`
     : '';
   const hue = _categoryHue(entry.taskName, entry.kind);
   // CSS vars feed the colored title + accent stripe.
   const styleVars = `--cat-hue:${hue};`;
-  const _runningPlaceholder = /^(Starting…|Starting\.\.\.|_Running…_|_Running\.\.\._|_Queued\b)/i.test((entry.result || '').trim());
+  const _resTrim = (entry.result || '').trim();
+  const _runningPlaceholder = /^(Starting…|Starting\.\.\.|_Running…_|_Running\.\.\._|_Queued\b)/i.test(_resTrim)
+    || _resTrim === '_' + t('ui.js.tasks_ph_running', null, 'Running…') + '_'
+    || _resTrim === '_' + t('ui.js.tasks_ph_queued', null, 'Queued — waiting for a free slot…') + '_';
   const hasResult = !!(entry.result && entry.result.trim() && entry.status !== 'running' && entry.status !== 'queued');
   const hasRunningProgress = !!(entry.result && entry.result.trim() && !_runningPlaceholder && (entry.status === 'running' || entry.status === 'queued'));
   // "Open in chat" only makes sense for runs whose result is a real assistant
@@ -2272,33 +2294,33 @@ function _renderActivityEntry(entry) {
   const _isChatWorthy = entry.kind === 'llm' || entry.kind === 'research';
   let actionBtn = '';
   if (hasResult && _isChatWorthy) {
-    actionBtn = `<button class="task-log-open-chat" type="button" title="Open this result in a chat to read full-width + ask follow-ups">
+    actionBtn = `<button class="task-log-open-chat" type="button" title="${t('ui.js.tasks_open_chat_title', null, 'Open this result in a chat to read full-width + ask follow-ups')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-         Open in chat
+         ${t('ui.js.tasks_open_in_chat', null, 'Open in chat')}
        </button>`;
     if (entry.kind === 'research' && entry.researchId) {
-      actionBtn += `<button class="task-log-open-report" type="button" title="Open the visual research report">
+      actionBtn += `<button class="task-log-open-report" type="button" title="${t('ui.js.tasks_visual_report_title', null, 'Open the visual research report')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
-         Visual report
+         ${t('ui.js.tasks_visual_report', null, 'Visual report')}
        </button>`;
     }
   } else if (hasResult) {
-    actionBtn = `<button class="task-log-copy" type="button" title="Copy this log entry">
+    actionBtn = `<button class="task-log-copy" type="button" title="${t('ui.js.tasks_copy_log_title', null, 'Copy this log entry')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-         Copy log
+         ${t('ui.js.tasks_copy_log', null, 'Copy log')}
        </button>`;
   }
   const clearLabel = _taskClearCacheLabel(entry);
   if (hasResult && clearLabel && entry.taskId) {
-    actionBtn += `<button class="task-log-clear-cache" type="button" title="Clear cached ${_escHtml(clearLabel)} for this task">
+    actionBtn += `<button class="task-log-clear-cache" type="button" title="${_escHtml(t('ui.js.tasks_clear_cache_title', { label: clearLabel }, 'Clear cached {label} for this task'))}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>
-         Clear cache
+         ${t('ui.js.tasks_clear_cache', null, 'Clear cache')}
        </button>`;
   }
   if (hasResult && entry.taskId) {
-    actionBtn += `<button class="task-log-run-again" type="button" title="Run this task again">
+    actionBtn += `<button class="task-log-run-again" type="button" title="${t('ui.js.tasks_run_again_title', null, 'Run this task again')}">
          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-         Run again
+         ${t('ui.js.tasks_run_again', null, 'Run again')}
        </button>`;
   }
   // Running rows replace the relative-time on the right with "Running NN" + a
@@ -2311,10 +2333,10 @@ function _renderActivityEntry(entry) {
     // Initial elapsed for the first paint; the 1s interval below keeps it live.
     const startMs = entry.ts ? new Date(entry.ts).getTime() : Date.now();
     const stale = !isQueued && (Date.now() - startMs) > 30 * 60 * 1000;
-    const label = isQueued ? 'Queued' : stale ? 'Still running' : 'Running';
+    const label = isQueued ? t('ui.js.tasks_lbl_queued', null, 'Queued') : stale ? t('ui.js.tasks_lbl_still_running', null, 'Still running') : t('ui.js.tasks_lbl_running', null, 'Running');
     const elapsedInit = isQueued ? '' : `<span class="task-log-running-elapsed" data-since="${startMs}">${_fmtElapsed(Date.now() - startMs)}</span>`;
-    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="Start now in parallel, bypassing the queue"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg><span>Start now</span></button>` : '';
-    const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="Stop this task"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
+    const forceBtn = isQueued && entry.taskId ? `<button class="task-log-force-run" type="button" title="${t('ui.js.tasks_start_now_title', null, 'Start now in parallel, bypassing the queue')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg><span>${t('ui.js.tasks_start_now', null, 'Start now')}</span></button>` : '';
+    const stopBtn = entry.taskId ? `<button class="task-log-stop" type="button" title="${t('ui.js.tasks_stop_title', null, 'Stop this task')}"><svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>` : '';
     rightHtml = `<span class="task-log-running-inline"><span class="task-log-running-label">${label}</span>${elapsedInit}<span data-spin-here="1"></span>${forceBtn}${stopBtn}</span>`;
   } else {
     rightHtml = `<span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>`;
@@ -2332,7 +2354,7 @@ function _renderActivityEntry(entry) {
           <span class="task-log-task-icon">${_taskIcon({ action: entry.action, task_type: entry.kind })}</span>
           <span class="task-log-name">${_escHtml(entry.taskName)}</span>${_taskAiMark(entry)}
           ${repeatBadge}
-          <span class="task-log-skipped-reason">skipped${reason ? ' — ' + _escHtml(reason) : ''}</span>
+          <span class="task-log-skipped-reason">${t('ui.js.tasks_status_skipped', null, 'skipped')}${reason ? ' — ' + _escHtml(reason) : ''}</span>
           <span class="task-log-time" title="${_escHtml(tsAbs)}">${_escHtml(tsLabel)}</span>
         </div>
       </div>
@@ -2351,7 +2373,7 @@ function _renderActivityEntry(entry) {
       ${(_isRunning && !hasRunningProgress) ? '' : `<div class="task-log-row-body">${resultHtml}</div>`}
       ${promptHtml}
       <div class="task-log-row-actions">
-        ${long ? '<button class="task-log-row-toggle" type="button">Show more</button>' : '<span></span>'}
+        ${long ? '<button class="task-log-row-toggle" type="button">' + t('ui.js.tasks_show_more', null, 'Show more') + '</button>' : '<span></span>'}
         ${actionBtn}
       </div>
     </div>
@@ -2395,7 +2417,7 @@ async function _aiDraftTask(inputEl, btnEl) {
     });
     const data = await res.json();
     if (!data.success || !data.draft) {
-      if (uiModule) uiModule.showError(data.message || 'Could not draft task');
+      if (uiModule) uiModule.showError(data.message || t('ui.js.tasks_err_draft', null, 'Could not draft task'));
       return;
     }
     const draft = data.draft;
@@ -2409,7 +2431,7 @@ async function _aiDraftTask(inputEl, btnEl) {
     // field but still creates via POST on save.
     _showForm(draft, draft.task_type, draft.trigger_type || 'schedule');
   } catch (e) {
-    if (uiModule) uiModule.showError('AI draft failed: ' + (e.message || e));
+    if (uiModule) uiModule.showError(t('ui.js.tasks_draft_failed', { error: e.message || e }, 'AI draft failed: {error}'));
   } finally {
     try { _sp.stop(); } catch (_) {}
     btnEl.classList.remove('spinning');
@@ -2427,26 +2449,26 @@ function _renderMainView() {
   body.innerHTML = `
     <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;top:-2px;">
       <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
-        <h2 style="margin:0;padding:0;line-height:1;position:relative;top:-4px;">Ongoing Tasks <span id="tasks-head-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
-        <button class="memory-toolbar-btn" id="tasks-pause-all-btn" title="Pause all active tasks" style="margin-left:auto;">Pause all</button>
+        <h2 style="margin:0;padding:0;line-height:1;position:relative;top:-4px;">${t('ui.js.tasks_ongoing', null, 'Ongoing Tasks')} <span id="tasks-head-count" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+        <button class="memory-toolbar-btn" id="tasks-pause-all-btn" title="${t('ui.js.tasks_pause_all_title', null, 'Pause every active task')}" style="margin-left:auto;">${t('ui.js.tasks_pause_all', null, 'Pause all')}</button>
       </div>
-      <p class="memory-desc" style="position:relative;top:-4px;">Scheduled prompts and actions that run automatically. Results appear in a dedicated session.</p>
+      <p class="memory-desc" style="position:relative;top:-4px;">${t('ui.js.tasks_main_desc', null, 'Scheduled prompts and actions that run automatically. Results appear in a dedicated session.')}</p>
       <div class="memory-toolbar">
         <div class="memory-category-filters" style="display:flex;align-items:center;gap:6px;">
-          <select class="memory-sort-select" id="tasks-sort" aria-label="Sort tasks" title="Sort tasks" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
-            <option value="recent">Recent</option>
-            <option value="name">A–Z</option>
-            <option value="status">Status</option>
+          <select class="memory-sort-select" id="tasks-sort" aria-label="${t('ui.js.tasks_sort_title', null, 'Sort tasks')}" title="${t('ui.js.tasks_sort_title', null, 'Sort tasks')}" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
+            <option value="recent">${t('ui.js.tasks_sort_recent', null, 'Recent')}</option>
+            <option value="name">${t('ui.js.tasks_sort_az', null, 'A–Z')}</option>
+            <option value="status">${t('ui.js.tasks_sort_status', null, 'Status')}</option>
           </select>
-          <button class="memory-toolbar-btn" id="tasks-select-btn" title="Select tasks" style="position:relative;top:-7px;">Select</button>
+          <button class="memory-toolbar-btn" id="tasks-select-btn" title="${t('ui.js.tasks_select_title', null, 'Select tasks')}" style="position:relative;top:-7px;">${t('ui.js.tasks_select', null, 'Select')}</button>
         </div>
-        <input type="text" id="tasks-search" placeholder="Search tasks…" class="memory-search-input" value="${_esc(_taskSearch)}" style="position:relative;top:-4px;" />
+        <input type="text" id="tasks-search" placeholder="${t('ui.js.tasks_search_ph', null, 'Search tasks…')}" class="memory-search-input" value="${_esc(_taskSearch)}" style="position:relative;top:-4px;" />
       </div>
       <div id="tasks-bulk-bar" class="memory-bulk-bar${_taskSelectMode ? '' : ' hidden'}" style="position:relative;top:-4px;">
-        <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="tasks-select-all" /> All</label>
-        <span id="tasks-selected-count">0 Selected</span>
-        <button id="tasks-bulk-delete" class="memory-toolbar-btn danger" style="position:relative;top:-2px;" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
-        <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+        <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="tasks-select-all" /> ${t('ui.js.tasks_all', null, 'All')}</label>
+        <span id="tasks-selected-count">${t('ui.js.tasks_n_selected', { n: 0 }, '{n} Selected')}</span>
+        <button id="tasks-bulk-delete" class="memory-toolbar-btn danger" style="position:relative;top:-2px;" disabled><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>${t('ui.js.tasks_delete', null, 'Delete')}</button>
+        <button id="tasks-bulk-cancel" class="memory-toolbar-btn" title="${t('ui.js.tasks_cancel_esc', null, 'Cancel (Esc)')}" style="margin-left:4px;padding:3px 6px;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
       </div>
       <div id="tasks-filter-chips" class="tasks-activity-filters" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;position:relative;top:-4px;"></div>
       <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:-4px;"></div>
@@ -2502,22 +2524,22 @@ export function openTasks(focusId) {
   modal.innerHTML = `
     <div class="modal-content tasks-modal-content">
       <div class="modal-header">
-        <h4 style="position:relative;top:-2px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3L2 6"/><path d="M22 6l-3-3"/></svg>Tasks</h4>
+        <h4 style="position:relative;top:-2px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3L2 6"/><path d="M22 6l-3-3"/></svg>${t('ui.js.tasks_title', null, 'Tasks')}</h4>
         <span style="flex:1"></span>
         <button class="close-btn" id="tasks-close">✖</button>
       </div>
       <div class="memory-tabs tasks-tabs" role="tablist">
         <button class="memory-tab tasks-tab active" data-tab="tasks" role="tab" aria-selected="true">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-          Tasks <span id="tasks-tab-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span>
+          ${t('ui.js.tasks_tab_tasks', null, 'Tasks')} <span id="tasks-tab-count" class="memory-count" style="font-size:0.8em;opacity:0.6;font-weight:normal;margin-left:4px">0</span>
         </button>
         <button class="memory-tab tasks-tab" data-tab="activity" role="tab" aria-selected="false">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-          Activity
+          ${t('ui.js.tasks_tab_activity', null, 'Activity')}
         </button>
         <button class="memory-tab tasks-tab" data-tab="new" role="tab" aria-selected="false">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-          Add
+          ${t('ui.js.tasks_tab_add', null, 'Add')}
         </button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;overflow:hidden;"></div>
@@ -2669,7 +2691,7 @@ async function _pollTaskNotifications() {
       // — show it as a real browser Notification (richer than a toast). Falls
       // back to a toast when permission is denied or unavailable.
       if (ok && n.body) {
-        const title = n.task_name || 'Task';
+        const title = n.task_name || t('ui.js.tasks_task', null, 'Task');
         let fired = false;
         try {
           if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -2680,7 +2702,7 @@ async function _pollTaskNotifications() {
         if (!fired && uiModule) uiModule.showToast(title + ': ' + n.body.slice(0, 140), { duration: 7000 });
         continue;
       }
-      const msg = `Task ${ok ? 'finished' : 'failed'}: ${n.task_name}`;
+      const msg = ok ? t('ui.js.tasks_finished', { name: n.task_name }, 'Task finished: {name}') : t('ui.js.tasks_failed_name', { name: n.task_name }, 'Task failed: {name}');
       if (!uiModule) continue;
       if (ok) uiModule.showToast(msg, { duration: 5000 });
       else uiModule.showError(msg);

@@ -9,13 +9,14 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
+import { t } from './i18n.js';
 
 const API_BASE = window.location.origin;
 const _acct = () => window.__odysseusActiveEmailAccount
   ? `&account_id=${encodeURIComponent(window.__odysseusActiveEmailAccount)}`
   : '';
 
-const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
+const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">' + t('ui.js.inbox_setup_label', null, 'Setup:') + ' <span style="color:var(--accent,var(--red));">' + t('ui.js.inbox_setup_path', null, 'Settings &rsaquo; Integrations') + '</span></div>';
 
 // SVG icons matching sessions.js dropdown style
 const _replyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>';
@@ -323,7 +324,7 @@ export async function loadEmails(append = false) {
     console.error('Failed to load emails:', e);
     if (_listSpinner) { _listSpinner.destroy(); _listSpinner = null; }
     if (!append && list) {
-      const msg = e && e.message ? `Failed to load: ${e.message}` : 'Failed to load';
+      const msg = e && e.message ? t('ui.js.inbox_load_failed_err', { error: e.message }, 'Failed to load: {error}') : t('ui.js.inbox_load_failed', null, 'Failed to load');
       list.innerHTML = `<div class="email-loading">${msg.replace(/&/g, '&amp;').replace(/</g, '&lt;')}${_emailSetupHint()}</div>`;
     }
   } finally {
@@ -369,14 +370,14 @@ export function sortedFolders(folders) {
 export function folderDisplayName(folder) {
   const raw = String(folder || '');
   const f = raw.toLowerCase();
-  if (f === 'inbox') return 'INBOX';
-  if (f.includes('all mail')) return 'Archive / All Mail';
-  if (f.includes('archive')) return 'Archive';
-  if (f.includes('spam')) return 'Spam';
-  if (f.includes('junk')) return 'Junk';
-  if (f.includes('trash') || f.includes('bin') || f.includes('deleted')) return 'Trash';
-  if (f.includes('sent')) return 'Sent';
-  if (f.includes('draft')) return 'Drafts';
+  if (f === 'inbox') return t('ui.js.inbox_folder_inbox', null, 'INBOX');
+  if (f.includes('all mail')) return t('ui.js.inbox_folder_all_mail', null, 'Archive / All Mail');
+  if (f.includes('archive')) return t('ui.js.inbox_folder_archive', null, 'Archive');
+  if (f.includes('spam')) return t('ui.js.inbox_folder_spam', null, 'Spam');
+  if (f.includes('junk')) return t('ui.js.inbox_folder_junk', null, 'Junk');
+  if (f.includes('trash') || f.includes('bin') || f.includes('deleted')) return t('ui.js.inbox_folder_trash', null, 'Trash');
+  if (f.includes('sent')) return t('ui.js.inbox_folder_sent', null, 'Sent');
+  if (f.includes('draft')) return t('ui.js.inbox_folder_drafts', null, 'Drafts');
   return raw;
 }
 
@@ -416,7 +417,7 @@ function _renderList() {
   if (_senderFilter) {
     const chip = document.createElement('div');
     chip.className = 'email-filter-chip';
-    chip.innerHTML = `<span class="email-filter-chip-label">From: ${_esc(_senderFilterLabel || _senderFilter)}</span><button class="email-filter-chip-clear" title="Clear filter">&times;</button>`;
+    chip.innerHTML = `<span class="email-filter-chip-label">${t('ui.js.inbox_filter_from', { sender: _esc(_senderFilterLabel || _senderFilter) }, 'From: {sender}')}</span><button class="email-filter-chip-clear" title="${t('ui.js.inbox_clear_filter', null, 'Clear filter')}">&times;</button>`;
     chip.querySelector('.email-filter-chip-clear').addEventListener('click', () => _clearSenderFilter());
     list.appendChild(chip);
   }
@@ -424,7 +425,9 @@ function _renderList() {
   if (_emails.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'email-loading';
-    empty.textContent = _senderFilter ? `No emails from ${_senderFilterLabel || _senderFilter}` : 'No emails';
+    empty.textContent = _senderFilter
+      ? t('ui.js.inbox_no_emails_from', { sender: _senderFilterLabel || _senderFilter }, 'No emails from {sender}')
+      : t('ui.js.inbox_no_emails', null, 'No emails');
     list.appendChild(empty);
     return;
   }
@@ -478,7 +481,7 @@ function _createEmailItem(em) {
   const color = _senderColor(senderName);
 
   const attachIcon = em.has_attachments
-    ? '<span title="Has attachments" style="opacity:0.6;display:inline-flex;flex-shrink:0;margin-left:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>'
+    ? '<span title="' + t('ui.js.inbox_has_attachments', null, 'Has attachments') + '" style="opacity:0.6;display:inline-flex;flex-shrink:0;margin-left:4px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></span>'
     : '';
 
   // Per-row dot tint: if the urgency scanner flagged this UID, override the
@@ -486,7 +489,7 @@ function _createEmailItem(em) {
   // ending in `:<uid>` since the per_uid map is keyed `<account_id>:<uid>`
   // and the inbox list doesn't surface the account id per row.
   let _unreadColor = color;
-  let _unreadTitle = 'Unread';
+  let _unreadTitle = t('ui.js.inbox_unread', null, 'Unread');
   try {
     const us = window._emailUrgencyState;
     if (us && us.per_uid && em.uid != null) {
@@ -495,8 +498,8 @@ function _createEmailItem(em) {
         if (k.endsWith(suffix)) {
           const v = us.per_uid[k] || {};
           const score = v.score || 0;
-          if (score >= 3) { _unreadColor = 'var(--color-error, #e06c75)'; _unreadTitle = 'Urgent — ' + (v.reason || 'needs reply now'); }
-          else if (score === 2) { _unreadColor = '#f0ad4e'; _unreadTitle = 'Reply soon — ' + (v.reason || ''); }
+          if (score >= 3) { _unreadColor = 'var(--color-error, #e06c75)'; _unreadTitle = t('ui.js.inbox_urgent', { reason: v.reason || t('ui.js.inbox_needs_reply_now', null, 'needs reply now') }, 'Urgent — {reason}'); }
+          else if (score === 2) { _unreadColor = '#f0ad4e'; _unreadTitle = t('ui.js.inbox_reply_soon', { reason: v.reason || '' }, 'Reply soon — {reason}'); }
           break;
         }
       }
@@ -512,7 +515,7 @@ function _createEmailItem(em) {
     : '';
 
   const spamTag = em.is_spam_verdict
-    ? `<span class="email-tag email-tag-spam" title="AI flagged as spam — click ✓ to unflag">spam <button class="email-spam-unflag" data-uid="${em.uid}" title="Not spam">\u2713</button></span>`
+    ? `<span class="email-tag email-tag-spam" title="${t('ui.js.inbox_spam_flag_title', null, 'AI flagged as spam — click ✓ to unflag')}">${t('ui.js.inbox_spam_tag', null, 'spam')} <button class="email-spam-unflag" data-uid="${em.uid}" title="${t('ui.js.inbox_not_spam', null, 'Not spam')}">\u2713</button></span>`
     : '';
 
   const senderAddr = (em.from_address || '').toLowerCase();
@@ -520,13 +523,13 @@ function _createEmailItem(em) {
     <span class="email-avatar" style="background:${color}">${initial}</span>
     <div class="email-item-content">
       <div class="email-item-top">
-        <span class="email-sender email-sender-clickable" style="color:${color}" data-from-addr="${_esc(senderAddr)}" data-from-name="${_esc(senderName)}" title="Show all emails from ${_esc(senderName)}">${_esc(senderName)}</span>
+        <span class="email-sender email-sender-clickable" style="color:${color}" data-from-addr="${_esc(senderAddr)}" data-from-name="${_esc(senderName)}" title="${t('ui.js.inbox_show_all_from', { sender: _esc(senderName) }, 'Show all emails from {sender}')}">${_esc(senderName)}</span>
         <span class="email-date">${_esc(dateStr)}</span>
       </div>
       <div class="email-subject">${_esc(em.subject)}${unreadIcon}${attachIcon}${tagPills}${spamTag}</div>
     </div>
     <div class="email-menu-wrap">
-      <button class="hamburger email-menu-btn" title="Actions">
+      <button class="hamburger email-menu-btn" title="${t('ui.js.inbox_actions', null, 'Actions')}">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
       </button>
     </div>
@@ -676,7 +679,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
       } else {
         let draftToastTimer = null;
         draftToastTimer = setTimeout(() => {
-          import('./ui.js').then(m => m.showToast && m.showToast('Drafting AI reply', { duration: 3000, leadingIcon: 'spinner' })).catch(() => {});
+          import('./ui.js').then(m => m.showToast && m.showToast(t('ui.js.inbox_drafting_ai_reply', null, 'Drafting AI reply'), { duration: 3000, leadingIcon: 'spinner' })).catch(() => {});
         }, 450);
         try {
           let currentModel = '';
@@ -705,15 +708,15 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
           if (result.success && result.reply) {
             aiSuggestedBody = _cleanAiReplyText(result.reply);
           } else {
-            const _msg = result.error || 'AI reply could not be generated';
+            const _msg = result.error || t('ui.js.inbox_ai_reply_not_generated', null, 'AI reply could not be generated');
             console.error('AI reply generation failed:', _msg);
-            import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + _msg)).catch(() => {});
+            import('./ui.js').then(m => m.showError && m.showError(t('ui.js.inbox_ai_reply_failed', { error: _msg }, 'AI reply failed: {error}'))).catch(() => {});
             return;
           }
         } catch (e) {
           if (draftToastTimer) clearTimeout(draftToastTimer);
           console.error('AI reply generation failed:', e);
-          import('./ui.js').then(m => m.showError && m.showError('AI reply failed: ' + (e.message || e))).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError(t('ui.js.inbox_ai_reply_failed', { error: String(e.message || e) }, 'AI reply failed: {error}'))).catch(() => {});
           return;
         }
       }
@@ -848,7 +851,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
         if (!activeSid) {
           try {
             const _fd = new FormData();
-            _fd.append('name', `Email: ${(data.subject || '').slice(0, 60)}`);
+            _fd.append('name', t('ui.js.inbox_email_prefix', { subject: (data.subject || '').slice(0, 60) }, 'Email: {subject}'));
             _fd.append('skip_validation', 'true');
             const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
             if (_sres.ok) {
@@ -882,7 +885,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
           // import pattern the rest of this file uses. (Previously this
           // referenced a bare `uiModule`, throwing a ReferenceError that
           // the outer catch swallowed → reply silently did nothing.)
-          import('./ui.js').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError(t('ui.js.inbox_reply_draft_failed', { status: docRes.status }, 'Failed to create reply draft ({status})'))).catch(() => {});
           return;
         }
         const doc = await docRes.json();
@@ -908,7 +911,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
     // look like "nothing happened". Dynamic import — uiModule isn't a
     // static import in this file.
     const msg = e && e.message ? e.message : String(e);
-    import('./ui.js').then(m => m.showError && m.showError('Reply failed: ' + msg)).catch(() => {});
+    import('./ui.js').then(m => m.showError && m.showError(t('ui.js.inbox_reply_failed', { error: msg }, 'Reply failed: {error}'))).catch(() => {});
   } finally {
     if (spinner) { spinner.destroy(); spinner.element.remove(); }
     if (itemEl) {
@@ -925,10 +928,10 @@ function _showEmailMenu(em, anchor, itemEl) {
   dropdown.className = 'dropdown email-dropdown show';
 
   const actions = [
-    { label: 'Open', icon: _replyIcon, action: () => _openEmail(em, itemEl) },
-    { label: 'Remind to reply', icon: _bellIcon, submenu: 'remind' },
-    { label: 'Archive', icon: _archiveIcon, action: () => _archiveEmail(em) },
-    { label: 'Delete', icon: _deleteIcon, danger: true, action: () => _deleteEmail(em) },
+    { label: t('ui.js.inbox_action_open', null, 'Open'), icon: _replyIcon, action: () => _openEmail(em, itemEl) },
+    { label: t('ui.js.inbox_action_remind', null, 'Remind to reply'), icon: _bellIcon, submenu: 'remind' },
+    { label: t('ui.js.inbox_action_archive', null, 'Archive'), icon: _archiveIcon, action: () => _archiveEmail(em) },
+    { label: t('ui.js.inbox_action_delete', null, 'Delete'), icon: _deleteIcon, danger: true, action: () => _deleteEmail(em) },
   ];
 
   for (const a of actions) {
@@ -967,7 +970,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   const header = document.createElement('div');
   header.className = 'dropdown-item-compact';
   header.style.cssText = 'opacity:0.5;font-size:10px;pointer-events:none;text-transform:uppercase;letter-spacing:0.5px;padding-top:6px;';
-  header.innerHTML = '<span>Remind me</span>';
+  header.innerHTML = '<span>' + t('ui.js.inbox_remind_me', null, 'Remind me') + '</span>';
   parentDropdown.appendChild(header);
 
   const now = new Date();
@@ -981,9 +984,9 @@ function _showRemindSubmenu(em, parentDropdown) {
   const nextWeek = new Date(now); nextWeek.setDate(now.getDate() + daysUntilMon); nextWeek.setHours(8, 0, 0, 0);
 
   const presets = [
-    { label: 'Later today', sub: laterToday.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), date: laterToday },
-    { label: 'Tomorrow', sub: tomorrow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), date: tomorrow },
-    { label: 'Next week', sub: nextWeek.toLocaleDateString([], { weekday: 'short' }) + ' ' + nextWeek.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), date: nextWeek },
+    { label: t('ui.js.inbox_later_today', null, 'Later today'), sub: laterToday.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), date: laterToday },
+    { label: t('ui.js.inbox_tomorrow', null, 'Tomorrow'), sub: tomorrow.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), date: tomorrow },
+    { label: t('ui.js.inbox_next_week', null, 'Next week'), sub: nextWeek.toLocaleDateString([], { weekday: 'short' }) + ' ' + nextWeek.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), date: nextWeek },
   ];
   for (const p of presets) {
     const item = document.createElement('div');
@@ -998,7 +1001,7 @@ function _showRemindSubmenu(em, parentDropdown) {
   }
   const customItem = document.createElement('div');
   customItem.className = 'dropdown-item-compact';
-  customItem.innerHTML = '<span>Pick date and time…</span>';
+  customItem.innerHTML = '<span>' + t('ui.js.inbox_pick_datetime', null, 'Pick date and time…') + '</span>';
   customItem.addEventListener('click', async (e) => {
     e.stopPropagation();
     parentDropdown.remove();
@@ -1044,10 +1047,10 @@ function _showRemindSubmenu(em, parentDropdown) {
 async function _createReplyReminder(em, dueDate) {
   const pad = n => String(n).padStart(2, '0');
   const iso = `${dueDate.getFullYear()}-${pad(dueDate.getMonth()+1)}-${pad(dueDate.getDate())}T${pad(dueDate.getHours())}:${pad(dueDate.getMinutes())}`;
-  const from = em.from || em.sender || 'someone';
+  const from = em.from || em.sender || t('ui.js.inbox_someone', null, 'someone');
   const payload = {
-    title: `Reply: ${em.subject || '(no subject)'}`,
-    content: `From: ${from}\n\nRemember to reply to this email.`,
+    title: t('ui.js.inbox_reminder_title', { subject: em.subject || t('ui.js.inbox_no_subject', null, '(no subject)') }, 'Reply: {subject}'),
+    content: t('ui.js.inbox_reminder_content', { from }, 'From: {from}\n\nRemember to reply to this email.'),
     note_type: 'note',
     label: 'email',
     due_date: iso,
@@ -1062,14 +1065,14 @@ async function _createReplyReminder(em, dueDate) {
     if (!res.ok) throw new Error('Failed');
     const { showToast } = await import('./ui.js');
     const fmt = dueDate.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    showToast(`Reminder set for ${fmt}`);
+    showToast(t('ui.js.inbox_reminder_set', { when: fmt }, 'Reminder set for {when}'));
     // Request notification permission if needed
     if ('Notification' in window && Notification.permission === 'default') {
       try { Notification.requestPermission(); } catch {}
     }
   } catch (e) {
     const { showError } = await import('./ui.js');
-    showError('Failed to create reminder');
+    showError(t('ui.js.inbox_reminder_failed', null, 'Failed to create reminder'));
   }
 }
 
@@ -1084,9 +1087,9 @@ async function _archiveEmail(em) {
 }
 
 async function _deleteEmail(em) {
-  const subject = em.subject || '(no subject)';
+  const subject = em.subject || t('ui.js.inbox_no_subject', null, '(no subject)');
   const { styledConfirm } = await import('./ui.js');
-  const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
+  const ok = await styledConfirm(t('ui.js.inbox_delete_confirm', { subject }, 'Delete "{subject}"?'), { confirmText: t('ui.js.inbox_delete', null, 'Delete'), cancelText: t('ui.js.inbox_cancel', null, 'Cancel'), danger: true });
   if (!ok) return;
   try {
     await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'DELETE' });
@@ -1144,7 +1147,7 @@ async function _createEmailChat(emailData) {
       await sessionModule.createDirectChat(url, model, endpointId);
       // Set a helpful title in the chat meta
       const meta = document.getElementById('current-meta');
-      if (meta) meta.textContent = `Email: ${(emailData.subject || '').slice(0, 60)}`;
+      if (meta) meta.textContent = t('ui.js.inbox_email_prefix', { subject: (emailData.subject || '').slice(0, 60) }, 'Email: {subject}');
     }
   } catch (e) {
     console.error('Failed to create email chat:', e);
@@ -1165,7 +1168,7 @@ async function _composeNew() {
     let sid = '';
     try { sid = sessionModule?.getCurrentSessionId?.() || ''; } catch (_) {}
     if (!sid) {
-      await _createEmailChat({ subject: 'New Email' });
+      await _createEmailChat({ subject: t('ui.js.inbox_new_email', null, 'New Email') });
       try { sid = sessionModule?.getCurrentSessionId?.() || ''; } catch (_) {}
     }
     // Guarantee a session — _createEmailChat can't make one when there's no
@@ -1175,7 +1178,7 @@ async function _composeNew() {
     if (!sid) {
       try {
         const _fd = new FormData();
-        _fd.append('name', 'New Email');
+        _fd.append('name', t('ui.js.inbox_new_email', null, 'New Email'));
         _fd.append('skip_validation', 'true');
         const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
         if (_sres.ok) {
@@ -1193,7 +1196,7 @@ async function _composeNew() {
     }
     if (!sid) {
       console.error('compose: could not obtain a session_id');
-      import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
+      import('./ui.js').then(m => m.showError && m.showError(t('ui.js.inbox_compose_no_session', null, 'Could not start a new email (no session).'))).catch(() => {});
       return;
     }
     const res = await fetch(`${API_BASE}/api/document`, {
@@ -1201,14 +1204,14 @@ async function _composeNew() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: sid,
-        title: 'New Email',
+        title: t('ui.js.inbox_new_email', null, 'New Email'),
         content: 'To: \nSubject: \n---\n',
         language: 'email',
       }),
     });
     if (!res.ok) {
       console.error('compose POST failed', res.status, await res.text().catch(() => ''));
-      import('./ui.js').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(() => {});
+      import('./ui.js').then(m => m.showError && m.showError(t('ui.js.inbox_compose_failed', { status: res.status }, 'Failed to create new email ({status})'))).catch(() => {});
       return;
     }
     const doc = await res.json();

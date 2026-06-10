@@ -10,6 +10,7 @@
 // the calendar's entry module.
 
 import uiModule from '../ui.js';
+import { t } from '../i18n.js';
 
 const API_BASE = window.location.origin;
 
@@ -30,14 +31,16 @@ function _formatReminderBody(note) {
       let when2 = '';
       const sameDay = start.toDateString() === now.toDateString();
       if (!sameDay) when2 = ' ' + start.toLocaleDateString([], { month: 'short', day: 'numeric' });
-      if (mins >= 1 && mins <= 60) return `Starts in ${mins} min (${when}${when2})`;
-      if (mins === 0) return `Starting now (${when}${when2})`;
+      if (mins >= 1 && mins <= 60) return t('ui.js.calendar_starts_in_min', { mins, when: when + when2 }, 'Starts in {mins} min ({when})');
+      if (mins === 0) return t('ui.js.calendar_starting_now', { when: when + when2 }, 'Starting now ({when})');
       if (mins > 60) {
         const h = Math.round(mins / 60);
-        return `Starts in ${h} hour${h === 1 ? '' : 's'} (${when}${when2})`;
+        return h === 1
+          ? t('ui.js.calendar_starts_in_one_hour', { when: when + when2 }, 'Starts in 1 hour ({when})')
+          : t('ui.js.calendar_starts_in_hours', { hours: h, when: when + when2 }, 'Starts in {hours} hours ({when})');
       }
-      if (mins >= -60) return `Started ${Math.abs(mins)} min ago (${when}${when2})`;
-      return `Was scheduled for ${when}${when2}`;
+      if (mins >= -60) return t('ui.js.calendar_started_min_ago', { mins: Math.abs(mins), when: when + when2 }, 'Started {mins} min ago ({when})');
+      return t('ui.js.calendar_was_scheduled', { when: when + when2 }, 'Was scheduled for {when}');
     }
   }
   // Legacy notes (no event_dtstart). Scrub stale relative-time strings.
@@ -80,18 +83,18 @@ async function _pollReminders() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           note_id: note.id,
-          title: note.title || 'Calendar Reminder',
+          title: note.title || t('ui.js.calendar_reminder_default_title', null, 'Calendar Reminder'),
           body,
         }),
       }).catch(() => {});
       if ('Notification' in window && Notification.permission === 'granted') {
-        new Notification(note.title || 'Calendar Reminder', {
+        new Notification(note.title || t('ui.js.calendar_reminder_default_title', null, 'Calendar Reminder'), {
           body,
           icon: '/static/favicon.png',
           tag: `cal-remind-${note.id}`,
         });
       }
-      if (uiModule.showToast) uiModule.showToast((note.title || 'Calendar Reminder') + (body ? ' — ' + body : ''));
+      if (uiModule.showToast) uiModule.showToast((note.title || t('ui.js.calendar_reminder_default_title', null, 'Calendar Reminder')) + (body ? ' — ' + body : ''));
     }
     // Persist fired set (keep last 200)
     const arr = [..._notifFired].slice(-200);

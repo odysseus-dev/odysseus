@@ -3,12 +3,32 @@
 // Pure constants + zero-state helpers for the calendar UI.
 // No DOM, no fetch, no global mutable state — safe to import anywhere.
 
-export const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+// ── locale-aware month/weekday names ──
+// Derived via Intl from the persisted i18n locale choice (or the browser
+// language). The locale id is read synchronously from localStorage so these
+// constants are correct at module load, without waiting for the async
+// locale-strings fetch in i18n.js.
+function _intlLocale() {
+  try {
+    const v = localStorage.getItem('odysseus.locale');
+    if (v) return v;
+  } catch (_) { /* localStorage unavailable */ }
+  return (typeof navigator !== 'undefined' && navigator.language) || 'en-US';
+}
 
-export const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'];
+function _cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-export const MON_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function _fmtSeq(count, opts, base) {
+  const fmt = new Intl.DateTimeFormat(_intlLocale(), { ...opts, timeZone: 'UTC' });
+  return Array.from({ length: count }, (_, i) => _cap(fmt.format(base(i))));
+}
+
+// Monday-first short weekday names (2024-01-01 was a Monday).
+export const WEEKDAYS = _fmtSeq(7, { weekday: 'short' }, i => new Date(Date.UTC(2024, 0, 1 + i)));
+
+export const MONTHS = _fmtSeq(12, { month: 'long' }, i => new Date(Date.UTC(2024, i, 15)));
+
+export const MON_SHORT = _fmtSeq(12, { month: 'short' }, i => new Date(Date.UTC(2024, i, 15)));
 
 export const CAL_PALETTE = [
   'var(--accent)', '#5b8abf', '#bf6b5b', '#5bbf7a', '#bf9a5b',

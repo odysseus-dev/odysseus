@@ -7,6 +7,7 @@
 
 import uiModule from './ui.js';
 import * as spinnerModule from './spinner.js';
+import { t } from './i18n.js';
 
 const API = window.location.origin;
 let skills = [];
@@ -48,7 +49,7 @@ function _preloadVisibleMarkdown() {
     const name = card.dataset.skillName;
     if (!name || card._mdLoaded) return;
     const pre = card.querySelector('.skill-md-pre');
-    const apply = (md) => { if (pre) pre.textContent = md || '(empty)'; card._mdLoaded = true; card._md = md || ''; };
+    const apply = (md) => { if (pre) pre.textContent = md || t('ui.js.skills_empty', null, '(empty)'); card._mdLoaded = true; card._md = md || ''; };
     if (_mdCache.has(name)) { apply(_mdCache.get(name)); return; }
     _fetchSkillMarkdown(name).then(apply).catch(() => {});
   });
@@ -155,7 +156,9 @@ function updateCount() {
   const el = document.getElementById('skills-count');
   if (el) el.textContent = skills.length || '0';
   const elH = document.getElementById('skills-count-h2');
-  if (elH) elH.textContent = skills.length + ' skill' + (skills.length === 1 ? '' : 's');
+  if (elH) elH.textContent = skills.length === 1
+    ? t('ui.js.skills_count_one', null, '1 skill')
+    : t('ui.js.skills_count_many', { count: skills.length }, '{count} skills');
 }
 
 function _sortSkills(list) {
@@ -185,8 +188,8 @@ function _matches(sk, query) {
 
 function _statusPill(sk) {
   const s = sk.status || (sk._legacy ? 'legacy' : 'draft');
-  if (s === 'published') return '<span class="memory-cat-badge skill-status-pill" data-status="published" style="background:color-mix(in srgb, var(--accent, #4ade80) 30%, transparent)">published</span>';
-  if (s === 'draft')     return '<span class="memory-cat-badge skill-status-pill" data-status="draft" style="background:color-mix(in srgb, var(--fg) 14%, transparent)">draft</span>';
+  if (s === 'published') return '<span class="memory-cat-badge skill-status-pill" data-status="published" style="background:color-mix(in srgb, var(--accent, #4ade80) 30%, transparent)">' + t('ui.js.skills_status_published', null, 'published') + '</span>';
+  if (s === 'draft')     return '<span class="memory-cat-badge skill-status-pill" data-status="draft" style="background:color-mix(in srgb, var(--fg) 14%, transparent)">' + t('ui.js.skills_status_draft', null, 'draft') + '</span>';
   return `<span class="memory-cat-badge skill-status-pill" data-status="${esc(s)}" style="opacity:0.6">${esc(s)}</span>`;
 }
 
@@ -197,7 +200,7 @@ function _statusPill(sk) {
 function _sourcePill(sk) {
   if (sk.source !== 'teacher-escalation') return '';
   const teacher = sk.teacher_model || 'teacher';
-  return `<span class="memory-cat-badge" title="Created by teacher escalation: ${esc(teacher)}" style="background:color-mix(in srgb, var(--color-warning, #f0ad4e) 22%, transparent);">teacher-created</span>`;
+  return `<span class="memory-cat-badge" title="${t('ui.js.skills_teacher_created_title', { teacher: esc(teacher) }, 'Created by teacher escalation: {teacher}')}" style="background:color-mix(in srgb, var(--color-warning, #f0ad4e) 22%, transparent);">${t('ui.js.skills_teacher_created', null, 'teacher-created')}</span>`;
 }
 
 function _modelShortName(model) {
@@ -290,13 +293,13 @@ function _auditModelPills(sk) {
   const teacher = sk.audit_teacher_model || '';
   let html = '';
   if (worker) {
-    html += `<span class="memory-cat-badge skill-model-pill skill-model-student" title="Last audited by default audit model: ${esc(worker)}">audit</span>`;
+    html += `<span class="memory-cat-badge skill-model-pill skill-model-student" title="${t('ui.js.skills_audit_model_title', { model: esc(worker) }, 'Last audited by default audit model: {model}')}">${t('ui.js.skills_audit_pill', null, 'audit')}</span>`;
   }
   if (sk.audit_by_teacher || teacher) {
     const title = teacher
-      ? `Teacher rewrote this skill; audit model passed after the rewrite. Teacher: ${teacher}`
-      : 'Teacher rewrote this skill; audit model passed after the rewrite.';
-    html += `<span class="memory-cat-badge skill-model-pill skill-model-teacher" title="${esc(title)}">teacher-fixed</span>`;
+      ? t('ui.js.skills_teacher_fixed_title_model', { teacher }, 'Teacher rewrote this skill; audit model passed after the rewrite. Teacher: {teacher}')
+      : t('ui.js.skills_teacher_fixed_title', null, 'Teacher rewrote this skill; audit model passed after the rewrite.');
+    html += `<span class="memory-cat-badge skill-model-pill skill-model-teacher" title="${esc(title)}">${t('ui.js.skills_teacher_fixed', null, 'teacher-fixed')}</span>`;
   }
   return html;
 }
@@ -317,22 +320,22 @@ function _necessityPill(sk) {
   if (!kind) return '';
   const nec = sk.necessity || {};
   const dup = (nec.redundant_with || []).filter(Boolean);
-  const label = kind === 'duplicate' ? (sk._duplicateGroup ? `duplicate #${sk._duplicateGroup}` : 'duplicate')
-    : kind === 'trivial' ? 'generic'
-    : 'possibly-irrelevant';
+  const label = kind === 'duplicate' ? (sk._duplicateGroup ? t('ui.js.skills_duplicate_n', { num: sk._duplicateGroup }, 'duplicate #{num}') : t('ui.js.skills_duplicate', null, 'duplicate'))
+    : kind === 'trivial' ? t('ui.js.skills_generic', null, 'generic')
+    : t('ui.js.skills_possibly_irrelevant', null, 'possibly-irrelevant');
   const group = sk._duplicateNames || [];
   const why = sk._duplicateGroup
-    ? `Duplicate group #${sk._duplicateGroup}. Recommended keep: ${sk._duplicateKeepName}. Group: ${group.join(', ')}`
-    : (nec.reason || 'May not be worth keeping') + (dup.length ? ' | overlaps: ' + dup.join(', ') : '');
+    ? t('ui.js.skills_duplicate_group_title', { num: sk._duplicateGroup, keep: sk._duplicateKeepName, group: group.join(', ') }, 'Duplicate group #{num}. Recommended keep: {keep}. Group: {group}')
+    : (nec.reason || t('ui.js.skills_not_worth_keeping', null, 'May not be worth keeping')) + (dup.length ? t('ui.js.skills_overlaps', { names: dup.join(', ') }, ' | overlaps: {names}') : '');
   return `<span class="memory-cat-badge skill-necessity-pill skill-necessity-${kind}" title="${esc(why)}">${label}</span>`;
 }
 
 function _duplicatePriorityPill(sk) {
   if (!sk._duplicateGroup) return '';
   if (sk._duplicateKeep) {
-    return `<span class="memory-cat-badge skill-duplicate-keep" title="Best duplicate candidate by published status, uses, confidence, and specificity">recommended</span>`;
+    return `<span class="memory-cat-badge skill-duplicate-keep" title="${t('ui.js.skills_recommended_title', null, 'Best duplicate candidate by published status, uses, confidence, and specificity')}">${t('ui.js.skills_recommended', null, 'recommended')}</span>`;
   }
-  return `<span class="memory-cat-badge skill-duplicate-lower" title="Lower-priority duplicate. Suggested keeper: ${esc(sk._duplicateKeepName || '')}">lower-priority</span>`;
+  return `<span class="memory-cat-badge skill-duplicate-lower" title="${t('ui.js.skills_lower_priority_title', { keeper: esc(sk._duplicateKeepName || '') }, 'Lower-priority duplicate. Suggested keeper: {keeper}')}">${t('ui.js.skills_lower_priority', null, 'lower-priority')}</span>`;
 }
 
 // Verified-by-test indicators shown next to the confidence %. A check when a
@@ -341,11 +344,11 @@ function _duplicatePriorityPill(sk) {
 function _auditMarks(sk) {
   let html = '';
   if (sk.audit_verdict === 'pass') {
-    html += `<span class="skill-verified" title="Passed an automated test"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>`;
+    html += `<span class="skill-verified" title="${t('ui.js.skills_passed_test', null, 'Passed an automated test')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>`;
   }
   if (sk.audit_by_teacher) {
     const teacher = sk.audit_teacher_model ? `: ${sk.audit_teacher_model}` : '';
-    html += `<span class="skill-teachermark" title="Teacher rewrote this skill; audit model passed after the rewrite${esc(teacher)}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 3 2 6 2s6-1 6-2v-5"/></svg></span>`;
+    html += `<span class="skill-teachermark" title="${t('ui.js.skills_teacher_fixed_title', null, 'Teacher rewrote this skill; audit model passed after the rewrite')}${esc(teacher)}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 3 2 6 2s6-1 6-2v-5"/></svg></span>`;
   }
   return html;
 }
@@ -390,23 +393,23 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
     item.addEventListener('click', (e) => { e.stopPropagation(); menu.remove(); onClick(); });
     menu.appendChild(item);
   };
-  if (isPublished) mk(_ICON.unpublish, 'Unpublish', {}, () => _setSkillStatus(name, 'draft'));
-  else mk(_ICON.approve, 'Publish', {}, () => _setSkillStatus(name, 'published'));
-  mk(_ICON.edit, 'Edit', {}, async () => {
+  if (isPublished) mk(_ICON.unpublish, t('ui.js.skills_unpublish', null, 'Unpublish'), {}, () => _setSkillStatus(name, 'draft'));
+  else mk(_ICON.approve, t('ui.js.skills_publish', null, 'Publish'), {}, () => _setSkillStatus(name, 'published'));
+  mk(_ICON.edit, t('ui.js.skills_edit', null, 'Edit'), {}, async () => {
     if (!card.classList.contains('doclib-card-expanded')) await _expandSkillCard(card, name);
     _toggleSkillEdit(card, name);
   });
-  mk(_ICON.test, 'Test', {}, () => _testSkill(card, name));
+  mk(_ICON.test, t('ui.js.skills_test', null, 'Test'), {}, () => _testSkill(card, name));
   // Audit kicks off the bulk audit-all loop (test → judge → fix → retry → demote).
   // Starts at the top of the list and walks down.
-  mk(_ICON.test, 'Audit', {}, () => _auditAllSkills());
-  mk(_ICON.del, 'Delete', { danger: true }, () => _deleteSkill(name, card));
+  mk(_ICON.test, t('ui.js.skills_audit', null, 'Audit'), {}, () => _auditAllSkills());
+  mk(_ICON.del, t('ui.js.skills_delete', null, 'Delete'), { danger: true }, () => _deleteSkill(name, card));
 
   // Select — enters bulk-select mode and pre-selects this skill. Same pattern
   // as the email/documents/brain Select item, with the email bullet icon.
   const selItem = document.createElement('button');
   selItem.className = 'skill-kebab-item';
-  selItem.innerHTML = '<span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;"><span style="font-size:16px;line-height:1;">●</span></span><span>Select</span>';
+  selItem.innerHTML = '<span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;"><span style="font-size:16px;line-height:1;">●</span></span><span>' + t('ui.js.skills_select', null, 'Select') + '</span>';
   selItem.addEventListener('click', (e) => {
     e.stopPropagation();
     menu.remove();
@@ -421,7 +424,7 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   // already dismisses cleanly.
   const cancelItem = document.createElement('button');
   cancelItem.className = 'skill-kebab-item dropdown-cancel-mobile';
-  cancelItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>Cancel</span>';
+  cancelItem.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span>' + t('ui.js.skills_cancel', null, 'Cancel') + '</span>';
   cancelItem.addEventListener('click', (e) => { e.stopPropagation(); menu.remove(); });
   menu.appendChild(cancelItem);
 
@@ -464,8 +467,8 @@ function _buildBuiltinCards() {
       <div style="flex:1;min-width:0;overflow:hidden;">
         <div class="doclib-card-title" style="display:flex;align-items:center;gap:6px;min-width:0;">
           <code style="font-weight:600;font-size:0.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;min-width:0;">${esc(b.name)}</code>
-          <span class="memory-cat-badge" style="background:color-mix(in srgb, var(--fg) 14%, transparent)">built-in</span>
-          ${b.is_overridden ? '<span class="memory-cat-badge" title="You have edited this built-in capability" style="background:color-mix(in srgb, var(--color-warning, #f0ad4e) 30%, transparent);">edited</span>' : ''}
+          <span class="memory-cat-badge" style="background:color-mix(in srgb, var(--fg) 14%, transparent)">${t('ui.js.skills_builtin', null, 'built-in')}</span>
+          ${b.is_overridden ? '<span class="memory-cat-badge" title="' + t('ui.js.skills_edited_title', null, 'You have edited this built-in capability') + '" style="background:color-mix(in srgb, var(--color-warning, #f0ad4e) 30%, transparent);">' + t('ui.js.skills_edited', null, 'edited') + '</span>' : ''}
         </div>
         ${b.description ? `<div class="doclib-card-session" title="${esc(b.description)}" style="font-size:10px;opacity:0.55;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(b.description)}</div>` : ''}
       </div>
@@ -478,7 +481,7 @@ function _buildBuiltinCards() {
     // Warning banner — editing a built-in changes how the assistant uses a native tool.
     const warn = document.createElement('div');
     warn.className = 'skill-builtin-warn';
-    warn.innerHTML = '⚠ This is a built-in capability. Editing changes how the assistant is instructed to use this native tool — it can break or alter core behaviour. Use Revert to restore the shipped default.';
+    warn.innerHTML = '⚠ ' + t('ui.js.skills_builtin_warn', null, 'This is a built-in capability. Editing changes how the assistant is instructed to use this native tool — it can break or alter core behaviour. Use Revert to restore the shipped default.');
     preview.appendChild(warn);
     const pre = document.createElement('pre');
     pre.className = 'skill-md-pre';
@@ -491,13 +494,13 @@ function _buildBuiltinCards() {
 
     const revertBtn = document.createElement('button');
     revertBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
-    revertBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>Revert';
-    revertBtn.title = 'Restore the original shipped instructions';
+    revertBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>' + t('ui.js.skills_revert', null, 'Revert');
+    revertBtn.title = t('ui.js.skills_revert_title', null, 'Restore the original shipped instructions');
     revertBtn.addEventListener('click', (e) => { e.stopPropagation(); _revertBuiltin(b.name); });
 
     const editBtn = document.createElement('button');
     editBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-    editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit';
+    editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' + t('ui.js.skills_edit', null, 'Edit');
     editBtn.addEventListener('click', (e) => { e.stopPropagation(); _toggleBuiltinEdit(card, b.name); });
 
     const rightGroup = document.createElement('div');
@@ -531,17 +534,17 @@ async function _expandBuiltinCard(card, name) {
   if (grid) grid.scrollTop = 0;
   const pre = card.querySelector('.skill-md-pre');
   if (pre && !card._loaded) {
-    pre.textContent = 'Loading…';
+    pre.textContent = t('ui.js.skills_loading', null, 'Loading…');
     try {
       const res = await fetch(`${API}/api/skills/builtin/${encodeURIComponent(name)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      pre.textContent = data.text || '(empty)';
+      pre.textContent = data.text || t('ui.js.skills_empty', null, '(empty)');
       card._loaded = true;
       card._text = data.text || '';
       card._default = data.default || '';
     } catch (e) {
-      pre.textContent = 'Failed to load.';
+      pre.textContent = t('ui.js.skills_load_failed', null, 'Failed to load.');
     }
   }
 }
@@ -560,7 +563,7 @@ function _toggleBuiltinEdit(card, name) {
   preview.insertBefore(ta, preview.querySelector('.doclib-card-expanded-actions'));
   ta.focus();
   const editBtn = [...preview.querySelectorAll('.doclib-card-action-btn')].find(b => /Edit|Save/.test(b.textContent));
-  if (editBtn) editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save';
+  if (editBtn) editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>' + t('ui.js.skills_save', null, 'Save');
 }
 
 async function _saveBuiltinEdit(card, name) {
@@ -573,21 +576,21 @@ async function _saveBuiltinEdit(card, name) {
       body: JSON.stringify({ text: ta.value }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    uiModule.showToast('Built-in capability updated');
+    uiModule.showToast(t('ui.js.skills_builtin_updated', null, 'Built-in capability updated'));
     builtinSkills = [];  // force reload of built-in list (refreshes "edited" badge)
     await loadSkills();
-  } catch (e) { uiModule.showError('Save failed: ' + e.message); }
+  } catch (e) { uiModule.showError(t('ui.js.skills_save_failed', { error: e.message }, 'Save failed: {error}')); }
 }
 
 async function _revertBuiltin(name) {
-  if (!(await uiModule.styledConfirm(`Revert "${name}" to its original built-in instructions?`, { confirmText: 'Revert', danger: true }))) return;
+  if (!(await uiModule.styledConfirm(t('ui.js.skills_revert_confirm', { name }, 'Revert "{name}" to its original built-in instructions?'), { confirmText: t('ui.js.skills_revert', null, 'Revert'), danger: true }))) return;
   try {
     const res = await fetch(`${API}/api/skills/builtin/${encodeURIComponent(name)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    uiModule.showToast('Reverted to default');
+    uiModule.showToast(t('ui.js.skills_reverted', null, 'Reverted to default'));
     builtinSkills = [];
     await loadSkills();
-  } catch (e) { uiModule.showError('Revert failed: ' + e.message); }
+  } catch (e) { uiModule.showError(t('ui.js.skills_revert_failed', { error: e.message }, 'Revert failed: {error}')); }
 }
 
 function _getFilteredSkills() {
@@ -624,7 +627,7 @@ function renderSkillsList() {
     const selectBtn = document.getElementById('skills-select-btn');
     if (selectBtn) selectBtn.disabled = true;
     if (_selectMode) _exitSelectMode();
-    container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? 'No skills yet, use agent for it to auto extract them.' : 'Loading…'}</div>`;
+    container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? t('ui.js.skills_none_yet', null, 'No skills yet, use agent for it to auto extract them.') : t('ui.js.skills_loading', null, 'Loading…')}</div>`;
     return;
   }
 
@@ -691,8 +694,8 @@ function renderSkillsList() {
         ${_necessityPill(sk)}
         ${_duplicatePriorityPill(sk)}
         <span class="skill-stats">${_auditMarks(sk)}<span class="skill-conf" style="color:${confColor};">${conf}%</span> · ${uses}u</span>
-        <span class="skill-chevron-up" title="Collapse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
-        <button class="skill-kebab-btn" title="Actions" aria-label="Actions"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></button>
+        <span class="skill-chevron-up" title="${t('ui.js.skills_collapse', null, 'Collapse')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></span>
+        <button class="skill-kebab-btn" title="${t('ui.js.skills_actions', null, 'Actions')}" aria-label="${t('ui.js.skills_actions', null, 'Actions')}"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg></button>
       </div>
     `;
     card.appendChild(header);
@@ -718,23 +721,23 @@ function renderSkillsList() {
 
     const delBtn = document.createElement('button');
     delBtn.className = 'doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger';
-    delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Delete';
+    delBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>' + t('ui.js.skills_delete', null, 'Delete');
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); _deleteSkill(name, card); });
 
     const editBtn = document.createElement('button');
     editBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-    editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Edit';
+    editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>' + t('ui.js.skills_edit', null, 'Edit');
     editBtn.addEventListener('click', (e) => { e.stopPropagation(); _toggleSkillEdit(card, name); });
 
     const pubBtn = document.createElement('button');
     pubBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
     if (isPublished) {
-      pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12l5 5L20 7"/></svg>Unpublish';
-      pubBtn.title = 'Move back to draft';
+      pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12l5 5L20 7"/></svg>' + t('ui.js.skills_unpublish', null, 'Unpublish');
+      pubBtn.title = t('ui.js.skills_unpublish_title', null, 'Move back to draft');
       pubBtn.addEventListener('click', (e) => { e.stopPropagation(); _setSkillStatus(name, 'draft'); });
     } else {
-      pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>Publish';
-      pubBtn.title = 'Publish — appears in the skills index';
+      pubBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>' + t('ui.js.skills_publish', null, 'Publish');
+      pubBtn.title = t('ui.js.skills_publish_title', null, 'Publish — appears in the skills index');
       pubBtn.style.color = 'var(--color-success, #4caf50)';
       pubBtn.addEventListener('click', (e) => { e.stopPropagation(); _setSkillStatus(name, 'published'); });
     }
@@ -743,8 +746,8 @@ function renderSkillsList() {
     // the footer too so it's not buried under the "⋯" menu.
     const testBtn = document.createElement('button');
     testBtn.className = 'doclib-card-text-btn doclib-card-action-btn';
-    testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Test';
-    testBtn.title = 'Test this skill — run it + AI judge';
+    testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + t('ui.js.skills_test', null, 'Test');
+    testBtn.title = t('ui.js.skills_test_title', null, 'Test this skill — run it + AI judge');
     testBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       // Immediate visual feedback: previously the click looked like nothing
@@ -755,7 +758,7 @@ function renderSkillsList() {
       testBtn.dataset.busy = '1';
       testBtn.disabled = true;
       const _origHTML = testBtn.innerHTML;
-      testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + 'Starting…';
+      testBtn.innerHTML = _svg(_ICON.test, { size: 11 }) + t('ui.js.skills_starting', null, 'Starting…');
       Promise.resolve(_testSkill(card, name)).finally(() => {
         // The preview gets overwritten by _testSkill, which removes the
         // testBtn from the DOM. The cleanup below only matters if the
@@ -851,14 +854,14 @@ function renderSkillsList() {
   // "Your skills" section — show the header only when there's also a
   // built-in section to distinguish from (otherwise it's just the list).
   if (cards.length) {
-    if (showBuiltin) container.appendChild(_mkSectionHeader('user', 'Your skills', cards.length));
+    if (showBuiltin) container.appendChild(_mkSectionHeader('user', t('ui.js.skills_your_skills', null, 'Your skills'), cards.length));
     cards.forEach(c => { c.dataset.skillSection = 'user'; container.appendChild(c); });
   }
 
   // Built-in capabilities — read-only cards (the agent's native tools).
   if (showBuiltin) {
     const builtinCards = _buildBuiltinCards();
-    container.appendChild(_mkSectionHeader('builtin', 'Built-in capabilities', builtinCards.length));
+    container.appendChild(_mkSectionHeader('builtin', t('ui.js.skills_builtin_capabilities', null, 'Built-in capabilities'), builtinCards.length));
     builtinCards.forEach(c => { c.dataset.skillSection = 'builtin'; container.appendChild(c); });
   }
 
@@ -993,18 +996,18 @@ async function _expandSkillCard(card, name) {
     // so the content is in place synchronously — no async settle/jump.
     if (_mdCache.has(name)) {
       const md = _mdCache.get(name);
-      pre.textContent = md || '(empty)';
+      pre.textContent = md || t('ui.js.skills_empty', null, '(empty)');
       card._mdLoaded = true;
       card._md = md || '';
     } else {
-      pre.textContent = 'Loading…';
+      pre.textContent = t('ui.js.skills_loading', null, 'Loading…');
       try {
         const md = await _fetchSkillMarkdown(name);
-        pre.textContent = md || '(empty)';
+        pre.textContent = md || t('ui.js.skills_empty', null, '(empty)');
         card._mdLoaded = true;
         card._md = md;
       } catch (e) {
-        pre.textContent = 'Failed to load SKILL.md';
+        pre.textContent = t('ui.js.skills_load_md_failed', null, 'Failed to load SKILL.md');
       }
     }
   }
@@ -1032,7 +1035,7 @@ function _toggleSkillEdit(card, name) {
   ta.focus();
   // Flip the Edit button label to "Save".
   const editBtn = [...preview.querySelectorAll('.doclib-card-action-btn')].find(b => /Edit|Save/.test(b.textContent));
-  if (editBtn) editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save';
+  if (editBtn) editBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>' + t('ui.js.skills_save', null, 'Save');
 }
 
 async function _saveSkillEdit(card, name) {
@@ -1048,15 +1051,15 @@ async function _saveSkillEdit(card, name) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     // Refresh the cached markdown so the preload/expand show the new text.
     _mdCache.set(name, ta.value);
-    uiModule.showToast('Saved');
+    uiModule.showToast(t('ui.js.skills_saved', null, 'Saved'));
     await loadSkills();  // re-render (frontmatter changes like name/status may have changed)
   } catch (e) {
-    uiModule.showError('Save failed: ' + e.message);
+    uiModule.showError(t('ui.js.skills_save_failed', { error: e.message }, 'Save failed: {error}'));
   }
 }
 
 async function _deleteSkill(name, card = null) {
-  if (!(await uiModule.styledConfirm(`Delete skill "${name}"? This removes the SKILL.md.`, { confirmText: 'Delete', danger: true }))) return;
+  if (!(await uiModule.styledConfirm(t('ui.js.skills_delete_confirm', { name }, 'Delete skill "{name}"? This removes the SKILL.md.'), { confirmText: t('ui.js.skills_delete', null, 'Delete'), danger: true }))) return;
   // Locate the card if the caller didn't hand one over, so we can collapse it
   // away gracefully (same fade+shrink as the document library) instead of
   // re-rendering the whole list.
@@ -1075,8 +1078,8 @@ async function _deleteSkill(name, card = null) {
       setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
     }
     await loadSkills();
-    uiModule.showToast('Skill deleted');
-  } catch (e) { uiModule.showError('Delete failed: ' + e.message); }
+    uiModule.showToast(t('ui.js.skills_deleted', null, 'Skill deleted'));
+  } catch (e) { uiModule.showError(t('ui.js.skills_delete_failed', { error: e.message }, 'Delete failed: {error}')); }
 }
 
 async function _setSkillStatus(name, status) {
@@ -1087,8 +1090,8 @@ async function _setSkillStatus(name, status) {
       body: JSON.stringify({ status }),
     });
     await loadSkills();
-    uiModule.showToast(status === 'published' ? 'Skill approved' : 'Skill moved to draft');
-  } catch (e) { uiModule.showError('Update failed: ' + e.message); }
+    uiModule.showToast(status === 'published' ? t('ui.js.skills_approved', null, 'Skill approved') : t('ui.js.skills_moved_draft', null, 'Skill moved to draft'));
+  } catch (e) { uiModule.showError(t('ui.js.skills_update_failed', { error: e.message }, 'Update failed: {error}')); }
 }
 
 // ---- Test a skill (sandbox agent run + AI eval) ----
@@ -1105,15 +1108,15 @@ function _renderTestLog(logEl, verdictEl, job, card, name) {
   logEl.innerHTML = '';
   const add = (txt, cls) => { const d = document.createElement('div'); if (cls) d.className = cls; d.textContent = txt; logEl.appendChild(d); };
   for (const ev of (job.log || [])) {
-    if (ev.type === 'skill_test_start') { add('Task: ' + ev.task, 'skill-test-task'); add('Model: ' + ev.model, 'skill-test-meta'); }
-    else if (ev.type === 'agent_step') add('— round ' + ev.round + ' —', 'skill-test-round');
+    if (ev.type === 'skill_test_start') { add(t('ui.js.skills_test_task', { task: ev.task }, 'Task: {task}'), 'skill-test-task'); add(t('ui.js.skills_test_model', { model: ev.model }, 'Model: {model}'), 'skill-test-meta'); }
+    else if (ev.type === 'agent_step') add(t('ui.js.skills_test_round', { round: ev.round }, '— round {round} —'), 'skill-test-round');
     else if (ev.type === 'tool_start') add('▸ ' + ev.tool + '  ' + String(ev.command || '').slice(0, 200), 'skill-test-tool');
     else if (ev.type === 'tool_output') add(String(ev.output || '').slice(0, 500), 'skill-test-out');
     else if (ev.type === 'say') add(ev.text || '', 'skill-test-say');
-    else if (ev.type === 'evaluating') add('Evaluating run…', 'skill-test-meta');
-    else if (ev.type === 'error') add('Error: ' + (ev.error || 'run failed'), 'skill-test-err');
+    else if (ev.type === 'evaluating') add(t('ui.js.skills_test_evaluating', null, 'Evaluating run…'), 'skill-test-meta');
+    else if (ev.type === 'error') add(t('ui.js.skills_test_error', { error: ev.error || t('ui.js.skills_test_run_failed', null, 'run failed') }, 'Error: {error}'), 'skill-test-err');
   }
-  if (job.status === 'running') add('…running (you can close this — it keeps going)', 'skill-test-meta');
+  if (job.status === 'running') add(t('ui.js.skills_test_running', null, '…running (you can close this — it keeps going)'), 'skill-test-meta');
   logEl.scrollTop = logEl.scrollHeight;
   if (job.status === 'done' && job.verdict) _renderTestVerdict(verdictEl, job.verdict, card, name);
   else if (verdictEl) verdictEl.innerHTML = '';
@@ -1135,7 +1138,7 @@ async function _testSkill(card, name, force = false) {
   let job = force ? { status: 'none' } : await _fetchTestStatus(name);
 
   if (job.status === 'none') {
-    logEl.innerHTML = '<div class="skill-test-meta">Starting test…</div>';
+    logEl.innerHTML = '<div class="skill-test-meta">' + t('ui.js.skills_test_starting', null, 'Starting test…') + '</div>';
     let model = '', endpoint_url = '';
     try {
       const sm = window.sessionModule;
@@ -1147,8 +1150,8 @@ async function _testSkill(card, name, force = false) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, endpoint_url }),
       });
-      if (!res.ok) { logEl.innerHTML = '<div class="skill-test-err">Test failed: HTTP ' + res.status + '</div>'; return; }
-    } catch (e) { logEl.innerHTML = '<div class="skill-test-err">Test failed: ' + (e.message || e) + '</div>'; return; }
+      if (!res.ok) { logEl.innerHTML = '<div class="skill-test-err">' + t('ui.js.skills_test_failed', { error: 'HTTP ' + res.status }, 'Test failed: {error}') + '</div>'; return; }
+    } catch (e) { logEl.innerHTML = '<div class="skill-test-err">' + t('ui.js.skills_test_failed', { error: String(e.message || e) }, 'Test failed: {error}') + '</div>'; return; }
     job = await _fetchTestStatus(name);
   }
 
@@ -1260,8 +1263,8 @@ function _applyVerdictToHeader(card, verdict) {
       // styled like the other memory-cat-badges so it reads as a real chip.
       const span = document.createElement('span');
       span.className = 'memory-cat-badge skill-pill-verdict';
-      span.title = 'Audited: ' + verdict.replace(/_/g, ' ');
-      span.innerHTML = ICON + '<span>checked</span>';
+      span.title = t('ui.js.skills_audited_title', { verdict: verdict.replace(/_/g, ' ') }, 'Audited: {verdict}');
+      span.innerHTML = ICON + '<span>' + t('ui.js.skills_checked', null, 'checked') + '</span>';
       if (tint) {
         span.style.background = tint.bg;
         span.style.color = tint.fg;
@@ -1283,15 +1286,21 @@ function _renderTestVerdict(el, v, card, name) {
   if (!el) return;
   const verdict = (v && v.verdict) || 'unknown';
   const cls = { pass: 'ok', needs_work: 'warn', fail: 'bad', inconclusive: 'unknown' }[verdict] || 'unknown';
-  const label = { pass: 'PASS', needs_work: 'NEEDS WORK', fail: 'FAIL', inconclusive: 'INCONCLUSIVE', unknown: 'UNCLEAR' }[verdict] || 'UNCLEAR';
+  const label = {
+    pass: t('ui.js.skills_verdict_pass', null, 'PASS'),
+    needs_work: t('ui.js.skills_verdict_needs_work', null, 'NEEDS WORK'),
+    fail: t('ui.js.skills_verdict_fail', null, 'FAIL'),
+    inconclusive: t('ui.js.skills_verdict_inconclusive', null, 'INCONCLUSIVE'),
+    unknown: t('ui.js.skills_verdict_unclear', null, 'UNCLEAR'),
+  }[verdict] || t('ui.js.skills_verdict_unclear', null, 'UNCLEAR');
   const conf = v && typeof v.confidence === 'number' ? Math.round(v.confidence * 100) + '%' : '';
   const issues = Array.isArray(v && v.issues) ? v.issues : [];
   // Reflect the skill's current state: if it's already published, the button
   // confirms "Approved" (click to unpublish) rather than offering to approve.
   const isPub = card && card.dataset && card.dataset.skillStatus === 'published';
-  const approveLabel = isPub ? 'Approved' : 'Approve';
+  const approveLabel = isPub ? t('ui.js.skills_approved_btn', null, 'Approved') : t('ui.js.skills_approve', null, 'Approve');
   const approveCls = 'skill-eval-approve' + (isPub ? ' is-approved' : (verdict === 'pass' ? ' suggested' : ''));
-  const approveTitle = isPub ? 'Already approved — click to unpublish' : 'Publish — appears in the skills index';
+  const approveTitle = isPub ? t('ui.js.skills_already_approved_title', null, 'Already approved — click to unpublish') : t('ui.js.skills_publish_title', null, 'Publish — appears in the skills index');
   el.innerHTML =
     '<div class="skill-eval-head"><span class="skill-eval-badge skill-eval-' + cls + '">' + label + (conf ? ' · ' + conf : '') + '</span>' +
     '<span class="skill-eval-summary">' + esc((v && v.summary) || '') + '</span></div>' +
@@ -1299,10 +1308,10 @@ function _renderTestVerdict(el, v, card, name) {
     '<div class="doclib-card-expanded-actions skill-eval-actions-wrap">' +
       '<button class="doclib-card-text-btn doclib-card-action-btn ' + approveCls + '" data-act="approve" title="' + approveTitle + '">' + approveLabel + '</button>' +
       '<div class="doclib-action-group"><div class="doclib-action-btn-row">' +
-        '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="retry" title="Run the test again">Retry</button>' +
-        '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="copy" title="Copy the run output + verdict">Copy</button>' +
-        '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="edit">Edit</button>' +
-        '<button class="doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger" data-act="del"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>' +
+        '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="retry" title="' + t('ui.js.skills_retry_title', null, 'Run the test again') + '">' + t('ui.js.skills_retry', null, 'Retry') + '</button>' +
+        '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="copy" title="' + t('ui.js.skills_copy_title', null, 'Copy the run output + verdict') + '">' + t('ui.js.skills_copy', null, 'Copy') + '</button>' +
+        '<button class="doclib-card-text-btn doclib-card-action-btn" data-act="edit">' + t('ui.js.skills_edit', null, 'Edit') + '</button>' +
+        '<button class="doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger" data-act="del"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>' + t('ui.js.skills_delete', null, 'Delete') + '</button>' +
       '</div></div>' +
     '</div>';
   _applyVerdictToHeader(card, verdict);
@@ -1315,8 +1324,8 @@ function _renderTestVerdict(el, v, card, name) {
     const btn = el.querySelector('[data-act="approve"]');
     if (btn) {
       const pub = card.dataset.skillStatus === 'published';
-      btn.textContent = pub ? 'Approved' : 'Approve';
-      btn.title = pub ? 'Already approved — click to unpublish' : 'Publish — appears in the skills index';
+      btn.textContent = pub ? t('ui.js.skills_approved_btn', null, 'Approved') : t('ui.js.skills_approve', null, 'Approve');
+      btn.title = pub ? t('ui.js.skills_already_approved_title', null, 'Already approved — click to unpublish') : t('ui.js.skills_publish_title', null, 'Publish — appears in the skills index');
       btn.classList.toggle('is-approved', pub);
       btn.classList.toggle('suggested', !pub && verdict === 'pass');
     }
@@ -1327,9 +1336,9 @@ function _renderTestVerdict(el, v, card, name) {
   el.querySelector('[data-act="copy"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const logEl = card.querySelector('.skill-test-log');
-    const issuesTxt = issues.length ? '\nIssues:\n- ' + issues.join('\n- ') : '';
+    const issuesTxt = issues.length ? '\n' + t('ui.js.skills_issues_label', null, 'Issues:') + '\n- ' + issues.join('\n- ') : '';
     const text = (logEl ? logEl.innerText.trim() + '\n\n' : '') +
-      '=== Eval: ' + label + (conf ? ' (' + conf + ')' : '') + ' ===\n' + ((v && v.summary) || '') + issuesTxt;
+      '=== ' + t('ui.js.skills_eval_label', null, 'Eval:') + ' ' + label + (conf ? ' (' + conf + ')' : '') + ' ===\n' + ((v && v.summary) || '') + issuesTxt;
     // Shared helper falls back to execCommand on plain HTTP (navigator.clipboard
     // is unavailable in non-secure contexts, which is why the raw call failed).
     uiModule.copyToClipboard(text);
@@ -1350,17 +1359,17 @@ function _confirmAuditSkills(label) {
       overlay.className = 'modal';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box">' +
-          '<div class="modal-header"><h4>Audit Skills</h4></div>' +
+          '<div class="modal-header"><h4>' + t('ui.js.skills_audit_modal_title', null, 'Audit Skills') + '</h4></div>' +
           '<div class="modal-body">' +
             '<p id="skills-audit-confirm-msg"></p>' +
             '<label class="memory-bulk-check-all" style="margin-top:10px;display:inline-flex;align-items:center;gap:7px;">' +
               '<input type="checkbox" id="skills-audit-skip-audited" checked />' +
-              '<span>Skip already audited</span>' +
+              '<span>' + t('ui.js.skills_skip_audited', null, 'Skip already audited') + '</span>' +
             '</label>' +
           '</div>' +
           '<div class="modal-footer">' +
-            '<button id="skills-audit-confirm-cancel" class="confirm-btn confirm-btn-secondary">Cancel</button>' +
-            '<button id="skills-audit-confirm-ok" class="confirm-btn confirm-btn-primary">Audit</button>' +
+            '<button id="skills-audit-confirm-cancel" class="confirm-btn confirm-btn-secondary">' + t('ui.js.skills_cancel', null, 'Cancel') + '</button>' +
+            '<button id="skills-audit-confirm-ok" class="confirm-btn confirm-btn-primary">' + t('ui.js.skills_audit', null, 'Audit') + '</button>' +
           '</div>' +
         '</div>';
       document.body.appendChild(overlay);
@@ -1370,7 +1379,7 @@ function _confirmAuditSkills(label) {
     const skip = overlay.querySelector('#skills-audit-skip-audited');
     const okBtn = overlay.querySelector('#skills-audit-confirm-ok');
     const cancelBtn = overlay.querySelector('#skills-audit-confirm-cancel');
-    msg.textContent = `Audit ${label}? Each is tested from top to bottom, then published or moved to draft using your auto-approve confidence threshold.`;
+    msg.textContent = t('ui.js.skills_audit_confirm_msg', { label }, 'Audit {label}? Each is tested from top to bottom, then published or moved to draft using your auto-approve confidence threshold.');
     skip.checked = true;
     overlay.classList.remove('hidden');
     overlay.style.display = '';
@@ -1415,10 +1424,10 @@ async function _auditAllSkills(opts = {}) {
       .filter(Boolean);
     const names = explicitNames || visibleNames;
     const label = explicitNames
-      ? `${names.length} selected ${names.length === 1 ? 'skill' : 'skills'}`
-      : `${names.length} visible ${names.length === 1 ? 'skill' : 'skills'}`;
+      ? (names.length === 1 ? t('ui.js.skills_selected_one', null, '1 selected skill') : t('ui.js.skills_selected_many', { count: names.length }, '{count} selected skills'))
+      : (names.length === 1 ? t('ui.js.skills_visible_one', null, '1 visible skill') : t('ui.js.skills_visible_many', { count: names.length }, '{count} visible skills'));
     if (!names.length) {
-      uiModule.showToast(explicitNames ? 'No selected skills to audit' : 'No visible skills to audit');
+      uiModule.showToast(explicitNames ? t('ui.js.skills_no_selected_audit', null, 'No selected skills to audit') : t('ui.js.skills_no_visible_audit', null, 'No visible skills to audit'));
       return;
     }
     const confirmed = await _confirmAuditSkills(label);
@@ -1428,9 +1437,9 @@ async function _auditAllSkills(opts = {}) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scope: explicitNames ? 'selected' : 'all', names, skip_audited: confirmed.skipAudited }),
       });
-      if (!r.ok) { uiModule.showError('Audit failed to start (HTTP ' + r.status + ')'); return; }
+      if (!r.ok) { uiModule.showError(t('ui.js.skills_audit_start_failed', { status: r.status }, 'Audit failed to start (HTTP {status})')); return; }
       st = await _fetchAuditStatus();
-    } catch (e) { uiModule.showError('Audit failed: ' + (e.message || e)); return; }
+    } catch (e) { uiModule.showError(t('ui.js.skills_audit_failed', { error: String(e.message || e) }, 'Audit failed: {error}')); return; }
     _auditSeenResults = 0;
   }
   panel.classList.remove('hidden');
@@ -1543,21 +1552,23 @@ function _renderAuditPanel(panel, st) {
   const running = st.status === 'running';
   const cancelled = st.status === 'cancelled';
   const head = running
-    ? `Auditing ${done}/${total}${st.current ? ' — ' + esc(st.current) : ''}`
+    ? t('ui.js.skills_auditing', { done, total }, 'Auditing {done}/{total}') + (st.current ? ' — ' + esc(st.current) : '')
     : cancelled
-      ? `Audit cancelled — ${done}/${total}`
-    : `Audit complete — ${total} skill${total === 1 ? '' : 's'}`;
+      ? t('ui.js.skills_audit_cancelled', { done, total }, 'Audit cancelled — {done}/{total}')
+    : (total === 1
+      ? t('ui.js.skills_audit_complete_one', null, 'Audit complete — 1 skill')
+      : t('ui.js.skills_audit_complete_many', { total }, 'Audit complete — {total} skills'));
   panel.innerHTML =
     '<div class="skills-audit-head">' +
       '<span class="skills-audit-title-wrap" style="display:inline-flex;align-items:center;gap:8px;">' +
         '<span class="skills-audit-title">' + head + '</span>' +
       '</span>' +
       (running
-        ? '<button class="memory-toolbar-btn" data-act="audit-cancel">Cancel</button>'
-        : '<button class="memory-toolbar-btn" data-act="audit-close">Close</button>') +
+        ? '<button class="memory-toolbar-btn" data-act="audit-cancel">' + t('ui.js.skills_cancel', null, 'Cancel') + '</button>'
+        : '<button class="memory-toolbar-btn" data-act="audit-close">' + t('ui.js.skills_close', null, 'Close') + '</button>') +
     '</div>' +
     '<div class="skills-audit-bar"><div class="skills-audit-fill" style="width:' + pct + '%"></div></div>' +
-    (summary ? '<div class="skills-audit-summary">' + esc(summary) + (st.teacher ? ' · teacher: ' + esc(st.teacher) : '') + '</div>' : '') +
+    (summary ? '<div class="skills-audit-summary">' + esc(summary) + (st.teacher ? ' · ' + t('ui.js.skills_teacher_label', null, 'teacher:') + ' ' + esc(st.teacher) : '') + '</div>' : '') +
     '<div class="skills-audit-log">' + (st.log || []).slice(-40).map(l => '<div>' + esc(l) + '</div>').join('') + '</div>';
   // Whirlpool sits next to the title while the audit is actually running.
   if (running) {
@@ -1572,7 +1583,7 @@ function _renderAuditPanel(panel, st) {
   if (cancel) cancel.addEventListener('click', async (e) => {
     e.stopPropagation();
     cancel.disabled = true;
-    cancel.textContent = 'Cancelling...';
+    cancel.textContent = t('ui.js.skills_cancelling', null, 'Cancelling...');
     try {
       await fetch(`${API}/api/skills/audit-all/cancel`, { method: 'POST', credentials: 'same-origin' });
       const s = await _fetchAuditStatus();
@@ -1580,7 +1591,7 @@ function _renderAuditPanel(panel, st) {
       _highlightAuditCard(null);
     } catch {
       cancel.disabled = false;
-      cancel.textContent = 'Cancel';
+      cancel.textContent = t('ui.js.skills_cancel', null, 'Cancel');
     }
   });
   const close = panel.querySelector('[data-act="audit-close"]');
@@ -1597,7 +1608,7 @@ function _enterSelectMode() {
   const bar = document.getElementById('skills-bulk-bar');
   const btn = document.getElementById('skills-select-btn');
   if (bar) bar.classList.remove('hidden');
-  if (btn) { btn.classList.add('active'); btn.textContent = 'Cancel'; }
+  if (btn) { btn.classList.add('active'); btn.textContent = t('ui.js.skills_cancel', null, 'Cancel'); }
   _updateBulkBar();
   renderSkillsList();
 }
@@ -1609,7 +1620,7 @@ function _exitSelectMode() {
   const btn = document.getElementById('skills-select-btn');
   const all = document.getElementById('skills-select-all');
   if (bar) bar.classList.add('hidden');
-  if (btn) { btn.classList.remove('active'); btn.textContent = 'Select'; }
+  if (btn) { btn.classList.remove('active'); btn.textContent = t('ui.js.skills_select', null, 'Select'); }
   if (all) all.checked = false;
   renderSkillsList();
 }
@@ -1620,15 +1631,17 @@ function _updateBulkBar() {
   const delNonPassingBtn = document.getElementById('skills-bulk-delete-nonpassing');
   const pubBtn = document.getElementById('skills-bulk-publish');
   const auditBtn = document.getElementById('skills-bulk-audit');
-  if (countEl) countEl.textContent = `${_selectedNames.size} Selected`;
+  if (countEl) countEl.textContent = t('ui.js.skills_n_selected', { count: _selectedNames.size }, '{count} Selected');
   if (delBtn) delBtn.disabled = _selectedNames.size === 0;
   if (auditBtn) auditBtn.disabled = _selectedNames.size === 0;
   if (delNonPassingBtn) {
     const count = _selectedNonPassingSkills().length;
     delNonPassingBtn.disabled = count === 0;
     delNonPassingBtn.title = count
-      ? `Delete ${count} selected non-passing ${count === 1 ? 'skill' : 'skills'}`
-      : 'No selected non-passing skills';
+      ? (count === 1
+        ? t('ui.js.skills_delete_nonpassing_one', null, 'Delete 1 selected non-passing skill')
+        : t('ui.js.skills_delete_nonpassing_many', { count }, 'Delete {count} selected non-passing skills'))
+      : t('ui.js.skills_no_nonpassing', null, 'No selected non-passing skills');
   }
   // Approve is only meaningful when at least one selected skill is still a draft.
   const anyDraft = [..._selectedNames].some(n => {
@@ -1652,8 +1665,10 @@ async function _bulkDelete() {
   if (!_selectedNames.size) return;
   const n = _selectedNames.size;
   const ok = await uiModule.styledConfirm(
-    `Delete ${n} ${n === 1 ? 'skill' : 'skills'}? This removes their SKILL.md files.`,
-    { confirmText: 'Delete', danger: true }
+    n === 1
+      ? t('ui.js.skills_bulk_delete_confirm_one', null, 'Delete 1 skill? This removes its SKILL.md file.')
+      : t('ui.js.skills_bulk_delete_confirm_many', { count: n }, 'Delete {count} skills? This removes their SKILL.md files.'),
+    { confirmText: t('ui.js.skills_delete', null, 'Delete'), danger: true }
   );
   if (!ok) return;
   let deleted = 0;
@@ -1674,7 +1689,7 @@ async function _bulkDelete() {
   if (deletedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Deleted ${deleted}`);
+  uiModule.showToast(t('ui.js.skills_deleted_n', { count: deleted }, 'Deleted {count}'));
 }
 
 async function _loadSkillApprovalThreshold() {
@@ -1704,14 +1719,16 @@ function _selectedNonPassingSkills() {
 async function _bulkDeleteNonPassing() {
   const targets = _selectedNonPassingSkills();
   if (!targets.length) {
-    uiModule.showToast('No selected non-passing skills');
+    uiModule.showToast(t('ui.js.skills_no_nonpassing', null, 'No selected non-passing skills'));
     return;
   }
   const thresholdPct = Math.round(_skillApprovalThreshold * 100);
   const names = targets.map(sk => sk.name || sk.id).filter(Boolean);
   const ok = await uiModule.styledConfirm(
-    `Delete ${names.length} selected non-passing ${names.length === 1 ? 'skill' : 'skills'}? This removes duplicates, generic/irrelevant skills, failed audits, and anything below ${thresholdPct}%.`,
-    { confirmText: 'Delete non passing', danger: true }
+    names.length === 1
+      ? t('ui.js.skills_delete_nonpassing_confirm_one', { threshold: thresholdPct }, 'Delete 1 selected non-passing skill? This removes duplicates, generic/irrelevant skills, failed audits, and anything below {threshold}%.')
+      : t('ui.js.skills_delete_nonpassing_confirm_many', { count: names.length, threshold: thresholdPct }, 'Delete {count} selected non-passing skills? This removes duplicates, generic/irrelevant skills, failed audits, and anything below {threshold}%.'),
+    { confirmText: t('ui.js.skills_delete_nonpassing_btn', null, 'Delete non passing'), danger: true }
   );
   if (!ok) return;
   let deleted = 0;
@@ -1733,7 +1750,7 @@ async function _bulkDeleteNonPassing() {
   if (deletedNames.length) await new Promise(resolve => setTimeout(resolve, 320));
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Deleted ${deleted} non-passing`);
+  uiModule.showToast(t('ui.js.skills_deleted_nonpassing', { count: deleted }, 'Deleted {count} non-passing'));
 }
 
 async function _bulkApprove() {
@@ -1753,7 +1770,7 @@ async function _bulkApprove() {
   }
   _exitSelectMode();
   await loadSkills();
-  uiModule.showToast(`Published ${published}`);
+  uiModule.showToast(t('ui.js.skills_published_n', { count: published }, 'Published {count}'));
 }
 
 async function _bulkAudit() {
@@ -1774,7 +1791,7 @@ async function _showSkillSource(name) {
     const data = await res.json();
     md = data.markdown || '';
   } catch (e) {
-    uiModule.showError('Failed to load SKILL.md');
+    uiModule.showError(t('ui.js.skills_load_md_failed', null, 'Failed to load SKILL.md'));
     return;
   }
 
@@ -1787,12 +1804,12 @@ async function _showSkillSource(name) {
       <div class="modal-header">
         <h4>SKILL.md — <code>${esc(name)}</code></h4>
         <span style="flex:1"></span>
-        <button class="memory-toolbar-btn" id="skill-save-btn">Save</button>
+        <button class="memory-toolbar-btn" id="skill-save-btn">${t('ui.js.skills_save', null, 'Save')}</button>
         <button class="close-btn" id="skill-md-close">✖</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:8px">
         <textarea id="skill-md-textarea" spellcheck="false" style="flex:1;min-height:50vh;width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);box-sizing:border-box"></textarea>
-        <p class="memory-desc" style="margin:0">Edit the frontmatter and body directly. Save replaces the file via PUT /api/skills/{name}.</p>
+        <p class="memory-desc" style="margin:0">${t('ui.js.skills_md_edit_desc', null, 'Edit the frontmatter and body directly. Save replaces the file.')}</p>
       </div>
     </div>
   `;
@@ -1814,11 +1831,11 @@ async function _showSkillSource(name) {
         body: JSON.stringify({ markdown: ta.value }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      uiModule.showToast('Saved');
+      uiModule.showToast(t('ui.js.skills_saved', null, 'Saved'));
       wrap.remove();
       await loadSkills();
     } catch (e) {
-      uiModule.showError('Save failed: ' + e.message);
+      uiModule.showError(t('ui.js.skills_save_failed', { error: e.message }, 'Save failed: {error}'));
     }
   });
 }
@@ -1827,7 +1844,7 @@ async function importSkillFromUrl() {
   const input = document.getElementById('skill-import-url');
   const url = (input?.value || '').trim();
   if (!url) {
-    uiModule.showError('Paste a GitHub or skills.sh URL first');
+    uiModule.showError(t('ui.js.skills_paste_url_first', null, 'Paste a GitHub or skills.sh URL first'));
     return;
   }
   const btn = document.getElementById('skill-import-url-btn');
@@ -1843,10 +1860,10 @@ async function importSkillFromUrl() {
     if (input) input.value = '';
     await loadSkills();
     const name = data.skill?.name || 'skill';
-    uiModule.showToast(`Imported ${name} (${data.files || 1} file(s))`);
+    uiModule.showToast(t('ui.js.skills_imported', { name, files: data.files || 1 }, 'Imported {name} ({files} file(s))'));
     if (name) openSkill(name);
   } catch (err) {
-    uiModule.showError('Import failed: ' + err.message);
+    uiModule.showError(t('ui.js.skills_import_failed', { error: err.message }, 'Import failed: {error}'));
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -1865,7 +1882,7 @@ async function addSkill() {
   const category = document.getElementById('new-skill-category')?.value.trim() || 'general';
 
   if (!description && !name) {
-    uiModule.showError('Description (or name) is required');
+    uiModule.showError(t('ui.js.skills_description_required', null, 'Description (or name) is required'));
     return;
   }
   const procedure = procedureRaw
@@ -1893,9 +1910,9 @@ async function addSkill() {
      'new-skill-category']
       .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
     await loadSkills();
-    uiModule.showToast('Skill added (draft)');
+    uiModule.showToast(t('ui.js.skills_added_draft', null, 'Skill added (draft)'));
   } catch (err) {
-    uiModule.showError('Failed to add skill: ' + err.message);
+    uiModule.showError(t('ui.js.skills_add_failed', { error: err.message }, 'Failed to add skill: {error}'));
   }
 }
 

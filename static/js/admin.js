@@ -6,6 +6,7 @@ import settingsModule from './settings.js';
 import { providerLogo } from './providers.js';
 import { sortModelObjects } from './modelSort.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+import { t } from './i18n.js';
 
 let initialized = false;
 let modalEl = null;
@@ -20,23 +21,27 @@ function esc(s) { return uiModule.esc(s); }
 /* ═══════════════════════════════════════════
    USERS TAB
    ═══════════════════════════════════════════ */
-const PRIV_LABELS = {
-  can_use_agent: 'Agent mode',
-  can_use_browser: 'Browser automation',
-  can_use_bash: 'Shell / Python / Files',
-  can_use_documents: 'Document editor',
-  can_use_research: 'Deep research',
-  can_generate_images: 'Image generation',
-  can_manage_memory: 'Memory & skills',
-};
+// Resolved lazily (function, not a frozen object): admin.js is imported at
+// page load, before initI18n() has fetched the locale JSON, so evaluating
+// t() at module top-level would freeze the English fallback even for pt/es
+// users. Calling it at render time picks up the active locale.
+const PRIV_LABELS = () => ({
+  can_use_agent: t('ui.js.admin_priv_agent', null, 'Agent mode'),
+  can_use_browser: t('ui.js.admin_priv_browser', null, 'Browser automation'),
+  can_use_bash: t('ui.js.admin_priv_bash', null, 'Shell / Python / Files'),
+  can_use_documents: t('ui.js.admin_priv_documents', null, 'Document editor'),
+  can_use_research: t('ui.js.admin_priv_research', null, 'Deep research'),
+  can_generate_images: t('ui.js.admin_priv_images', null, 'Image generation'),
+  can_manage_memory: t('ui.js.admin_priv_memory', null, 'Memory & skills'),
+});
 
 async function loadUsers() {
   const list = el('adm-userList');
   try {
     const res = await fetch('/api/auth/users', { credentials: 'same-origin' });
-    if (res.status === 401 || res.status === 403) { list.innerHTML = '<div class="admin-empty">Access denied</div>'; return; }
+    if (res.status === 401 || res.status === 403) { list.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_access_denied', null, 'Access denied') + '</div>'; return; }
     const data = await res.json();
-    if (!data.users || data.users.length === 0) { list.innerHTML = '<div class="admin-empty">No users found</div>'; return; }
+    if (!data.users || data.users.length === 0) { list.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_no_users', null, 'No users found') + '</div>'; return; }
     list.innerHTML = '';
     data.users.forEach(u => {
       const row = document.createElement('div');
@@ -51,12 +56,12 @@ async function loadUsers() {
           <div style="width:28px;height:28px;border-radius:50%;background:color-mix(in srgb, var(--accent) 20%, var(--panel));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;color:var(--accent);">${esc(initial)}</div>
           <div>
             <span class="admin-user-name">${esc(u.username)}</span>
-            ${u.is_admin ? '<span class="admin-badge" style="margin-left:6px;">ADMIN</span>' : '<span style="font-size:10px;opacity:0.4;display:block;">Click to manage privileges</span>'}
+            ${u.is_admin ? '<span class="admin-badge" style="margin-left:6px;">' + t('ui.js.admin_badge_admin', null, 'ADMIN') + '</span>' : '<span style="font-size:10px;opacity:0.4;display:block;">' + t('ui.js.admin_click_manage_privileges', null, 'Click to manage privileges') + '</span>'}
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
-          ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
+          <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">${t('ui.js.admin_rename', null, 'Rename')}</button>
+          ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">${t('ui.js.admin_remove', null, 'Remove')}</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
         </div>
       `;
@@ -69,8 +74,8 @@ async function loadUsers() {
         privPanel.style.cssText = 'padding:8px 0 4px;border-top:1px solid var(--border);margin-top:8px;';
 
         // Boolean toggles
-        let html = '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin-bottom:4px;">Features</div>';
-        for (const [key, label] of Object.entries(PRIV_LABELS)) {
+        let html = '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin-bottom:4px;">' + t('ui.js.admin_features_header', null, 'Features') + '</div>';
+        for (const [key, label] of Object.entries(PRIV_LABELS())) {
           const checked = u.privileges && u.privileges[key] ? 'checked' : '';
           html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
             <span style="font-size:12px;">${label}</span>
@@ -78,12 +83,12 @@ async function loadUsers() {
           </div>`;
         }
         // Rate limit
-        html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin:10px 0 4px;">Limits</div>';
+        html += '<div style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;opacity:0.35;font-weight:600;margin:10px 0 4px;">' + t('ui.js.admin_limits_header', null, 'Limits') + '</div>';
         const maxMsg = (u.privileges && u.privileges.max_messages_per_day) || 0;
         html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
           <div>
-            <span style="font-size:12px;">Daily message limit</span>
-            <div style="font-size:10px;opacity:0.4;">0 = no limit</div>
+            <span style="font-size:12px;">${t('ui.js.admin_daily_limit', null, 'Daily message limit')}</span>
+            <div style="font-size:10px;opacity:0.4;">${t('ui.js.admin_zero_no_limit', null, '0 = no limit')}</div>
           </div>
           <input type="number" min="0" value="${maxMsg}" data-priv="max_messages_per_day" data-user="${esc(u.username)}" style="width:70px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:12px;text-align:center;">
         </div>`;
@@ -96,15 +101,15 @@ async function loadUsers() {
         const blockAllModels = !!(u.privileges && u.privileges.block_all_models);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-size:12px;">Allowed models</span>
+            <span style="font-size:12px;">${t('ui.js.admin_allowed_models', null, 'Allowed models')}</span>
             <div style="display:flex;gap:8px;">
-              <a href="#" class="priv-models-all" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">All</a>
-              <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
+              <a href="#" class="priv-models-all" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">${t('ui.js.admin_all', null, 'All')}</a>
+              <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">${t('ui.js.admin_none', null, 'None')}</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${blockAllModels ? 'No models allowed' : (!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed'))}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${blockAllModels ? t('ui.js.admin_no_models_allowed', null, 'No models allowed') : (!modelsRestricted ? t('ui.js.admin_all_models_allowed', null, 'All models allowed (no restrictions)') : (allowedSet.size === 0 ? t('ui.js.admin_no_models_allowed', null, 'No models allowed') : t('ui.js.admin_n_models_allowed', { count: allowedSet.size }, '{count} model(s) allowed')))}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
-            <span style="opacity:0.4;font-size:11px;">Loading models...</span>
+            <span style="opacity:0.4;font-size:11px;">${t('ui.js.admin_loading_models', null, 'Loading models...')}</span>
           </div>
         </div>`;
         privPanel.innerHTML = html;
@@ -143,7 +148,7 @@ async function loadUsers() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ [key]: value }),
               });
-            } catch (e) { uiModule.showError('Failed to update privilege'); }
+            } catch (e) { uiModule.showError(t('ui.js.admin_priv_update_failed', null, 'Failed to update privilege')); }
           };
           if (input.type === 'checkbox') input.addEventListener('change', handler);
           else input.addEventListener('change', handler);
@@ -156,10 +161,10 @@ async function loadUsers() {
         renameBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const oldUsername = renameBtn.dataset.admRenameUser;
-          const next = await uiModule.styledPrompt(`Rename "${oldUsername}"`, {
+          const next = await uiModule.styledPrompt(t('ui.js.admin_rename_user_title', { name: oldUsername }, 'Rename "{name}"'), {
             defaultValue: oldUsername,
-            placeholder: 'New username',
-            confirmText: 'Rename',
+            placeholder: t('ui.js.admin_new_username', null, 'New username'),
+            confirmText: t('ui.js.admin_rename', null, 'Rename'),
           });
           const username = (next || '').trim();
           if (!username || username === oldUsername) return;
@@ -172,7 +177,7 @@ async function loadUsers() {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-              uiModule.showError(data.detail || 'Failed to rename user');
+              uiModule.showError(data.detail || t('ui.js.admin_rename_failed', null, 'Failed to rename user'));
               return;
             }
             if (data.renamed_self) {
@@ -181,7 +186,7 @@ async function loadUsers() {
             }
             loadUsers();
           } catch (err) {
-            uiModule.showError('Failed to rename user');
+            uiModule.showError(t('ui.js.admin_rename_failed', null, 'Failed to rename user'));
           }
         });
       }
@@ -192,16 +197,16 @@ async function loadUsers() {
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const username = delBtn.dataset.admDelUser;
-          if (!await uiModule.styledConfirm(`Remove user "${username}"?`, { confirmText: 'Remove', danger: true })) return;
+          if (!await uiModule.styledConfirm(t('ui.js.admin_remove_user_confirm', { name: username }, 'Remove user "{name}"?'), { confirmText: t('ui.js.admin_remove', null, 'Remove'), danger: true })) return;
           const res = await fetch('/api/auth/users', { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
           if (res.ok) loadUsers();
-          else uiModule.showError('Failed to delete user');
+          else uiModule.showError(t('ui.js.admin_delete_user_failed', null, 'Failed to delete user'));
         });
       }
 
       list.appendChild(row);
     });
-  } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
+  } catch (e) { list.innerHTML = '<div class="admin-error">' + t('ui.js.admin_load_users_failed', null, 'Failed to load users') + '</div>'; }
 }
 
 async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockAllModels, privPanel) {
@@ -223,7 +228,7 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
       });
     });
     if (!allModels.length) {
-      listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">No models available</span>';
+      listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">' + t('ui.js.admin_no_models_available', null, 'No models available') + '</span>';
       return;
     }
     let restricted = modelsRestricted;
@@ -252,17 +257,17 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
         restricted = false;
         blockAll = false;
         value = [];
-        hintText = 'All models allowed (no restrictions)';
+        hintText = t('ui.js.admin_all_models_allowed', null, 'All models allowed (no restrictions)');
       } else if (checked.length === 0) {
         restricted = true;
         blockAll = true;
         value = [];
-        hintText = 'No models allowed';
+        hintText = t('ui.js.admin_no_models_allowed', null, 'No models allowed');
       } else {
         restricted = true;
         blockAll = false;
         value = checked;
-        hintText = value.length + ' model(s) allowed';
+        hintText = t('ui.js.admin_n_models_allowed', { count: value.length }, '{count} model(s) allowed');
       }
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
       if (hint) hint.textContent = hintText;
@@ -286,7 +291,7 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockA
       _saveModels();
     });
   } catch (e) {
-    listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">Failed to load models</span>';
+    listEl.innerHTML = '<span style="opacity:0.4;font-size:11px;">' + t('ui.js.admin_load_models_failed', null, 'Failed to load models') + '</span>';
   }
 }
 
@@ -312,15 +317,15 @@ function initAddUser() {
     const username = el('adm-newUsername').value.trim();
     const password = el('adm-newPassword').value;
     const is_admin = el('adm-newIsAdmin').checked;
-    if (!username) { msg.textContent = 'Username required'; msg.className = 'admin-error'; return; }
-    if (password.length < 8) { msg.textContent = 'Password must be at least 8 characters'; msg.className = 'admin-error'; return; }
+    if (!username) { msg.textContent = t('ui.js.admin_username_required', null, 'Username required'); msg.className = 'admin-error'; return; }
+    if (password.length < 8) { msg.textContent = t('ui.js.admin_password_min', null, 'Password must be at least 8 characters'); msg.className = 'admin-error'; return; }
     el('adm-addBtn').disabled = true;
     try {
       const res = await fetch('/api/auth/users', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, is_admin }) });
       const data = await res.json();
-      if (res.ok) { msg.textContent = 'User created'; msg.className = 'admin-success'; el('adm-newUsername').value = ''; el('adm-newPassword').value = ''; el('adm-newIsAdmin').checked = false; loadUsers(); }
-      else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+      if (res.ok) { msg.textContent = t('ui.js.admin_user_created', null, 'User created'); msg.className = 'admin-success'; el('adm-newUsername').value = ''; el('adm-newPassword').value = ''; el('adm-newIsAdmin').checked = false; loadUsers(); }
+      else { msg.textContent = data.detail || t('ui.js.admin_failed', null, 'Failed'); msg.className = 'admin-error'; }
+    } catch (e) { msg.textContent = t('ui.js.admin_request_failed', null, 'Request failed'); msg.className = 'admin-error'; }
     el('adm-addBtn').disabled = false;
   });
 }
@@ -422,9 +427,9 @@ async function loadEndpoints() {
       try { data = await res.json(); } catch { data = []; }
     }
     if (!Array.isArray(data) || data.length === 0) {
-      const empty = '<div class="admin-empty">None</div>';
+      const empty = '<div class="admin-empty">' + t('ui.js.admin_none_empty', null, 'None') + '</div>';
       if (listLocal) listLocal.innerHTML = empty;
-      if (listApi) listApi.innerHTML = '<div class="admin-empty">None</div>';
+      if (listApi) listApi.innerHTML = empty;
       if (listLegacy) listLegacy.innerHTML = empty;
       return;
     }
@@ -436,34 +441,34 @@ async function loadEndpoints() {
       // un-hide them. Gate on the total instead.
       const hasModels = ep.online && totalCount > 0;
       const statusBadge = ep.status === 'empty'
-        ? '<span class="admin-badge">no models</span>'
+        ? '<span class="admin-badge">' + t('ui.js.admin_no_models_badge', null, 'no models') + '</span>'
         : ep.online
-          ? `<span class="admin-badge">${visibleCount}/${totalCount} models enabled</span>`
-          : '<span class="admin-badge admin-badge-off">offline</span>';
+          ? `<span class="admin-badge">${t('ui.js.admin_models_enabled_badge', { enabled: visibleCount, total: totalCount }, '{enabled}/{total} models enabled')}</span>`
+          : '<span class="admin-badge admin-badge-off">' + t('ui.js.admin_offline_badge', null, 'offline') + '</span>';
       const justAddedClass = (_recentlyAddedEpId && String(ep.id) === _recentlyAddedEpId) ? ' adm-ep-just-added' : '';
       const category = ep.category || (_isLocalEndpoint(ep.base_url) ? 'local' : 'api');
       const kindLabel = ep.endpoint_kind && ep.endpoint_kind !== 'auto' ? ep.endpoint_kind.toUpperCase() : '';
       const keyLabel = ep.has_key
-        ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
+        ? (ep.api_key_fingerprint ? ' (' + t('ui.js.admin_key_fingerprint', { fingerprint: esc(ep.api_key_fingerprint) }, 'key {fingerprint}') + ')' : ' (' + t('ui.js.admin_key_set', null, 'key set') + ')')
         : '';
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
             <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
               <span class="admin-user-name">${esc(ep.name)}</span>
-              ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">Image</span>' : ''}
+              ${ep.model_type === 'image' ? '<span class="admin-badge" style="background:color-mix(in srgb, var(--accent) 20%, transparent);color:var(--accent);">' + t('ui.js.admin_image_badge', null, 'Image') + '</span>' : ''}
               ${kindLabel ? `<span class="admin-badge">${esc(kindLabel)}</span>` : ''}
               ${statusBadge}
-              ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'}
-              ${hasModels ? '<span style="font-size:10px;opacity:0.4;">Click to manage models</span>' : ''}
+              ${ep.is_enabled ? '' : '<span class="admin-badge admin-badge-off">' + t('ui.js.admin_disabled_badge', null, 'disabled') + '</span>'}
+              ${hasModels ? '<span style="font-size:10px;opacity:0.4;">' + t('ui.js.admin_click_manage_models', null, 'Click to manage models') + '</span>' : ''}
             </div>
             <div style="display:flex;gap:4px;align-items:center;">
-              <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? 'Disable' : 'Enable'}</button>
-              <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">Delete</button>
+              <button class="admin-btn-sm" data-adm-toggle-ep="${ep.id}">${ep.is_enabled ? t('ui.js.admin_disable', null, 'Disable') : t('ui.js.admin_enable', null, 'Enable')}</button>
+              <button class="admin-btn-delete" data-adm-del-ep="${ep.id}" data-adm-ep-online="${ep.online ? '1' : '0'}">${t('ui.js.admin_delete', null, 'Delete')}</button>
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
           </div>
-          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
+          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="${t('ui.js.admin_copy_url', null, 'Copy URL')}" aria-label="${t('ui.js.admin_copy_url', null, 'Copy URL')}" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -532,11 +537,11 @@ async function loadEndpoints() {
             var depData = await depRes.json();
             deps = depData.dependents || [];
           } catch (e) { /* proceed without warning */ }
-          var msg = 'Delete this endpoint?';
+          var msg = t('ui.js.admin_delete_endpoint_confirm', null, 'Delete this endpoint?');
           if (deps.length) {
-            msg += '\n\nThe following settings use this endpoint and will be reset:\n— ' + deps.join('\n— ');
+            msg += '\n\n' + t('ui.js.admin_endpoint_dependents', null, 'The following settings use this endpoint and will be reset:') + '\n— ' + deps.join('\n— ');
           }
-          if (!await uiModule.styledConfirm(msg, { confirmText: 'Delete', danger: true })) return;
+          if (!await uiModule.styledConfirm(msg, { confirmText: t('ui.js.admin_delete', null, 'Delete'), danger: true })) return;
         }
         // Optimistic: remove from UI immediately
         const row = btn.closest('[data-adm-ep-id]');
@@ -579,7 +584,7 @@ async function loadEndpoints() {
           let _modelsSpin = null;
           const _ld = document.createElement('span');
           _ld.style.cssText = 'opacity:0.55;font-size:11px;display:inline-flex;align-items:center;gap:8px;';
-          _ld.appendChild(document.createTextNode('Loading models…'));
+          _ld.appendChild(document.createTextNode(t('ui.js.admin_loading_models_ellipsis', null, 'Loading models…')));
           try {
             const _sp = (await import('./spinner.js')).default;
             _modelsSpin = _sp.createWhirlpool(14);
@@ -595,7 +600,7 @@ async function loadEndpoints() {
             const attachRefresh = () => {
               panel.querySelector(`[data-ep-refresh-models="${epId}"]`)?.addEventListener('click', async (e) => {
                 e.preventDefault();
-                panel.innerHTML = _loadingHtml('Refreshing models...');
+                panel.innerHTML = _loadingHtml(t('ui.js.admin_refreshing_models', null, 'Refreshing models...'));
                 try {
                   const res = await fetch(`/api/model-endpoints/${epId}/models?refresh=true&refresh_timeout=60`, { credentials: 'same-origin' });
                   const refreshWarning = res.headers.get('X-Model-Refresh-Warning') || '';
@@ -604,32 +609,32 @@ async function loadEndpoints() {
                   renderModels(refreshedModels, refreshWarning);
                   if (refreshWarning && uiModule?.showToast) uiModule.showToast(refreshWarning, 6000);
                 } catch (_) {
-                  renderModels(sortedModels, 'Model refresh failed; kept cached models.');
+                  renderModels(sortedModels, t('ui.js.admin_model_refresh_failed', null, 'Model refresh failed; kept cached models.'));
                 }
               });
             };
             if (!sortedModels.length) {
               panel.innerHTML = `<div class="mcp-tools-header">
-                <span>Models</span>
+                <span>${t('ui.js.admin_models_header', null, 'Models')}</span>
                 <span style="display:flex;gap:8px;align-items:center;">
-                  <span class="mcp-tools-count">0/0 enabled</span>
-                  <a href="#" data-ep-refresh-models="${epId}">Refresh</a>
+                  <span class="mcp-tools-count">${t('ui.js.admin_n_enabled', { enabled: 0, total: 0 }, '{enabled}/{total} enabled')}</span>
+                  <a href="#" data-ep-refresh-models="${epId}">${t('ui.js.admin_refresh', null, 'Refresh')}</a>
                 </span>
-              </div>${warningHtml}<span style="opacity:0.5;font-size:11px;">No models</span>`;
+              </div>${warningHtml}<span style="opacity:0.5;font-size:11px;">${t('ui.js.admin_no_models', null, 'No models')}</span>`;
               attachRefresh();
               return;
             }
             const hiddenSet = new Set(sortedModels.filter(m => m.is_hidden).map(m => m.id));
             const showSearch = sortedModels.length >= 8;
             panel.innerHTML = `<div class="mcp-tools-header">
-              <span>Models</span>
+              <span>${t('ui.js.admin_models_header', null, 'Models')}</span>
               <span style="display:flex;gap:8px;align-items:center;">
-                <span class="mcp-tools-count">${sortedModels.length - hiddenSet.size}/${sortedModels.length} enabled</span>
-                <a href="#" data-ep-refresh-models="${epId}">Refresh</a>
-                <a href="#" data-ep-select-all="${epId}">All</a>
-                <a href="#" data-ep-select-none="${epId}">None</a>
+                <span class="mcp-tools-count">${t('ui.js.admin_n_enabled', { enabled: sortedModels.length - hiddenSet.size, total: sortedModels.length }, '{enabled}/{total} enabled')}</span>
+                <a href="#" data-ep-refresh-models="${epId}">${t('ui.js.admin_refresh', null, 'Refresh')}</a>
+                <a href="#" data-ep-select-all="${epId}">${t('ui.js.admin_all', null, 'All')}</a>
+                <a href="#" data-ep-select-none="${epId}">${t('ui.js.admin_none', null, 'None')}</a>
               </span>
-            </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
+            </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="${t('ui.js.admin_search_n_models', { count: sortedModels.length }, 'Search {count} models...')}" data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
               `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
                 <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
                 <span class="adm-check-dot" aria-hidden="true"></span>
@@ -668,12 +673,12 @@ async function loadEndpoints() {
             const models = await res.json();
             _stopSpin();
             renderModels(models);
-          } catch (e) { _stopSpin(); panel.innerHTML = '<span class="admin-error" style="font-size:11px;">Failed to load models</span>'; }
+          } catch (e) { _stopSpin(); panel.innerHTML = '<span class="admin-error" style="font-size:11px;">' + t('ui.js.admin_load_models_failed', null, 'Failed to load models') + '</span>'; }
         }
       });
     });
   } catch (e) {
-    const err = '<div class="admin-error">Failed to load</div>';
+    const err = '<div class="admin-error">' + t('ui.js.admin_load_failed', null, 'Failed to load') + '</div>';
     [listLocal, listApi, listLegacy].forEach(c => { if (c) c.innerHTML = err; });
   }
 }
@@ -692,11 +697,11 @@ async function _saveEpModelState(epId, panel) {
       body: JSON.stringify({ hidden }),
     });
     const countLabel = panel.querySelector('.mcp-tools-count');
-    if (countLabel) countLabel.textContent = `${total - hidden.length}/${total} enabled`;
+    if (countLabel) countLabel.textContent = t('ui.js.admin_n_enabled', { enabled: total - hidden.length, total }, '{enabled}/{total} enabled');
     const row = panel.closest('[data-adm-ep-id]');
     if (row) {
       const badge = row.querySelector('.admin-badge');
-      if (badge && !badge.classList.contains('admin-badge-off')) badge.textContent = `${total - hidden.length}/${total} models enabled`;
+      if (badge && !badge.classList.contains('admin-badge-off')) badge.textContent = t('ui.js.admin_models_enabled_badge', { enabled: total - hidden.length, total }, '{enabled}/{total} models enabled');
     }
     if (settingsModule && typeof settingsModule.refreshAiModelEndpoints === 'function') {
       settingsModule.refreshAiModelEndpoints();
@@ -741,12 +746,12 @@ function initEndpointForm() {
     if (deviceAuthConfig) {
       urlInput.value = '';
       urlInput.placeholder = deviceAuthProvider === 'copilot'
-        ? 'GitHub Copilot uses GitHub account sign-in'
-        : 'ChatGPT Subscription uses OpenAI account sign-in';
+        ? t('ui.js.admin_copilot_signin', null, 'GitHub Copilot uses GitHub account sign-in')
+        : t('ui.js.admin_chatgpt_signin', null, 'ChatGPT Subscription uses OpenAI account sign-in');
       urlInput.readOnly = true;
       if (apiKey) {
         apiKey.value = '';
-        apiKey.placeholder = 'No API key needed';
+        apiKey.placeholder = t('ui.js.admin_no_api_key_needed', null, 'No API key needed');
         apiKey.disabled = true;
       }
       if (testBtn) {
@@ -756,7 +761,7 @@ function initEndpointForm() {
       }
       if (addBtn) {
         addBtn.disabled = false;
-        addBtn.textContent = 'Add';
+        addBtn.textContent = t('ui.js.admin_add', null, 'Add');
         addBtn.style.width = '55px';
         addBtn.style.display = '';
       }
@@ -766,10 +771,10 @@ function initEndpointForm() {
         msg.className = '';
       }
     } else {
-      urlInput.placeholder = 'Base URL or pick provider';
+      urlInput.placeholder = t('ui.js.admin_base_url_placeholder', null, 'Base URL or pick provider');
       urlInput.readOnly = false;
       if (apiKey) {
-        apiKey.placeholder = 'API key';
+        apiKey.placeholder = t('ui.js.admin_api_key_placeholder', null, 'API key');
         apiKey.disabled = false;
       }
       if (testBtn) {
@@ -779,7 +784,7 @@ function initEndpointForm() {
       }
       if (addBtn) {
         addBtn.disabled = false;
-        addBtn.textContent = 'Add';
+        addBtn.textContent = t('ui.js.admin_add', null, 'Add');
         addBtn.style.width = '55px';
         addBtn.style.display = '';
       }
@@ -904,18 +909,18 @@ function initEndpointForm() {
 
   function _renderEndpointTestResult(msg, res, d) {
     if (res.ok && d.status === 'empty') {
-      msg.textContent = 'Online — no models found';
+      msg.textContent = t('ui.js.admin_online_no_models', null, 'Online — no models found');
       msg.className = 'admin-success';
       return;
     }
     if (res.ok && d.online) {
       const models = d.models || [];
       const preview = models.slice(0, 3).map(m => esc(String(m).split('/').pop())).join(', ');
-      msg.innerHTML = `Online — found ${models.length} model${models.length !== 1 ? 's' : ''}${preview ? `: ${preview}${models.length > 3 ? ', …' : ''}` : ''}`;
+      msg.innerHTML = t('ui.js.admin_online_found_models', { count: models.length }, 'Online — found {count} model(s)') + `${preview ? `: ${preview}${models.length > 3 ? ', …' : ''}` : ''}`;
       msg.className = 'admin-success';
       return;
     }
-    msg.textContent = (d && d.detail) || (d && d.ping_error ? `Offline — ${d.ping_error}` : 'Offline');
+    msg.textContent = (d && d.detail) || (d && d.ping_error ? t('ui.js.admin_offline_reason', { reason: d.ping_error }, 'Offline — {reason}') : t('ui.js.admin_offline', null, 'Offline'));
     msg.className = 'admin-error';
   }
 
@@ -938,12 +943,12 @@ function initEndpointForm() {
       msg.textContent = ''; msg.className = '';
       const rawUrl = (urlInput.value || provider.value).trim();
       const apiKey = el('adm-epApiKey').value.trim();
-      if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-      if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+      if (!rawUrl) { msg.textContent = t('ui.js.admin_select_provider_or_url', null, 'Select a provider or enter a base URL'); msg.className = 'admin-error'; return; }
+      if (provider.value && !apiKey) { msg.textContent = t('ui.js.admin_api_key_required', null, 'API key is required for cloud providers'); msg.className = 'admin-error'; return; }
       const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
       apiTestController = new AbortController();
       apiTestBtn.disabled = true;
-      apiTestBtn.textContent = 'Testing...';
+      apiTestBtn.textContent = t('ui.js.admin_testing', null, 'Testing...');
       if (apiCancelTestBtn) apiCancelTestBtn.classList.remove('hidden');
       try {
         const fd = new FormData();
@@ -961,16 +966,16 @@ function initEndpointForm() {
         _renderEndpointTestResult(msg, res, d);
       } catch (e) {
         if (e && e.name === 'AbortError') {
-          msg.textContent = 'Test canceled';
+          msg.textContent = t('ui.js.admin_test_canceled', null, 'Test canceled');
           msg.className = '';
         } else {
-          msg.textContent = 'Test failed: ' + (e && e.message ? e.message : 'request failed');
+          msg.textContent = t('ui.js.admin_test_failed', { error: e && e.message ? e.message : t('ui.js.admin_request_failed_lc', null, 'request failed') }, 'Test failed: {error}');
           msg.className = 'admin-error';
         }
       }
       apiTestController = null;
       apiTestBtn.disabled = false;
-      apiTestBtn.textContent = 'Test';
+      apiTestBtn.textContent = t('ui.js.admin_test', null, 'Test');
       if (apiCancelTestBtn) apiCancelTestBtn.classList.add('hidden');
     });
   }
@@ -990,12 +995,12 @@ function initEndpointForm() {
     msg.textContent = ''; msg.className = '';
     const rawUrl = (urlInput.value || provider.value).trim();
     const apiKey = el('adm-epApiKey').value.trim();
-    if (!rawUrl) { msg.textContent = 'Select a provider or enter a base URL'; msg.className = 'admin-error'; return; }
-    if (provider.value && !apiKey) { msg.textContent = 'API key is required for cloud providers'; msg.className = 'admin-error'; return; }
+    if (!rawUrl) { msg.textContent = t('ui.js.admin_select_provider_or_url', null, 'Select a provider or enter a base URL'); msg.className = 'admin-error'; return; }
+    if (provider.value && !apiKey) { msg.textContent = t('ui.js.admin_api_key_required', null, 'API key is required for cloud providers'); msg.className = 'admin-error'; return; }
     // Normalize URL (fix typos, add /v1, strip wrong paths)
     const url = provider.value && rawUrl === provider.value ? rawUrl : _normalizeBaseUrl(rawUrl);
     const btn = el('adm-epAddBtn');
-    btn.disabled = true; btn.textContent = 'Adding...';
+    btn.disabled = true; btn.textContent = t('ui.js.admin_adding', null, 'Adding...');
     try {
       const fd = new FormData();
       fd.append('base_url', url);
@@ -1023,18 +1028,18 @@ function initEndpointForm() {
         await loadEndpoints();
         await _selectAddedModelInChat(d);
         if (!d.online) {
-          msg.textContent = 'Added (endpoint offline — will retry on next load)';
+          msg.textContent = t('ui.js.admin_added_offline', null, 'Added (endpoint offline — will retry on next load)');
           msg.className = 'admin-error';
         } else if (d.status === 'empty') {
-          msg.textContent = 'Added — endpoint reachable, no models found';
+          msg.textContent = t('ui.js.admin_added_empty', null, 'Added — endpoint reachable, no models found');
           msg.className = 'admin-success';
         } else {
-          msg.textContent = `Added — found ${count} model${count !== 1 ? 's' : ''}`;
+          msg.textContent = t('ui.js.admin_added_found', { count }, 'Added — found {count} model(s)');
           msg.className = 'admin-success';
         }
-      } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
-    btn.disabled = false; btn.textContent = 'Add';
+      } else { msg.textContent = d.detail || t('ui.js.admin_failed', null, 'Failed'); msg.className = 'admin-error'; }
+    } catch (e) { msg.textContent = t('ui.js.admin_request_failed', null, 'Request failed'); msg.className = 'admin-error'; }
+    btn.disabled = false; btn.textContent = t('ui.js.admin_add', null, 'Add');
   });
 
   async function _startProviderDeviceAuth(providerKey, triggerEl = null) {
@@ -1053,14 +1058,14 @@ function initEndpointForm() {
       const retry = document.createElement('button');
       retry.type = 'button';
       retry.className = 'admin-btn-sm';
-      retry.textContent = 'Try again';
+      retry.textContent = t('ui.js.admin_try_again', null, 'Try again');
       retry.addEventListener('click', () => { _startProviderDeviceAuth(providerKey, triggerEl); });
       status.appendChild(retry);
     };
     const reset = () => {
       if (triggerEl) {
         triggerEl.disabled = false;
-        triggerEl.textContent = triggerText || 'Add';
+        triggerEl.textContent = triggerText || t('ui.js.admin_add', null, 'Add');
       }
       deviceAuthPolling = false;
       _setApiFormForProvider();
@@ -1069,28 +1074,28 @@ function initEndpointForm() {
     status.className = 'adm-ep-inline-msg';
     if (triggerEl) {
       triggerEl.disabled = true;
-      triggerEl.textContent = 'Starting...';
+      triggerEl.textContent = t('ui.js.admin_starting', null, 'Starting...');
     }
     deviceAuthPolling = true;
     _setApiFormForProvider();
-    status.textContent = `Starting ${config.label} sign-in...`;
+    status.textContent = t('ui.js.admin_starting_signin', { provider: config.label }, 'Starting {provider} sign-in...');
 
     try {
       const result = await runProviderDeviceFlow(providerKey, {
         openWindow: () => {},
         onStart: ({ start, authUrl }) => {
-          if (triggerEl) triggerEl.textContent = 'Waiting...';
+          if (triggerEl) triggerEl.textContent = t('ui.js.admin_waiting', null, 'Waiting...');
           status.className = '';
-          const authLabel = providerKey === 'copilot' ? 'Authorize on GitHub' : 'Authorize with OpenAI';
-          const waitLabel = providerKey === 'copilot' ? 'Waiting for GitHub authorization...' : 'Waiting for ChatGPT authorization...';
+          const authLabel = providerKey === 'copilot' ? t('ui.js.admin_authorize_github', null, 'Authorize on GitHub') : t('ui.js.admin_authorize_openai', null, 'Authorize with OpenAI');
+          const waitLabel = providerKey === 'copilot' ? t('ui.js.admin_waiting_github', null, 'Waiting for GitHub authorization...') : t('ui.js.admin_waiting_chatgpt', null, 'Waiting for ChatGPT authorization...');
           status.innerHTML =
             '<div class="adm-copilot-panel">' +
               '<div class="adm-copilot-wait"><span class="admin-spinner"></span>' +
                 '<span>' + esc(waitLabel) + '</span></div>' +
               '<div class="adm-copilot-coderow">' +
-                '<span class="adm-copilot-code-label">Code</span>' +
+                '<span class="adm-copilot-code-label">' + t('ui.js.admin_code_label', null, 'Code') + '</span>' +
                 '<code class="adm-copilot-code">' + esc(start.user_code) + '</code>' +
-                '<button type="button" class="admin-btn-sm adm-device-auth-copy">Copy</button>' +
+                '<button type="button" class="admin-btn-sm adm-device-auth-copy">' + t('ui.js.admin_copy', null, 'Copy') + '</button>' +
               '</div>' +
               '<a class="admin-btn-add adm-copilot-auth" href="' + encodeURI(authUrl || '') + '" target="_blank" rel="noopener">' + esc(authLabel) + ' ↗</a>' +
             '</div>';
@@ -1117,8 +1122,8 @@ function initEndpointForm() {
               try { ok = document.execCommand('copy'); } catch (e) {}
               ta.remove();
             }
-            copyBtn.textContent = ok ? 'Copied' : 'Failed';
-            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+            copyBtn.textContent = ok ? t('ui.js.admin_copied', null, 'Copied') : t('ui.js.admin_failed', null, 'Failed');
+            setTimeout(() => { copyBtn.textContent = t('ui.js.admin_copy', null, 'Copy'); }, 1500);
           });
         },
       });
@@ -1126,7 +1131,7 @@ function initEndpointForm() {
         const endpoint = result.endpoint || {};
         const n = ((endpoint && endpoint.models) || []).length;
         status.className = 'admin-success';
-        status.textContent = 'Connected - ' + n + ' ' + config.label + ' model' + (n !== 1 ? 's' : '') + ' available.';
+        status.textContent = t('ui.js.admin_connected_models', { count: n, provider: config.label }, 'Connected - {count} {provider} model(s) available.');
         if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
         await loadEndpoints();
         await _selectAddedModelInChat(endpoint || {});
@@ -1135,12 +1140,12 @@ function initEndpointForm() {
       }
       if (result.status === 'failed') {
         reset();
-        showAuthError('Authorization failed (' + (result.error || 'denied') + ').');
+        showAuthError(t('ui.js.admin_auth_failed', { error: result.error || 'denied' }, 'Authorization failed ({error}).'));
         return;
       }
       if (result.status === 'expired') {
         reset();
-        showAuthError('Authorization expired.');
+        showAuthError(t('ui.js.admin_auth_expired', null, 'Authorization expired.'));
         return;
       }
     } catch (e) {
@@ -1200,7 +1205,7 @@ function initEndpointForm() {
     probeAllBtn.addEventListener('click', async () => {
       probeAllBtn.disabled = true;
       const origHTML = probeAllBtn.innerHTML;
-      probeAllBtn.innerHTML = '<span style="opacity:0.7;">Probing…</span>';
+      probeAllBtn.innerHTML = '<span style="opacity:0.7;">' + t('ui.js.admin_probing', null, 'Probing…') + '</span>';
       try {
         // Hit the bulk local probe (same one the model picker uses).
         await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).catch(() => {});
@@ -1220,7 +1225,7 @@ function initEndpointForm() {
         })());
         await Promise.all(workers);
         await loadEndpoints();
-        if (uiModule && uiModule.showToast) uiModule.showToast('Endpoint status refreshed', 1800);
+        if (uiModule && uiModule.showToast) uiModule.showToast(t('ui.js.admin_status_refreshed', null, 'Endpoint status refreshed'), 1800);
       } finally {
         probeAllBtn.innerHTML = origHTML;
         probeAllBtn.disabled = false;
@@ -1235,15 +1240,15 @@ function initEndpointForm() {
       const ids = offlineBtns.map(b => b.getAttribute('data-adm-del-ep')).filter(Boolean);
       if (!ids.length) {
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('No offline endpoints — nothing to clear', 1800);
+          uiModule.showToast(t('ui.js.admin_no_offline_endpoints', null, 'No offline endpoints — nothing to clear'), 1800);
         }
         return;
       }
       const confirmMsg = ids.length === 1
-        ? 'Remove 1 offline endpoint?'
-        : `Remove ${ids.length} offline endpoints?`;
+        ? t('ui.js.admin_remove_offline_one', null, 'Remove 1 offline endpoint?')
+        : t('ui.js.admin_remove_offline_many', { count: ids.length }, 'Remove {count} offline endpoints?');
       if (uiModule && uiModule.styledConfirm) {
-        const ok = await uiModule.styledConfirm(confirmMsg, { confirmText: 'Remove', danger: true });
+        const ok = await uiModule.styledConfirm(confirmMsg, { confirmText: t('ui.js.admin_remove', null, 'Remove'), danger: true });
         if (!ok) return;
       } else if (!confirm(confirmMsg)) {
         return;
@@ -1259,7 +1264,7 @@ function initEndpointForm() {
       ));
       try { await loadEndpoints(); } catch (_) {}
       _refreshOfflineCount();
-      if (uiModule && uiModule.showToast) uiModule.showToast(`Removed ${ids.length} offline endpoint${ids.length === 1 ? '' : 's'}`, 1800);
+      if (uiModule && uiModule.showToast) uiModule.showToast(ids.length === 1 ? t('ui.js.admin_removed_offline_one', null, 'Removed 1 offline endpoint') : t('ui.js.admin_removed_offline_many', { count: ids.length }, 'Removed {count} offline endpoints'), 1800);
     });
   }
 
@@ -1295,12 +1300,12 @@ function initEndpointForm() {
       const msg = _endpointMsg('local');
       msg.textContent = ''; msg.className = '';
       const raw = (el('adm-epLocalUrl').value || '').trim();
-      if (!raw) { msg.textContent = 'Enter a base URL to test'; msg.className = 'admin-error'; return; }
+      if (!raw) { msg.textContent = t('ui.js.admin_enter_url_test', null, 'Enter a base URL to test'); msg.className = 'admin-error'; return; }
       const url = _normalizeBaseUrl(raw);
       const keyEl = el('adm-epLocalApiKey');
       const apiKey = keyEl ? keyEl.value.trim() : '';
       localTestBtn.disabled = true;
-      localTestBtn.textContent = 'Testing...';
+      localTestBtn.textContent = t('ui.js.admin_testing', null, 'Testing...');
       try {
         const fd = new FormData();
         fd.append('base_url', url);
@@ -1309,11 +1314,11 @@ function initEndpointForm() {
         const d = await res.json();
         _renderEndpointTestResult(msg, res, d);
       } catch (e) {
-        msg.textContent = 'Test failed: ' + (e && e.message ? e.message : 'request failed');
+        msg.textContent = t('ui.js.admin_test_failed', { error: e && e.message ? e.message : t('ui.js.admin_request_failed_lc', null, 'request failed') }, 'Test failed: {error}');
         msg.className = 'admin-error';
       }
       localTestBtn.disabled = false;
-      localTestBtn.textContent = 'Test';
+      localTestBtn.textContent = t('ui.js.admin_test', null, 'Test');
     });
   }
   if (localAddBtn) {
@@ -1321,11 +1326,11 @@ function initEndpointForm() {
       const msg = _endpointMsg('local');
       msg.textContent = ''; msg.className = '';
       const raw = (el('adm-epLocalUrl').value || '').trim();
-      if (!raw) { msg.textContent = 'Enter a base URL (e.g. http://localhost:8002/v1)'; msg.className = 'admin-error'; return; }
+      if (!raw) { msg.textContent = t('ui.js.admin_enter_url_example', null, 'Enter a base URL (e.g. http://localhost:8002/v1)'); msg.className = 'admin-error'; return; }
       const url = _normalizeBaseUrl(raw);
       const keyEl = el('adm-epLocalApiKey');
       const apiKey = keyEl ? keyEl.value.trim() : '';
-      localAddBtn.disabled = true; localAddBtn.textContent = 'Adding...';
+      localAddBtn.disabled = true; localAddBtn.textContent = t('ui.js.admin_adding', null, 'Adding...');
       try {
         const fd = new FormData();
         fd.append('base_url', url);
@@ -1346,14 +1351,14 @@ function initEndpointForm() {
           await _selectAddedModelInChat(d);
           const count = (d.models || []).length;
           msg.textContent = d.status === 'empty'
-            ? 'Added — Ollama is running, no models pulled yet'
+            ? t('ui.js.admin_added_ollama_empty', null, 'Added — Ollama is running, no models pulled yet')
             : d.online
-            ? `Added — found ${count} model${count !== 1 ? 's' : ''}`
-            : 'Added (offline — will retry on next load)';
+            ? t('ui.js.admin_added_found', { count }, 'Added — found {count} model(s)')
+            : t('ui.js.admin_added_offline_short', null, 'Added (offline — will retry on next load)');
           msg.className = d.online ? 'admin-success' : 'admin-error';
-        } else { msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
-      } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
-      localAddBtn.disabled = false; localAddBtn.textContent = 'Add';
+        } else { msg.textContent = d.detail || t('ui.js.admin_failed', null, 'Failed'); msg.className = 'admin-error'; }
+      } catch (e) { msg.textContent = t('ui.js.admin_request_failed', null, 'Request failed'); msg.className = 'admin-error'; }
+      localAddBtn.disabled = false; localAddBtn.textContent = t('ui.js.admin_add', null, 'Add');
     });
   }
 
@@ -1367,7 +1372,7 @@ function initEndpointForm() {
       }
       const msg = _endpointMsg('local');
       if (msg) {
-        msg.innerHTML = '<span style="font-size:11px;opacity:0.55;">Ollama ready to test.</span>';
+        msg.innerHTML = '<span style="font-size:11px;opacity:0.55;">' + t('ui.js.admin_ollama_ready', null, 'Ollama ready to test.') + '</span>';
         msg.className = '';
       }
     });
@@ -1392,18 +1397,18 @@ function initEndpointForm() {
         wrap.style.cssText = 'display:flex;align-items:center;padding:8px 0;';
         wrap.appendChild(wp.element);
         const txt = document.createElement('span');
-        txt.textContent = 'Scanning ports 8000-8020 and 11434 for model servers...';
+        txt.textContent = t('ui.js.admin_scanning_ports', null, 'Scanning ports 8000-8020 and 11434 for model servers...');
         txt.style.cssText = 'font-size:12px;opacity:0.7;';
         wrap.appendChild(txt);
         msg.appendChild(wrap);
         discoverBtn._wp = wp;
-      } catch(e) { msg.textContent = 'Scanning...'; }
+      } catch(e) { msg.textContent = t('ui.js.admin_scanning', null, 'Scanning...'); }
       try {
         const res = await fetch('/api/discover');
         const data = await res.json();
         const items = data.items || [];
         if (!items.length) {
-          msg.textContent = 'No model servers found. Make sure vLLM, llama.cpp, SGLang, or Ollama is running. Docker users may need Ollama bound to a trusted reachable interface.';
+          msg.textContent = t('ui.js.admin_no_servers_found', null, 'No model servers found. Make sure vLLM, llama.cpp, SGLang, or Ollama is running. Docker users may need Ollama bound to a trusted reachable interface.');
           msg.className = 'admin-error';
         } else {
           // Auto-add each discovered endpoint. Server dedupes on base_url
@@ -1427,20 +1432,20 @@ function initEndpointForm() {
             }
           }
           const totalModels = items.reduce((n, i) => n + (i.models ? i.models.length : 0), 0);
-          const parts = [`Found ${items.length} server${items.length !== 1 ? 's' : ''} with ${totalModels} model${totalModels !== 1 ? 's' : ''}`];
-          if (added) parts.push(`added ${added} new`);
-          if (skipped) parts.push(`${skipped} already added`);
+          const parts = [t('ui.js.admin_found_servers', { servers: items.length, models: totalModels }, 'Found {servers} server(s) with {models} model(s)')];
+          if (added) parts.push(t('ui.js.admin_added_new', { count: added }, 'added {count} new'));
+          if (skipped) parts.push(t('ui.js.admin_already_added', { count: skipped }, '{count} already added'));
           msg.innerHTML = parts.join(' — ');
           msg.className = 'admin-success';
           loadEndpoints();
         }
       } catch (e) {
-        msg.textContent = 'Scan failed: ' + e.message;
+        msg.textContent = t('ui.js.admin_scan_failed', { error: e.message }, 'Scan failed: {error}');
         msg.className = 'admin-error';
       }
       if (discoverBtn._wp) { discoverBtn._wp.destroy(); discoverBtn._wp = null; }
       discoverBtn.disabled = false;
-      discoverBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan for Servers';
+      discoverBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' + t('ui.js.admin_scan_for_servers', null, 'Scan for Servers');
     });
   }
 
@@ -1574,40 +1579,56 @@ const MCP_PRESETS = [
     help: "1. Go to todoist.com > Settings > Integrations > Developer\n2. Copy your API token" },
 ];
 // ── Built-in tools management ──
-const TOOL_META = {
-  bash:              { name: 'Shell',            desc: 'Execute bash commands',           cat: 'Code',       ctx: '~200' },
-  python:            { name: 'Python',           desc: 'Run Python scripts',              cat: 'Code',       ctx: '~200' },
-  read_file:         { name: 'Read File',        desc: 'Read files from disk',            cat: 'Code',       ctx: '~150' },
-  write_file:        { name: 'Write File',       desc: 'Write/create files',              cat: 'Code',       ctx: '~150' },
-  web_search:        { name: 'Web Search',       desc: 'Search the web via SearXNG',      cat: 'Search',     ctx: '~300' },
-  search_chats:      { name: 'Search Chats',     desc: 'Search conversation history',     cat: 'Search',     ctx: '~150' },
-  create_document:   { name: 'Create Document',  desc: 'Create new documents',            cat: 'Documents',  ctx: '~200' },
-  update_document:   { name: 'Update Document',  desc: 'Modify existing documents',       cat: 'Documents',  ctx: '~200' },
-  edit_document:     { name: 'Edit Document',    desc: 'Find & replace in documents',     cat: 'Documents',  ctx: '~200' },
-  suggest_document:  { name: 'Suggest Changes',  desc: 'Propose document edits',          cat: 'Documents',  ctx: '~200' },
-  manage_documents:  { name: 'Manage Documents', desc: 'List, delete, organize docs',     cat: 'Documents',  ctx: '~150' },
-  generate_image:    { name: 'Generate Image',   desc: 'Create images via AI',            cat: 'Media',      ctx: '~150' },
-  manage_memory:     { name: 'Memory',           desc: 'Save and recall memories',        cat: 'Knowledge',  ctx: '~200' },
-  manage_skills:     { name: 'Skills',           desc: 'Learn and use procedures',        cat: 'Knowledge',  ctx: '~200' },
-  manage_rag:        { name: 'RAG / Docs',       desc: 'Query indexed documents',         cat: 'Knowledge',  ctx: '~150' },
-  chat_with_model:   { name: 'Chat with Model',  desc: 'Talk to another AI model',        cat: 'Multi-Agent', ctx: '~200' },
-  second_opinion:    { name: 'Second Opinion',   desc: 'Get another model\'s take',       cat: 'Multi-Agent', ctx: '~150' },
-  pipeline:          { name: 'Pipeline',         desc: 'Multi-step AI workflows',         cat: 'Multi-Agent', ctx: '~200' },
-  ask_teacher:       { name: 'Ask Teacher',      desc: 'Query a more capable model',      cat: 'Multi-Agent', ctx: '~150' },
-  send_to_session:   { name: 'Send to Session',  desc: 'Send message to another chat',    cat: 'Sessions',   ctx: '~100' },
-  create_session:    { name: 'Create Session',   desc: 'Start a new chat session',        cat: 'Sessions',   ctx: '~100' },
-  list_sessions:     { name: 'List Sessions',    desc: 'Browse existing sessions',        cat: 'Sessions',   ctx: '~100' },
-  manage_session:    { name: 'Manage Session',   desc: 'Rename, archive, configure',      cat: 'Sessions',   ctx: '~100' },
-  list_models:       { name: 'List Models',      desc: 'Show available models',           cat: 'System',     ctx: '~100' },
-  ui_control:        { name: 'UI Control',       desc: 'Change theme, layout, settings',  cat: 'System',     ctx: '~150' },
-  manage_tasks:      { name: 'Tasks',            desc: 'Schedule automated tasks',        cat: 'System',     ctx: '~150' },
-  api_call:          { name: 'API Call',         desc: 'Make HTTP requests',              cat: 'System',     ctx: '~200' },
-  manage_endpoints:  { name: 'Endpoints',        desc: 'Add/remove model endpoints',      cat: 'System',     ctx: '~100' },
-  manage_mcp:        { name: 'MCP Servers',      desc: 'Manage MCP connections',          cat: 'System',     ctx: '~100' },
-  manage_webhooks:   { name: 'Webhooks',         desc: 'Configure webhook events',        cat: 'System',     ctx: '~100' },
-  manage_tokens:     { name: 'API Tokens',       desc: 'Manage API access tokens',        cat: 'System',     ctx: '~100' },
-  manage_settings:   { name: 'Settings',         desc: 'Change app settings',             cat: 'System',     ctx: '~100' },
-};
+// Lazy (function) so labels resolve at render time against the active locale —
+// admin.js is imported before initI18n() loads the locale JSON, so a frozen
+// top-level object would lock in English. See PRIV_LABELS note above.
+const TOOL_META = () => ({
+  bash:              { name: t('ui.js.admin_tool_bash', null, 'Shell'),            desc: t('ui.js.admin_tool_bash_desc', null, 'Execute bash commands'),           cat: 'Code',       ctx: '~200' },
+  python:            { name: t('ui.js.admin_tool_python', null, 'Python'),         desc: t('ui.js.admin_tool_python_desc', null, 'Run Python scripts'),            cat: 'Code',       ctx: '~200' },
+  read_file:         { name: t('ui.js.admin_tool_read_file', null, 'Read File'),   desc: t('ui.js.admin_tool_read_file_desc', null, 'Read files from disk'),       cat: 'Code',       ctx: '~150' },
+  write_file:        { name: t('ui.js.admin_tool_write_file', null, 'Write File'), desc: t('ui.js.admin_tool_write_file_desc', null, 'Write/create files'),        cat: 'Code',       ctx: '~150' },
+  web_search:        { name: t('ui.js.admin_tool_web_search', null, 'Web Search'), desc: t('ui.js.admin_tool_web_search_desc', null, 'Search the web via SearXNG'), cat: 'Search',    ctx: '~300' },
+  search_chats:      { name: t('ui.js.admin_tool_search_chats', null, 'Search Chats'), desc: t('ui.js.admin_tool_search_chats_desc', null, 'Search conversation history'), cat: 'Search', ctx: '~150' },
+  create_document:   { name: t('ui.js.admin_tool_create_document', null, 'Create Document'), desc: t('ui.js.admin_tool_create_document_desc', null, 'Create new documents'), cat: 'Documents', ctx: '~200' },
+  update_document:   { name: t('ui.js.admin_tool_update_document', null, 'Update Document'), desc: t('ui.js.admin_tool_update_document_desc', null, 'Modify existing documents'), cat: 'Documents', ctx: '~200' },
+  edit_document:     { name: t('ui.js.admin_tool_edit_document', null, 'Edit Document'), desc: t('ui.js.admin_tool_edit_document_desc', null, 'Find & replace in documents'), cat: 'Documents', ctx: '~200' },
+  suggest_document:  { name: t('ui.js.admin_tool_suggest_document', null, 'Suggest Changes'), desc: t('ui.js.admin_tool_suggest_document_desc', null, 'Propose document edits'), cat: 'Documents', ctx: '~200' },
+  manage_documents:  { name: t('ui.js.admin_tool_manage_documents', null, 'Manage Documents'), desc: t('ui.js.admin_tool_manage_documents_desc', null, 'List, delete, organize docs'), cat: 'Documents', ctx: '~150' },
+  generate_image:    { name: t('ui.js.admin_tool_generate_image', null, 'Generate Image'), desc: t('ui.js.admin_tool_generate_image_desc', null, 'Create images via AI'), cat: 'Media', ctx: '~150' },
+  manage_memory:     { name: t('ui.js.admin_tool_manage_memory', null, 'Memory'), desc: t('ui.js.admin_tool_manage_memory_desc', null, 'Save and recall memories'), cat: 'Knowledge', ctx: '~200' },
+  manage_skills:     { name: t('ui.js.admin_tool_manage_skills', null, 'Skills'), desc: t('ui.js.admin_tool_manage_skills_desc', null, 'Learn and use procedures'), cat: 'Knowledge', ctx: '~200' },
+  manage_rag:        { name: t('ui.js.admin_tool_manage_rag', null, 'RAG / Docs'), desc: t('ui.js.admin_tool_manage_rag_desc', null, 'Query indexed documents'), cat: 'Knowledge', ctx: '~150' },
+  chat_with_model:   { name: t('ui.js.admin_tool_chat_with_model', null, 'Chat with Model'), desc: t('ui.js.admin_tool_chat_with_model_desc', null, 'Talk to another AI model'), cat: 'Multi-Agent', ctx: '~200' },
+  second_opinion:    { name: t('ui.js.admin_tool_second_opinion', null, 'Second Opinion'), desc: t('ui.js.admin_tool_second_opinion_desc', null, "Get another model's take"), cat: 'Multi-Agent', ctx: '~150' },
+  pipeline:          { name: t('ui.js.admin_tool_pipeline', null, 'Pipeline'), desc: t('ui.js.admin_tool_pipeline_desc', null, 'Multi-step AI workflows'), cat: 'Multi-Agent', ctx: '~200' },
+  ask_teacher:       { name: t('ui.js.admin_tool_ask_teacher', null, 'Ask Teacher'), desc: t('ui.js.admin_tool_ask_teacher_desc', null, 'Query a more capable model'), cat: 'Multi-Agent', ctx: '~150' },
+  send_to_session:   { name: t('ui.js.admin_tool_send_to_session', null, 'Send to Session'), desc: t('ui.js.admin_tool_send_to_session_desc', null, 'Send message to another chat'), cat: 'Sessions', ctx: '~100' },
+  create_session:    { name: t('ui.js.admin_tool_create_session', null, 'Create Session'), desc: t('ui.js.admin_tool_create_session_desc', null, 'Start a new chat session'), cat: 'Sessions', ctx: '~100' },
+  list_sessions:     { name: t('ui.js.admin_tool_list_sessions', null, 'List Sessions'), desc: t('ui.js.admin_tool_list_sessions_desc', null, 'Browse existing sessions'), cat: 'Sessions', ctx: '~100' },
+  manage_session:    { name: t('ui.js.admin_tool_manage_session', null, 'Manage Session'), desc: t('ui.js.admin_tool_manage_session_desc', null, 'Rename, archive, configure'), cat: 'Sessions', ctx: '~100' },
+  list_models:       { name: t('ui.js.admin_tool_list_models', null, 'List Models'), desc: t('ui.js.admin_tool_list_models_desc', null, 'Show available models'), cat: 'System', ctx: '~100' },
+  ui_control:        { name: t('ui.js.admin_tool_ui_control', null, 'UI Control'), desc: t('ui.js.admin_tool_ui_control_desc', null, 'Change theme, layout, settings'), cat: 'System', ctx: '~150' },
+  manage_tasks:      { name: t('ui.js.admin_tool_manage_tasks', null, 'Tasks'), desc: t('ui.js.admin_tool_manage_tasks_desc', null, 'Schedule automated tasks'), cat: 'System', ctx: '~150' },
+  api_call:          { name: t('ui.js.admin_tool_api_call', null, 'API Call'), desc: t('ui.js.admin_tool_api_call_desc', null, 'Make HTTP requests'), cat: 'System', ctx: '~200' },
+  manage_endpoints:  { name: t('ui.js.admin_tool_manage_endpoints', null, 'Endpoints'), desc: t('ui.js.admin_tool_manage_endpoints_desc', null, 'Add/remove model endpoints'), cat: 'System', ctx: '~100' },
+  manage_mcp:        { name: t('ui.js.admin_tool_manage_mcp', null, 'MCP Servers'), desc: t('ui.js.admin_tool_manage_mcp_desc', null, 'Manage MCP connections'), cat: 'System', ctx: '~100' },
+  manage_webhooks:   { name: t('ui.js.admin_tool_manage_webhooks', null, 'Webhooks'), desc: t('ui.js.admin_tool_manage_webhooks_desc', null, 'Configure webhook events'), cat: 'System', ctx: '~100' },
+  manage_tokens:     { name: t('ui.js.admin_tool_manage_tokens', null, 'API Tokens'), desc: t('ui.js.admin_tool_manage_tokens_desc', null, 'Manage API access tokens'), cat: 'System', ctx: '~100' },
+  manage_settings:   { name: t('ui.js.admin_tool_manage_settings', null, 'Settings'), desc: t('ui.js.admin_tool_manage_settings_desc', null, 'Change app settings'), cat: 'System', ctx: '~100' },
+});
+// Translated labels for tool categories (keys stay English for grouping).
+// Lazy for the same reason as TOOL_META.
+const TOOL_CAT_LABELS = () => ({
+  'Code': t('ui.js.admin_cat_code', null, 'Code'),
+  'Search': t('ui.js.admin_cat_search', null, 'Search'),
+  'Documents': t('ui.js.admin_cat_documents', null, 'Documents'),
+  'Media': t('ui.js.admin_cat_media', null, 'Media'),
+  'Knowledge': t('ui.js.admin_cat_knowledge', null, 'Knowledge'),
+  'Multi-Agent': t('ui.js.admin_cat_multi_agent', null, 'Multi-Agent'),
+  'Sessions': t('ui.js.admin_cat_sessions', null, 'Sessions'),
+  'System': t('ui.js.admin_cat_system', null, 'System'),
+  'Other': t('ui.js.admin_cat_other', null, 'Other'),
+});
 
 async function loadBuiltinTools() {
   const list = el('adm-builtin-tools-list');
@@ -1616,15 +1637,19 @@ async function loadBuiltinTools() {
     const res = await fetch('/api/tools', { credentials: 'same-origin' });
     const data = await res.json();
     const tools = data.tools || [];
-    if (!tools.length) { list.innerHTML = '<div class="admin-empty">No tools found</div>'; return; }
+    if (!tools.length) { list.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_no_tools_found', null, 'No tools found') + '</div>'; return; }
+
+    // Resolve the localized maps once (lazy — see TOOL_META definition).
+    const toolMeta = TOOL_META();
+    const catLabels = TOOL_CAT_LABELS();
 
     // Group by category
     const groups = {};
-    for (const t of tools) {
-      const meta = TOOL_META[t.id] || { name: t.id, desc: '', cat: 'Other', ctx: '?' };
+    for (const tool of tools) {
+      const meta = toolMeta[tool.id] || { name: tool.id, desc: '', cat: 'Other', ctx: '?' };
       const cat = meta.cat;
       if (!groups[cat]) groups[cat] = [];
-      groups[cat].push({ ...t, ...meta });
+      groups[cat].push({ ...tool, ...meta });
     }
 
     // Category order
@@ -1639,7 +1664,7 @@ async function loadBuiltinTools() {
       const allEnabled = enabledCount === totalCount;
       html += `<div class="admin-tool-category">
         <div class="admin-tool-cat-header" data-tool-cat="${catId}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
-          <span>${esc(cat)}</span>
+          <span>${esc(catLabels[cat] || cat)}</span>
           <span style="display:flex;align-items:center;gap:6px;" class="admin-tool-cat-right">
             <span class="admin-tool-cat-count" style="font-size:10px;opacity:0.5;">${enabledCount}/${totalCount}</span>
             <label class="admin-switch" style="flex-shrink:0;">
@@ -1650,16 +1675,17 @@ async function loadBuiltinTools() {
           </span>
         </div>
         <div class="admin-tool-cat-body hidden" id="${catId}">`;
-      for (const t of items) {
+      const _ctxTitle = t('ui.js.admin_ctx_title', null, 'Approximate context tokens used');
+      for (const tool of items) {
         html += `
         <div class="admin-tool-row">
           <div class="admin-tool-info">
-            <span class="admin-tool-name">${esc(t.name)}</span>
-            <span class="admin-tool-desc">${esc(t.desc)}</span>
+            <span class="admin-tool-name">${esc(tool.name)}</span>
+            <span class="admin-tool-desc">${esc(tool.desc)}</span>
           </div>
-          <span class="admin-tool-ctx" title="Approximate context tokens used">${esc(t.ctx)}</span>
+          <span class="admin-tool-ctx" title="${esc(_ctxTitle)}">${esc(tool.ctx)}</span>
           <label class="admin-switch" style="flex-shrink:0;">
-            <input type="checkbox" data-tool-id="${esc(t.id)}" ${t.enabled ? 'checked' : ''}>
+            <input type="checkbox" data-tool-id="${esc(tool.id)}" ${tool.enabled ? 'checked' : ''}>
             <span class="admin-slider"></span>
           </label>
         </div>`;
@@ -1731,7 +1757,7 @@ async function loadBuiltinTools() {
     });
   } catch (e) {
     console.error('Failed to load tools:', e);
-    list.innerHTML = '<div class="admin-empty">Failed to load tools</div>';
+    list.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_load_tools_failed', null, 'Failed to load tools') + '</div>';
   }
 }
 
@@ -1741,24 +1767,24 @@ async function loadMcpServers() {
   try {
     const res = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
     const servers = await res.json();
-    if (!servers.length) { list.innerHTML = '<div class="admin-empty">No MCP servers configured</div>'; return; }
+    if (!servers.length) { list.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_no_mcp_servers', null, 'No MCP servers configured') + '</div>'; return; }
     list.innerHTML = servers.map(s => {
       const statusColor = s.needs_oauth ? '#e5a33a' : s.status === 'connected' ? 'var(--fg)' : s.status === 'error' ? 'var(--red)' : 'color-mix(in srgb, var(--fg) 50%, transparent)';
-      const toolInfo = s.status === 'connected' ? `${s.enabled_tool_count}/${s.tool_count} tools enabled` : '';
-      const statusText = s.needs_oauth ? 'Needs authorization' : s.status === 'connected' ? `Connected (${toolInfo})` : s.status === 'error' ? `Error: ${s.error || 'unknown'}` : 'Disconnected';
+      const toolInfo = s.status === 'connected' ? t('ui.js.admin_tools_enabled', { enabled: s.enabled_tool_count, total: s.tool_count }, '{enabled}/{total} tools enabled') : '';
+      const statusText = s.needs_oauth ? t('ui.js.admin_needs_authorization', null, 'Needs authorization') : s.status === 'connected' ? t('ui.js.admin_connected_info', { info: toolInfo }, 'Connected ({info})') : s.status === 'error' ? t('ui.js.admin_error_info', { error: s.error || 'unknown' }, 'Error: {error}') : t('ui.js.admin_disconnected', null, 'Disconnected');
       const hasTools = s.status === 'connected' && s.tool_count > 0;
       return `<div class="admin-user-row" data-adm-mcp-id="${s.id}">
         <div style="display:flex;align-items:center;justify-content:space-between;${hasTools ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-mcp-header="${s.id}">
           <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
             <span class="admin-user-name">${esc(s.name)}</span>
             <span class="admin-badge" style="background:${statusColor}33;color:${statusColor}">${statusText}</span>
-            ${hasTools ? `<span style="font-size:10px;opacity:0.4;">Click to manage tools</span>` : ''}
+            ${hasTools ? `<span style="font-size:10px;opacity:0.4;">${t('ui.js.admin_click_manage_tools', null, 'Click to manage tools')}</span>` : ''}
           </div>
           <div style="display:flex;gap:4px;align-items:center;">
-            ${s.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${s.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;">Authorize</a>` : ''}
-            <button class="admin-btn-sm" data-adm-mcp-reconnect="${s.id}">Reconnect</button>
-            <button class="admin-btn-delete" style="border-color:${s.is_enabled ? 'color-mix(in srgb, var(--red) 30%, transparent)' : 'color-mix(in srgb, var(--fg) 30%, transparent)'};color:${s.is_enabled ? 'var(--red)' : 'var(--fg)'};" data-adm-mcp-toggle="${s.id}" data-adm-mcp-enable="${!s.is_enabled}">${s.is_enabled ? 'Disable' : 'Enable'}</button>
-            <button class="admin-btn-delete" data-adm-mcp-delete="${s.id}">Delete</button>
+            ${s.needs_oauth ? `<a href="/api/mcp/oauth/authorize/${s.id}" target="_blank" class="admin-btn-sm" style="background:var(--red);color:#fff;text-decoration:none;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;">${t('ui.js.admin_authorize', null, 'Authorize')}</a>` : ''}
+            <button class="admin-btn-sm" data-adm-mcp-reconnect="${s.id}">${t('ui.js.admin_reconnect', null, 'Reconnect')}</button>
+            <button class="admin-btn-delete" style="border-color:${s.is_enabled ? 'color-mix(in srgb, var(--red) 30%, transparent)' : 'color-mix(in srgb, var(--fg) 30%, transparent)'};color:${s.is_enabled ? 'var(--red)' : 'var(--fg)'};" data-adm-mcp-toggle="${s.id}" data-adm-mcp-enable="${!s.is_enabled}">${s.is_enabled ? t('ui.js.admin_disable', null, 'Disable') : t('ui.js.admin_enable', null, 'Enable')}</button>
+            <button class="admin-btn-delete" data-adm-mcp-delete="${s.id}">${t('ui.js.admin_delete', null, 'Delete')}</button>
             ${hasTools ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
           </div>
         </div>
@@ -1767,14 +1793,14 @@ async function loadMcpServers() {
     }).join('');
     list.querySelectorAll('[data-adm-mcp-reconnect]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const msg = el('adm-mcpMsg'); msg.textContent = 'Reconnecting...'; msg.className = '';
+        const msg = el('adm-mcpMsg'); msg.textContent = t('ui.js.admin_reconnecting', null, 'Reconnecting...'); msg.className = '';
         try {
           const res = await fetch(`/api/mcp/servers/${btn.dataset.admMcpReconnect}/reconnect`, { method: 'POST', credentials: 'same-origin' });
           const data = await res.json();
-          msg.textContent = data.connected ? `Reconnected (${data.tool_count} tools)` : `Failed: ${data.error || 'unknown'}`;
+          msg.textContent = data.connected ? t('ui.js.admin_reconnected', { count: data.tool_count }, 'Reconnected ({count} tools)') : t('ui.js.admin_failed_error', { error: data.error || 'unknown' }, 'Failed: {error}');
           msg.className = data.connected ? 'admin-success' : 'admin-error';
           loadMcpServers();
-        } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-error'; }
+        } catch (e) { msg.textContent = t('ui.js.admin_failed_error', { error: e.message }, 'Failed: {error}'); msg.className = 'admin-error'; }
       });
     });
     list.querySelectorAll('[data-adm-mcp-toggle]').forEach(btn => {
@@ -1786,7 +1812,7 @@ async function loadMcpServers() {
     });
     list.querySelectorAll('[data-adm-mcp-delete]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!await uiModule.styledConfirm('Delete this MCP server?', { confirmText: 'Delete', danger: true })) return;
+        if (!await uiModule.styledConfirm(t('ui.js.admin_delete_mcp_confirm', null, 'Delete this MCP server?'), { confirmText: t('ui.js.admin_delete', null, 'Delete'), danger: true })) return;
         await fetch(`/api/mcp/servers/${btn.dataset.admMcpDelete}`, { method: 'DELETE', credentials: 'same-origin' });
         loadMcpServers();
       });
@@ -1811,18 +1837,18 @@ async function loadMcpServers() {
         }
         if (!_toolsLoaded && isOpen) {
           _toolsLoaded = true;
-          panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">Loading tools...</span>';
+          panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">' + t('ui.js.admin_loading_tools', null, 'Loading tools...') + '</span>';
           try {
             const res = await fetch(`/api/mcp/servers/${sid}/tools`, { credentials: 'same-origin' });
             const tools = await res.json();
-            if (!tools.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">No tools</span>'; return; }
+            if (!tools.length) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px;">' + t('ui.js.admin_no_tools', null, 'No tools') + '</span>'; return; }
             const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
             panel.innerHTML = `<div class="mcp-tools-header">
-              <span>Tools</span>
+              <span>${t('ui.js.admin_tools_header', null, 'Tools')}</span>
               <span style="display:flex;gap:8px;align-items:center;">
-                <span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} enabled</span>
-                <a href="#" data-mcp-select-all="${sid}">All</a>
-                <a href="#" data-mcp-select-none="${sid}">None</a>
+                <span class="mcp-tools-count">${t('ui.js.admin_n_enabled', { enabled: tools.length - disabled.size, total: tools.length }, '{enabled}/{total} enabled')}</span>
+                <a href="#" data-mcp-select-all="${sid}">${t('ui.js.admin_all', null, 'All')}</a>
+                <a href="#" data-mcp-select-none="${sid}">${t('ui.js.admin_none', null, 'None')}</a>
               </span>
             </div><div class="mcp-tools-list">` + tools.map(t =>
               `<label title="${esc(t.description)}">
@@ -1843,11 +1869,11 @@ async function loadMcpServers() {
             panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
               cb.addEventListener('change', () => _saveMcpToolState(sid, panel));
             });
-          } catch (e) { panel.innerHTML = '<span class="admin-error" style="font-size:11px;">Failed to load tools</span>'; }
+          } catch (e) { panel.innerHTML = '<span class="admin-error" style="font-size:11px;">' + t('ui.js.admin_load_tools_failed', null, 'Failed to load tools') + '</span>'; }
         }
       });
     });
-  } catch (e) { if (list) list.innerHTML = '<div class="admin-error">Failed to load MCP servers</div>'; }
+  } catch (e) { if (list) list.innerHTML = '<div class="admin-error">' + t('ui.js.admin_load_mcp_failed', null, 'Failed to load MCP servers') + '</div>'; }
 }
 
 async function _saveMcpToolState(serverId, panel) {
@@ -1865,12 +1891,12 @@ async function _saveMcpToolState(serverId, panel) {
     });
     // Update the count label in the panel
     const countLabel = panel.querySelector('.mcp-tools-count');
-    if (countLabel) countLabel.textContent = `${total - disabled.length}/${total} enabled`;
+    if (countLabel) countLabel.textContent = t('ui.js.admin_n_enabled', { enabled: total - disabled.length, total }, '{enabled}/{total} enabled');
     // Update badge in the server row
     const row = panel.closest('[data-adm-mcp-id]');
     if (row) {
       const badge = row.querySelector('.admin-badge');
-      if (badge) badge.textContent = `Connected (${total - disabled.length}/${total} tools enabled)`;
+      if (badge) badge.textContent = t('ui.js.admin_connected_info', { info: t('ui.js.admin_tools_enabled', { enabled: total - disabled.length, total }, '{enabled}/{total} tools enabled') }, 'Connected ({info})');
     }
   } catch (e) { /* silent */ }
 }
@@ -1911,7 +1937,7 @@ function initMcpForm() {
       row.style.cssText = 'gap:6px;align-items:center;';
       const label = document.createElement('span');
       label.style.cssText = 'font-size:11px;opacity:0.55;min-width:0;white-space:nowrap;';
-      label.textContent = pd.label || 'Provider';
+      label.textContent = pd.label || t('ui.js.admin_provider_label', null, 'Provider');
       const select = document.createElement('select');
       select.style.cssText = 'flex:1;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:12px;';
       pd.options.forEach((opt, i) => {
@@ -1962,7 +1988,7 @@ function initMcpForm() {
     if (help) {
       _activeHelp = help;
       const helpLink = document.createElement('a');
-      helpLink.textContent = 'How do I get these?';
+      helpLink.textContent = t('ui.js.admin_how_get_these', null, 'How do I get these?');
       helpLink.href = '#';
       helpLink.style.cssText = 'font-size:10.5px;opacity:0.5;margin-top:2px;display:inline-block;';
       helpLink.addEventListener('click', (e) => {
@@ -2003,7 +2029,7 @@ function initMcpForm() {
     MCP_PRESETS.forEach((p, i) => {
       const opt = document.createElement('option');
       opt.value = i;
-      opt.textContent = p.name + (Object.keys(p.env).length ? '  (requires keys)' : '');
+      opt.textContent = p.name + (Object.keys(p.env).length ? '  ' + t('ui.js.admin_requires_keys', null, '(requires keys)') : '');
       presetSel.appendChild(opt);
     });
     presetSel.addEventListener('change', () => {
@@ -2034,10 +2060,10 @@ function initMcpForm() {
     const env = _collectEnv();
     const url = el('adm-mcpUrl').value.trim();
     const msg = el('adm-mcpMsg');
-    if (!name) { msg.textContent = 'Name is required'; msg.className = 'admin-error'; return; }
-    if (transport === 'stdio' && !command) { msg.textContent = 'Command is required for stdio'; msg.className = 'admin-error'; return; }
-    if (transport === 'sse' && !url) { msg.textContent = 'URL is required for SSE'; msg.className = 'admin-error'; return; }
-    try { JSON.parse(env); } catch { msg.textContent = 'Env must be valid JSON'; msg.className = 'admin-error'; return; }
+    if (!name) { msg.textContent = t('ui.js.admin_name_required', null, 'Name is required'); msg.className = 'admin-error'; return; }
+    if (transport === 'stdio' && !command) { msg.textContent = t('ui.js.admin_command_required', null, 'Command is required for stdio'); msg.className = 'admin-error'; return; }
+    if (transport === 'sse' && !url) { msg.textContent = t('ui.js.admin_url_required_sse', null, 'URL is required for SSE'); msg.className = 'admin-error'; return; }
+    try { JSON.parse(env); } catch { msg.textContent = t('ui.js.admin_env_json', null, 'Env must be valid JSON'); msg.className = 'admin-error'; return; }
     const fd = new FormData();
     fd.append('name', name); fd.append('transport', transport); fd.append('command', command); fd.append('args', args); fd.append('env', env); fd.append('url', url);
     // If preset has oauthFile config, send credentials for file generation
@@ -2054,20 +2080,20 @@ function initMcpForm() {
     if (_activeOauth) {
       fd.append('oauth_config', JSON.stringify(_activeOauth));
     }
-    msg.textContent = 'Adding...'; msg.className = '';
+    msg.textContent = t('ui.js.admin_adding', null, 'Adding...'); msg.className = '';
     try {
       const res = await fetch('/api/mcp/servers', { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
       if (data.needs_oauth) {
-        msg.innerHTML = `Added ${esc(name)} — <a href="/api/mcp/oauth/authorize/${data.id}" target="_blank" style="color:var(--red);font-weight:600;">Authorize with Google</a> to connect`;
+        msg.innerHTML = t('ui.js.admin_added_authorize_google', { name: esc(name), link: `<a href="/api/mcp/oauth/authorize/${data.id}" target="_blank" style="color:var(--red);font-weight:600;">${t('ui.js.admin_authorize_with_google', null, 'Authorize with Google')}</a>` }, 'Added {name} — {link} to connect');
         msg.className = 'admin-success';
       } else if (data.connected) {
-        msg.textContent = `Added ${name} (${data.tool_count} tools discovered)`; msg.className = 'admin-success';
-      } else { msg.textContent = `Added but connection failed: ${data.error || 'unknown'}`; msg.className = 'admin-error'; }
+        msg.textContent = t('ui.js.admin_added_tools_discovered', { name, count: data.tool_count }, 'Added {name} ({count} tools discovered)'); msg.className = 'admin-success';
+      } else { msg.textContent = t('ui.js.admin_added_connection_failed', { error: data.error || 'unknown' }, 'Added but connection failed: {error}'); msg.className = 'admin-error'; }
       el('adm-mcpName').value = ''; el('adm-mcpCommand').value = ''; el('adm-mcpArgs').value = ''; el('adm-mcpUrl').value = '';
       _clearEnvFields(); helpBox.style.display = 'none'; _activeHelp = null; _activeOauthFile = null; _activeOauth = null;
       loadMcpServers();
-    } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-error'; }
+    } catch (e) { msg.textContent = t('ui.js.admin_failed_error', { error: e.message }, 'Failed: {error}'); msg.className = 'admin-error'; }
   });
 }
 
@@ -2084,43 +2110,43 @@ async function loadRag() {
     const data = await res.json();
     const dirList = el('adm-ragDirList');
     const dirs = data.directories || [];
-    if (dirs.length === 0) { dirList.innerHTML = '<div class="admin-empty">No directories indexed</div>'; }
+    if (dirs.length === 0) { dirList.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_no_dirs_indexed', null, 'No directories indexed') + '</div>'; }
     else {
-      dirList.innerHTML = dirs.map(d => `<div class="admin-rag-item"><span class="admin-rag-item-name" title="${esc(d)}">${esc(d)}</span><button class="admin-btn-delete" data-adm-rag-dir="${esc(d)}">Remove</button></div>`).join('');
+      dirList.innerHTML = dirs.map(d => `<div class="admin-rag-item"><span class="admin-rag-item-name" title="${esc(d)}">${esc(d)}</span><button class="admin-btn-delete" data-adm-rag-dir="${esc(d)}">${t('ui.js.admin_remove', null, 'Remove')}</button></div>`).join('');
       dirList.querySelectorAll('[data-adm-rag-dir]').forEach(btn => {
         btn.addEventListener('click', async () => {
-          if (!await uiModule.styledConfirm(`Remove directory "${btn.dataset.admRagDir}" from RAG?`, { confirmText: 'Remove', danger: true })) return;
+          if (!await uiModule.styledConfirm(t('ui.js.admin_remove_dir_confirm', { dir: btn.dataset.admRagDir }, 'Remove directory "{dir}" from RAG?'), { confirmText: t('ui.js.admin_remove', null, 'Remove'), danger: true })) return;
           btn.disabled = true; btn.textContent = '...';
           try {
             const res = await fetch('/api/personal/remove_directory?directory=' + encodeURIComponent(btn.dataset.admRagDir), { method: 'DELETE' });
-            if (res.ok) { ragMsg('Directory removed'); loadRag(); }
-            else { const e = await res.json(); ragMsg(e.detail || 'Failed', true); }
-          } catch (e) { ragMsg('Error: ' + e.message, true); }
+            if (res.ok) { ragMsg(t('ui.js.admin_dir_removed', null, 'Directory removed')); loadRag(); }
+            else { const e = await res.json(); ragMsg(e.detail || t('ui.js.admin_failed', null, 'Failed'), true); }
+          } catch (e) { ragMsg(t('ui.js.admin_error_info', { error: e.message }, 'Error: {error}'), true); }
         });
       });
     }
     const fileList = el('adm-ragFileList');
     const files = data.files || [];
-    if (files.length === 0) { fileList.innerHTML = '<div class="admin-empty">No files indexed</div>'; }
+    if (files.length === 0) { fileList.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_no_files_indexed', null, 'No files indexed') + '</div>'; }
     else {
       fileList.innerHTML = files.map(f => {
         const size = f.size ? (f.size > 1024 ? (f.size / 1024).toFixed(1) + ' KB' : f.size + ' B') : '';
-        return `<div class="admin-rag-item"><span class="admin-rag-item-name" title="${esc(f.path || f.name)}">${esc(f.name)}</span><span class="admin-rag-item-meta">${size}</span><button class="admin-btn-delete" data-adm-rag-file="${esc(f.path || f.name)}">Delete</button></div>`;
+        return `<div class="admin-rag-item"><span class="admin-rag-item-name" title="${esc(f.path || f.name)}">${esc(f.name)}</span><span class="admin-rag-item-meta">${size}</span><button class="admin-btn-delete" data-adm-rag-file="${esc(f.path || f.name)}">${t('ui.js.admin_delete', null, 'Delete')}</button></div>`;
       }).join('');
       fileList.querySelectorAll('[data-adm-rag-file]').forEach(btn => {
         btn.addEventListener('click', async () => {
-          if (!await uiModule.styledConfirm(`Delete "${btn.dataset.admRagFile}" from RAG?`, { confirmText: 'Delete', danger: true })) return;
+          if (!await uiModule.styledConfirm(t('ui.js.admin_delete_file_confirm', { file: btn.dataset.admRagFile }, 'Delete "{file}" from RAG?'), { confirmText: t('ui.js.admin_delete', null, 'Delete'), danger: true })) return;
           btn.disabled = true; btn.textContent = '...';
           try {
             const res = await fetch('/api/personal/file?filepath=' + encodeURIComponent(btn.dataset.admRagFile), { method: 'DELETE' });
-            if (res.ok) { ragMsg('File removed'); loadRag(); }
-            else { const e = await res.json(); ragMsg(e.detail || 'Failed', true); }
-          } catch (e) { ragMsg('Error: ' + e.message, true); }
+            if (res.ok) { ragMsg(t('ui.js.admin_file_removed', null, 'File removed')); loadRag(); }
+            else { const e = await res.json(); ragMsg(e.detail || t('ui.js.admin_failed', null, 'Failed'), true); }
+          } catch (e) { ragMsg(t('ui.js.admin_error_info', { error: e.message }, 'Error: {error}'), true); }
         });
       });
     }
   } catch (e) {
-    el('adm-ragDirList').innerHTML = '<div class="admin-error">Failed to load</div>';
+    el('adm-ragDirList').innerHTML = '<div class="admin-error">' + t('ui.js.admin_load_failed', null, 'Failed to load') + '</div>';
     el('adm-ragFileList').innerHTML = '';
   }
 }
@@ -2135,15 +2161,15 @@ function ragMsg(text, isError, persist) {
 
 async function ragUpload(files) {
   if (!files || files.length === 0) return;
-  ragMsg('Uploading ' + files.length + ' file(s)...', false, true);
+  ragMsg(t('ui.js.admin_uploading_files', { count: files.length }, 'Uploading {count} file(s)...'), false, true);
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   try {
     const res = await fetch('/api/personal/upload', { method: 'POST', body: fd });
     const data = await res.json();
-    if (data.success) { ragMsg(`Uploaded ${data.uploaded.length} file(s), ${data.indexed_count} chunks indexed`); loadRag(); }
-    else ragMsg(data.detail || 'Upload failed', true);
-  } catch (e) { ragMsg('Upload error: ' + e.message, true); }
+    if (data.success) { ragMsg(t('ui.js.admin_uploaded_indexed', { files: data.uploaded.length, chunks: data.indexed_count }, 'Uploaded {files} file(s), {chunks} chunks indexed')); loadRag(); }
+    else ragMsg(data.detail || t('ui.js.admin_upload_failed', null, 'Upload failed'), true);
+  } catch (e) { ragMsg(t('ui.js.admin_upload_error', { error: e.message }, 'Upload error: {error}'), true); }
 }
 
 function initRag() {
@@ -2158,25 +2184,25 @@ function initRag() {
     const dir = el('adm-ragDirInput').value.trim();
     if (!dir) return;
     const btn = el('adm-ragAddDirBtn');
-    btn.disabled = true; btn.textContent = 'Indexing...';
+    btn.disabled = true; btn.textContent = t('ui.js.admin_indexing', null, 'Indexing...');
     try {
       const res = await fetch('/api/personal/add_directory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ directory: dir }) });
       const data = await res.json();
-      if (data.success) { ragMsg(`Indexed ${data.indexed_count} chunks from directory`); el('adm-ragDirInput').value = ''; loadRag(); }
-      else ragMsg(data.detail || data.message || 'Failed', true);
-    } catch (e) { ragMsg('Error: ' + e.message, true); }
-    btn.disabled = false; btn.textContent = 'Add Directory';
+      if (data.success) { ragMsg(t('ui.js.admin_indexed_chunks', { count: data.indexed_count }, 'Indexed {count} chunks from directory')); el('adm-ragDirInput').value = ''; loadRag(); }
+      else ragMsg(data.detail || data.message || t('ui.js.admin_failed', null, 'Failed'), true);
+    } catch (e) { ragMsg(t('ui.js.admin_error_info', { error: e.message }, 'Error: {error}'), true); }
+    btn.disabled = false; btn.textContent = t('ui.js.admin_add_directory', null, 'Add Directory');
   });
   el('adm-ragReloadBtn').addEventListener('click', async () => {
     const btn = el('adm-ragReloadBtn');
-    btn.disabled = true; btn.textContent = 'Reloading...';
+    btn.disabled = true; btn.textContent = t('ui.js.admin_reloading', null, 'Reloading...');
     try {
       const res = await fetch('/api/personal/reload', { method: 'POST' });
       const data = await res.json();
-      ragMsg(`Index reloaded: ${data.count} documents`);
+      ragMsg(t('ui.js.admin_index_reloaded', { count: data.count }, 'Index reloaded: {count} documents'));
       loadRag();
-    } catch (e) { ragMsg('Reload failed: ' + e.message, true); }
-    btn.disabled = false; btn.textContent = 'Reload Index';
+    } catch (e) { ragMsg(t('ui.js.admin_reload_failed', { error: e.message }, 'Reload failed: {error}'), true); }
+    btn.disabled = false; btn.textContent = t('ui.js.admin_reload_index', null, 'Reload Index');
   });
 }
 
@@ -2188,26 +2214,31 @@ async function loadTokens() {
   try {
     const res = await fetch('/api/tokens', { credentials: 'same-origin' });
     const tokens = await res.json();
-    if (!tokens.length) { list.innerHTML = '<div class="admin-empty">No API tokens</div>'; return; }
-    list.innerHTML = tokens.map(t => `
+    if (!tokens.length) { list.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_no_tokens', null, 'No API tokens') + '</div>'; return; }
+    const _scopesTitle = t('ui.js.admin_scopes_title', null, 'Allowed API scopes');
+    const _neverUsed = t('ui.js.admin_never_used', null, 'Never used');
+    const _revoke = t('ui.js.admin_revoke', null, 'Revoke');
+    const _ownerLbl = (owner) => t('ui.js.admin_owner', { owner }, 'Owner: {owner}');
+    const _lastUsedLbl = (when) => t('ui.js.admin_last_used', { when }, 'Last used: {when}');
+    list.innerHTML = tokens.map(tk => `
       <div class="admin-user-row">
         <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;">
-          <span class="admin-user-name">${esc(t.name)}</span>
-          <span class="admin-badge">${esc(t.token_prefix)}...</span>
-          <span class="admin-badge" title="Allowed API scopes">${esc((t.scopes || ['chat']).join(', '))}</span>
-          ${t.owner ? `<span style="font-size:0.75rem;opacity:0.5;">Owner: ${esc(t.owner)}</span>` : ''}
-          ${t.last_used_at ? `<span style="font-size:0.75rem;opacity:0.5;">Last used: ${new Date(t.last_used_at).toLocaleDateString()}</span>` : '<span style="font-size:0.75rem;opacity:0.4;">Never used</span>'}
+          <span class="admin-user-name">${esc(tk.name)}</span>
+          <span class="admin-badge">${esc(tk.token_prefix)}...</span>
+          <span class="admin-badge" title="${esc(_scopesTitle)}">${esc((tk.scopes || ['chat']).join(', '))}</span>
+          ${tk.owner ? `<span style="font-size:0.75rem;opacity:0.5;">${esc(_ownerLbl(tk.owner))}</span>` : ''}
+          ${tk.last_used_at ? `<span style="font-size:0.75rem;opacity:0.5;">${esc(_lastUsedLbl(new Date(tk.last_used_at).toLocaleDateString()))}</span>` : `<span style="font-size:0.75rem;opacity:0.4;">${esc(_neverUsed)}</span>`}
         </div>
-        <button class="admin-btn-delete" data-adm-del-token="${t.id}">Revoke</button>
+        <button class="admin-btn-delete" data-adm-del-token="${tk.id}">${esc(_revoke)}</button>
       </div>`).join('');
     list.querySelectorAll('[data-adm-del-token]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!await uiModule.styledConfirm('Revoke this API token? External integrations using it will stop working.', { confirmText: 'Revoke', danger: true })) return;
+        if (!await uiModule.styledConfirm(t('ui.js.admin_revoke_token_confirm', null, 'Revoke this API token? External integrations using it will stop working.'), { confirmText: t('ui.js.admin_revoke', null, 'Revoke'), danger: true })) return;
         await fetch(`/api/tokens/${btn.dataset.admDelToken}`, { method: 'DELETE', credentials: 'same-origin' });
         loadTokens();
       });
     });
-  } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load tokens</div>'; }
+  } catch (e) { list.innerHTML = '<div class="admin-error">' + t('ui.js.admin_load_tokens_failed', null, 'Failed to load tokens') + '</div>'; }
 }
 
 function initTokenForm() {
@@ -2219,7 +2250,7 @@ function initTokenForm() {
     const reveal = el('adm-tokenReveal');
     msg.textContent = ''; msg.className = ''; reveal.style.display = 'none';
     const name = el('adm-tokenName').value.trim();
-    if (!name) { msg.textContent = 'Token name is required'; msg.className = 'admin-error'; return; }
+    if (!name) { msg.textContent = t('ui.js.admin_token_name_required', null, 'Token name is required'); msg.className = 'admin-error'; return; }
     const fd = new FormData(); fd.append('name', name);
     const scopes = (el('adm-tokenScopes')?.value || '').trim();
     if (scopes) fd.append('scopes', scopes);
@@ -2233,14 +2264,14 @@ function initTokenForm() {
         if (el('adm-tokenScopes')) el('adm-tokenScopes').value = '';
         loadTokens();
       }
-      else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
+      else { msg.textContent = data.detail || t('ui.js.admin_failed', null, 'Failed'); msg.className = 'admin-error'; }
+    } catch (e) { msg.textContent = t('ui.js.admin_request_failed', null, 'Request failed'); msg.className = 'admin-error'; }
   });
   el('adm-tokenCopyBtn').addEventListener('click', () => {
     const val = el('adm-tokenValue').textContent;
     navigator.clipboard.writeText(val).then(() => {
-      el('adm-tokenCopyBtn').textContent = 'Copied!';
-      setTimeout(() => { el('adm-tokenCopyBtn').textContent = 'Copy'; }, 2000);
+      el('adm-tokenCopyBtn').textContent = t('ui.js.admin_copied_excl', null, 'Copied!');
+      setTimeout(() => { el('adm-tokenCopyBtn').textContent = t('ui.js.admin_copy', null, 'Copy'); }, 2000);
     });
   });
 }
@@ -2251,38 +2282,38 @@ async function loadWebhooks() {
   try {
     const res = await fetch('/api/webhooks', { credentials: 'same-origin' });
     const hooks = await res.json();
-    if (!hooks.length) { list.innerHTML = '<div class="admin-empty">No webhooks configured</div>'; return; }
+    if (!hooks.length) { list.innerHTML = '<div class="admin-empty">' + t('ui.js.admin_no_webhooks', null, 'No webhooks configured') + '</div>'; return; }
     list.innerHTML = hooks.map(w => {
       const events = (w.events || []).map(e => `<span class="admin-badge">${esc(e)}</span>`).join(' ');
       const statusBadge = w.last_status_code
         ? `<span class="admin-badge" style="background:${w.last_status_code < 400 ? 'color-mix(in srgb, var(--fg) 20%, transparent)' : 'color-mix(in srgb, var(--red) 20%, transparent)'};color:${w.last_status_code < 400 ? 'var(--fg)' : 'var(--red)'};">${w.last_status_code}</span>`
         : '';
-      const lastTriggered = w.last_triggered_at ? new Date(w.last_triggered_at).toLocaleString() : 'Never';
-      const errorText = w.last_error ? `<div style="font-size:0.75rem;color:var(--red);margin-top:0.2rem;">Error: ${esc(w.last_error.substring(0, 80))}</div>` : '';
+      const lastTriggered = w.last_triggered_at ? new Date(w.last_triggered_at).toLocaleString() : t('ui.js.admin_never', null, 'Never');
+      const errorText = w.last_error ? `<div style="font-size:0.75rem;color:var(--red);margin-top:0.2rem;">${t('ui.js.admin_error_info', { error: esc(w.last_error.substring(0, 80)) }, 'Error: {error}')}</div>` : '';
       return `
         <div class="admin-ep-item" style="flex-wrap:wrap;">
           <div class="admin-ep-info" style="flex:1;min-width:200px;">
-            <div class="admin-ep-name">${esc(w.name)} ${w.is_active ? '' : '<span class="admin-badge admin-badge-off">disabled</span>'} ${w.has_secret ? '<span class="admin-badge">signed</span>' : ''}</div>
+            <div class="admin-ep-name">${esc(w.name)} ${w.is_active ? '' : '<span class="admin-badge admin-badge-off">' + t('ui.js.admin_disabled_badge', null, 'disabled') + '</span>'} ${w.has_secret ? '<span class="admin-badge">' + t('ui.js.admin_signed_badge', null, 'signed') + '</span>' : ''}</div>
             <div class="admin-ep-detail">${esc(w.url)}</div>
             <div style="margin-top:0.3rem;">${events}</div>
-            <div class="admin-ep-detail">Last: ${lastTriggered} ${statusBadge}</div>
+            <div class="admin-ep-detail">${t('ui.js.admin_last_label', { when: lastTriggered }, 'Last: {when}')} ${statusBadge}</div>
             ${errorText}
           </div>
           <div class="admin-ep-actions">
-            <button class="admin-btn-sm" data-adm-wh-test="${w.id}">Test</button>
-            <button class="admin-btn-sm" data-adm-wh-toggle="${w.id}">${w.is_active ? 'Disable' : 'Enable'}</button>
-            <button class="admin-btn-delete" data-adm-wh-delete="${w.id}">Delete</button>
+            <button class="admin-btn-sm" data-adm-wh-test="${w.id}">${t('ui.js.admin_test', null, 'Test')}</button>
+            <button class="admin-btn-sm" data-adm-wh-toggle="${w.id}">${w.is_active ? t('ui.js.admin_disable', null, 'Disable') : t('ui.js.admin_enable', null, 'Enable')}</button>
+            <button class="admin-btn-delete" data-adm-wh-delete="${w.id}">${t('ui.js.admin_delete', null, 'Delete')}</button>
           </div>
         </div>`;
     }).join('');
     list.querySelectorAll('[data-adm-wh-test]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        const msg = el('adm-whMsg'); msg.textContent = 'Sending test...'; msg.className = '';
+        const msg = el('adm-whMsg'); msg.textContent = t('ui.js.admin_sending_test', null, 'Sending test...'); msg.className = '';
         try {
           const res = await fetch(`/api/webhooks/${btn.dataset.admWhTest}/test`, { method: 'POST', credentials: 'same-origin' });
-          msg.textContent = res.ok ? 'Test sent!' : 'Test failed'; msg.className = res.ok ? 'admin-success' : 'admin-error';
+          msg.textContent = res.ok ? t('ui.js.admin_test_sent', null, 'Test sent!') : t('ui.js.admin_test_failed_short', null, 'Test failed'); msg.className = res.ok ? 'admin-success' : 'admin-error';
           setTimeout(() => loadWebhooks(), 1000);
-        } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-error'; }
+        } catch (e) { msg.textContent = t('ui.js.admin_failed_error', { error: e.message }, 'Failed: {error}'); msg.className = 'admin-error'; }
       });
     });
     list.querySelectorAll('[data-adm-wh-toggle]').forEach(btn => {
@@ -2290,11 +2321,11 @@ async function loadWebhooks() {
     });
     list.querySelectorAll('[data-adm-wh-delete]').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!await uiModule.styledConfirm('Delete this webhook?', { confirmText: 'Delete', danger: true })) return;
+        if (!await uiModule.styledConfirm(t('ui.js.admin_delete_webhook_confirm', null, 'Delete this webhook?'), { confirmText: t('ui.js.admin_delete', null, 'Delete'), danger: true })) return;
         await fetch(`/api/webhooks/${btn.dataset.admWhDelete}`, { method: 'DELETE', credentials: 'same-origin' }); loadWebhooks();
       });
     });
-  } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load webhooks</div>'; }
+  } catch (e) { list.innerHTML = '<div class="admin-error">' + t('ui.js.admin_load_webhooks_failed', null, 'Failed to load webhooks') + '</div>'; }
 }
 
 function initWebhookForm() {
@@ -2305,32 +2336,33 @@ function initWebhookForm() {
     const url = el('adm-whUrl').value.trim();
     const secret = el('adm-whSecret').value.trim();
     const events = Array.from(modalEl.querySelectorAll('.adm-wh-event:checked')).map(e => e.value).join(',');
-    if (!name) { msg.textContent = 'Name is required'; msg.className = 'admin-error'; return; }
-    if (!url) { msg.textContent = 'URL is required'; msg.className = 'admin-error'; return; }
-    if (!events) { msg.textContent = 'Select at least one event'; msg.className = 'admin-error'; return; }
+    if (!name) { msg.textContent = t('ui.js.admin_name_required', null, 'Name is required'); msg.className = 'admin-error'; return; }
+    if (!url) { msg.textContent = t('ui.js.admin_url_required', null, 'URL is required'); msg.className = 'admin-error'; return; }
+    if (!events) { msg.textContent = t('ui.js.admin_select_event', null, 'Select at least one event'); msg.className = 'admin-error'; return; }
     const fd = new FormData();
     fd.append('name', name); fd.append('url', url); fd.append('secret', secret); fd.append('events', events);
     try {
       const res = await fetch('/api/webhooks', { method: 'POST', body: fd, credentials: 'same-origin' });
-      if (res.ok) { msg.textContent = 'Webhook added'; msg.className = 'admin-success'; el('adm-whName').value = ''; el('adm-whUrl').value = ''; el('adm-whSecret').value = ''; loadWebhooks(); }
-      else { const d = await res.json(); msg.textContent = d.detail || 'Failed'; msg.className = 'admin-error'; }
-    } catch (e) { msg.textContent = 'Failed: ' + e.message; msg.className = 'admin-error'; }
+      if (res.ok) { msg.textContent = t('ui.js.admin_webhook_added', null, 'Webhook added'); msg.className = 'admin-success'; el('adm-whName').value = ''; el('adm-whUrl').value = ''; el('adm-whSecret').value = ''; loadWebhooks(); }
+      else { const d = await res.json(); msg.textContent = d.detail || t('ui.js.admin_failed', null, 'Failed'); msg.className = 'admin-error'; }
+    } catch (e) { msg.textContent = t('ui.js.admin_failed_error', { error: e.message }, 'Failed: {error}'); msg.className = 'admin-error'; }
   });
 }
 
 /* ── Features ── */
-const featureLabels = {
-  web_search: 'Web Search', deep_research: 'Deep Research',
-  memory: 'Memory', document_editor: 'Document Editor', rag: 'RAG Knowledge Base', sensitive_filter: 'Sensitive Info Filter',
-  gallery: 'Gallery'
-};
+// Lazy — see PRIV_LABELS note (resolves at render time, not module load).
+const featureLabels = () => ({
+  web_search: t('ui.js.admin_feat_web_search', null, 'Web Search'), deep_research: t('ui.js.admin_feat_deep_research', null, 'Deep Research'),
+  memory: t('ui.js.admin_feat_memory', null, 'Memory'), document_editor: t('ui.js.admin_feat_document_editor', null, 'Document Editor'), rag: t('ui.js.admin_feat_rag', null, 'RAG Knowledge Base'), sensitive_filter: t('ui.js.admin_feat_sensitive_filter', null, 'Sensitive Info Filter'),
+  gallery: t('ui.js.admin_feat_gallery', null, 'Gallery')
+});
 
 async function loadFeatures() {
   const container = el('adm-featureToggles');
   try {
     const res = await fetch('/api/auth/features', { credentials: 'same-origin' });
     const features = await res.json();
-    container.innerHTML = Object.entries(featureLabels).map(([key, label]) => `
+    container.innerHTML = Object.entries(featureLabels()).map(([key, label]) => `
       <div class="admin-toggle-row" style="padding:0.4rem 0;border-bottom:1px solid var(--border);">
         <div class="admin-toggle-label">${label}</div>
         <label class="admin-switch"><input type="checkbox" data-adm-feature="${key}" ${features[key] ? 'checked' : ''}><span class="admin-slider"></span></label>
@@ -2341,7 +2373,7 @@ async function loadFeatures() {
         await fetch('/api/auth/features', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       });
     });
-  } catch (e) { container.innerHTML = '<div class="admin-error">Failed to load features</div>'; }
+  } catch (e) { container.innerHTML = '<div class="admin-error">' + t('ui.js.admin_load_features_failed', null, 'Failed to load features') + '</div>'; }
 }
 
 /* ── CalDAV Config ── */
@@ -2363,7 +2395,7 @@ function initCalDAV() {
     }).catch(() => {});
 
   saveBtn.addEventListener('click', async () => {
-    status.textContent = 'Saving...';
+    status.textContent = t('ui.js.admin_saving', null, 'Saving...');
     try {
       const res = await fetch(`${API_BASE}/api/calendar/config`, {
         method: 'POST', credentials: 'same-origin',
@@ -2371,14 +2403,14 @@ function initCalDAV() {
         body: JSON.stringify({ caldav_url: urlIn.value, caldav_username: userIn.value, caldav_password: passIn.value }),
       });
       const d = await res.json();
-      status.textContent = d.ok ? 'Saved' : 'Error';
+      status.textContent = d.ok ? t('ui.js.admin_saved', null, 'Saved') : t('ui.js.admin_error', null, 'Error');
       status.style.color = d.ok ? 'var(--green)' : 'var(--red)';
-    } catch (e) { status.textContent = 'Error'; status.style.color = 'var(--red)'; }
+    } catch (e) { status.textContent = t('ui.js.admin_error', null, 'Error'); status.style.color = 'var(--red)'; }
     setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 3000);
   });
 
   testBtn.addEventListener('click', async () => {
-    status.textContent = 'Testing...';
+    status.textContent = t('ui.js.admin_testing', null, 'Testing...');
     try {
       // Save first
       await fetch(`${API_BASE}/api/calendar/config`, {
@@ -2388,9 +2420,9 @@ function initCalDAV() {
       });
       const res = await fetch(`${API_BASE}/api/calendar/test`, { method: 'POST', credentials: 'same-origin' });
       const d = await res.json();
-      status.textContent = d.ok ? `Connected (${d.calendars} calendars)` : `Failed: ${d.error}`;
+      status.textContent = d.ok ? t('ui.js.admin_connected_calendars', { count: d.calendars }, 'Connected ({count} calendars)') : t('ui.js.admin_failed_error', { error: d.error }, 'Failed: {error}');
       status.style.color = d.ok ? 'var(--green)' : 'var(--red)';
-    } catch (e) { status.textContent = 'Error'; status.style.color = 'var(--red)'; }
+    } catch (e) { status.textContent = t('ui.js.admin_error', null, 'Error'); status.style.color = 'var(--red)'; }
     setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 5000);
   });
 }
@@ -2400,7 +2432,7 @@ function initBackup() {
   el('adm-exportDataBtn').addEventListener('click', async () => {
     const btn = el('adm-exportDataBtn');
     const msg = el('adm-backupMsg');
-    btn.disabled = true; btn.textContent = 'Exporting...'; msg.textContent = '';
+    btn.disabled = true; btn.textContent = t('ui.js.admin_exporting', null, 'Exporting...'); msg.textContent = '';
     try {
       const res = await fetch('/api/export', { credentials: 'same-origin' });
       if (!res.ok) throw new Error('Export failed');
@@ -2413,9 +2445,9 @@ function initBackup() {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(a.href);
-      msg.textContent = 'Export downloaded.'; msg.className = 'admin-success';
-    } catch (e) { msg.textContent = 'Export failed: ' + e.message; msg.className = 'admin-error'; }
-    btn.disabled = false; btn.textContent = 'Export Data';
+      msg.textContent = t('ui.js.admin_export_downloaded', null, 'Export downloaded.'); msg.className = 'admin-success';
+    } catch (e) { msg.textContent = t('ui.js.admin_export_failed', { error: e.message }, 'Export failed: {error}'); msg.className = 'admin-error'; }
+    btn.disabled = false; btn.textContent = t('ui.js.admin_export_data', null, 'Export Data');
   });
 
   const fileInput = el('adm-importFile');
@@ -2425,14 +2457,14 @@ function initBackup() {
     if (!file) return;
     const msg = el('adm-backupMsg');
     const btn = el('adm-importDataBtn');
-    btn.disabled = true; btn.textContent = 'Importing...'; msg.textContent = '';
+    btn.disabled = true; btn.textContent = t('ui.js.admin_importing', null, 'Importing...'); msg.textContent = '';
     try {
       const text = (await file.text()).replace(/^\uFEFF/, '').trim();
       let data;
       try {
         data = JSON.parse(text);
       } catch (e) {
-        throw new Error('Invalid backup file: ' + e.message);
+        throw new Error(t('ui.js.admin_invalid_backup', { error: e.message }, 'Invalid backup file: {error}'));
       }
       const res = await fetch('/api/import', {
         method: 'POST', credentials: 'same-origin',
@@ -2441,15 +2473,15 @@ function initBackup() {
       });
       const result = await res.json().catch(() => null);
       if (!result) {
-        throw new Error(`Import failed: server returned ${res.status}`);
+        throw new Error(t('ui.js.admin_import_server_error', { status: res.status }, 'Import failed: server returned {status}'));
       }
       if (res.ok && result.ok) {
-        msg.textContent = result.message || 'Import successful.'; msg.className = 'admin-success';
+        msg.textContent = result.message || t('ui.js.admin_import_successful', null, 'Import successful.'); msg.className = 'admin-success';
       } else {
-        msg.textContent = result.message || result.detail || 'Import failed'; msg.className = 'admin-error';
+        msg.textContent = result.message || result.detail || t('ui.js.admin_import_failed_short', null, 'Import failed'); msg.className = 'admin-error';
       }
-    } catch (e) { msg.textContent = 'Import failed: ' + e.message; msg.className = 'admin-error'; }
-    btn.disabled = false; btn.textContent = 'Import Data';
+    } catch (e) { msg.textContent = t('ui.js.admin_import_failed', { error: e.message }, 'Import failed: {error}'); msg.className = 'admin-error'; }
+    btn.disabled = false; btn.textContent = t('ui.js.admin_import_data', null, 'Import Data');
   });
 }
 
@@ -2459,29 +2491,29 @@ function initDangerZone() {
   // via data-wipe-kind; one delegated handler handles double-confirm,
   // POSTs to /api/admin/wipe/{kind}, and writes the result.
   const _LABELS = {
-    chats: 'chats', memory: 'memory entries', skills: 'skills',
-    notes: 'notes', tasks: 'tasks', documents: 'documents',
-    gallery: 'gallery images', calendar: 'calendar items',
+    chats: t('ui.js.admin_wipe_chats', null, 'chats'), memory: t('ui.js.admin_wipe_memory', null, 'memory entries'), skills: t('ui.js.admin_wipe_skills', null, 'skills'),
+    notes: t('ui.js.admin_wipe_notes', null, 'notes'), tasks: t('ui.js.admin_wipe_tasks', null, 'tasks'), documents: t('ui.js.admin_wipe_documents', null, 'documents'),
+    gallery: t('ui.js.admin_wipe_gallery', null, 'gallery images'), calendar: t('ui.js.admin_wipe_calendar', null, 'calendar items'),
   };
   const _wipeMsg = el('adm-wipeMsg');
   modalEl.querySelectorAll('[data-wipe-kind]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const kind = btn.dataset.wipeKind;
       const label = _LABELS[kind] || kind;
-      if (!await uiModule.styledConfirm(`Wipe ALL ${label}? This cannot be undone.`, { confirmText: 'Wipe', danger: true })) return;
-      if (!await uiModule.styledConfirm(`Really wipe every one of your ${label}?`, { confirmText: 'Yes, wipe everything', danger: true })) return;
-      btn.disabled = true; const prev = btn.textContent; btn.textContent = 'Wiping…';
+      if (!await uiModule.styledConfirm(t('ui.js.admin_wipe_confirm', { label }, 'Wipe ALL {label}? This cannot be undone.'), { confirmText: t('ui.js.admin_wipe', null, 'Wipe'), danger: true })) return;
+      if (!await uiModule.styledConfirm(t('ui.js.admin_wipe_confirm_2', { label }, 'Really wipe every one of your {label}?'), { confirmText: t('ui.js.admin_wipe_everything', null, 'Yes, wipe everything'), danger: true })) return;
+      btn.disabled = true; const prev = btn.textContent; btn.textContent = t('ui.js.admin_wiping', null, 'Wiping…');
       if (_wipeMsg) { _wipeMsg.textContent = ''; _wipeMsg.className = ''; }
       try {
         const res = await fetch(`/api/admin/wipe/${kind}`, { method: 'DELETE', credentials: 'same-origin' });
         const data = await res.json().catch(() => ({}));
         if (res.ok) {
-          if (_wipeMsg) { _wipeMsg.textContent = `Wiped ${data.count ?? 0} ${label}.`; _wipeMsg.className = 'admin-success'; }
+          if (_wipeMsg) { _wipeMsg.textContent = t('ui.js.admin_wiped', { count: data.count ?? 0, label }, 'Wiped {count} {label}.'); _wipeMsg.className = 'admin-success'; }
         } else {
-          if (_wipeMsg) { _wipeMsg.textContent = data.detail || 'Failed'; _wipeMsg.className = 'admin-error'; }
+          if (_wipeMsg) { _wipeMsg.textContent = data.detail || t('ui.js.admin_failed', null, 'Failed'); _wipeMsg.className = 'admin-error'; }
         }
       } catch (e) {
-        if (_wipeMsg) { _wipeMsg.textContent = 'Request failed: ' + e.message; _wipeMsg.className = 'admin-error'; }
+        if (_wipeMsg) { _wipeMsg.textContent = t('ui.js.admin_request_failed_error', { error: e.message }, 'Request failed: {error}'); _wipeMsg.className = 'admin-error'; }
       }
       btn.disabled = false; btn.textContent = prev;
     });

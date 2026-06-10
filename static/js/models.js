@@ -12,6 +12,7 @@ import spinnerModule from './spinner.js';
 import { modelColor } from './chatRenderer.js';
 import { providerLogo } from './providers.js';
 import { sortModelIds } from './modelSort.js';
+import { t } from './i18n.js';
 
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
@@ -82,7 +83,7 @@ function _startChat(url, mid, endpointId) {
   if (sessionModule) {
     sessionModule.createDirectChat(url, mid, endpointId);
   } else if (uiModule) {
-    uiModule.showError('Session module not loaded');
+    uiModule.showError(t('ui.js.models_session_module_not_loaded', null, 'Session module not loaded'));
   }
 }
 
@@ -95,7 +96,7 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   const handle = document.createElement('span');
   handle.className = 'item-drag-handle';
   handle.textContent = '\u22EE\u22EE';
-  handle.title = 'Drag to reorder';
+  handle.title = t('ui.js.models_drag_to_reorder', null, 'Drag to reorder');
   row.appendChild(handle);
 
   // Favorite indicator — provider logo or colored dot
@@ -109,12 +110,12 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
   } else {
     fav.className = 'model-fav-btn' + (_isFavorite(mid) ? ' active' : '');
   }
-  fav.title = 'Toggle favorite';
+  fav.title = t('ui.js.models_toggle_favorite', null, 'Toggle favorite');
   fav.addEventListener('click', (e) => {
     e.stopPropagation();
     const nowFav = _toggleFavorite(mid);
     fav.classList.toggle('active', nowFav);
-    uiModule.showToast(nowFav ? 'Favorited' : 'Unfavorited');
+    uiModule.showToast(nowFav ? t('ui.js.models_favorited', null, 'Favorited') : t('ui.js.models_unfavorited', null, 'Unfavorited'));
     refreshModels();
   });
   const span = document.createElement('span');
@@ -124,14 +125,18 @@ function _buildModelRow(mid, url, displayName, endpointId, offline, modelType) {
     const badge = document.createElement('span');
     badge.className = 'model-type-badge';
     badge.textContent = 'IMG';
-    badge.title = 'Image generation model';
+    badge.title = t('ui.js.models_image_generation_model', null, 'Image generation model');
     badge.style.cssText = 'font-size:0.65em;padding:1px 4px;border-radius:3px;background:var(--accent,#7c3aed);color:#fff;margin-left:6px;vertical-align:middle;';
     span.appendChild(badge);
   }
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.textContent = offline ? 'Offline' : (modelType === 'image' ? '+ Image' : '+ Chat');
+  btn.textContent = offline
+    ? t('ui.js.models_offline', null, 'Offline')
+    : (modelType === 'image'
+      ? t('ui.js.models_new_image', null, '+ Image')
+      : t('ui.js.models_new_chat', null, '+ Chat'));
   btn.className = 'model-chat-btn';
   btn.style.transition = 'all 0.2s ease';
   if (offline) {
@@ -197,7 +202,7 @@ export async function refreshModels(force = false) {
       _cachedItems = data.items || [];
     } catch (e) {
       console.error(e);
-      box.textContent = '(scan failed)';
+      box.textContent = t('ui.js.models_scan_failed', null, '(scan failed)');
       return;
     } finally {
       box.innerHTML = '';
@@ -281,7 +286,7 @@ export async function refreshModels(force = false) {
         favToggle.textContent = favCollapsed ? '\u25B6' : '\u25BC';
         favHeader.appendChild(favToggle);
         const favLabel = document.createElement('span');
-        favLabel.textContent = 'Favorites';
+        favLabel.textContent = t('ui.js.models_favorites', null, 'Favorites');
         favHeader.appendChild(favLabel);
         const favCount = document.createElement('span');
         favCount.className = 'folder-count';
@@ -314,8 +319,8 @@ export async function refreshModels(force = false) {
       Object.keys(groups.local).length > 1 || Object.keys(groups.api).length > 1;
 
     const categoryOrder = [
-      { key: 'local', label: 'Local' },
-      { key: 'api', label: 'API' },
+      { key: 'local', label: t('ui.js.models_local', null, 'Local') },
+      { key: 'api', label: t('ui.js.models_api', null, 'API') },
     ];
 
     categoryOrder.forEach(({ key, label }) => {
@@ -384,7 +389,7 @@ export async function refreshModels(force = false) {
           if (isOfflineEndpoint) {
             const badge = document.createElement('span');
             badge.className = 'endpoint-offline-badge';
-            badge.textContent = '(offline)';
+            badge.textContent = t('ui.js.models_offline_badge', null, '(offline)');
             sub.appendChild(badge);
           }
 
@@ -442,7 +447,9 @@ export async function refreshModels(force = false) {
           const showMoreBtn = document.createElement('div');
           showMoreBtn.className = 'models-show-all-btn';
           showMoreBtn.style.cssText = 'text-align:center;padding:6px;opacity:0.5;cursor:pointer;font-size:0.82em;';
-          showMoreBtn.textContent = `Show ${allHidden.length} more model${allHidden.length === 1 ? '' : 's'}`;
+          showMoreBtn.textContent = allHidden.length === 1
+            ? t('ui.js.models_show_more_one', null, 'Show 1 more model')
+            : t('ui.js.models_show_more', { count: allHidden.length }, 'Show {count} more models');
           showMoreBtn._target = target;
           showMoreBtn.addEventListener('click', () => {
             showMoreBtn.remove();
@@ -505,7 +512,7 @@ export async function refreshModels(force = false) {
     if (totalModelCount >= 10) {
       const searchBox = document.createElement('input');
       searchBox.type = 'text';
-      searchBox.placeholder = 'Search models...';
+      searchBox.placeholder = t('ui.js.models_search_placeholder', null, 'Search models...');
       searchBox.className = 'model-search-input';
       searchBox.addEventListener('click', (e) => e.stopPropagation());
       searchBox.addEventListener('touchstart', (e) => e.stopPropagation());
@@ -548,7 +555,7 @@ export async function refreshModels(force = false) {
         if (searchResults.children.length === 0) {
           const empty = document.createElement('div');
           empty.style.cssText = 'text-align:center;padding:12px;opacity:0.4;';
-          empty.textContent = 'No models match "' + searchBox.value.trim() + '"';
+          empty.textContent = t('ui.js.models_no_match', { query: searchBox.value.trim() }, 'No models match "{query}"');
           searchResults.appendChild(empty);
         }
       });
@@ -559,45 +566,48 @@ export async function refreshModels(force = false) {
       const noModels = document.createElement('div');
       noModels.className = 'models-empty-state';
       if (window._isAdmin) {
-        noModels.innerHTML = '<span class="muted">No models found</span><br>'
-          + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">Open Admin to add endpoints</a>'
-          + '<br><span class="muted-sm">Type /setup for Local models or API setup.</span>';
+        noModels.innerHTML = '<span class="muted">' + t('ui.js.models_none_found', null, 'No models found') + '</span><br>'
+          + '<a href="#" onclick="document.getElementById(\'user-bar-admin\')?.click();return false;" class="accent-link">' + t('ui.js.models_open_admin_endpoints', null, 'Open Admin to add endpoints') + '</a>'
+          + '<br><span class="muted-sm">' + t('ui.js.models_setup_hint', null, 'Type /setup for Local models or API setup.') + '</span>';
       } else {
-        noModels.innerHTML = '<span class="muted">No models available</span><br>'
-          + '<span class="muted-sm">Ask an admin to configure model endpoints</span>';
+        noModels.innerHTML = '<span class="muted">' + t('ui.js.models_none_available', null, 'No models available') + '</span><br>'
+          + '<span class="muted-sm">' + t('ui.js.models_ask_admin', null, 'Ask an admin to configure model endpoints') + '</span>';
       }
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span> to get started.';
+      if (welcomeSub) {
+        const _setupLink = '<span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="' + t('ui.js.models_click_launch_setup', null, 'Click to launch setup') + '">/setup</span>';
+        welcomeSub.innerHTML = t('ui.js.models_welcome_setup', { link: _setupLink }, 'Type {link} to get started.');
+      }
       const welcomeTip = document.getElementById('welcome-tip');
-      if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
+      if (welcomeTip) welcomeTip.textContent = t('ui.js.models_welcome_setup_tip', null, 'Type /setup, then choose Local models or API.');
     } else {
       // Configured installs should feel ready, not stuck in onboarding.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.textContent = 'Yours for the voyage.';
+      if (welcomeSub) welcomeSub.textContent = t('ui.js.models_welcome_tagline', null, 'Yours for the voyage.');
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) {
         const tips = window.innerWidth <= 768
           ? [
-              'Tip: Long-press a session for rename, delete, and memory options.',
-              'Tip: Tap the eye icon for Nobody mode - no history saved.',
-              'Tip: Switch to Agent mode when you want tools.',
-              'Tip: Attach images or files using the + button next to the input.',
+              t('ui.js.models_tip_longpress', null, 'Tip: Long-press a session for rename, delete, and memory options.'),
+              t('ui.js.models_tip_nobody', null, 'Tip: Tap the eye icon for Nobody mode - no history saved.'),
+              t('ui.js.models_tip_agent', null, 'Tip: Switch to Agent mode when you want tools.'),
+              t('ui.js.models_tip_attach_mobile', null, 'Tip: Attach images or files using the + button next to the input.'),
             ]
           : [
-              'Tip: Press Ctrl+K to search across all your conversations.',
-              'Tip: Press Ctrl+B to quickly toggle the sidebar.',
-              'Tip: Shift-click the sidebar toggle to swap it to the other side.',
-              'Tip: Drag and drop files onto the chat to attach them.',
-              'Tip: Right-click a session for rename, delete, and memory options.',
+              t('ui.js.models_tip_search', null, 'Tip: Press Ctrl+K to search across all your conversations.'),
+              t('ui.js.models_tip_sidebar', null, 'Tip: Press Ctrl+B to quickly toggle the sidebar.'),
+              t('ui.js.models_tip_sidebar_swap', null, 'Tip: Shift-click the sidebar toggle to swap it to the other side.'),
+              t('ui.js.models_tip_dragdrop', null, 'Tip: Drag and drop files onto the chat to attach them.'),
+              t('ui.js.models_tip_rightclick', null, 'Tip: Right-click a session for rename, delete, and memory options.'),
             ];
         welcomeTip.textContent = tips[Math.floor(Math.random() * tips.length)];
       }
     }
   } catch (e) {
     console.error(e);
-    box.textContent = '(render failed: ' + e.message + ')';
+    box.textContent = t('ui.js.models_render_failed', { error: e.message }, '(render failed: {error})');
   }
 }
 
@@ -608,7 +618,7 @@ export async function refreshProviders() {
   const sel = document.getElementById('openai-model');
   if (!sel) return; // Exit if element doesn't exist
 
-  sel.innerHTML = '<option disabled>Loading providers…</option>';
+  sel.innerHTML = '<option disabled>' + t('ui.js.models_loading_providers', null, 'Loading providers…') + '</option>';
 
   try {
     const res = await fetch(`${API_BASE}/api/providers`);
@@ -628,7 +638,7 @@ export async function refreshProviders() {
     } else {
       const opt = document.createElement('option');
       opt.value = '';
-      opt.textContent = '(OPENAI_API_KEY not set on server)';
+      opt.textContent = t('ui.js.models_openai_key_not_set', null, '(OPENAI_API_KEY not set on server)');
       sel.appendChild(opt);
     }
   } catch (e) {

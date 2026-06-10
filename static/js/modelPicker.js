@@ -5,6 +5,7 @@ import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
+import { t } from './i18n.js';
 
 const API_BASE = window.location.origin;
 
@@ -212,8 +213,8 @@ function _initModelPickerDropdown() {
           ].filter(Boolean).join(' '),
           stale: isLocalDead || epOffline,
           staleReason: epOffline
-            ? (item.ping_error || 'endpoint offline')
-            : (isLocalDead ? (probeResult.error || 'not responding') : ''),
+            ? (item.ping_error || t('ui.js.modelpicker_endpoint_offline', null, 'endpoint offline'))
+            : (isLocalDead ? (probeResult.error || t('ui.js.modelpicker_not_responding', null, 'not responding')) : ''),
           offline: epOffline,
         });
       });
@@ -277,7 +278,9 @@ function _initModelPickerDropdown() {
     listEl.classList.toggle('is-empty', !hasAnyModel);
     menu.classList.toggle('no-models', !hasAnyModel);
     if (search) {
-      search.placeholder = hasAnyModel ? 'Search models…' : 'No models connected';
+      search.placeholder = hasAnyModel
+        ? t('ui.js.modelpicker_search_placeholder', null, 'Search models…')
+        : t('ui.js.modelpicker_no_models_connected', null, 'No models connected');
     }
     if (searchRow) {
       searchRow.classList.toggle('searching', !!q);
@@ -310,7 +313,7 @@ function _initModelPickerDropdown() {
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
-        row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
+        row.title = t('ui.js.modelpicker_stale_title', { reason: m.staleReason }, 'Local server appears offline: {reason}. Click to try anyway, or relaunch in Cookbook.');
       }
       const _mlogo = providerLogo(m.mid);
       if (_mlogo) {
@@ -345,8 +348,11 @@ function _initModelPickerDropdown() {
       favDot.textContent = '●';
       const _setFavState = (on) => {
         favDot.classList.toggle('active', on);
-        favDot.title = on ? 'Remove from favorites' : 'Add to favorites';
-        favDot.setAttribute('aria-label', on ? 'Remove from favorites' : 'Add to favorites');
+        const _favLabel = on
+          ? t('ui.js.modelpicker_remove_favorite', null, 'Remove from favorites')
+          : t('ui.js.modelpicker_add_favorite', null, 'Add to favorites');
+        favDot.title = _favLabel;
+        favDot.setAttribute('aria-label', _favLabel);
         favDot.setAttribute('aria-pressed', on ? 'true' : 'false');
       };
       _setFavState(favs.includes(m.mid));
@@ -361,7 +367,7 @@ function _initModelPickerDropdown() {
         const idx = favs.indexOf(m.mid);
         if (nowFav && idx < 0) favs.push(m.mid);
         else if (!nowFav && idx >= 0) favs.splice(idx, 1);
-        if (uiModule && uiModule.showToast) uiModule.showToast(nowFav ? 'Favorited' : 'Unfavorited');
+        if (uiModule && uiModule.showToast) uiModule.showToast(nowFav ? t('ui.js.modelpicker_favorited', null, 'Favorited') : t('ui.js.modelpicker_unfavorited', null, 'Unfavorited'));
         // In browse mode the Favorites section membership changed — rebuild
         // (cheap: Recent + Favorites). In search mode the row stays put, so
         // the in-place favorite update above is enough.
@@ -384,7 +390,7 @@ function _initModelPickerDropdown() {
         return [m.mid, m.display, m.epName, m.providerText, provName]
           .filter(Boolean).join(' ').toLowerCase().includes(q);
       });
-      if (matches.length === 0) _addEmpty('No matching models');
+      if (matches.length === 0) _addEmpty(t('ui.js.modelpicker_no_matching', null, 'No matching models'));
       else matches.forEach(_addRow);
       return;
     }
@@ -401,7 +407,7 @@ function _initModelPickerDropdown() {
     const shown = new Set();
     const favModels = favs.map(id => byId.get(id)).filter(Boolean);
     if (favModels.length) {
-      _addSection('Favorites');
+      _addSection(t('ui.js.modelpicker_favorites', null, 'Favorites'));
       favModels.forEach(m => { shown.add(m.mid); _addRow(m); });
     }
     // Recent: only render when the catalog is big enough that surfacing
@@ -414,7 +420,7 @@ function _initModelPickerDropdown() {
         .filter(m => !shown.has(m.mid))
         .slice(0, RECENT_MAX);
       if (recentModels.length) {
-        _addSection('Recent');
+        _addSection(t('ui.js.modelpicker_recent', null, 'Recent'));
         recentModels.forEach(m => { shown.add(m.mid); _addRow(m); });
       }
     }
@@ -423,7 +429,7 @@ function _initModelPickerDropdown() {
     if (all.length <= BROWSE_ALL_LIMIT) {
       const rest = all.filter(m => !shown.has(m.mid));
       if (rest.length) {
-        if (shown.size) _addSection('All models');
+        if (shown.size) _addSection(t('ui.js.modelpicker_all_models', null, 'All models'));
         rest.forEach(_addRow);
       }
     } else {
@@ -502,7 +508,7 @@ function _initModelPickerDropdown() {
       _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
       // Header stays as session name — model switch only updates picker
       updateModelPicker();
-      uiModule.showToast(`Using ${m.display}`);
+      uiModule.showToast(t('ui.js.modelpicker_using_model', { model: m.display }, 'Using {model}'));
       return;
     } else if (!currentSessionId) {
       // No session yet — create one with this model
@@ -516,7 +522,7 @@ function _initModelPickerDropdown() {
       try {
         const res = await fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd });
         if (!res.ok) {
-          uiModule.showError('Failed to set model');
+          uiModule.showError(t('ui.js.modelpicker_set_model_failed', null, 'Failed to set model'));
           return;
         }
         const sessions = _deps.getSessions();
@@ -524,13 +530,13 @@ function _initModelPickerDropdown() {
         if (s) { s.model = m.mid; s.endpoint_url = m.url; }
         // Header stays as session name — model info shown in picker only
       } catch (e) {
-        uiModule.showError('Failed to set model: ' + e);
+        uiModule.showError(t('ui.js.modelpicker_set_model_failed_err', { error: String(e) }, 'Failed to set model: {error}'));
         return;
       }
     }
     // Update picker visibility — model is now set
     updateModelPicker();
-    uiModule.showToast(`Using ${m.display}`);
+    uiModule.showToast(t('ui.js.modelpicker_using_model', { model: m.display }, 'Using {model}'));
   }
 
   document.addEventListener('odysseus:auto-select-model', async (e) => {
@@ -710,7 +716,7 @@ export function updateModelPicker() {
     }
   }
 
-  const displayName = modelId ? modelId.split('/').pop() : 'Select model';
+  const displayName = modelId ? modelId.split('/').pop() : t('ui.js.modelpicker_select_model', null, 'Select model');
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
   label.title = modelId || '';

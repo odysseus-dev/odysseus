@@ -7,6 +7,7 @@ import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { t } from './i18n.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
 import { _hwfitCache, _hwfitDebounce, _hwfitFetch, _hwfitInit, _hwfitRenderList, _hwfitRenderHw, _renderGpuToggles, _expandModelRow, _fitColors, _hwfitColumns, _cachedModelIds, _gpuToggleTotal, _resetGpuToggleState } from './cookbook-hwfit.js';
 
@@ -172,7 +173,7 @@ function _buildServerOpts(excludeLocal = false) {
   // skip that same entry in the loop below — otherwise it appeared twice.
   const _localIdx = _envState.servers.findIndex(_isLocalEntry);
   const _localSrv = _localIdx >= 0 ? _envState.servers[_localIdx] : null;
-  const _localLabel = (_localSrv && _localSrv.name) ? _localSrv.name : 'Local';
+  const _localLabel = (_localSrv && _localSrv.name) ? _localSrv.name : t('ui.js.cookbook_local', null, 'Local');
   let html = `<option value="local"${!_envState.remoteHost ? ' selected' : ''}>${esc(_localLabel)}</option>`;
   const selectedKey = _envState.remoteServerKey || '';
   let legacyHostSelected = false;
@@ -180,7 +181,7 @@ function _buildServerOpts(excludeLocal = false) {
     const s = _envState.servers[i];
     if (i === _localIdx) continue;                 // already the synthetic "local" option
     if (excludeLocal && _isLocalEntry(s)) continue;
-    const label = s.name || s.host || `Server ${i + 1}`;
+    const label = s.name || s.host || t('ui.js.cookbook_server_n', { num: i + 1 }, 'Server {num}');
     const value = _serverKey(s);
     let selected = selectedKey ? value === selectedKey : false;
     if (!selectedKey && _envState.remoteHost === s.host && !legacyHostSelected) {
@@ -691,11 +692,11 @@ async function _fetchDependencies() {
     list.appendChild(_spin.element);
     const label = document.createElement('div');
     label.className = 'hwfit-loading';
-    label.textContent = 'Loading packages…';
+    label.textContent = t('ui.js.cookbook_loading_packages', null, 'Loading packages…');
     label.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;margin-top:6px;';
     list.appendChild(label);
   } catch {
-    list.innerHTML = '<div class="hwfit-loading">Loading packages...</div>';
+    list.innerHTML = '<div class="hwfit-loading">' + t('ui.js.cookbook_loading_packages', null, 'Loading packages…') + '</div>';
   }
   try {
     // Resolve the target server from the deps dropdown so remote-target
@@ -717,23 +718,23 @@ async function _fetchDependencies() {
     const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
     const data = await resp.json();
     const pkgs = data.packages || [];
-    if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
+    if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">' + t('ui.js.cookbook_no_packages', null, 'No packages found') + '</div>'; return; }
     const _winUnsupported = new Set(['diffusers', 'hf_transfer', 'vllm', 'rembg', 'gfpgan']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
-      if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
-      if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">${t('ui.js.cookbook_na', null, 'N/A')}</span>`;
+      if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${t('ui.js.cookbook_found_on_server', null, 'Found on selected server')}">${t('ui.js.cookbook_installed', null, 'Installed')}</span>`;
       if (pkg.installed && pkg.pip_update_available === false) {
-        const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
-        return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
+        const tip = esc(pkg.update_note || pkg.status_note || t('ui.js.cookbook_found_externally', null, 'Found externally; update outside Odysseus.'));
+        return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">${t('ui.js.cookbook_installed', null, 'Installed')}</span>`;
       }
-      if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="Installed — click for actions"><span class="cookbook-dep-installed-label">Installed</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
+      if (pkg.installed) return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" title="${t('ui.js.cookbook_installed_click', null, 'Installed — click for actions')}"><span class="cookbook-dep-installed-label">${t('ui.js.cookbook_installed', null, 'Installed')}</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
       if (isSystemDep) {
-        const depTip = esc(pkg.install_hint || 'Install this OS package on the selected server.');
-        const depLabel = pkg.applicable === false ? 'N/A ?' : 'Missing';
+        const depTip = esc(pkg.install_hint || t('ui.js.cookbook_install_os_pkg', null, 'Install this OS package on the selected server.'));
+        const depLabel = pkg.applicable === false ? t('ui.js.cookbook_na_maybe', null, 'N/A ?') : t('ui.js.cookbook_missing', null, 'Missing');
         return `<span class="cookbook-dep-tag cookbook-dep-na" title="${depTip}">${depLabel}</span>`;
       }
-      return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">Install</button>`;
+      return `<button class="cookbook-dep-tag cookbook-dep-install" data-dep-pip="${esc(pkg.pip)}" data-dep-target="${isLocal ? 'local' : 'remote'}">${t('ui.js.cookbook_install', null, 'Install')}</button>`;
     };
 
     const _depRow = (pkg) => {
@@ -750,11 +751,11 @@ async function _fetchDependencies() {
       // so the user can watch the pip install in the Running tab.
       let _rebuildBtn = '';
       if (pkg.name === 'llama_cpp') {
-        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`;
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="${t('ui.js.cookbook_rebuild_title', null, 'Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).')}">${t('ui.js.cookbook_rebuild', null, 'Rebuild')}</button>`;
       } else if (pkg.name === 'vllm' && pkg.installed) {
-        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="${t('ui.js.cookbook_reinstall_vllm_title', null, 'Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.')}">${t('ui.js.cookbook_reinstall', null, 'Reinstall')}</button>`;
       } else if (pkg.name === 'sglang' && pkg.installed) {
-        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="sglang" title="Force-reinstall SGLang (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="sglang" title="${t('ui.js.cookbook_reinstall_sglang_title', null, 'Force-reinstall SGLang (pulls a matching torch). Runs as a tmux task in the Running tab.')}">${t('ui.js.cookbook_reinstall', null, 'Reinstall')}</button>`;
       }
       return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
         + `<div class="cookbook-dep-info">`
@@ -779,8 +780,8 @@ async function _fetchDependencies() {
     const _serverDeps = pkgs.filter(p => p.target !== 'local');
 
     list.innerHTML = [
-      _viewingRemote ? '' : _section('Odysseus app', 'Run inside the Odysseus app itself.', _appDeps),
-      _section('Server', 'Run on the server chosen above (Local, or a remote box over SSH).', _serverDeps),
+      _viewingRemote ? '' : _section(t('ui.js.cookbook_app_section', null, 'Odysseus app'), t('ui.js.cookbook_app_section_note', null, 'Run inside the Odysseus app itself.'), _appDeps),
+      _section(t('ui.js.cookbook_server_section', null, 'Server'), t('ui.js.cookbook_server_section_note', null, 'Run on the server chosen above (Local, or a remote box over SSH).'), _serverDeps),
     ].join('');
 
     // Shared install/update routine — used by the Install button and the
@@ -795,7 +796,7 @@ async function _fetchDependencies() {
         const depsServerSel = document.getElementById('hwfit-deps-server');
         if (depsServerSel) _applyServerSelection(depsServerSel.value);
       }
-      const targetHost = isLocalOnly ? 'this server' : (_envState.remoteHost || 'local');
+      const targetHost = isLocalOnly ? t('ui.js.cookbook_this_server', null, 'this server') : (_envState.remoteHost || 'local');
       // Always go through `python -m pip` so the leading token is `python`
       // — matches the /api/model/serve allow-list (bare `pip` is blocked).
       // Inside a venv/conda env, `--user` is invalid (pip refuses), so we
@@ -850,17 +851,19 @@ async function _fetchDependencies() {
           // FastAPI HTTPException returns {detail: …}; the route's own
           // path returns {ok:false, error:…}. Surface whichever we get.
           const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast('Install failed: ' + String(reason).slice(0, 200));
+          uiModule.showToast(t('ui.js.cookbook_install_failed', { error: String(reason).slice(0, 200) }, 'Install failed: {error}'));
           return;
         }
         // _dep flags this as a pip dependency/driver install (not a servable
         // model) so the running-task card doesn't offer a "Serve →" button.
         const payload = { repo_id: pipName, _cmd: cmd, remote_host: _envState.remoteHost || '', _dep: true, env_path: _envState.envPath || '' };
         _addTask(data.session_id, 'pip ' + pkgName, 'download', payload);
-        if (statusEl) { statusEl.textContent = upgrade ? 'Updating...' : 'Installing...'; statusEl.disabled = true; }
-        uiModule.showToast(`${upgrade ? 'Updating' : 'Installing'} ${pkgName} on ${targetHost}...`);
+        if (statusEl) { statusEl.textContent = upgrade ? t('ui.js.cookbook_updating', null, 'Updating...') : t('ui.js.cookbook_installing', null, 'Installing...'); statusEl.disabled = true; }
+        uiModule.showToast(upgrade
+          ? t('ui.js.cookbook_updating_on', { pkg: pkgName, host: targetHost }, 'Updating {pkg} on {host}...')
+          : t('ui.js.cookbook_installing_on', { pkg: pkgName, host: targetHost }, 'Installing {pkg} on {host}...'));
       } catch (err) {
-        uiModule.showToast('Install failed: ' + err.message);
+        uiModule.showToast(t('ui.js.cookbook_install_failed', { error: err.message }, 'Install failed: {error}'));
       }
     }
 
@@ -892,8 +895,8 @@ async function _fetchDependencies() {
       const upIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
       const it = document.createElement('div');
       it.className = 'dropdown-item-compact';
-      it.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>Update</span>`;
-      it.title = `Update ${pkgName} to the latest version (pip install -U)`;
+      it.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>${t('ui.js.cookbook_update', null, 'Update')}</span>`;
+      it.title = t('ui.js.cookbook_update_title', { pkg: pkgName }, 'Update {pkg} to the latest version (pip install -U)');
       it.addEventListener('click', async (e) => {
         e.stopPropagation();
         dropdown.remove();
@@ -920,7 +923,7 @@ async function _fetchDependencies() {
       });
     });
   } catch (err) {
-    list.innerHTML = `<div class="hwfit-loading">Error loading packages: ${esc(err.message)}</div>`;
+    list.innerHTML = `<div class="hwfit-loading">${t('ui.js.cookbook_packages_error', { error: esc(err.message) }, 'Error loading packages: {error}')}</div>`;
   }
 }
 
@@ -1114,7 +1117,7 @@ function _wireTabEvents(body) {
       if (dirsEl) {
         const dirs = (Array.isArray(srv.modelDirs) ? srv.modelDirs : [srv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
         dirsEl.innerHTML = dirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('') +
-          '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
+          '<span class="cookbook-serve-dir-edit" title="' + t('ui.js.cookbook_edit_in_settings', null, 'Edit in Settings') + '">' + t('ui.js.cookbook_edit_lc', null, 'edit') + '</span>';
         dirsEl.querySelector('.cookbook-serve-dir-edit')?.addEventListener('click', () => {
           const settingsTab = body.querySelector('.cookbook-tab[data-backend="Settings"]');
           if (settingsTab) settingsTab.click();
@@ -1162,10 +1165,10 @@ function _wireTabEvents(body) {
       if (sel) _applyServerSelection(sel.value);
       const host = _envState.remoteHost || '';
       const where = host || 'this server';
-      if (!confirm(`Rebuild the llama.cpp engine on ${where}?\n\nThis clears the cached llama-server build so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.`)) return;
+      if (!confirm(t('ui.js.cookbook_rebuild_confirm', { where }, 'Rebuild the llama.cpp engine on {where}?\n\nThis clears the cached llama-server build so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.'))) return;
       const _label = rebuildBtn.textContent;
       rebuildBtn.disabled = true;
-      rebuildBtn.textContent = 'Clearing...';
+      rebuildBtn.textContent = t('ui.js.cookbook_clearing', null, 'Clearing...');
       try {
         const res = await fetch('/api/cookbook/rebuild-engine', {
           method: 'POST', credentials: 'same-origin',
@@ -1179,12 +1182,12 @@ function _wireTabEvents(body) {
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
           const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
+          uiModule.showToast(t('ui.js.cookbook_rebuild_failed', { error: String(reason).slice(0, 200) }, 'Rebuild failed: {error}'));
         } else {
-          uiModule.showToast(`Cleared llama.cpp build on ${where}. Re-launch the serve task to rebuild with GPU support.`);
+          uiModule.showToast(t('ui.js.cookbook_rebuild_cleared', { where }, 'Cleared llama.cpp build on {where}. Re-launch the serve task to rebuild with GPU support.'));
         }
       } catch (err) {
-        uiModule.showToast('Rebuild failed: ' + err.message);
+        uiModule.showToast(t('ui.js.cookbook_rebuild_failed', { error: err.message }, 'Rebuild failed: {error}'));
       } finally {
         rebuildBtn.disabled = false;
         rebuildBtn.textContent = _label;
@@ -1210,7 +1213,7 @@ function _wireTabEvents(body) {
       if (sel) _applyServerSelection(sel.value);
       const host = _envState.remoteHost || '';
       const where = host || 'this server';
-      if (!confirm(`Reinstall ${pkg} on ${where}?\n\nRuns "pip install --force-reinstall --no-deps ${pkg}" as a tmux task. Watch progress in the Running tab.`)) return;
+      if (!confirm(t('ui.js.cookbook_reinstall_confirm', { pkg, where }, 'Reinstall {pkg} on {where}?\n\nRuns "pip install --force-reinstall --no-deps {pkg}" as a tmux task. Watch progress in the Running tab.'))) return;
       const _venvPy = (_envState.env === 'venv' && _envState.envPath)
         ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`
         : 'python3';
@@ -1242,7 +1245,7 @@ function _wireTabEvents(body) {
   if (selectBtn && bulkBar) {
     selectBtn.addEventListener('click', () => {
       const active = selectBtn.classList.toggle('active');
-      selectBtn.textContent = active ? 'Cancel' : 'Select';
+      selectBtn.textContent = active ? t('ui.js.cookbook_cancel', null, 'Cancel') : t('ui.js.cookbook_select', null, 'Select');
       bulkBar.classList.toggle('hidden', !active);
       document.querySelectorAll('.serve-select-cb').forEach(dot => {
         dot.style.display = active ? '' : 'none';
@@ -1266,12 +1269,12 @@ function _wireTabEvents(body) {
     function _updateBulkCount() {
       const count = document.querySelectorAll('.serve-select-cb.selected').length;
       const countEl = document.getElementById('serve-bulk-count');
-      if (countEl) countEl.textContent = count + ' selected';
+      if (countEl) countEl.textContent = t('ui.js.cookbook_n_selected', { count }, '{count} selected');
     }
 
     document.getElementById('serve-bulk-cancel')?.addEventListener('click', () => {
       selectBtn.classList.remove('active');
-      selectBtn.textContent = 'Select';  // reset label so the button doesn't stay reading "Cancel" after exit
+      selectBtn.textContent = t('ui.js.cookbook_select', null, 'Select');  // reset label so the button doesn't stay reading "Cancel" after exit
       bulkBar.classList.add('hidden');
       document.querySelectorAll('.serve-select-cb').forEach(dot => { dot.style.display = 'none'; dot.classList.remove('selected'); });
     });
@@ -1284,13 +1287,13 @@ function _wireTabEvents(body) {
         const item = dot.closest('.memory-item[data-repo]');
         if (item?.dataset.repo) repos.push(item.dataset.repo);
       });
-      if (!(await uiModule.styledConfirm(`Delete ${repos.length} model(s)? This removes cached files.`, { confirmText: 'Delete', danger: true }))) return;
+      if (!(await uiModule.styledConfirm(t('ui.js.cookbook_bulk_delete_confirm', { count: repos.length }, 'Delete {count} model(s)? This removes cached files.'), { confirmText: t('ui.js.cookbook_delete', null, 'Delete'), danger: true }))) return;
       for (const repo of repos) {
         const item = document.querySelector(`.memory-item[data-repo="${repo}"]`);
         if (item) await _deleteCachedModel(repo, item, true);
       }
       selectBtn.classList.remove('active');
-      selectBtn.textContent = 'Select';  // same reset as bulk-cancel
+      selectBtn.textContent = t('ui.js.cookbook_select', null, 'Select');  // same reset as bulk-cancel
       bulkBar.classList.add('hidden');
       document.querySelectorAll('.serve-select-cb').forEach(dot => { dot.style.display = 'none'; dot.classList.remove('selected'); });
     });
@@ -1346,7 +1349,7 @@ function _wireTabEvents(body) {
       // Ollama names (single-segment with a tag) skip this check — they go
       // through `ollama pull` server-side, not snapshot_download.
       if (!ollamaName && !/^[^\s/]+\/[^\s/]+$/.test(repo)) {
-        uiModule.showToast('Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".');
+        uiModule.showToast(t('ui.js.cookbook_repo_id_hint', null, 'Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".'));
         dlInput.focus();
         return;
       }
@@ -1472,11 +1475,11 @@ function _wireTabEvents(body) {
         hfList.appendChild(_spin.element);
         const lbl = document.createElement('div');
         lbl.className = 'hwfit-loading';
-        lbl.textContent = 'Scanning models…';
+        lbl.textContent = t('ui.js.cookbook_scanning_models', null, 'Scanning models…');
         lbl.style.cssText = 'text-align:center;opacity:0.5;font-size:11px;margin-top:6px;';
         hfList.appendChild(lbl);
       } catch {
-        hfList.innerHTML = '<div class="hwfit-loading">Scanning models…</div>';
+        hfList.innerHTML = '<div class="hwfit-loading">' + t('ui.js.cookbook_scanning_models', null, 'Scanning models…') + '</div>';
       }
       const hwInfo = await _getSelectedServerHw();
       const vram = hwInfo.vram || 0;
@@ -1502,8 +1505,8 @@ function _wireTabEvents(body) {
           // Distinguish "the HF API failed" from "nothing matched" so an outage
           // doesn't masquerade as no-fitting-models.
           const msg = lastErr
-            ? `Couldn't load trending models (${esc(lastErr)})`
-            : 'No trending models found';
+            ? t('ui.js.cookbook_trending_error', { error: esc(lastErr) }, "Couldn't load trending models ({error})")
+            : t('ui.js.cookbook_no_trending', null, 'No trending models found');
           hfList.innerHTML = `<div class="hwfit-loading">${msg}</div>`;
           return;
         }
@@ -1514,7 +1517,7 @@ function _wireTabEvents(body) {
           const meta = [];
           if (org) meta.push(esc(org));
           if (m.needed_vram_gb) meta.push(`~${m.needed_vram_gb}GB`);
-          if (m.downloads) meta.push(`${m.downloads.toLocaleString()} downloads`);
+          if (m.downloads) meta.push(t('ui.js.cookbook_downloads_count', { count: m.downloads.toLocaleString() }, '{count} downloads'));
           const date = m.createdAt ? new Date(m.createdAt).toISOString().slice(0, 10) : '';
           if (date) meta.push(date);
           html += `<div class="doclib-card memory-item cookbook-hf-latest-card" data-repo="${esc(m.repo_id)}" style="cursor:pointer;">`;
@@ -1536,7 +1539,7 @@ function _wireTabEvents(body) {
           });
         });
       } catch (e) {
-        hfList.innerHTML = '<div class="hwfit-loading">Failed to load</div>';
+        hfList.innerHTML = '<div class="hwfit-loading">' + t('ui.js.cookbook_load_failed', null, 'Failed to load') + '</div>';
       }
     }
     hfToggle.addEventListener('click', () => {
@@ -1580,13 +1583,13 @@ function _wireTabEvents(body) {
   if (olToggle && olList) {
     let _olLoaded = false;
     async function _loadOllama(refresh = false) {
-      olList.innerHTML = '<div class="hwfit-loading" style="opacity:0.5;font-size:11px;text-align:center;padding:12px;">Loading…</div>';
+      olList.innerHTML = '<div class="hwfit-loading" style="opacity:0.5;font-size:11px;text-align:center;padding:12px;">' + t('ui.js.cookbook_loading', null, 'Loading…') + '</div>';
       try {
         const res = await fetch(`/api/cookbook/ollama/library${refresh ? '?refresh=1' : ''}`);
         const data = await res.json();
         const models = data.models || [];
         if (!models.length) {
-          olList.innerHTML = '<div class="hwfit-loading">No models</div>';
+          olList.innerHTML = '<div class="hwfit-loading">' + t('ui.js.cookbook_no_models', null, 'No models') + '</div>';
           return;
         }
         let html = '';
@@ -1625,7 +1628,7 @@ function _wireTabEvents(body) {
           });
         });
       } catch (e) {
-        olList.innerHTML = '<div class="hwfit-loading">Failed to load</div>';
+        olList.innerHTML = '<div class="hwfit-loading">' + t('ui.js.cookbook_load_failed', null, 'Failed to load') + '</div>';
       }
     }
     olToggle.addEventListener('click', () => {
@@ -1665,19 +1668,19 @@ function _wireTabEvents(body) {
         _envState.hfTokenConfigured = true;
         const masked = val.length > 6 ? val.slice(0, 3) + '…' + val.slice(-3) : '••••';
         _envState.hfTokenMasked = masked;
-        hfInput.placeholder = `Stored (${masked}) - enter a new token to replace`;
+        hfInput.placeholder = t('ui.js.cookbook_token_stored_placeholder', { masked }, 'Stored ({masked}) - enter a new token to replace');
         hfInput.value = '';
         let check = hfInput.parentNode.querySelector('.hwfit-hf-check');
         if (!check) {
           check = document.createElement('span');
           check.className = 'hwfit-hf-check';
-          check.title = 'Token stored';
+          check.title = t('ui.js.cookbook_token_stored', null, 'Token stored');
           check.textContent = '✓';
           check.style.cssText = 'font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;';
           hfInput.parentNode.insertBefore(check, hfInput);
         }
         const flash = document.createElement('span');
-        flash.textContent = 'Saved';
+        flash.textContent = t('ui.js.cookbook_saved', null, 'Saved');
         flash.style.cssText = 'margin-left:8px;font-size:11px;color:var(--green,#50fa7b);opacity:0;transition:opacity 0.18s;flex-shrink:0;position:relative;top:1px;';
         hfInput.parentNode.appendChild(flash);
         requestAnimationFrame(() => { flash.style.opacity = '1'; });
@@ -1696,15 +1699,15 @@ function _wireTabEvents(body) {
 // (a new server's host is empty, which would otherwise read as "Local").
 export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   const isLocal = (forceRemote || isNew) ? false : (!s.host || s.host === 'local');
-  const envOpts = ['none', 'venv'].map(e => `<option value="${e}"${s.env === e ? ' selected' : ''}>${e === 'none' ? 'None' : e}</option>`).join('');
+  const envOpts = ['none', 'venv'].map(e => `<option value="${e}"${s.env === e ? ' selected' : ''}>${e === 'none' ? t('ui.js.cookbook_env_none', null, 'None') : e}</option>`).join('');
   let html = '';
   html += `<div class="cookbook-server-entry" data-idx="${i}" data-platform="${esc(s.platform || '')}">`;
-  const _srvTitle = s.name || (isLocal ? 'Local' : (s.host || `Server ${i + 1}`));
+  const _srvTitle = s.name || (isLocal ? t('ui.js.cookbook_local', null, 'Local') : (s.host || t('ui.js.cookbook_server_n', { num: i + 1 }, 'Server {num}')));
   const _srvKey = isLocal ? 'local' : (s.host || '');
   const _isDefaultSrv = (defaultServer || '') === _srvKey;
   const _pIco = _platformIcon(s.platform);
-  const _keyBtn = `<button class="cookbook-server-key-btn" title="Set up SSH key for this server" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M12 11l8-8"/><path d="M17 6l3 3"/></svg>Key</button>`;
-  const _checkBtn = `<button class="cookbook-server-check-btn" title="Check SSH connection" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>Check</button>`;
+  const _keyBtn = `<button class="cookbook-server-key-btn" title="${t('ui.js.cookbook_key_title', null, 'Set up SSH key for this server')}" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><circle cx="7.5" cy="15.5" r="5.5"/><path d="M12 11l8-8"/><path d="M17 6l3 3"/></svg>${t('ui.js.cookbook_key', null, 'Key')}</button>`;
+  const _checkBtn = `<button class="cookbook-server-check-btn" title="${t('ui.js.cookbook_check_title', null, 'Check SSH connection')}" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>${t('ui.js.cookbook_check', null, 'Check')}</button>`;
   html += `<span class="cookbook-server-title" style="display:flex;align-items:center;gap:6px;width:100%;font-size:13px;font-weight:600;margin-bottom:4px;">`;
   html += `${esc(_srvTitle)}`;
   html += _pIco ? `<span class="cookbook-srv-platform" title="${esc(s.platform || '')}" style="display:inline-flex;align-items:center;opacity:0.55;">${_pIco}</span>` : '';
@@ -1712,50 +1715,50 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   if (isNew) {
     // New server: Cancel (discard) sits top-right; the default toggle only makes
     // sense once the server is saved.
-    html += `<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center;">${_checkBtn}${_keyBtn}<button class="cookbook-server-cancel-btn" title="Discard this new server" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>Cancel</button></span>`;
+    html += `<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center;">${_checkBtn}${_keyBtn}<button class="cookbook-server-cancel-btn" title="${t('ui.js.cookbook_discard_server', null, 'Discard this new server')}" style="height:22px;box-sizing:border-box;display:inline-flex;align-items:center;position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>${t('ui.js.cookbook_cancel', null, 'Cancel')}</button></span>`;
   } else {
-    html += `<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center;">${!isLocal ? _checkBtn + _keyBtn : ''}<span class="cookbook-srv-default${_isDefaultSrv ? ' active' : ''}" title="${_isDefaultSrv ? 'Default server — Cookbook opens here' : 'Make this the default server'}" data-srv-key="${esc(_srvKey)}">${_isDefaultSrv ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF}<span class="cookbook-srv-default-label">default</span></span></span>`;
+    html += `<span style="margin-left:auto;display:inline-flex;gap:4px;align-items:center;">${!isLocal ? _checkBtn + _keyBtn : ''}<span class="cookbook-srv-default${_isDefaultSrv ? ' active' : ''}" title="${_isDefaultSrv ? t('ui.js.cookbook_default_server_title', null, 'Default server — Cookbook opens here') : t('ui.js.cookbook_make_default_title', null, 'Make this the default server')}" data-srv-key="${esc(_srvKey)}">${_isDefaultSrv ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF}<span class="cookbook-srv-default-label">${t('ui.js.cookbook_default', null, 'default')}</span></span></span>`;
   }
   html += `</span>`;
   html += `<div class="cookbook-server-row">`;
-  html += `<input type="text" class="hwfit-sf cookbook-srv-name" value="${esc(s.name || (isLocal ? 'Local' : ''))}" placeholder="Name (optional)" style="width:92px;flex-shrink:0;" />`;
-  html += `<input type="text" class="hwfit-sf cookbook-srv-host" value="${isLocal ? '' : esc(s.host || '')}" placeholder="e.g. user@ip" style="width:214.5px;flex-shrink:0;box-sizing:border-box;" ${isLocal ? 'readonly' : ''} />`;
-  html += `<input type="text" class="hwfit-sf cookbook-srv-port" value="${esc(s.port || '')}" placeholder="Port" title="SSH port (default 22)" style="width:48px;flex-shrink:0;" ${isLocal ? 'readonly' : ''} />`;
+  html += `<input type="text" class="hwfit-sf cookbook-srv-name" value="${esc(s.name || (isLocal ? t('ui.js.cookbook_local', null, 'Local') : ''))}" placeholder="${t('ui.js.cookbook_name_optional', null, 'Name (optional)')}" style="width:92px;flex-shrink:0;" />`;
+  html += `<input type="text" class="hwfit-sf cookbook-srv-host" value="${isLocal ? '' : esc(s.host || '')}" placeholder="${t('ui.js.cookbook_host_placeholder', null, 'e.g. user@ip')}" style="width:214.5px;flex-shrink:0;box-sizing:border-box;" ${isLocal ? 'readonly' : ''} />`;
+  html += `<input type="text" class="hwfit-sf cookbook-srv-port" value="${esc(s.port || '')}" placeholder="${t('ui.js.cookbook_port', null, 'Port')}" title="${t('ui.js.cookbook_port_title', null, 'SSH port (default 22)')}" style="width:48px;flex-shrink:0;" ${isLocal ? 'readonly' : ''} />`;
   html += `<select class="hwfit-sf cookbook-srv-env">${envOpts}</select>`;
-  html += `<input type="text" class="hwfit-sf cookbook-srv-path" value="${esc(s.envPath || '')}" placeholder="${s.platform === 'windows' ? 'venv path' : '~/venv'}" />`;
+  html += `<input type="text" class="hwfit-sf cookbook-srv-path" value="${esc(s.envPath || '')}" placeholder="${s.platform === 'windows' ? t('ui.js.cookbook_venv_path', null, 'venv path') : '~/venv'}" />`;
   html += `<span class="cookbook-dep-tag cookbook-dep-target" style="font-size:8px;flex-shrink:0;min-width:46px;text-align:center;visibility:hidden;">placeholder</span>`;
   html += `<span class="cookbook-srv-actions" style="display:inline-flex;gap:4px;align-items:center;width:78px;flex-shrink:0;justify-content:flex-end;"></span>`;
   html += `</div>`;
   const modelDirs = Array.isArray(s.modelDirs) && s.modelDirs.length ? s.modelDirs : ['~/.cache/huggingface/hub'];
   const activeDlDir = s.downloadDir || '';
   html += `<div class="cookbook-modeldirs" style="margin:2px 0 0 0;display:flex;flex-wrap:wrap;gap:4px;align-items:center;">`;
-  html += `<span style="width:100%;font-size:13px;font-weight:600;margin-bottom:3px;">Model Directory <span style="font-weight:400;opacity:0.5;font-size:11px;">— check the one downloads should go to</span></span>`;
+  html += `<span style="width:100%;font-size:13px;font-weight:600;margin-bottom:3px;">${t('ui.js.cookbook_model_directory', null, 'Model Directory')} <span style="font-weight:400;opacity:0.5;font-size:11px;">${t('ui.js.cookbook_model_directory_hint', null, '— check the one downloads should go to')}</span></span>`;
   for (let j = 0; j < modelDirs.length; j++) {
     const isDefault = modelDirs[j] === '~/.cache/huggingface/hub';
     const dirVal = isDefault ? '' : modelDirs[j];
     const isTarget = activeDlDir === dirVal;
-    const dlBtn = `<span class="cookbook-modeldir-dl${isTarget ? ' active' : ''}" title="${isTarget ? 'Downloads go here' : 'Send downloads here'}" data-dl-dir="${esc(dirVal)}">${isTarget ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF}</span>`;
-    const rmBtn = isDefault ? '' : ' <span class="cookbook-modeldir-rm" title="Remove">✖</span>';
+    const dlBtn = `<span class="cookbook-modeldir-dl${isTarget ? ' active' : ''}" title="${isTarget ? t('ui.js.cookbook_downloads_go_here', null, 'Downloads go here') : t('ui.js.cookbook_send_downloads_here', null, 'Send downloads here')}" data-dl-dir="${esc(dirVal)}">${isTarget ? _MODELDIR_CHECK_ON : _MODELDIR_CHECK_OFF}</span>`;
+    const rmBtn = isDefault ? '' : ' <span class="cookbook-modeldir-rm" title="' + t('ui.js.cookbook_remove', null, 'Remove') + '">✖</span>';
     html += `<span class="cookbook-modeldir-tag${isDefault ? ' cookbook-modeldir-default' : ''}${isTarget ? ' cookbook-modeldir-target' : ''}" data-dir-idx="${j}" data-dir="${esc(modelDirs[j])}">${dlBtn} ${esc(modelDirs[j])}${rmBtn}</span>`;
   }
-  html += `<button class="cookbook-modeldir-add" title="Add model directory">+ Add</button>`;
+  html += `<button class="cookbook-modeldir-add" title="${t('ui.js.cookbook_add_model_dir', null, 'Add model directory')}">${t('ui.js.cookbook_add_btn', null, '+ Add')}</button>`;
   const _btnStyle = 'margin-left:auto;position:relative;top:-2px;height:22px;box-sizing:border-box;display:inline-flex;align-items:center;';
   if (isNew) {
     // A brand-new server: Save (confirm) sits where Delete would be; Cancel is
     // top-right in the title. Save confirms with a checkmark (auto-saves on edit too).
-    html += `<button class="cookbook-server-save-btn" title="Save this server" style="${_btnStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`;
+    html += `<button class="cookbook-server-save-btn" title="${t('ui.js.cookbook_save_server', null, 'Save this server')}" style="${_btnStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>${t('ui.js.cookbook_save', null, 'Save')}</button>`;
   } else if (!isLocal) {
-    html += `<button class="cookbook-server-rm cookbook-server-rm-btn" title="Delete this server" style="${_btnStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>Delete</button>`;
+    html += `<button class="cookbook-server-rm cookbook-server-rm-btn" title="${t('ui.js.cookbook_delete_server', null, 'Delete this server')}" style="${_btnStyle}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>${t('ui.js.cookbook_delete', null, 'Delete')}</button>`;
   }
   html += `</div>`;
   if (!isLocal) {
     html += `<div class="cookbook-server-key-panel hidden" style="margin-top:6px;flex-direction:column;gap:5px;">`;
     html += `<div style="display:flex;gap:4px;align-items:center;">`;
-    html += `<button type="button" class="memory-toolbar-btn cookbook-server-key-gen" style="height:23px;">Generate key</button>`;
-    html += `<button type="button" class="memory-toolbar-btn cookbook-server-key-copy" style="height:23px;" disabled>Copy command</button>`;
-    html += `<span style="font-size:10px;opacity:0.55;line-height:1.25;">Docker: run this command in your terminal once.</span>`;
+    html += `<button type="button" class="memory-toolbar-btn cookbook-server-key-gen" style="height:23px;">${t('ui.js.cookbook_generate_key', null, 'Generate key')}</button>`;
+    html += `<button type="button" class="memory-toolbar-btn cookbook-server-key-copy" style="height:23px;" disabled>${t('ui.js.cookbook_copy_command', null, 'Copy command')}</button>`;
+    html += `<span style="font-size:10px;opacity:0.55;line-height:1.25;">${t('ui.js.cookbook_docker_key_hint', null, 'Docker: run this command in your terminal once.')}</span>`;
     html += `</div>`;
-    html += `<textarea class="memory-search-input cookbook-server-key-command" readonly rows="3" style="min-height:58px;resize:vertical;font-family:var(--mono,monospace);font-size:10px;line-height:1.35;">Enter user@host, then generate the key.</textarea>`;
+    html += `<textarea class="memory-search-input cookbook-server-key-command" readonly rows="3" style="min-height:58px;resize:vertical;font-family:var(--mono,monospace);font-size:10px;line-height:1.35;">${t('ui.js.cookbook_key_placeholder', null, 'Enter user@host, then generate the key.')}</textarea>`;
     html += `</div>`;
   }
   html += `</div>`;
@@ -1773,10 +1776,10 @@ function _renderRecipes() {
 
   // Tabs
   html += '<div class="cookbook-tabs">';
-  html += '<button class="cookbook-tab active" data-backend="Search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="7 14 12 19 17 14"/><line x1="12" y1="19" x2="12" y2="5"/><line x1="5" y1="21" x2="19" y2="21"/></svg>Download</button>';
-  html += '<button class="cookbook-tab" data-backend="Serve"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>Serve</button>';
-  html += '<button class="cookbook-tab" data-backend="Dependencies"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>Dependencies</button>';
-  html += '<button class="cookbook-tab" data-backend="Settings"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>';
+  html += '<button class="cookbook-tab active" data-backend="Search"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="7 14 12 19 17 14"/><line x1="12" y1="19" x2="12" y2="5"/><line x1="5" y1="21" x2="19" y2="21"/></svg>' + t('ui.js.cookbook_tab_download', null, 'Download') + '</button>';
+  html += '<button class="cookbook-tab" data-backend="Serve"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>' + t('ui.js.cookbook_tab_serve', null, 'Serve') + '</button>';
+  html += '<button class="cookbook-tab" data-backend="Dependencies"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>' + t('ui.js.cookbook_tab_dependencies', null, 'Dependencies') + '</button>';
+  html += '<button class="cookbook-tab" data-backend="Settings"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:3px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>' + t('ui.js.cookbook_tab_settings', null, 'Settings') + '</button>';
   html += '</div>';
 
   // Search group
@@ -1787,10 +1790,13 @@ function _renderRecipes() {
   // State persisted to localStorage so the fold survives reloads.
   const _dlTabFolded = (() => { try { return localStorage.getItem('cookbook_dl_tab_folded_v1') === '1'; } catch { return false; } })();
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px;">';
-  html += `<h2 id="cookbook-dl-tab-fold" class="${_dlTabFolded ? 'is-folded' : ''}" style="margin:0;padding:0;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;flex:1;">Download<span id="cookbook-dl-tab-chevron" style="display:inline-block;transition:transform 0.15s;font-size:1.1em;margin-left:8px;opacity:0.85;">${_dlTabFolded ? '▸' : '▾'}</span></h2>`;
+  html += `<h2 id="cookbook-dl-tab-fold" class="${_dlTabFolded ? 'is-folded' : ''}" style="margin:0;padding:0;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none;flex:1;">${t('ui.js.cookbook_tab_download', null, 'Download')}<span id="cookbook-dl-tab-chevron" style="display:inline-block;transition:transform 0.15s;font-size:1.1em;margin-left:8px;opacity:0.85;">${_dlTabFolded ? '▸' : '▾'}</span></h2>`;
   html += '</div>';
   html += `<div id="cookbook-dl-tab-fold-body" style="${_dlTabFolded ? 'display:none;' : ''}">`;
-  html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Download from <a href="https://huggingface.co/models" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:1px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>HuggingFace</a> by pasting model link, or download directly in the Scan section below.</p>';
+  {
+    const _hfLink = '<a href="https://huggingface.co/models" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:1px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>HuggingFace</a>';
+    html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">' + t('ui.js.cookbook_download_desc', { link: _hfLink }, 'Download from {link} by pasting model link, or download directly in the Scan section below.') + '</p>';
+  }
   html += '<div class="hwfit-container" id="hwfit-container">';
 
   // Section 1: Settings
@@ -1828,11 +1834,11 @@ function _renderRecipes() {
   } else {
     html += `<input type="hidden" id="hwfit-dl-server" value="local" />`;
   }
-  html += `<button class="memory-toolbar-btn cookbook-dl-add-server" title="Add server in Settings" style="height:28px;">add server</button>`;
+  html += `<button class="memory-toolbar-btn cookbook-dl-add-server" title="${t('ui.js.cookbook_add_server_title', null, 'Add server in Settings')}" style="height:28px;">${t('ui.js.cookbook_add_server', null, 'add server')}</button>`;
   html += `</div>`;
   html += `<div class="cookbook-dl-input" style="margin-top:0;">`;
-  html += `<input type="text" class="cookbook-dl-repo" id="cookbook-dl-repo" placeholder="org/model-name, qwen2.5:14b, or HF URL" />`;
-  html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
+  html += `<input type="text" class="cookbook-dl-repo" id="cookbook-dl-repo" placeholder="${t('ui.js.cookbook_dl_placeholder', null, 'org/model-name, qwen2.5:14b, or HF URL')}" />`;
+  html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">${t('ui.js.cookbook_download_btn', null, 'Download')}</button>`;
   html += `</div>`;
   // Browse Ollama library — fetches popular models from ollama.com via the
   // /api/cookbook/ollama/library cached proxy, click → fills the input with
@@ -1841,9 +1847,9 @@ function _renderRecipes() {
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   html += `<button type="button" class="memory-toolbar-btn" id="cookbook-ollama-toggle" style="flex:1;text-align:left;height:26px;display:flex;align-items:center;gap:6px;border-radius:4px;">`;
   html += `<span id="cookbook-ollama-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;">▸</span>`;
-  html += `<span style="pointer-events:none;">Browse Ollama library</span>`;
+  html += `<span style="pointer-events:none;">${t('ui.js.cookbook_browse_ollama', null, 'Browse Ollama library')}</span>`;
   html += `</button>`;
-  html += `<button type="button" class="memory-toolbar-btn" id="cookbook-ollama-refresh" title="Refresh" style="height:26px;width:26px;padding:0;border-radius:4px;">↻</button>`;
+  html += `<button type="button" class="memory-toolbar-btn" id="cookbook-ollama-refresh" title="${t('ui.js.cookbook_refresh', null, 'Refresh')}" style="height:26px;width:26px;padding:0;border-radius:4px;">↻</button>`;
   html += `</div>`;
   html += `<div id="cookbook-ollama-list" style="display:none;margin-top:4px;max-height:320px;overflow-y:auto;flex-direction:column;gap:4px;"></div>`;
   html += `</div>`;
@@ -1852,9 +1858,9 @@ function _renderRecipes() {
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-toggle" style="flex:1;text-align:left;height:26px;display:flex;align-items:center;gap:6px;border-radius:4px;">`;
   html += `<span id="cookbook-hf-latest-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;">\u25B8</span>`;
-  html += `<span style="pointer-events:none;">Trending models that fit your hardware</span>`;
+  html += `<span style="pointer-events:none;">${t('ui.js.cookbook_trending_models', null, 'Trending models that fit your hardware')}</span>`;
   html += `</button>`;
-  html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-refresh" title="Refresh" style="height:26px;width:26px;padding:0;border-radius:4px;">\u21BB</button>`;
+  html += `<button type="button" class="memory-toolbar-btn" id="cookbook-hf-latest-refresh" title="${t('ui.js.cookbook_refresh', null, 'Refresh')}" style="height:26px;width:26px;padding:0;border-radius:4px;">\u21BB</button>`;
   html += `</div>`;
   html += `<div id="cookbook-hf-latest-list" style="display:none;margin-top:4px;max-height:320px;overflow-y:auto;flex-direction:column;gap:4px;"></div>`;
   html += `</div>`;
@@ -1865,49 +1871,49 @@ function _renderRecipes() {
   html += '<div class="cookbook-group" data-backend-group="Search">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Scan / Download</h2>';
+  html += '<h2 style="margin:0;padding:0;line-height:1;">' + t('ui.js.cookbook_scan_download', null, 'Scan / Download') + '</h2>';
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">Scans your hardware for what models you can run. Hardware is cached; hit the scan button to re-probe after changing GPUs.</p>';
+  html += '<p class="memory-desc doclib-desc" style="margin-top:6px;">' + t('ui.js.cookbook_scan_desc', null, 'Scans your hardware for what models you can run. Hardware is cached; hit the scan button to re-probe after changing GPUs.') + '</p>';
   html += '<div class="hwfit-toolbar" style="margin-top:9px;">';
   html += '<select class="cookbook-field-input hwfit-usecase" id="hwfit-usecase" style="height:28px;">';
-  html += '<option value="general" selected>Standard</option><option value="coding">Coding</option>';
-  html += '<option value="reasoning">Reasoning</option><option value="chat">Chat</option>';
+  html += '<option value="general" selected>' + t('ui.js.cookbook_usecase_standard', null, 'Standard') + '</option><option value="coding">' + t('ui.js.cookbook_usecase_coding', null, 'Coding') + '</option>';
+  html += '<option value="reasoning">' + t('ui.js.cookbook_usecase_reasoning', null, 'Reasoning') + '</option><option value="chat">' + t('ui.js.cookbook_usecase_chat', null, 'Chat') + '</option>';
   // Image tab removed — text→image gen is gone from this build (only inpaint
    // remains, which uses its own settings panel). Vision (multimodal) stays.
-  html += '<option value="multimodal">Vision</option></select>';
+  html += '<option value="multimodal">' + t('ui.js.cookbook_usecase_vision', null, 'Vision') + '</option></select>';
   // Engine sits next to the type filter so the "what category / which serving
   // path" filters live together; Quant + Context are storage-format and budget
   // levers, grouped to the right.
   html += '<span class="hwfit-engine-wrap">';
-  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="Filter by serving engine">';
-  html += '<option value="">Engine</option>';
+  html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="' + t('ui.js.cookbook_engine_filter_title', null, 'Filter by serving engine') + '">';
+  html += '<option value="">' + t('ui.js.cookbook_engine', null, 'Engine') + '</option>';
   html += '<option value="llamacpp">llama.cpp</option>';
   html += '<option value="ollama">Ollama</option>';
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
   html += '</select>';
-  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.">?</span>';
+  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-engine-help" title="' + t('ui.js.cookbook_engine_help', null, 'Rule of thumb: GGUF on single GPU / CPU+RAM → llama.cpp (or Ollama). Safetensors on multi-GPU NVIDIA → vLLM. SGLang is a vLLM-class alternative, sometimes faster on big-MoE / long-context.') + '">?</span>';
   html += '</span>';
   // Quant (Q4/Q8/…). Default is "All" so the list shows the best-scoring
   // quant for every model instead of silently filtering to Q4.
   html += '<span class="hwfit-quant-wrap">';
   html += '<select class="cookbook-field-input hwfit-quant" id="hwfit-quant" style="height:28px;">';
-  html += '<option value="" selected>Quant: All</option>';
+  html += '<option value="" selected>' + t('ui.js.cookbook_quant_all', null, 'Quant: All') + '</option>';
   html += '<option value="Q4_K_M">Q4</option><option value="Q8_0">Q8</option>';
   html += '<option value="Q6_K">Q6</option><option value="Q5_K_M">Q5</option>';
   html += '<option value="Q3_K_M">Q3</option><option value="Q2_K">Q2</option>';
   html += '<option value="AWQ-4bit">AWQ</option><option value="FP8">FP8</option><option value="FP4">FP4</option><option value="NVFP4">NVFP4</option></select>';
-  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-quant-help" title="Lower quant tiers (Q2/Q3/Q4 / AWQ-4bit) are smaller, faster, and cheaper to run, at some quality loss. Higher tiers (Q8 / FP8 / FP16 / BF16) preserve more quality but need more VRAM. “All” shows the best-scoring quant per model — pick a specific one to filter.">?</span>';
+  html += '<span class="hwfit-help-chip hwfit-help-chip-inline hwfit-quant-help" title="' + t('ui.js.cookbook_quant_help', null, 'Lower quant tiers (Q2/Q3/Q4 / AWQ-4bit) are smaller, faster, and cheaper to run, at some quality loss. Higher tiers (Q8 / FP8 / FP16 / BF16) preserve more quality but need more VRAM. “All” shows the best-scoring quant per model — pick a specific one to filter.') + '">?</span>';
   html += '</span>';
   // Ctx slider — lets you target a context length for fit estimates; the
   // hwfit ranking uses _ctxValue() to factor that into VRAM math, so
   // dragging this re-sorts the list toward models that fit your chosen ctx.
-  html += '<label class="hwfit-ctx-control" title="Context length for fit estimates. Lower it to find more models that could fit your hardware.">';
-  html += '<span>Context</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />';
+  html += '<label class="hwfit-ctx-control" title="' + t('ui.js.cookbook_ctx_title', null, 'Context length for fit estimates. Lower it to find more models that could fit your hardware.') + '">';
+  html += '<span>' + t('ui.js.cookbook_context', null, 'Context') + '</span><span class="hwfit-help-chip hwfit-help-chip-inline" title="' + t('ui.js.cookbook_ctx_help', null, 'Context length. Lower it to find more models that could fit your hardware; raise it when you need longer chats or documents.') + '">?</span><input type="range" id="hwfit-context" min="0" max="5" step="1" value="3" />';
   html += '<output id="hwfit-context-label">50k</output></label>';
   // Search lives at the far right of the toolbar so the controls (Type/Quant/
   // Engine/Context) read as a row of compact filters followed by free-text.
-  html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="Search models..." style="flex:1;" />';
+  html += '<input type="text" class="cookbook-field-input hwfit-search" id="hwfit-search" placeholder="' + t('ui.js.cookbook_search_models', null, 'Search models...') + '" style="flex:1;" />';
   html += '</div>';
   html += '<div class="hwfit-toolbar" style="margin-top:7px;">';
   html += '<select class="cookbook-field-input hwfit-server-select" id="hwfit-server-select" style="height:28px;min-width:88px;position:relative;top:0px;">';
@@ -1915,34 +1921,34 @@ function _renderRecipes() {
   html += '</select>';
   html += '<div class="hwfit-gpu-toggles" id="hwfit-gpu-toggles"></div>';
   // Scan/refresh button (icon-only) where the quant dropdown used to sit.
-  html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-rescan" title="Re-scan hardware" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">↻ RESCAN</button>';
-  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="Set hardware manually" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>EDIT</button>';
+  html += '<button type="button" class="hwfit-gpu-btn" id="hwfit-rescan" title="' + t('ui.js.cookbook_rescan_title', null, 'Re-scan hardware') + '" style="flex-shrink:0;position:relative;top:-3px;left:-1px;">↻ ' + t('ui.js.cookbook_rescan', null, 'RESCAN') + '</button>';
+  html += '<button type="button" class="hwfit-gpu-btn hwfit-hw-manual-btn" id="hwfit-hw-manual-btn" title="' + t('ui.js.cookbook_edit_hw_title', null, 'Set hardware manually') + '" style="flex-shrink:0;position:relative;top:-3px;left:-1px;display:inline-flex;align-items:center;gap:3px;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>' + t('ui.js.cookbook_edit_hw', null, 'EDIT') + '</button>';
   // Sort state — the clickable column headers read/write this (pewds' original
   // sort paradigm). Newest is reachable by clicking the Model column header.
   html += '<select class="cookbook-field-input hwfit-sort" id="hwfit-sort" style="display:none">';
-  html += '<option value="fit">Fit</option><option value="score">Score</option><option value="vram">VRAM</option>';
-  html += '<option value="speed">Speed</option><option value="params">Params</option>';
-  html += '<option value="context">Context</option></select>';
+  html += '<option value="fit">' + t('ui.js.cookbook_sort_fit', null, 'Fit') + '</option><option value="score">' + t('ui.js.cookbook_sort_score', null, 'Score') + '</option><option value="vram">VRAM</option>';
+  html += '<option value="speed">' + t('ui.js.cookbook_sort_speed', null, 'Speed') + '</option><option value="params">' + t('ui.js.cookbook_sort_params', null, 'Params') + '</option>';
+  html += '<option value="context">' + t('ui.js.cookbook_context', null, 'Context') + '</option></select>';
   html += '</div>';
   html += '<div class="hwfit-manual-panel hidden" id="hwfit-manual-panel">';
-  html += '<span class="hwfit-manual-note" style="font-size:10px;opacity:0.6;width:100%;margin-bottom:2px;">Simulator — these values REPLACE detected hardware.</span>';
+  html += '<span class="hwfit-manual-note" style="font-size:10px;opacity:0.6;width:100%;margin-bottom:2px;">' + t('ui.js.cookbook_simulator_note', null, 'Simulator — these values REPLACE detected hardware.') + '</span>';
   html += '<select class="hwfit-manual-mode"><option value="gpu">GPU</option><option value="ram">RAM</option></select>';
-  html += '<label>GPUs<input class="hwfit-manual-gpus" type="text" inputmode="numeric" placeholder="1"></label>';
-  html += '<label>VRAM per GPU<input class="hwfit-manual-vram" type="text" inputmode="decimal" placeholder="8 GB"></label>';
-  html += '<label>Total RAM<input class="hwfit-manual-ram" type="text" inputmode="decimal" placeholder="32 GB"></label>';
+  html += '<label>' + t('ui.js.cookbook_gpus', null, 'GPUs') + '<input class="hwfit-manual-gpus" type="text" inputmode="numeric" placeholder="1"></label>';
+  html += '<label>' + t('ui.js.cookbook_vram_per_gpu', null, 'VRAM per GPU') + '<input class="hwfit-manual-vram" type="text" inputmode="decimal" placeholder="8 GB"></label>';
+  html += '<label>' + t('ui.js.cookbook_total_ram', null, 'Total RAM') + '<input class="hwfit-manual-ram" type="text" inputmode="decimal" placeholder="32 GB"></label>';
   html += '<select class="hwfit-manual-backend"><option value="cuda">CUDA</option><option value="rocm">ROCm</option></select>';
-  html += '<button type="button" class="hwfit-hw-manual-save">✓ Apply</button>';
-  html += '<button type="button" class="hwfit-hw-manual-clear">× Clear</button>';
+  html += '<button type="button" class="hwfit-hw-manual-save">✓ ' + t('ui.js.cookbook_apply', null, 'Apply') + '</button>';
+  html += '<button type="button" class="hwfit-hw-manual-clear">× ' + t('ui.js.cookbook_clear', null, 'Clear') + '</button>';
   html += '</div>';
-  html += '<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">Detected hardware</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>';
+  html += '<div id="hwfit-hw-row" style="display:none;align-items:center;gap:4px;margin-top:3px;padding-top:2px;"><span style="font-size:10px;padding:2px 8px;border-radius:10px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.7;white-space:nowrap;flex-shrink:0;position:relative;top:-1px;">' + t('ui.js.cookbook_detected_hardware', null, 'Detected hardware') + '</span><div class="hwfit-hw" id="hwfit-hw" style="flex:1;"></div></div>';
   html += '<div class="hwfit-list" id="hwfit-list"></div>';
   // Footer: link to the public discussion where users can request additions
   // to the curated model list. Sits below the list so it reads as a callout
   // after browsing, not a header.
   html += '<div class="hwfit-list-footer" style="display:none;">'
-       + 'Don\'t see a model? '
+       + t('ui.js.cookbook_dont_see_model', null, "Don't see a model?") + ' '
        + '<a href="https://github.com/pewdiepie-archdaemon/odysseus/discussions/1962" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;position:relative;top:-1px;">'
-       + 'Request it →'
+       + t('ui.js.cookbook_request_it', null, 'Request it →')
        + '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="flex-shrink:0;"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
        + '</a>'
        + '</div>';
@@ -1953,33 +1959,33 @@ function _renderRecipes() {
   html += '<div class="cookbook-group hidden" data-backend-group="Serve">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Serve <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
+  html += '<h2 style="margin:0;padding:0;line-height:1;">' + t('ui.js.cookbook_tab_serve', null, 'Serve') + ' <span id="serve-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>';
   html += '</div>';
   const _selSrv = _es.servers.find(s => s.host === _es.remoteHost) || _es.servers[0] || {};
   const _srvDirs = (Array.isArray(_selSrv.modelDirs) ? _selSrv.modelDirs : [_selSrv.modelDir || '~/.cache/huggingface/hub']).map(d => d.replaceAll('✕', '').replaceAll('✖', '').trim()).filter(Boolean);
   html += '<div class="cookbook-serve-dirs" style="margin-top:6px;">';
   html += _srvDirs.map(d => `<span class="cookbook-serve-dir-pill">${esc(d)}</span>`).join('');
-  html += '<span class="cookbook-serve-dir-edit" title="Edit in Settings">edit</span>';
+  html += '<span class="cookbook-serve-dir-edit" title="' + t('ui.js.cookbook_edit_in_settings', null, 'Edit in Settings') + '">' + t('ui.js.cookbook_edit_lc', null, 'edit') + '</span>';
   html += '</div>';
   html += '<div style="display:flex;gap:4px;align-items:center;margin-top:4px;">';
   html += '<select class="memory-sort-select" id="hwfit-cache-server" style="height:24px;">' + _buildServerOpts(true) + '</select>';
   html += '<select class="memory-sort-select" id="serve-sort" style="height:24px;">';
-  html += '<option value="name">Name</option><option value="size-desc">Size \u2193</option><option value="size-asc">Size \u2191</option><option value="recent">Recent</option>';
+  html += '<option value="name">' + t('ui.js.cookbook_sort_name', null, 'Name') + '</option><option value="size-desc">' + t('ui.js.cookbook_sort_size_desc', null, 'Size \u2193') + '</option><option value="size-asc">' + t('ui.js.cookbook_sort_size_asc', null, 'Size \u2191') + '</option><option value="recent">' + t('ui.js.cookbook_sort_recent', null, 'Recent') + '</option>';
   html += '</select>';
   html += '</div>';
   html += '<div class="memory-toolbar" style="margin-top:8px;">';
   html += '<div class="memory-category-filters">';
-  html += '<input type="text" class="memory-search-input" id="serve-search" placeholder="Search cached models\u2026" style="flex:1;min-width:120px;" />';
-  html += '<button class="memory-toolbar-btn" id="hwfit-cache-select">Select</button>';
+  html += '<input type="text" class="memory-search-input" id="serve-search" placeholder="' + t('ui.js.cookbook_search_cached', null, 'Search cached models\u2026') + '" style="flex:1;min-width:120px;" />';
+  html += '<button class="memory-toolbar-btn" id="hwfit-cache-select">' + t('ui.js.cookbook_select', null, 'Select') + '</button>';
   html += '</div>';
   html += '<div class="doclib-lang-chips" id="serve-tags"></div>';
   html += '</div>';
 
   html += '<div class="memory-bulk-bar hidden" id="serve-bulk-bar">';
-  html += '<label class="memory-bulk-check-all"><input type="checkbox" id="serve-select-all"> All</label>';
-  html += '<span id="serve-bulk-count" style="font-size:10px;opacity:0.5;">0 selected</span>';
-  html += '<button class="memory-toolbar-btn danger" id="serve-bulk-delete" style="position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>';
-  html += '<button class="memory-toolbar-btn" id="serve-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-7px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+  html += '<label class="memory-bulk-check-all"><input type="checkbox" id="serve-select-all"> ' + t('ui.js.cookbook_all', null, 'All') + '</label>';
+  html += '<span id="serve-bulk-count" style="font-size:10px;opacity:0.5;">' + t('ui.js.cookbook_n_selected', { count: 0 }, '{count} selected') + '</span>';
+  html += '<button class="memory-toolbar-btn danger" id="serve-bulk-delete" style="position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>' + t('ui.js.cookbook_delete', null, 'Delete') + '</button>';
+  html += '<button class="memory-toolbar-btn" id="serve-bulk-cancel" title="' + t('ui.js.cookbook_cancel_esc', null, 'Cancel (Esc)') + '" style="margin-left:4px;padding:3px 6px;position:relative;top:-7px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   html += '</div>';
 
   html += '<div class="doclib-grid hwfit-cached-list" id="hwfit-cached-list"></div>';
@@ -1989,15 +1995,15 @@ function _renderRecipes() {
   html += '<div class="cookbook-group hidden" data-backend-group="Dependencies">';
   html += '<div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">';
   html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Dependencies</h2>';
+  html += '<h2 style="margin:0;padding:0;line-height:1;">' + t('ui.js.cookbook_tab_dependencies', null, 'Dependencies') + '</h2>';
   // Rebuild llama.cpp button moved into the llama_cpp dep row (see _depRow);
   // having it in the title polluted the section header.
-  html += '<span style="font-size:10px;opacity:0.5;margin-left:auto;">Server</span>';
+  html += '<span style="font-size:10px;opacity:0.5;margin-left:auto;">' + t('ui.js.cookbook_server_label', null, 'Server') + '</span>';
   html += '<select class="cookbook-field-input" id="hwfit-deps-server" style="height:28px;min-width:70px;">';
   html += _buildServerOpts(false);
   html += '</select>';
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Optional packages that extend Odysseus capabilities.</p>';
+  html += '<p class="memory-desc doclib-desc">' + t('ui.js.cookbook_deps_desc', null, 'Optional packages that extend Odysseus capabilities.') + '</p>';
   html += '<div class="doclib-grid" id="cookbook-deps-list"></div>';
   html += '</div></div>';
 
@@ -2010,18 +2016,18 @@ function _renderRecipes() {
   // ── HuggingFace Token block ─────────────────────────────────────────
   html += '<div class="admin-card" style="flex:0 0 auto;display:flex;flex-direction:column;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">HuggingFace Token</h2>';
+  html += '<h2 style="margin:0;padding:0;line-height:1;">' + t('ui.js.cookbook_hf_token', null, 'HuggingFace Token') + '</h2>';
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Personal access token for downloading gated and private models.</p>';
+  html += '<p class="memory-desc doclib-desc">' + t('ui.js.cookbook_hf_token_desc', null, 'Personal access token for downloading gated and private models.') + '</p>';
   html += '<div class="memory-toolbar">';
   html += `<div style="display:flex;gap:4px;align-items:center;">`;
   // Bold green check shown when a token is stored (a placeholder can't style a
   // single glyph, so it's its own element next to the input).
   if (_es.hfTokenConfigured) {
-    html += `<span class="hwfit-hf-check" title="Token stored" style="font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>`;
+    html += `<span class="hwfit-hf-check" title="${t('ui.js.cookbook_token_stored', null, 'Token stored')}" style="font-weight:800;color:var(--green,#50fa7b);font-size:15px;line-height:1;flex-shrink:0;position:relative;top:2px;">✓</span>`;
   }
   const hfPlaceholder = _es.hfTokenConfigured
-    ? `Stored (${esc(_es.hfTokenMasked || 'configured')}) - enter a new token to replace`
+    ? t('ui.js.cookbook_token_stored_placeholder', { masked: esc(_es.hfTokenMasked || 'configured') }, 'Stored ({masked}) - enter a new token to replace')
     : 'hf_...';
   html += `<input type="password" class="memory-search-input" id="hwfit-hftoken" value="${esc(_es.hfToken || '')}" placeholder="${hfPlaceholder}" style="flex:1;" />`;
   html += `</div>`;
@@ -2031,12 +2037,12 @@ function _renderRecipes() {
   // ── Servers block ───────────────────────────────────────────────────
   html += '<div class="admin-card" style="flex:0 0 auto;display:flex;flex-direction:column;">';
   html += '<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;margin-top:-4px;">';
-  html += '<h2 style="margin:0;padding:0;line-height:1;">Servers</h2>';
+  html += '<h2 style="margin:0;padding:0;line-height:1;">' + t('ui.js.cookbook_servers', null, 'Servers') + '</h2>';
   // Reuse the calendar +New pill: spinning plus, label fades in idea uses
    // the same `.cal-add-btn-text` rules, so styling stays consistent.
-  html += '<button class="cal-add-btn cal-add-btn-text" id="cookbook-server-add" title="Add server" style="margin-left:auto;"><span class="cal-add-plus">+</span><span class="cal-add-label">Add</span></button>';
+  html += '<button class="cal-add-btn cal-add-btn-text" id="cookbook-server-add" title="' + t('ui.js.cookbook_add_server_btn_title', null, 'Add server') + '" style="margin-left:auto;"><span class="cal-add-plus">+</span><span class="cal-add-label">' + t('ui.js.cookbook_add', null, 'Add') + '</span></button>';
   html += '</div>';
-  html += '<p class="memory-desc doclib-desc">Configure SSH servers, install Odysseus keys, choose model directories, and set the default server. Local is this machine.</p>';
+  html += '<p class="memory-desc doclib-desc">' + t('ui.js.cookbook_servers_desc', null, 'Configure SSH servers, install Odysseus keys, choose model directories, and set the default server. Local is this machine.') + '</p>';
   html += '<div class="memory-toolbar cookbook-servers-toolbar" style="margin-top:4px;">';
   html += `<div id="cookbook-servers-list">`;
   for (let i = 0; i < _es.servers.length; i++) {
