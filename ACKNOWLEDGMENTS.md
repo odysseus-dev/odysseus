@@ -170,3 +170,15 @@ The project would not exist without them — credit where credit is due:
 - **Claude** (Anthropic)
 - **Codex** (OpenAI)
 - Friends, for helping me debug.
+
+---
+
+## This fork
+
+This is a fork of [`pewdiepie-archdaemon/odysseus`](https://github.com/pewdiepie-archdaemon/odysseus)
+(MIT). It adds **only** a remote-sandbox runner — [`crabbox.sh`](crabbox.sh), a
+[GitHub Action](.github/workflows/crabbox-islo.yml), and
+[docs/crabbox-islo.md](docs/crabbox-islo.md) — so you can run Odysseus on a
+throwaway [islo.dev](https://islo.dev) microVM via
+[crabbox](https://github.com/openclaw/crabbox) without installing anything
+locally. All application code and credit belong to the upstream project.

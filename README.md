@@ -61,6 +61,26 @@ Use that for the first login, then change it in **Settings**.
 Contributing? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and
 pull request guidelines.
 
+### Try it on a throwaway cloud box (no local install)
+
+Don't want to install anything? Run Odysseus on a fresh
+[islo.dev](https://islo.dev) microVM with one command, and throw the box away
+when you're done:
+
+```bash
+git clone https://github.com/zozo123/odysseus.git
+cd odysseus
+islo api-key create odysseus-demo --output-file islo.key   # https://islo.dev
+export ISLO_API_KEY=$(cat islo.key)
+
+./crabbox.sh serve     # boots Odysseus and prints a public URL you can click
+./crabbox.sh test      # or: warm a box, run the test suite, tear down
+```
+
+`serve` runs on the [islo.dev CLI](https://islo.dev); `test`/`shell` go through
+[crabbox](https://github.com/openclaw/crabbox) (`brew install openclaw/tap/crabbox`).
+Full details in [docs/crabbox-islo.md](docs/crabbox-islo.md).
+
 ### Docker (recommended)
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git

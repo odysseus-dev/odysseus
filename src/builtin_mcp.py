@@ -72,6 +72,10 @@ _BUILTIN_SERVERS = {
     "memory":     ("mcp_servers/memory_server.py",     "Built-in: Memory"),
     "rag":        ("mcp_servers/rag_server.py",        "Built-in: RAG"),
     "email":      ("mcp_servers/email_server.py",      "Built-in: Email"),
+    # Lets the agent run (untrusted/AI-generated) code on a throwaway islo.dev
+    # sandbox via crabbox instead of on this host. Degrades cleanly if crabbox
+    # or ISLO_API_KEY are absent. See crabbox.sh / docs/crabbox-islo.md.
+    "crabbox":    ("mcp_servers/crabbox_server.py",    "Built-in: Crabbox Sandbox"),
 }
 
 # NPX-based built-in servers (run via npx, not Python)

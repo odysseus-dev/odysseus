@@ -1,0 +1,62 @@
+name: crabbox - islo.dev
+
+# Run Odysseus's test suite on a fresh islo.dev microVM via crabbox.
+# This is the CI mirror of `./crabbox.sh test` — instead of a GitHub-hosted
+# runner, the suite executes on an ephemeral islo.dev box that is warmed,
+# synced, and torn down per run.
+#
+# Setup: add an ISLO_API_KEY repository secret (mint with `islo api-key create`).
+# Without the secret the job no-ops cleanly so forks don't see red X's.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: "pytest target (default: fast slice)"
+        required: false
+        default: "tests -q -k 'recurrence or static_mime or ordinal or quant_formats or preview'"
+  push:
+    branches: [main]
+    paths:
+      - "requirements.txt"
+      - "app.py"
+      - "core/**"
+      - "routes/**"
+      - "services/**"
+      - "crabbox.sh"
+      - ".github/workflows/crabbox-islo.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crabbox-islo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suite-on-islo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard — skip if no ISLO_API_KEY
+        id: guard
+        env:
+          ISLO_API_KEY: ${{ secrets.ISLO_API_KEY }}
+        run: |
+          if [ -z "$ISLO_API_KEY" ]; then
+            echo "ISLO_API_KEY not configured — skipping the islo.dev run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Odysseus suite on a fresh islo.dev box
+        # crabbox.sh self-installs the real openclaw crabbox (https://crabbox.sh)
+        # when it's missing — no brew on the runner, so it pulls the linux archive.
+        if: steps.guard.outputs.run == 'true'
+        env:
+          ISLO_API_KEY: ${{ secrets.ISLO_API_KEY }}
+          ODYSSEUS_TESTS: ${{ github.event.inputs.tests || "tests -q -k 'recurrence or static_mime or ordinal or quant_formats or preview'" }}
+        run: ./crabbox.sh test
