@@ -17,7 +17,6 @@ let _getPort;
 let _sshPrefix;
 let _serverByVal;
 let _getPlatform;
-let _serverByVal;
 let _isWindows;
 let _isMetal;
 let _buildEnvPrefix;
@@ -2320,7 +2319,6 @@ export function initServe(shared) {
   _sshPrefix = shared._sshPrefix;
   _serverByVal = shared._serverByVal;
   _getPlatform = shared._getPlatform;
-  _serverByVal = shared._serverByVal;
   _isWindows = shared._isWindows;
   _isMetal = shared._isMetal;
   _buildEnvPrefix = shared._buildEnvPrefix;
