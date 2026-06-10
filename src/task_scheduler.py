@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -1461,6 +1462,14 @@ class TaskScheduler:
             await self._deliver_via_email(output, task, result)
             return
 
+        if self._is_webhook_output_target(output):
+            await self._deliver_via_webhook(output, task, result)
+            return
+
+        if self._is_discord_output_target(output):
+            await self._deliver_via_discord(output, task, result)
+            return
+
         if output != "session":
             return
 
@@ -1611,6 +1620,99 @@ class TaskScheduler:
         if target.startswith("email:"):
             return True
         return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", target))
+
+    @staticmethod
+    def _is_webhook_output_target(output: str) -> bool:
+        target = (output or "").strip().lower()
+        return target == "webhook" or target.startswith("webhook:")
+
+    @staticmethod
+    def _is_discord_output_target(output: str) -> bool:
+        return (output or "").strip().lower() == "discord"
+
+    @staticmethod
+    def _resolve_task_webhook(output: str) -> str:
+        target = (output or "").strip()
+        if target.lower().startswith("webhook:"):
+            suffix = re.sub(r"[^A-Za-z0-9]+", "_", target.split(":", 1)[1]).strip("_").upper()
+            if suffix:
+                env_name = f"ODYSSEUS_TASK_WEBHOOK_{suffix}"
+                return os.getenv(env_name, "").strip()
+            return os.getenv("ODYSSEUS_TASK_WEBHOOK_URL", "").strip()
+        return os.getenv("ODYSSEUS_TASK_WEBHOOK_URL", "").strip()
+
+    @staticmethod
+    def _validate_task_webhook_url(url: str) -> None:
+        from src.url_safety import check_outbound_url
+
+        ok, reason = check_outbound_url(url)
+        if not ok:
+            raise RuntimeError(f"Task webhook URL is not allowed: {reason}")
+
+    @staticmethod
+    def _resolve_discord_webhook() -> str:
+        return os.getenv("ODYSSEUS_DISCORD_WEBHOOK_URL", "").strip()
+
+    @staticmethod
+    def _discord_chunks(text: str, limit: int = 1900) -> list[str]:
+        text = text or ""
+        if len(text) <= limit:
+            return [text]
+        chunks: list[str] = []
+        remaining = text
+        while remaining:
+            cut = remaining.rfind("\n", 0, limit)
+            if cut < 400:
+                cut = limit
+            chunks.append(remaining[:cut].strip())
+            remaining = remaining[cut:].strip()
+        return chunks
+
+    async def _deliver_via_webhook(self, output: str, task, result: str):
+        """Send task output to a configured generic webhook."""
+        webhook_url = self._resolve_task_webhook(output)
+        if not webhook_url:
+            raise RuntimeError("Webhook output target is configured, but no task webhook URL is set")
+        self._validate_task_webhook_url(webhook_url)
+
+        import httpx
+
+        payload = {
+            "event": "task.completed",
+            "source": "odysseus",
+            "task_id": getattr(task, "id", ""),
+            "task_name": getattr(task, "name", "") or "Scheduled Task",
+            "result": result or "",
+        }
+
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            resp = await client.post(webhook_url, json=payload)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Task webhook delivery failed with HTTP {resp.status_code}")
+        logger.info("Task %s posted result to webhook (%sb)", task.id, len(result or ""))
+
+    async def _deliver_via_discord(self, output: str, task, result: str):
+        """Send task output to a configured Discord incoming webhook."""
+        webhook_url = self._resolve_discord_webhook()
+        if not webhook_url:
+            raise RuntimeError("Discord output target is configured, but no Discord webhook URL is set")
+        self._validate_task_webhook_url(webhook_url)
+
+        import httpx
+
+        title = f"Odysseus: {getattr(task, 'name', '') or 'Scheduled Task'}"
+        body = (result or "").strip() or "[Task completed with no text output]"
+        chunks = self._discord_chunks(body, limit=1800)
+        total = len(chunks)
+
+        async with httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+            for idx, chunk in enumerate(chunks, start=1):
+                suffix = f" ({idx}/{total})" if total > 1 else ""
+                payload = {"content": f"**{title}{suffix}**\n{chunk}"}
+                resp = await client.post(webhook_url, json=payload)
+                if resp.status_code >= 400:
+                    raise RuntimeError(f"Discord delivery failed with HTTP {resp.status_code}")
+        logger.info("Task %s posted result to Discord (%sb)", task.id, len(result or ""))
 
     async def _deliver_via_email(self, output: str, task, result: str):
         """Send task output through the app's configured SMTP account.
