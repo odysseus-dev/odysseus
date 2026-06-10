@@ -402,6 +402,71 @@ def _parse_ollama_response(data: dict) -> str:
     return message.get("content") or data.get("response") or ""
 
 
+def _build_google_payload(
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    stream: bool = False,
+    tools: Optional[List[Dict]] = None,
+) -> Dict:
+    """Build the JSON payload for Google's Gemini API.
+
+    Google Gemini uses a different message format:
+    - "contents" instead of "messages"
+    - Message format: {"role": "user"|"model", "parts": [{"text": "..."}]}
+    - Generation config goes in "generationConfig" object
+    """
+    # Convert OpenAI-style messages to Google's format
+    contents = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        # Google uses "user" and "model" (not "assistant")
+        if role == "assistant":
+            role = "model"
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            parts = [{"text": content}]
+        else:
+            # Handle multimodal content if needed
+            parts = [{"text": str(content)}]
+        contents.append({"role": role, "parts": parts})
+
+    payload: Dict = {
+        "model": model,
+        "contents": contents,
+    }
+
+    # Generation config
+    gen_config: Dict = {}
+    if temperature is not None:
+        gen_config["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        gen_config["maxOutputTokens"] = max_tokens
+    if stream:
+        gen_config["candidateCount"] = 1
+    if gen_config:
+        payload["generationConfig"] = gen_config
+
+    # Note: Gemini tools use a different format (google.functionDeclaration)
+    # For now, we skip tools for Google or would need proper conversion
+    if tools:
+        logger.debug("Google Gemini tools not yet supported, ignoring tools")
+
+    return payload
+
+
+def _parse_google_response(data: dict) -> str:
+    """Parse Google Gemini API response."""
+    candidates = data.get("candidates", [])
+    if candidates:
+        content = candidates[0].get("content", {})
+        parts = content.get("parts", [])
+        if parts:
+            return parts[0].get("text", "")
+    return ""
+
+
 def _host_match(url: str, *domains: str) -> bool:
     """Return True if url's hostname equals any of `domains` or is a subdomain of one.
 
@@ -465,7 +530,22 @@ def _is_self_hosted_openai_compatible(url: str) -> bool:
     self-hosted servers generally ignore unknown fields and many (notably
     llama.cpp's server) use them for KV-cache slot affinity (issue #2927).
     """
-    return _detect_provider(url) == "openai" and not _host_match(url, "openai.com")
+    if _detect_provider(url) != "openai":
+        return False
+    # Exclude known cloud providers that offer OpenAI compatibility but reject
+    # unknown top-level fields (these are not "self-hosted").
+    return not _host_match(
+        url,
+        "openai.com",
+        "googleapis.com",
+        "x.ai",
+        "deepseek.com",
+        "mistral.ai",
+        "together.xyz",
+        "perplexity.ai",
+        "fireworks.ai",
+        "sambanova.ai",
+    )
 
 
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
@@ -1195,6 +1275,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "Google":
+        target_url = url
+        payload = _build_google_payload(model, messages_copy, temperature, max_tokens, stream=False)
     else:
         target_url = url
         if provider == "copilot":
@@ -1223,6 +1306,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
+        elif provider == "Google":
+            response = _parse_google_response(data)
         else:
             msg = data["choices"][0]["message"]
             response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1388,6 +1473,10 @@ async def llm_call_async(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+    elif provider == "Google":
+        target_url = url
+        h = _provider_headers(provider, headers)
+        payload = _build_google_payload(model, messages_copy, temperature, max_tokens, stream=False)
     else:
         target_url = url
         h = _provider_headers(provider, headers)
@@ -1440,6 +1529,8 @@ async def llm_call_async(
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
+                elif provider == "Google":
+                    response = _parse_google_response(data)
                 else:
                     msg = data["choices"][0]["message"]
                     response = msg.get("content") or msg.get("reasoning_content") or ""
@@ -1504,6 +1595,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
+    elif provider == "Google":
+        target_url = url
+        h = _provider_headers(provider, headers)
+        payload = _build_google_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+        # Google doesn't support session_id or cache_prompt - skip cache affinity
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
