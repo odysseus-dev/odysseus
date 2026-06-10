@@ -1471,10 +1471,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             results.append(r)
         created = [r for r in results if r.get("exit_code") == 0 and not r.get("error")]
         failed = [r for r in results if r.get("error")]
-        
+
         if not results:
             return {"error": "No events to create", "exit_code": 1}
-        
+
         # Surface both successes and failures
         parts = []
         if created:
@@ -1483,7 +1483,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         if failed:
             first_error = failed[0].get("error", "Unknown error")
             parts.append(f"Failed to create {len(failed)} event(s). First error: {first_error}")
-        
+
         response = "\n\n".join(parts)
         # Non-zero exit code for partial or total failure
         exit_code = 0 if not failed else 1
