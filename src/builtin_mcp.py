@@ -157,6 +157,18 @@ async def register_builtin_servers(mcp_manager):
                     f"  Notes:  this server is optional; see README.md "
                     f"'Built-in MCP servers' for details."
                 )
+                # Register a visible error entry so admins can see the server
+                # in the Integrations UI instead of it being silently absent.
+                mcp_manager._connections[server_id] = {
+                    "status": "error",
+                    "error": (
+                        f"npm package {pkg_spec!r} is not installed in the npx cache.\n"
+                        f"Fix: run `{os.path.basename(npx_path)} -y {pkg_spec} --version`\n"
+                        "then restart Odysseus."
+                    ),
+                    "name": cfg["name"],
+                }
+                mcp_manager._generation += 1
                 continue
 
             logger.info(f"Starting NPX server: {cfg['name']} ({npx_path} {' '.join(args)})")
