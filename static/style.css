@@ -7503,6 +7503,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
 
     /* ── Print / PDF Export ── */
     @media print {
+      html, body { height: auto !important; overflow: visible !important; }
       body { background: #fff !important; color: #000 !important; }
       #sidebar, .sidebar, #icon-rail, .hamburger-btn, #sidebar-backdrop, .chat-input-bar, .input-bar-wrapper,
       #welcome-screen, .chat-top-bar, .chat-meta-overlay, .msg-footer,

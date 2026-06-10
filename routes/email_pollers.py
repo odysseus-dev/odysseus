@@ -18,7 +18,6 @@ Pure helpers live in `email_helpers.py`. Routes themselves live in
 
 import email as email_mod
 import email.utils  # the `email` binding is referenced as email.utils.parseaddr inside the pass
-import smtplib
 import json
 import re
 import html

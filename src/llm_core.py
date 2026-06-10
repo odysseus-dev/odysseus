@@ -466,6 +466,262 @@ def _parse_ollama_response(data: dict) -> str:
     return message.get("content") or data.get("response") or ""
 
 
+def _google_model_name(model: str) -> str:
+    """Normalize a Gemini model id to the bare model name."""
+    name = str(model or "").strip()
+    if name.lower().startswith("models/"):
+        name = name.split("/", 1)[1]
+    return name.rsplit("/", 1)[-1]
+
+
+def _is_google_native_model(model: str) -> bool:
+    """Return True for Gemini/Gemma model ids that should use Gemini-native REST."""
+    if not model:
+        return False
+    m = _google_model_name(model).lower()
+    return m.startswith("gemini") or m.startswith("gemma")
+
+
+def _google_api_root(url: str) -> str:
+    """Return the Google Gemini REST root for a configured endpoint URL."""
+    url = (url or "").strip().rstrip("/")
+    parsed = urlparse(url)
+    path = (parsed.path or "").rstrip("/")
+    lowered = path.lower()
+
+    for suffix in ("/generatecontent", "/streamgeneratecontent", "/chat/completions", "/v1/messages"):
+        if lowered.endswith(suffix):
+            path = path[: -len(suffix)].rstrip("/")
+            lowered = path.lower()
+
+    marker = lowered.rfind("/models/")
+    if marker != -1 and ":" in path[marker:]:
+        path = path[:marker].rstrip("/")
+        lowered = path.lower()
+
+    if lowered.endswith("/models"):
+        path = path[: -len("/models")].rstrip("/")
+
+    return urlunparse(parsed._replace(path=path))
+
+
+def _google_chat_url(base: str, model: str, stream: bool = False) -> str:
+    """Return a Gemini-native generateContent endpoint for a base URL + model."""
+    root = _google_api_root(base)
+    encoded_model = quote(_google_model_name(model), safe="")
+    suffix = "streamGenerateContent?alt=sse" if stream else "generateContent"
+    return f"{root}/models/{encoded_model}:{suffix}"
+
+
+def _google_headers(headers: Optional[Dict] = None) -> Dict[str, str]:
+    """Build request headers for Gemini-native REST."""
+    h = {"Content-Type": "application/json"}
+    if isinstance(headers, dict):
+        h.update(headers)
+    auth = h.get("Authorization") or h.get("authorization")
+    if isinstance(auth, str) and auth.startswith("Bearer "):
+        h.setdefault("x-goog-api-key", auth[7:])
+    return h
+
+
+def _google_content_parts(content) -> List[Dict]:
+    """Convert an OpenAI-style content payload to Gemini part objects."""
+    if isinstance(content, list):
+        parts: List[Dict] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type == "text":
+                text = block.get("text")
+                if text is not None:
+                    parts.append({"text": str(text)})
+                continue
+            if block_type == "image_url":
+                url = (block.get("image_url") or {}).get("url", "")
+                if isinstance(url, str) and url.startswith("data:"):
+                    try:
+                        header, b64_data = url.split(",", 1)
+                        media_type = header.split(";", 1)[0].replace("data:", "")
+                        parts.append({"inlineData": {"mimeType": media_type, "data": b64_data}})
+                    except Exception:
+                        continue
+                elif url:
+                    # Gemini native only accepts fileData for uploaded files.
+                    # Keep the request valid by preserving a readable fallback.
+                    parts.append({"text": f"[image: {url}]"})
+                continue
+            if "text" in block:
+                text = block.get("text")
+                if text is not None:
+                    parts.append({"text": str(text)})
+        return parts
+    if content is None:
+        return []
+    if isinstance(content, str):
+        if not content.strip():
+            return []
+        return [{"text": content}]
+    return [{"text": str(content)}]
+
+
+def _google_tool_response(content):
+    """Convert a tool-result payload into a Gemini functionResponse body."""
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, list):
+        return {"parts": _google_content_parts(content)}
+    if content is None:
+        return {}
+    if isinstance(content, str):
+        stripped = content.strip()
+        if not stripped:
+            return {}
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        return {"text": content}
+    return {"text": str(content)}
+
+
+def _build_google_payload(model, messages, temperature, max_tokens, stream: bool = False, tools=None) -> Dict:
+    """Build a Gemini-native generateContent request body."""
+    system_parts: List[str] = []
+    contents: List[Dict] = []
+    tool_name_by_id: Dict[str, str] = {}
+
+    for m in messages:
+        role = m.get("role")
+        if role == "system":
+            system_parts.append(str(m.get("content") or ""))
+            continue
+
+        if role == "assistant":
+            parts: List[Dict] = []
+            content_parts = _google_content_parts(m.get("content"))
+            if content_parts:
+                parts.extend(content_parts)
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                args = fn.get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args) if args.strip() else {}
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                if not isinstance(args, dict):
+                    args = {}
+                part = {
+                    "functionCall": {
+                        "name": fn.get("name", ""),
+                        "args": args,
+                    }
+                }
+                sig = tc.get("extra_content")
+                if sig:
+                    part["thoughtSignature"] = sig
+                parts.append(part)
+                tc_id = str(tc.get("id") or "").strip()
+                if tc_id:
+                    tool_name_by_id[tc_id] = fn.get("name", "")
+            if parts:
+                contents.append({"role": "model", "parts": parts})
+            continue
+
+        if role == "tool":
+            tool_id = str(m.get("tool_call_id") or "").strip()
+            tool_name = tool_name_by_id.get(tool_id) or str(m.get("name") or "").strip()
+            contents.append({
+                "role": "tool",
+                "parts": [{
+                    "functionResponse": {
+                        "name": tool_name,
+                        "response": _google_tool_response(m.get("content")),
+                    }
+                }],
+            })
+            continue
+
+        parts = _google_content_parts(m.get("content"))
+        if parts:
+            contents.append({"role": role or "user", "parts": parts})
+
+    payload: Dict[str, object] = {"contents": contents}
+    if system_parts:
+        payload["systemInstruction"] = {
+            "parts": [{"text": "\n\n".join(p for p in system_parts if p)}]
+        }
+    generation_config: Dict[str, object] = {}
+    if temperature is not None:
+        generation_config["temperature"] = temperature
+    if max_tokens and max_tokens > 0:
+        generation_config["maxOutputTokens"] = max_tokens
+    if generation_config:
+        payload["generationConfig"] = generation_config
+    if tools:
+        gemini_tools = []
+        for t in tools:
+            if t.get("type") != "function":
+                continue
+            fn = t.get("function") or {}
+            gemini_tools.append({
+                "functionDeclarations": [{
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+                }]
+            })
+        if gemini_tools:
+            payload["tools"] = gemini_tools
+    return payload
+
+
+def _parse_google_response(data: dict) -> tuple[str, List[Dict], Dict]:
+    """Extract text, tool calls, and usage metadata from a Gemini response."""
+    candidates = data.get("candidates") or []
+    if not candidates:
+        return "", [], data.get("usageMetadata") or data.get("usage") or {}
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    text_parts: List[str] = []
+    tool_calls: List[Dict] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text:
+            text_parts.append(text)
+        function_call = part.get("functionCall") or part.get("function_call")
+        if isinstance(function_call, dict) and function_call.get("name"):
+            args = function_call.get("args") or function_call.get("arguments") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args) if args.strip() else {}
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+            call: Dict[str, object] = {
+                "id": function_call.get("id") or f"call_{len(tool_calls)}",
+                "name": function_call.get("name") or "",
+                "arguments": json.dumps(args),
+            }
+            sig = (
+                part.get("thoughtSignature")
+                or part.get("thought_signature")
+                or function_call.get("thoughtSignature")
+                or function_call.get("thought_signature")
+            )
+            if sig:
+                call["extra_content"] = sig
+            tool_calls.append(call)
+    usage = data.get("usageMetadata") or data.get("usage") or {}
+    return "".join(text_parts), tool_calls, usage
+
+
 def _host_match(url: str, *domains: str) -> bool:
     """Return True if url's hostname equals any of `domains` or is a subdomain of one.
 
@@ -1422,13 +1678,18 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         messages_copy = non_sys
 
     provider = _detect_provider(url)
+    google_native = _is_google_native_model(model) and provider not in {"anthropic", "ollama", "openrouter", "groq", "copilot"}
     cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
-    if provider == "anthropic":
+    if google_native:
+        target_url = _google_chat_url(url, model, stream=False)
+        h = _google_headers(headers)
+        payload = _build_google_payload(model, messages_copy, temperature, max_tokens)
+    elif provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
@@ -1462,10 +1723,12 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     except Exception as e:
         raise HTTPException(502, f"POST {target_url} failed: {e}")
     if not r.is_success:
-        raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
+        raise HTTPException(r.status_code, _format_upstream_error(r.status_code, r.text, target_url))
     data = r.json()
     try:
-        if provider == "anthropic":
+        if google_native:
+            response, _, _ = _parse_google_response(data)
+        elif provider == "anthropic":
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
@@ -1689,7 +1952,9 @@ async def llm_call_async(
             _clear_host_dead(target_url)
             data = r.json()
             try:
-                if provider == "anthropic":
+                if google_native:
+                    response, _, _ = _parse_google_response(data)
+                elif provider == "anthropic":
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
@@ -1747,7 +2012,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     else:
         messages_copy = non_sys
 
-    if provider == "anthropic":
+    if google_native:
+        target_url = _google_chat_url(url, model, stream=True)
+        h = _google_headers(headers)
+        payload = _build_google_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+    elif provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
         h = _build_anthropic_headers(headers)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
@@ -2151,6 +2420,87 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
         except Exception as e:
             logger.error(f"Anthropic stream error: {e}")
+            yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+        return
+
+    # ── Gemini-native streaming ──
+    if google_native:
+        _google_tool_calls: List[Dict] = []
+
+        def _google_emit_tool_calls():
+            if not _google_tool_calls:
+                return None
+            return f'data: {json.dumps({"type": "tool_calls", "calls": _google_tool_calls})}\n\n'
+
+        try:
+            client = _get_http_client()
+            async with client.stream("POST", target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _clear_host_dead(target_url)
+                if r.status_code != 200:
+                    raw = (await r.aread()).decode(errors="replace")
+                    friendly = _format_upstream_error(r.status_code, raw, target_url)
+                    yield f'event: error\ndata: {json.dumps({"status": r.status_code, "text": friendly, "raw": raw[:500]})}\n\n'
+                    return
+                async for line in r.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data:
+                        continue
+                    if data == "[DONE]":
+                        tc_event = _google_emit_tool_calls()
+                        if tc_event:
+                            yield tc_event
+                        yield "data: [DONE]\n\n"
+                        return
+                    if not data.startswith("{"):
+                        continue
+                    try:
+                        j = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+
+                    usage = j.get("usageMetadata") or j.get("usage") or {}
+                    if usage:
+                        input_tokens = usage.get("promptTokenCount") or usage.get("input_tokens") or usage.get("prompt_tokens") or 0
+                        output_tokens = usage.get("candidatesTokenCount") or usage.get("output_tokens") or usage.get("completion_tokens") or 0
+                        if input_tokens or output_tokens:
+                            yield f'data: {json.dumps({"type": "usage", "data": {"input_tokens": input_tokens, "output_tokens": output_tokens}})}\n\n'
+
+                    text, calls, _usage = _parse_google_response(j)
+                    if text:
+                        yield f'data: {json.dumps({"delta": text})}\n\n'
+                    for call in calls:
+                        idx = len(_google_tool_calls)
+                        if call.get("name") or not _google_tool_calls:
+                            _google_tool_calls.append({"id": f"call_{idx}", "name": "", "arguments": ""})
+                        else:
+                            idx = len(_google_tool_calls) - 1
+                        slot = _google_tool_calls[idx]
+                        if call.get("id"):
+                            slot["id"] = call["id"]
+                        if call.get("name"):
+                            slot["name"] = call["name"]
+                        if call.get("arguments"):
+                            slot["arguments"] = call["arguments"]
+                        if call.get("extra_content"):
+                            slot["extra_content"] = call["extra_content"]
+
+                tc_event = _google_emit_tool_calls()
+                if tc_event:
+                    yield tc_event
+                yield "data: [DONE]\n\n"
+        except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            _cooled = _mark_host_dead(target_url)
+            _tail = f" â€” host cooled for {DEAD_HOST_COOLDOWN:.0f}s" if _cooled else " â€” transient, will retry"
+            logger.warning(f"Gemini stream connect to {target_url} failed: {e}{_tail}")
+            yield f'event: error\ndata: {json.dumps({"error": f"Cannot reach {_host_key(target_url)}", "status": 503})}\n\n'
+        except httpx.ReadTimeout:
+            yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
+        except httpx.NetworkError:
+            yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
+        except Exception as e:
+            logger.error(f"Gemini stream error: {e}")
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
         return
 
