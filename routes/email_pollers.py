@@ -77,6 +77,7 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
                                    do_tag: bool = False, do_spam: bool = False,
                                    do_calendar: bool = False,
                                    days_back: int = 1,
+                                   owner: str | None = None,
                                    progress_cb=None) -> str:
     """One iteration of the email scan. Temporarily flips settings flags
     so the existing background-loop logic runs exactly once for the requested ops."""
@@ -91,7 +92,11 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
     settings["email_auto_calendar"] = bool(do_calendar)
     _save_settings(settings)
     try:
-        return await _auto_summarize_pass(days_back=days_back, progress_cb=progress_cb)
+        return await _auto_summarize_pass(
+            days_back=days_back,
+            owner=owner,
+            progress_cb=progress_cb,
+        )
     finally:
         s2 = _load_settings()
         for k, v in prev.items():
@@ -129,7 +134,8 @@ def _latest_inbox_fallback_uids(conn, reconnect):
         return [], reconnect()
 
 
-async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None,
+                               owner: str | None = None, progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan.
 
     When account_id is None, iterates over every enabled account in
@@ -141,12 +147,10 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
             from core.database import SessionLocal as _SL, EmailAccount as _EA
             db = _SL()
             try:
-                rows = (
-                    db.query(_EA)
-                    .filter(_EA.enabled == True)  # noqa: E712
-                    .order_by(_EA.is_default.desc(), _EA.created_at.asc())
-                    .all()
-                )
+                q = db.query(_EA).filter(_EA.enabled == True)  # noqa: E712
+                if owner:
+                    q = q.filter(_EA.owner == owner)
+                rows = q.order_by(_EA.is_default.desc(), _EA.created_at.asc()).all()
                 ids = [r.id for r in rows]
                 names = {r.id: r.name for r in rows}
             finally:
@@ -156,21 +160,37 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
             names = {}
         if len(ids) <= 1:
             # Single-account (or zero rows — fallback to legacy settings.json lookup)
-            return await _auto_summarize_pass_single(days_back=days_back, account_id=(ids[0] if ids else None), progress_cb=progress_cb)
+            return await _auto_summarize_pass_single(
+                days_back=days_back,
+                account_id=(ids[0] if ids else None),
+                owner=owner,
+                progress_cb=progress_cb,
+            )
         outs = []
         for idx, aid in enumerate(ids, start=1):
             try:
                 await _emit_progress(progress_cb, f"{names.get(aid, aid[:8])}: starting ({idx}/{len(ids)})")
-                result = await _auto_summarize_pass_single(days_back=days_back, account_id=aid, progress_cb=progress_cb)
+                result = await _auto_summarize_pass_single(
+                    days_back=days_back,
+                    account_id=aid,
+                    owner=owner,
+                    progress_cb=progress_cb,
+                )
                 outs.append(f"[{names.get(aid, aid[:8])}] {result}")
             except Exception as e:
                 logger.warning(f"auto-summarize pass failed for account {aid}: {e}")
                 outs.append(f"[{names.get(aid, aid[:8])}] error: {e}")
         return "\n".join(outs)
-    return await _auto_summarize_pass_single(days_back=days_back, account_id=account_id, progress_cb=progress_cb)
+    return await _auto_summarize_pass_single(
+        days_back=days_back,
+        account_id=account_id,
+        owner=owner,
+        progress_cb=progress_cb,
+    )
 
 
-async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
+async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None = None,
+                                      owner: str | None = None, progress_cb=None) -> str:
     """Single pass of the auto-summarize/reply scan for ONE account.
     Reads current settings flags."""
     import asyncio
@@ -193,7 +213,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     # mailbox, so an unscoped pass would disclose/mutate other tenants' data.
     # One resolution feeds both the mailbox path (account_owner) and upstream's
     # calendar path (_acct_owner, which expects None rather than "").
-    account_owner = _owner_for_email_account(account_id)
+    account_owner = _owner_for_email_account(account_id) or (owner or "")
     _acct_owner = account_owner or None
 
     conn = None
@@ -992,6 +1012,8 @@ async def _auto_summarize_poller():
     while True:
         try:
             await _asyncio.sleep(1800)
+            # Intentionally omit owner: this legacy poller preserves the
+            # system-wide scan; per-user scheduled tasks pass owner explicitly.
             await _auto_summarize_pass()
         except Exception as e:
             logger.error(f"Auto-summarize poller crash: {e}")
