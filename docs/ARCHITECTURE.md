@@ -236,6 +236,7 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   ├── agent_tools/
     │   │   ├── __init__.py
     │   │   ├── filesystem_tools.py
+    │   │   ├── document_tools.py
     │   │   ├── subprocess_tools.py
     │   │   └── web_tools.py
     │   ├── search/
@@ -511,6 +512,15 @@ This document serves as a comprehensive overview of the system's architecture, i
     │   │   ├── mammoth.browser.min.js
     │   │   ├── qrcode.min.js
     │   │   └── xlsx.full.min.js
+    │   ├── fonts/
+    │   │   ├── FiraCode-Light.woff2
+    │   │   ├── FiraCode-Regular.woff2
+    │   │   ├── FiraCode-SemiBold.woff2
+    │   │   ├── Inter-Medium.woff2
+    │   │   ├── Inter-Regular.woff2
+    │   │   ├── Inter-SemiBold.woff2
+    │   │   └── custom/
+    │   │       └── GohuFont.ttf
     │   ├── app.js
     │   ├── index.html
     │   ├── login.html
@@ -1098,11 +1108,11 @@ At a high level, Odysseus is a client-server web application with an embedded ba
 
 ```mermaid
 graph TD
-    Client[Web Browser Client] -->|HTTP/REST & SSE| FastAPI[FastAPI Backend Server]
-    FastAPI --> DB[(SQLite Database)]
-    FastAPI --> ChromaDB[(ChromaDB Vector Store)]
-    FastAPI --> LLM[(LLM Providers / Local Models)]
-    FastAPI --> OS[Local OS Tools & MCP Servers]
+    Client["Web Browser Client"] -->|HTTP/REST & SSE| FastAPI["FastAPI Backend Server"]
+    FastAPI --> DB["(SQLite Database)"]
+    FastAPI --> ChromaDB["(ChromaDB Vector Store)"]
+    FastAPI --> LLM["(LLM Providers / Local Models)"]
+    FastAPI --> OS["Local OS Tools & MCP Servers"]
 ```
 
 ### Core Responsibilities
@@ -1130,14 +1140,14 @@ The frontend avoids heavy frameworks like React or Vue, opting for vanilla JavaS
 
 ```mermaid
 graph TD
-    HTML[index.html] --> AppJS[app.js Orchestrator]
-    AppJS --> Core[ui.js, storage.js, init.js]
-    AppJS --> DomainChat[chat.js, chatRenderer.js, chatStream.js]
-    AppJS --> DomainDocs[document.js, editor/, markdown.js]
-    AppJS --> DomainSettings[settings.js, models.js, presets.js, search.js]
-    AppJS --> Components[ui.js, fileHandler.js, voiceRecorder.js]
-    AppJS --> SubSystems[calendar.js, tasks.js, notes.js, emailLibrary.js]
-    DomainChat --> |SSE Streaming| Render[streamingRenderer.js]
+    HTML["index.html"] --> AppJS["app.js Orchestrator"]
+    AppJS --> Core["ui.js, storage.js, init.js"]
+    AppJS --> DomainChat["chat.js, chatRenderer.js, chatStream.js"]
+    AppJS --> DomainDocs["document.js, editor/, markdown.js"]
+    AppJS --> DomainSettings["settings.js, models.js, presets.js, search.js"]
+    AppJS --> Components["ui.js, fileHandler.js, voiceRecorder.js"]
+    AppJS --> SubSystems["calendar.js, tasks.js, notes.js, emailLibrary.js"]
+    DomainChat --> |SSE Streaming| Render["streamingRenderer.js"]
 ```
 
 ### Directory Structure & Module Families
@@ -1147,6 +1157,10 @@ graph TD
 - **Assets & Web App Config**:
   - **[`manifest.json`](../static/manifest.json)**: Configures Odysseus as a standalone Progressive Web App with custom icons and theme colors.
   - **[`style.css`](../static/style.css)**: The consolidated stylesheet that dictates the UI layout, using CSS Variables to manage theming.
+- **[`static/fonts/`](../static/fonts/)**: Contains the locally hosted webfonts used in the interface:
+  - [`FiraCode-Light.woff2`](../static/fonts/FiraCode-Light.woff2), [`FiraCode-Regular.woff2`](../static/fonts/FiraCode-Regular.woff2), [`FiraCode-SemiBold.woff2`](../static/fonts/FiraCode-SemiBold.woff2): Fira Code fonts for monospace elements like code blocks.
+  - [`Inter-Medium.woff2`](../static/fonts/Inter-Medium.woff2), [`Inter-Regular.woff2`](../static/fonts/Inter-Regular.woff2), [`Inter-SemiBold.woff2`](../static/fonts/Inter-SemiBold.woff2): Inter fonts for general typography.
+  - [`custom/GohuFont.ttf`](../static/fonts/custom/GohuFont.ttf): Custom font utilized by specific themes.
 - **[`static/app.js`](../static/app.js) & [`static/js/init.js`](../static/js/init.js)**: The main orchestrator. Eagerly binds global event listeners (drag and drop, shortcuts) and bootstraps state.
 - **Core Wiring**: [`storage.js`](../static/js/storage.js) provides wrappers for LocalStorage persistence, while [`platform.js`](../static/js/platform.js) handles OS and browser detection.
 - **Chat Engine ([`chat.js`](../static/js/chat.js), [`chatStream.js`](../static/js/chatStream.js), [`chatRenderer.js`](../static/js/chatRenderer.js))**: The largest monolith. Directs UI transitions, manages chat session logic, submission, and SSE streaming. [`chat.js`](../static/js/chat.js) has a watchdog to detect stalled streams. Rendering output and markdown logic is handled via [`chatRenderer.js`](../static/js/chatRenderer.js), [`streamingRenderer.js`](../static/js/streamingRenderer.js), and [`streamingSegmenter.js`](../static/js/streamingSegmenter.js).
@@ -1335,12 +1349,12 @@ The real-time conversational UI relies heavily on Server-Sent Events (SSE) to up
 
 ```mermaid
 graph TD
-    User[Client Input] --> Chat[static/js/chat.js]
-    Chat --> Fetch[POST /api/chat]
-    Fetch --> SSE[static/js/chatStream.js]
-    SSE --> Renderer[static/js/streamingRenderer.js]
-    SSE --> Segmenter[static/js/streamingSegmenter.js]
-    Segmenter --> DOM[Updates to Message Bubble]
+    User["Client Input"] --> Chat["static/js/chat.js"]
+    Chat --> Fetch["POST /api/chat"]
+    Fetch --> SSE["static/js/chatStream.js"]
+    SSE --> Renderer["static/js/streamingRenderer.js"]
+    SSE --> Segmenter["static/js/streamingSegmenter.js"]
+    Segmenter --> DOM["Updates to Message Bubble"]
 ```
 
 ### Components
@@ -1397,13 +1411,13 @@ Compare mode provides a dual-pane, blind AB testing interface to evaluate the qu
 
 ```mermaid
 graph TD
-    UI[static/js/compare/index.js] --> |Setup Request| API[routes/compare_routes.py]
-    UI --> |Start SSE| Streams[static/js/compare/stream.js]
-    Streams --> |Left Pane| ModelA[Local / Remote Model A]
-    Streams --> |Right Pane| ModelB[Local / Remote Model B]
-    UI --> Vote[static/js/compare/vote.js]
-    Vote --> Scoreboard[static/js/compare/scoreboard.js]
-    Scoreboard --> DB[(SQLite Comparison Table)]
+    UI["static/js/compare/index.js"] --> |Setup Request| API["routes/compare_routes.py"]
+    UI --> |Start SSE| Streams["static/js/compare/stream.js"]
+    Streams --> |Left Pane| ModelA["Local / Remote Model A"]
+    Streams --> |Right Pane| ModelB["Local / Remote Model B"]
+    UI --> Vote["static/js/compare/vote.js"]
+    Vote --> Scoreboard["static/js/compare/scoreboard.js"]
+    Scoreboard --> DB["(SQLite Comparison Table)"]
 ```
 
 ### Components
@@ -1423,15 +1437,15 @@ The rich image editor features a comprehensive, multi-layer HTML5 Canvas archite
 
 ```mermaid
 graph TD
-    Canvas[HTML5 Canvas] --> Events[canvas-events.js]
-    Events --> State[state.js]
-    State --> Layers[layer-helpers.js / layer-panel.js]
-    State --> Tools[tools/ directory]
+    Canvas["HTML5 Canvas"] --> Events["canvas-events.js"]
+    Events --> State["state.js"]
+    State --> Layers["layer-helpers.js / layer-panel.js"]
+    State --> Tools["tools/ directory"]
     Tools --> |stroke, lasso, move| Canvas
-    Tools --> AI[AI Tools]
-    AI --> Inpaint[ai-inpaint.js]
-    AI --> Rembg[ai-rembg.js]
-    Inpaint --> API[routes/gallery_helpers.py]
+    Tools --> AI["AI Tools"]
+    AI --> Inpaint["ai-inpaint.js"]
+    AI --> Rembg["ai-rembg.js"]
+    Inpaint --> API["routes/gallery_helpers.py"]
     Rembg --> API
 ```
 
@@ -1459,11 +1473,11 @@ The backend is built around a slim orchestrator ([`app.py`](../app.py)), which g
 
 ```mermaid
 graph LR
-    Client --> FastAPI[app.py]
-    FastAPI --> Auth[Auth Middleware]
-    Auth --> Routers[Feature Routers routes/]
-    Routers --> DB[(SQLite Database core/models.py)]
-    Routers --> Logic[Core Logic src/]
+    Client --> FastAPI["app.py"]
+    FastAPI --> Auth["Auth Middleware"]
+    Auth --> Routers["Feature Routers routes/"]
+    Routers --> DB["(SQLite Database core/models.py)"]
+    Routers --> Logic["Core Logic src/"]
 ```
 
 ### Directory Structure & Core Components
@@ -1511,15 +1525,15 @@ The core utilities manage foundational backend state, security, process infrastr
 
 ```mermaid
 graph TD
-    App[FastAPI application] --> Auth[core/auth.py]
-    App --> SessionMan[core/session_manager.py]
-    App --> Middleware[core/middleware.py]
-    App --> IO[core/atomic_io.py]
-    App --> OS[core/platform_compat.py]
-    SessionMan --> DB[(SQLite Database core/database.py)]
+    App["FastAPI application"] --> Auth["core/auth.py"]
+    App --> SessionMan["core/session_manager.py"]
+    App --> Middleware["core/middleware.py"]
+    App --> IO["core/atomic_io.py"]
+    App --> OS["core/platform_compat.py"]
+    SessionMan --> DB["(SQLite Database core/database.py)"]
     Auth --> DB
-    Middleware --> Security[CSP / Isolation / SecurityHeadersMiddleware]
-    IO --> Disk[Local FS]
+    Middleware --> Security["CSP / Isolation / SecurityHeadersMiddleware"]
+    IO --> Disk["Local FS"]
 ```
 
 ### Components
@@ -1527,7 +1541,7 @@ graph TD
 - **Session Management ([`core/session_manager.py`](../core/session_manager.py))**: A centralized state machine holding in-memory references to user chat sessions and synchronizing them with SQLite. This module guarantees the transaction lifecycle, archiving inactive chats, tracking history, and purging deleted threads gracefully.
 - **Authentication ([`core/auth.py`](../core/auth.py))**: Provides security logic for the web application and external integrations. It handles Bearer tokens for API integrations and user TOTP secrets.
 - **Security Middleware ([`core/middleware.py`](../core/middleware.py))**: Intercepts all incoming requests to inject critical headers. It applies the `SecurityHeadersMiddleware`, enforcing the Content Security Policy (CSP), mitigating clickjacking by preventing framing (except on specific routes like the PDF previewer), and ensuring cross-origin isolation and loopback agent security.
-- **Atomic IO ([`core/atomic_io.py`](../core/atomic_io.py))**: Provides safe file-writing operations using temporary files and atomic renames. This ensures that a sudden power loss or application crash during a save operation (e.g., updating a [`user_prefs.json`](../data/user_prefs.json)) does not result in a corrupted, zero-byte file.
+- **Atomic IO ([`core/atomic_io.py`](../core/atomic_io.py))**: Provides safe file-writing operations using temporary files and atomic renames. This ensures that a sudden power loss or application crash during a save operation (e.g., updating a `data/user_prefs.json`) does not result in a corrupted, zero-byte file.
 - **Platform Compatibility ([`core/platform_compat.py`](../core/platform_compat.py))**: Normalizes differences between Windows, macOS, and Linux. This includes abstracting file path creation, permission handling (which differs vastly between POSIX and NTFS), and process signal management.
 - **Constants ([`core/constants.py`](../core/constants.py))**: Re-exports constants.
 - **Exceptions ([`core/exceptions.py`](../core/exceptions.py))**: Defines custom exceptions for core logic.
@@ -1560,15 +1574,15 @@ The internal architecture separates discrete background jobs into standalone, st
 
 ```mermaid
 graph TD
-    App[FastAPI App] --> HW[services/hwfit/]
-    App --> Faces[services/faces/]
-    Agent[Agent Loop] --> Shell[services/shell/service.py]
-    Agent --> Youtube[services/youtube/youtube_handler.py]
-    Client[Web Client] --> AudioIn[services/stt/stt_service.py]
-    Client --> AudioOut[services/tts/tts_service.py]
-    AudioOut --> Kokoro[Local Kokoro-82M model]
-    AudioIn --> Whisper[Local faster-whisper model]
-    Youtube --> YTDLP[yt-dlp]
+    App["FastAPI App"] --> HW["services/hwfit/"]
+    App --> Faces["services/faces/"]
+    Agent["Agent Loop"] --> Shell["services/shell/service.py"]
+    Agent --> Youtube["services/youtube/youtube_handler.py"]
+    Client["Web Client"] --> AudioIn["services/stt/stt_service.py"]
+    Client --> AudioOut["services/tts/tts_service.py"]
+    AudioOut --> Kokoro["Local Kokoro-82M model"]
+    AudioIn --> Whisper["Local faster-whisper model"]
+    Youtube --> YTDLP["yt-dlp"]
 ```
 
 ### Components
@@ -1610,10 +1624,10 @@ The [`docker/`](../docker/) directory contains critical infrastructure for secur
 
 ```mermaid
 graph LR
-    Host[Host OS Bind Mounts] --> Volume[data/ permissions]
-    Volume --> Entry[docker/entrypoint.sh]
-    Entry --> |gosu PUID:PGID| App[FastAPI Application]
-    Compose[docker-compose.yml] --> |Includes| GPU[gpu.nvidia.yml / gpu.amd.yml]
+    Host["Host OS Bind Mounts"] --> Volume["data/ permissions"]
+    Volume --> Entry["docker/entrypoint.sh"]
+    Entry --> |"gosu PUID:PGID"| App["FastAPI Application"]
+    Compose["docker-compose.yml"] --> |Includes| GPU["gpu.nvidia.yml / gpu.amd.yml"]
 ```
 
 ### Components
@@ -1656,12 +1670,12 @@ The Agent Loop is the brain of Odysseus, dynamically looping the LLM with local 
 
 ```mermaid
 graph TD
-    Input[User Prompt] --> RAG[RAG Context Injection]
-    RAG --> Loop[Agent Loop src/agent_loop.py]
-    Loop --> Index[ToolIndex: Semantic Tool Matching]
-    Index --> LLM[LLM Generation]
-    LLM --> |Tool Call Intercept| Dispatch[Tool Dispatch src/tool_execution.py]
-    Dispatch --> MCP[MCP Servers / Native Tools]
+    Input["User Prompt"] --> RAG["RAG Context Injection"]
+    RAG --> Loop["Agent Loop src/agent_loop.py"]
+    Loop --> Index["ToolIndex: Semantic Tool Matching"]
+    Index --> LLM["LLM Generation"]
+    LLM --> |Tool Call Intercept| Dispatch["Tool Dispatch src/tool_execution.py"]
+    Dispatch --> MCP["MCP Servers / Native Tools"]
     MCP --> |Tool Response| Loop
     LLM --> |Final Answer| Output[Client]
 ```
@@ -1705,13 +1719,13 @@ The core execution of conversational AI interactions lives primarily in [`src/ch
 
 ```mermaid
 graph TD
-    Client[Web UI] --> Route[routes/chat_routes.py]
-    Route --> CoreHandler[src/chat_handler.py]
-    CoreHandler --> AuthContext[Context & Security Checks]
-    CoreHandler --> Processor[src/chat_processor.py]
-    Processor --> |RAG/Search Injection| AgentLoop[src/agent_loop.py]
-    AgentLoop --> LLM[src/llm_core.py]
-    LLM -.-> |Stream Generator| Runs[src/agent_runs.py Background Task]
+    Client["Web UI"] --> Route["routes/chat_routes.py"]
+    Route --> CoreHandler["src/chat_handler.py"]
+    CoreHandler --> AuthContext["Context & Security Checks"]
+    CoreHandler --> Processor["src/chat_processor.py"]
+    Processor --> |RAG/Search Injection| AgentLoop["src/agent_loop.py"]
+    AgentLoop --> LLM["src/llm_core.py"]
+    LLM -.-> |Stream Generator| Runs["src/agent_runs.py Background Task"]
     Runs -.-> |SSE| Client
 ```
 
@@ -1738,11 +1752,11 @@ Odysseus employs a lightweight routing heuristic to determine when a standard ch
 
 ```mermaid
 graph TD
-    Input[User Prompt] --> Regex[Regex Intent Detection]
-    Regex --> |"can you search...", "read this..."| Agent[Promote to Agent Mode]
-    Regex --> |General question| Chat[Standard Chat Completion]
-    Agent --> LoadTools[Load Tools & System Prompt]
-    Chat --> LLM[LLM Generation]
+    Input["User Prompt"] --> Regex["Regex Intent Detection"]
+    Regex --> |"can you search...", "read this..."| Agent["Promote to Agent Mode"]
+    Regex --> |General question| Chat["Standard Chat Completion"]
+    Agent --> LoadTools["Load Tools & System Prompt"]
+    Chat --> LLM["LLM Generation"]
 ```
 
 ### Purpose
@@ -1766,19 +1780,20 @@ Odysseus provides its agent loop with a suite of highly privileged, local-first 
 
 ```mermaid
 graph TD
-    Agent[Agent Loop] --> Executor[src/tool_execution.py]
-    Executor --> Policy[src/tool_policy.py]
+    Agent["Agent Loop"] --> Executor["src/tool_execution.py"]
+    Executor --> Policy["src/tool_policy.py"]
     Policy --> |Approved| Dispatcher
-    Dispatcher --> FS[src/agent_tools/filesystem_tools.py]
-    Dispatcher --> Bash[src/agent_tools/subprocess_tools.py]
-    Dispatcher --> Web[src/agent_tools/web_tools.py]
+    Dispatcher --> FS["src/agent_tools/filesystem_tools.py"]
+    Dispatcher --> Bash["src/agent_tools/subprocess_tools.py"]
+    Dispatcher --> Web["src/agent_tools/web_tools.py"]
 ```
 
 ### Components
 - **[`src/agent_tools/__init__.py`](../src/agent_tools/__init__.py)**: Agent tools package init.
-- **Filesystem Tools ([`src/agent_tools/filesystem_tools.py`](../src/agent_tools/filesystem_tools.py))**: Provides concrete implementations for `read_file`, `write_file`, `list_directory`, etc. These tools are heavily sandboxed by the policy layer, meaning they generally cannot escape the [`data/`](../data/) directory unless explicitly authorized by an admin context.
+- **Filesystem Tools ([`src/agent_tools/filesystem_tools.py`](../src/agent_tools/filesystem_tools.py))**: Provides concrete implementations for `read_file`, `write_file`, `list_directory`, etc. These tools are heavily sandboxed by the policy layer, meaning they generally cannot escape the `data/` directory unless explicitly authorized by an admin context.
 - **Subprocess Tools ([`src/agent_tools/subprocess_tools.py`](../src/agent_tools/subprocess_tools.py))**: Allows the agent to run arbitrary shell commands. It manages timeout constraints, captures `stdout` and `stderr` safely, and ensures long-running processes do not hang the main agent loop.
 - **Web Tools ([`src/agent_tools/web_tools.py`](../src/agent_tools/web_tools.py))**: Includes utilities for fetching webpage content, often interacting with local headless browsers or `BeautifulSoup` to strip away visual clutter and return clean markdown directly to the agent's context.
+- **Document Tools ([`src/agent_tools/document_tools.py`](../src/agent_tools/document_tools.py))**: Tools for managing and querying workspace documents.
 
 ---
 
@@ -1793,11 +1808,11 @@ Odysseus features a registry of native automation actions that can be executed p
 
 ```mermaid
 graph TD
-    Scheduler[src/task_scheduler.py] --> Dequeue[Dequeue TaskRun from DB]
-    Dequeue --> Lookup[Lookup Action in builtin_actions.py Registry]
-    Lookup --> Execute[Execute Native Python Function]
-    Execute --> |Success| Mark[Mark Last Run / Next Run]
-    Execute --> |TaskNoop| Skip[Skip Silently]
+    Scheduler["src/task_scheduler.py"] --> Dequeue["Dequeue TaskRun from DB"]
+    Dequeue --> Lookup["Lookup Action in builtin_actions.py Registry"]
+    Lookup --> Execute["Execute Native Python Function"]
+    Execute --> |Success| Mark["Mark Last Run / Next Run"]
+    Execute --> |TaskNoop| Skip["Skip Silently"]
 ```
 
 ### Purpose
@@ -1822,11 +1837,11 @@ Provides reliable, zero-cost execution for routine system maintenance and user-d
 <summary>View Data, Memory, and Storage</summary>
 
 
-All data is kept local within the [`data/`](../data/) directory, adhering to the project's privacy-first ethos.
+All data is kept local within the `data/` directory, adhering to the project's privacy-first ethos.
 
 ### SQLite Database
 - **[`src/database.py`](../src/database.py)**: Engine connection setup and dependency injection utilities for SQLite database connections.
-- **Relational Data:** Managed via SQLAlchemy ([`data/app.db`](../data/app.db)).
+- **Relational Data:** Managed via SQLAlchemy (`data/app.db`).
 - **Stores:** Chats, sessions, API tokens, MCP server configs, Webhooks, user privileges, scheduled tasks, and calendar events.
 
 ### ChromaDB (Vector Store)
@@ -1872,12 +1887,12 @@ Long-term semantic context goes beyond just storing facts; the system contains a
 
 ```mermaid
 graph TD
-    Input[Teacher LLM Output / File Import] --> Importer[services/memory/skill_importer.py]
-    Importer --> Format[services/memory/skill_format.py]
-    Format --> Extractor[services/memory/skill_extractor.py]
-    Extractor --> Validate[services/memory/skills.py]
-    Validate --> |Save .md to Disk| Storage[DATA_DIR/skills/]
-    Validate --> |Index Metadata| Memory[services/memory/memory.py]
+    Input["Teacher LLM Output / File Import"] --> Importer["services/memory/skill_importer.py"]
+    Importer --> Format["services/memory/skill_format.py"]
+    Format --> Extractor["services/memory/skill_extractor.py"]
+    Extractor --> Validate["services/memory/skills.py"]
+    Validate --> |Save .md to Disk| Storage["DATA_DIR/skills/"]
+    Validate --> |Index Metadata| Memory["services/memory/memory.py"]
 ```
 
 ### Components
@@ -1907,13 +1922,13 @@ Odysseus can pair with companion apps, securely bridge third-party AI agents, an
 
 ```mermaid
 graph LR
-    Client[Mobile Companion App] --> |GET /api/companion/ping| Bridge[Companion Bridge routes]
-    Browser[Admin Browser Session] --> |POST /api/companion/pair| Mint[Token Minting]
-    Mint --> |Returns JSON Token| QRCode[QR Code / API Response]
+    Client["Mobile Companion App"] --> |GET /api/companion/ping| Bridge["Companion Bridge routes"]
+    Browser["Admin Browser Session"] --> |POST /api/companion/pair| Mint["Token Minting"]
+    Mint --> |Returns JSON Token| QRCode["QR Code / API Response"]
     QRCode -.-> |Scanned / Copied| Client
-    Agent[Claude Code / External Agent] --> |HTTP Bearer Token| Codex[routes/codex_routes.py]
-    Codex --> Auth[Token Validation & Scope Check]
-    Auth --> ToolIndex[Tool Dispatch src/tool_execution.py]
+    Agent["Claude Code / External Agent"] --> |HTTP Bearer Token| Codex["routes/codex_routes.py"]
+    Codex --> Auth["Token Validation & Scope Check"]
+    Auth --> ToolIndex["Tool Dispatch src/tool_execution.py"]
 ```
 
 ### Components
@@ -1936,14 +1951,14 @@ The system natively supports adding extensions via the Model Context Protocol (M
 
 ```mermaid
 graph TD
-    Loop[Agent Loop] --> MCPManager[src/mcp_manager.py]
-    MCPManager --> Memory[mcp_servers/memory_server.py]
-    MCPManager --> RAG[mcp_servers/rag_server.py]
-    MCPManager --> Email[mcp_servers/email_server.py]
-    MCPManager --> Image[mcp_servers/image_gen_server.py]
-    Memory --> MemoryService[services/memory/memory.py]
-    RAG --> RAGManager[src/rag_manager.py]
-    Image --> ImageProvider[OpenAI Compatible API]
+    Loop["Agent Loop"] --> MCPManager["src/mcp_manager.py"]
+    MCPManager --> Memory["mcp_servers/memory_server.py"]
+    MCPManager --> RAG["mcp_servers/rag_server.py"]
+    MCPManager --> Email["mcp_servers/email_server.py"]
+    MCPManager --> Image["mcp_servers/image_gen_server.py"]
+    Memory --> MemoryService["services/memory/memory.py"]
+    RAG --> RAGManager["src/rag_manager.py"]
+    Image --> ImageProvider["OpenAI Compatible API"]
 ```
 
 ### Purpose
@@ -2019,17 +2034,17 @@ Odysseus provides an encrypted secret store, safeguarding credentials while ensu
 
 ```mermaid
 graph TD
-    App[FastAPI Endpoints] --> SecretStore[src/secret_storage.py]
-    SecretStore --> KeyFile[.app_key (chmod 600)]
-    SecretStore --> SQLite[(data/app.db)]
-    App --> VaultRoute[routes/vault_routes.py]
-    VaultRoute --> VaultCLI[bw / Bitwarden CLI]
-    VaultCLI --> TokenFile[(data/vault.json)]
+    App["FastAPI Endpoints"] --> SecretStore["src/secret_storage.py"]
+    SecretStore --> KeyFile[".app_key (chmod 600)"]
+    SecretStore --> SQLite["(data/app.db)"]
+    App --> VaultRoute["routes/vault_routes.py"]
+    VaultRoute --> VaultCLI["bw / Bitwarden CLI"]
+    VaultCLI --> TokenFile["(data/vault.json)"]
 ```
 
 ### Components
-- **Secret Storage ([`src/secret_storage.py`](../src/secret_storage.py))**: A Fernet-based symmetric encryption module. It generates an [`.app_key`](../data/.app_key) (secured with `0o600` permissions) to encrypt sensitive configuration data, such as IMAP/SMTP passwords, before storing them in the SQLite database. Encrypted rows are prepended with `enc:` to seamlessly handle unencrypted legacy values.
-- **Vault Integration ([`routes/vault_routes.py`](../routes/vault_routes.py))**: A wrapper around the `bw` (Bitwarden / Vaultwarden) CLI. It allows admins to unlock their vault, caching the session token in [`data/vault.json`](../data/vault.json). Passwords are deliberately passed via `stdin` rather than command-line arguments to prevent leakage into `ps` or `/proc/<pid>/cmdline`.
+- **Secret Storage ([`src/secret_storage.py`](../src/secret_storage.py))**: A Fernet-based symmetric encryption module. It generates an `.app_key` (secured with `0o600` permissions) to encrypt sensitive configuration data, such as IMAP/SMTP passwords, before storing them in the SQLite database. Encrypted rows are prepended with `enc:` to seamlessly handle unencrypted legacy values.
+- **Vault Integration ([`routes/vault_routes.py`](../routes/vault_routes.py))**: A wrapper around the `bw` (Bitwarden / Vaultwarden) CLI. It allows admins to unlock their vault, caching the session token in `data/vault.json`. Passwords are deliberately passed via `stdin` rather than command-line arguments to prevent leakage into `ps` or `/proc/<pid>/cmdline`.
 
 ---
 
@@ -2048,7 +2063,7 @@ Managing the interaction between the system, the LLM, and external data is criti
 3. **No Network Egress Sandbox**: Tools executed by the LLM run directly as the app process user. A successful prompt-injection attack that escapes the prompt security wrapper could execute shell commands, but only if the user is an admin.
 
 ### Components
-- **Preset Manager ([`src/preset_manager.py`](../src/preset_manager.py))**: Maintains predefined system prompts, temperature configurations, and max token limits (`Code Analyze`, `Brainstorm`, `Reason`) as well as user-created templates. It performs atomic, concurrent-safe writes to [`data/presets.json`](../data/presets.json).
+- **Preset Manager ([`src/preset_manager.py`](../src/preset_manager.py))**: Maintains predefined system prompts, temperature configurations, and max token limits (`Code Analyze`, `Brainstorm`, `Reason`) as well as user-created templates. It performs atomic, concurrent-safe writes to `data/presets.json`.
 - **Prompt Security ([`src/prompt_security.py`](../src/prompt_security.py))**: Defends against prompt-injection attacks. Any text originating from a potentially untrusted source (emails, web results, external URLs) is sandboxed inside a `<<<UNTRUSTED_SOURCE_DATA>>>` boundary. The wrapper instructs the LLM strictly to treat the encapsulated content as data rather than executable instructions, preventing malicious documents from co-opting the agent.
 
 ---
@@ -2064,12 +2079,12 @@ Odysseus implements a modular and extensible search abstraction tier, allowing s
 
 ```mermaid
 graph TD
-    Agent[Deep Research / Web Search Tool] --> Core[src/search/core.py]
-    Core --> Cache[src/search/cache.py]
-    Cache --> |Miss| Providers[src/search/providers.py]
-    Providers --> |SearXNG, DuckDuckGo| Fetch[External Web]
-    Providers --> Ranking[src/search/ranking.py]
-    Ranking --> Stats[src/search/analytics.py]
+    Agent["Deep Research / Web Search Tool"] --> Core["src/search/core.py"]
+    Core --> Cache["src/search/cache.py"]
+    Cache --> |Miss| Providers["src/search/providers.py"]
+    Providers --> |SearXNG, DuckDuckGo| Fetch["External Web"]
+    Providers --> Ranking["src/search/ranking.py"]
+    Ranking --> Stats["src/search/analytics.py"]
     Ranking --> |Return Standardized Format| Core
 ```
 
@@ -2109,14 +2124,14 @@ Deep Research allows multi-step, autonomous information gathering resulting in a
 
 ```mermaid
 graph TD
-    Query[Research Prompt] --> Plan[LLM Planning]
-    Plan --> Gen[Generate Sub-Queries]
-    Gen --> Search[Search via SearXNG]
-    Search --> Fetch[Fetch & Extract URL Content]
-    Fetch --> Synthesize[Synthesize Findings]
+    Query["Research Prompt"] --> Plan["LLM Planning"]
+    Plan --> Gen["Generate Sub-Queries"]
+    Gen --> Search["Search via SearXNG"]
+    Search --> Fetch["Fetch & Extract URL Content"]
+    Fetch --> Synthesize["Synthesize Findings"]
     Synthesize --> |Iterate if needed| Gen
-    Synthesize --> Final[Generate Final Report]
-    Final --> Visual[visual_report.py HTML Render]
+    Synthesize --> Final["Generate Final Report"]
+    Final --> Visual["visual_report.py HTML Render"]
 ```
 
 ### Components
@@ -2258,12 +2273,12 @@ To prevent the LLM context window from overflowing during long sessions, Odysseu
 
 ```mermaid
 graph TD
-    History[Conversation History] --> Check[Estimate Token Count]
-    Check --> |Exceeds Threshold| Isolate[Isolate Oldest Messages]
-    Isolate --> Summarize[LLM Summarization Call]
-    Summarize --> DBUpdate[Replace Messages with Summary System Message]
-    DBUpdate --> NewHistory[Compacted Conversation History]
-    Check --> |Within Threshold| Proceed[Continue Normally]
+    History["Conversation History"] --> Check["Estimate Token Count"]
+    Check --> |Exceeds Threshold| Isolate["Isolate Oldest Messages"]
+    Isolate --> Summarize["LLM Summarization Call"]
+    Summarize --> DBUpdate["Replace Messages with Summary System Message"]
+    DBUpdate --> NewHistory["Compacted Conversation History"]
+    Check --> |Within Threshold| Proceed["Continue Normally"]
 ```
 
 ### Purpose
@@ -2289,12 +2304,12 @@ Odysseus features robust, local-first syncing for emails (IMAP/SMTP) and calenda
 
 ```mermaid
 graph TD
-    ExtCal[External CalDAV Server] <--> Sync[caldav_sync.py]
-    ExtMail[IMAP / SMTP Server] <--> MailPoll[email_pollers.py]
-    Sync <--> DB[(SQLite Local Cache)]
+    ExtCal["External CalDAV Server"] <--> Sync["caldav_sync.py"]
+    ExtMail["IMAP / SMTP Server"] <--> MailPoll["email_pollers.py"]
+    Sync <--> DB["(SQLite Local Cache)"]
     MailPoll <--> DB
-    MailPoll --> Parser[email_thread_parser.py]
-    MailPoll --> LLM[Auto Summarize & Classify]
+    MailPoll --> Parser["email_thread_parser.py"]
+    MailPoll --> LLM["Auto Summarize & Classify"]
 ```
 
 ### Components
@@ -2317,10 +2332,10 @@ The "Cookbook" automatically analyzes host hardware to recommend, download, and 
 
 ```mermaid
 graph LR
-    OS[OS / sysfs / WMI] --> HW[Hardware Discovery hardware.py]
-    HW --> Fit[Fitness Scoring fit.py]
-    Fit --> Serve[Model Serving cookbook_serve_lifecycle.py]
-    Serve --> Engine[vLLM / llama.cpp / tmux]
+    OS["OS / sysfs / WMI"] --> HW["Hardware Discovery hardware.py"]
+    HW --> Fit["Fitness Scoring fit.py"]
+    Fit --> Serve["Model Serving cookbook_serve_lifecycle.py"]
+    Serve --> Engine["vLLM / llama.cpp / tmux"]
 ```
 
 ### Components
@@ -2346,15 +2361,15 @@ The local model manager ("Cookbook") features a robust client-side state machine
 
 ```mermaid
 graph TD
-    User[Client] --> CookbookUI[cookbook.js]
-    CookbookUI --> Diagnosis[cookbook-diagnosis.js]
-    CookbookUI --> HWFit[cookbook-hwfit.js]
-    HWFit --> |Fetch Metrics| HWAPI[routes/hwfit_routes.py]
-    CookbookUI --> Actions[Download / Serve]
-    Actions --> Download[cookbookDownload.js]
-    Actions --> Serve[cookbookServe.js]
-    Download --> |SSE Tracking| Signal[cookbookProgressSignal.js]
-    Serve --> Running[cookbookRunning.js]
+    User[Client] --> CookbookUI["cookbook.js"]
+    CookbookUI --> Diagnosis["cookbook-diagnosis.js"]
+    CookbookUI --> HWFit["cookbook-hwfit.js"]
+    HWFit --> |Fetch Metrics| HWAPI["routes/hwfit_routes.py"]
+    CookbookUI --> Actions["Download / Serve"]
+    Actions --> Download["cookbookDownload.js"]
+    Actions --> Serve["cookbookServe.js"]
+    Download --> |SSE Tracking| Signal["cookbookProgressSignal.js"]
+    Serve --> Running["cookbookRunning.js"]
 ```
 
 ### Components
@@ -2447,10 +2462,10 @@ Odysseus incorporates a lightweight, in-memory event bus to trigger automated jo
 
 ```mermaid
 graph TD
-    System[Application Events] --> |fire_event| Bus[src/event_bus.py]
+    System["Application Events"] --> |fire_event| Bus["src/event_bus.py"]
     Bus --> |Loop create_task| Handler[_handle_event]
-    Handler --> |If threshold met| Scheduler[src/task_scheduler.py]
-    Scheduler --> DB[(SQLite ScheduledTasks)]
+    Handler --> |If threshold met| Scheduler["src/task_scheduler.py"]
+    Scheduler --> DB["(SQLite ScheduledTasks)"]
 ```
 
 ### Components
@@ -2471,12 +2486,12 @@ Odysseus can dispatch system events to external HTTP endpoints, allowing automat
 
 ```mermaid
 graph TD
-    EventBus[Event Bus / Agent Loop] --> |session.created, chat.completed| Manager[src/webhook_manager.py]
-    Manager --> |Lookup Subscriptions| DB[(SQLite Webhooks)]
-    Manager --> |Validate URL| SSRF[SSRF Security Layer]
+    EventBus["Event Bus / Agent Loop"] --> |session.created, chat.completed| Manager["src/webhook_manager.py"]
+    Manager --> |Lookup Subscriptions| DB["(SQLite Webhooks)"]
+    Manager --> |Validate URL| SSRF["SSRF Security Layer"]
     SSRF --> |Block Private IP| Drop[Discard]
-    SSRF --> |Permit| Dispatch[HTTPX Async POST]
-    Dispatch --> |X-Odysseus-Signature| External[External Webhook URL]
+    SSRF --> |Permit| Dispatch["HTTPX Async POST"]
+    Dispatch --> |X-Odysseus-Signature| External["External Webhook URL"]
 ```
 
 ### Components & Security
@@ -2497,7 +2512,10 @@ Odysseus relies on several external components and strictly manages their config
 
 ### Components
 - **[`config/searxng/settings.yml`](../config/searxng/settings.yml)**: A pre-configured settings file for the SearXNG search aggregator. Odysseus mounts this into the SearXNG container to enforce specific output formats (JSON/HTML) and inject a secret key securely without requiring user intervention.
-- **[`licenses/`](../licenses/)**: The directory tracking open-source licenses for embedded components. Odysseus uses modified or integrated parts of tools like `DeepResearch` or `llmfit`, and this directory ensures proper MIT/Apache 2.0 attribution without bloating the root project directory.
+- **[`licenses/`](../licenses/)**: The directory tracking open-source licenses for embedded components. Odysseus uses modified or integrated parts of tools like `DeepResearch` or `llmfit`, and this directory ensures proper MIT/Apache 2.0 attribution without bloating the root project directory, including:
+  - [`licenses/DeepResearch-Apache-2.0.txt`](../licenses/DeepResearch-Apache-2.0.txt)
+  - [`licenses/llmfit-MIT-LICENSE.txt`](../licenses/llmfit-MIT-LICENSE.txt)
+  - [`licenses/opencode-MIT-LICENSE.txt`](../licenses/opencode-MIT-LICENSE.txt)
 
 ---
 
@@ -2512,7 +2530,7 @@ For maintenance, debugging, and offline operations, Odysseus includes a suite of
 
 ### Components
 - **`odysseus-*` commands**: A collection of scripts starting with `odysseus-` providing low-level access to the database and systems. This includes: [`odysseus`](../scripts/odysseus), [`odysseus-backup`](../scripts/odysseus-backup), [`odysseus-calendar`](../scripts/odysseus-calendar), [`odysseus-contacts`](../scripts/odysseus-contacts), [`odysseus-cookbook`](../scripts/odysseus-cookbook), [`odysseus-docs`](../scripts/odysseus-docs), [`odysseus-gallery`](../scripts/odysseus-gallery), [`odysseus-logs`](../scripts/odysseus-logs), [`odysseus-mail`](../scripts/odysseus-mail), [`odysseus-mcp`](../scripts/odysseus-mcp), [`odysseus-memory`](../scripts/odysseus-memory), [`odysseus-notes`](../scripts/odysseus-notes), [`odysseus-personal`](../scripts/odysseus-personal), [`odysseus-preset`](../scripts/odysseus-preset), [`odysseus-research`](../scripts/odysseus-research), [`odysseus-sessions`](../scripts/odysseus-sessions), [`odysseus-signature`](../scripts/odysseus-signature), [`odysseus-skills`](../scripts/odysseus-skills), [`odysseus-tasks`](../scripts/odysseus-tasks), [`odysseus-theme`](../scripts/odysseus-theme), and [`odysseus-webhook`](../scripts/odysseus-webhook).
-- **[`_lib/__init__.py`](../scripts/_lib/__init__.py) & [`_lib/cli.py`](../scripts/_lib/cli.py)**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the [`app.db`](../data/app.db), and setting up rich console output.
+- **[`_lib/__init__.py`](../scripts/_lib/__init__.py) & [`_lib/cli.py`](../scripts/_lib/cli.py)**: A shared library simplifying the process of writing CLI tools, managing initialization, loading the `data/app.db`, and setting up rich console output.
 
 <details>
 <summary>Click to view granular descriptions of `scripts/` files</summary>
@@ -2604,10 +2622,17 @@ Odysseus utilizes standard tools for Python/Node environments, augmented by stri
 
 - **Project Documentation ([`docs/`](../docs/))**: Includes this architecture document ([`ARCHITECTURE.md`](../docs/ARCHITECTURE.md)), the pre-commit review audit guide ([`pr-blocker-audit.md`](../docs/pr-blocker-audit.md)), and email setup steps ([`email-outlook.md`](../docs/email-outlook.md)).
 ### GitHub Workflows ([`.github/`](../.github/))
-- **`ci.yml`**: The primary Continuous Integration pipeline. It runs the Pytest suite, Node.js invariant tests, enforces typing with `mypy`, and checks formatting.
-- **`docker-publish.yml`**: Automatically builds and pushes multi-architecture (AMD64, ARM64) Docker images to the registry on new releases.
-- **Issue & PR Validations**: Workflows like `issue-description-check.yml` and `pr-description-check.yml` execute scripts (e.g., [`check-pr-description.js`](../.github/scripts/check-pr-description.js)) to enforce minimum character limits and template adherence, reducing triage overhead.
+
+<details>
+<summary>View GitHub Workflows</summary>
+
+- **[`ci.yml`](../.github/workflows/ci.yml)**: The primary Continuous Integration pipeline. It runs the Pytest suite, Node.js invariant tests, enforces typing with `mypy`, and checks formatting.
+- **[`docker-publish.yml`](../.github/workflows/docker-publish.yml)**: Automatically builds and pushes multi-architecture (AMD64, ARM64) Docker images to the registry on new releases.
+- **Issue & PR Validations**: Workflows like **[`issue-description-check.yml`](../.github/workflows/issue-description-check.yml)** and **[`pr-description-check.yml`](../.github/workflows/pr-description-check.yml)** execute scripts (e.g., [`check-pr-description.js`](../.github/scripts/check-pr-description.js)) to enforce minimum character limits and template adherence, reducing triage overhead.
 - **`.github/scripts/`**: Automation scripts like [`check-issue-description.js`](../.github/scripts/check-issue-description.js) and [`check-pr-description.js`](../.github/scripts/check-pr-description.js) to enforce structural requirements on community submissions.
+
+</details>
+
 
 ---
 
@@ -2622,17 +2647,17 @@ Odysseus enforces a strict, deterministic testing strategy designed to eliminate
 
 ```mermaid
 graph TD
-    TestRunner[Pytest Runner] --> Collection[conftest.py / _taxonomy.py]
-    Collection --> Tags[Taxonomy Area Tags]
-    Tags --> Unit[tests/ unit / helpers]
-    Tags --> Routes[tests/ routes integration]
-    Tags --> Services[tests/ services / background]
-    Tags --> Security[tests/ security / isolation]
-    TestRunnerNode[Node.js Runner] --> JS[tests/ streaming/*.mjs]
-    Unit -.-> |Import State Isolation| Module[Core Modules]
-    JS --> Segmenter[static/js/streamingSegmenter.js]
-    CLI[scripts/_lib/cli.py] --> OdyScripts[scripts/odysseus-*]
-    OdyScripts --> Core[Core Python Application]
+    TestRunner["Pytest Runner"] --> Collection["conftest.py / _taxonomy.py"]
+    Collection --> Tags["Taxonomy Area Tags"]
+    Tags --> Unit["tests/ unit / helpers"]
+    Tags --> Routes["tests/ routes integration"]
+    Tags --> Services["tests/ services / background"]
+    Tags --> Security["tests/ security / isolation"]
+    TestRunnerNode["Node.js Runner"] --> JS["tests/ streaming/*.mjs"]
+    Unit -.-> |Import State Isolation| Module["Core Modules"]
+    JS --> Segmenter["static/js/streamingSegmenter.js"]
+    CLI["scripts/_lib/cli.py"] --> OdyScripts["scripts/odysseus-*"]
+    OdyScripts --> Core["Core Python Application"]
 ```
 
 ### Components & Principles
