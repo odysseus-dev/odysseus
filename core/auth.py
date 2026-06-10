@@ -3,6 +3,7 @@ Authentication module — multi-user password hashing, session tokens, config pe
 Config stored in data/auth.json. Uses bcrypt directly.
 """
 
+import enum
 import json
 import os
 import secrets
@@ -81,6 +82,15 @@ def _hash_password(password: str) -> str:
 
 def _verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+
+
+class SetAdminResult(enum.Enum):
+    """Outcome of AuthManager.set_admin, so callers can map each case to a
+    precise response instead of guessing from a bare bool."""
+    OK = "ok"
+    USER_NOT_FOUND = "user_not_found"
+    NOT_AUTHORIZED = "not_authorized"   # requester is not an admin
+    LAST_ADMIN = "last_admin"           # would remove the last remaining admin
 
 
 class AuthManager:
@@ -533,6 +543,43 @@ class AuthManager:
             self._save()
         logger.info(f"Updated privileges for '{username}': {current}")
         return True
+
+    def set_admin(self, username: str, is_admin: bool,
+                  requesting_user: str) -> SetAdminResult:
+        """Promote/demote an existing user to/from admin. Admin only.
+
+        Refuses to remove the last remaining admin so the instance can never
+        be locked out of admin access; self-demotion is allowed as long as
+        another admin remains. Admin status is re-checked live on every
+        request, so unlike delete/rename no session or token revocation is
+        needed — a demoted admin simply fails the next is_admin() gate.
+
+        Counting admins and flipping the flag happen in one critical section
+        so two concurrent demotions can't race the admin count to zero.
+        """
+        username = (username or "").strip().lower()
+        requesting_user = (requesting_user or "").strip().lower()
+        is_admin = bool(is_admin)
+        with self._config_lock:
+            target = self._config.get("users", {}).get(username)
+            if target is None:
+                return SetAdminResult.USER_NOT_FOUND
+            if not self.users.get(requesting_user, {}).get("is_admin"):
+                return SetAdminResult.NOT_AUTHORIZED
+            currently_admin = bool(target.get("is_admin"))
+            if currently_admin == is_admin:
+                return SetAdminResult.OK  # no-op; leave privileges untouched
+            if currently_admin and not is_admin:
+                admin_count = sum(1 for d in self.users.values() if d.get("is_admin"))
+                if admin_count <= 1:
+                    return SetAdminResult.LAST_ADMIN
+            target["is_admin"] = is_admin
+            target["privileges"] = dict(
+                ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES
+            )
+            self._save()
+        logger.info("Set is_admin=%s for '%s' (by '%s')", is_admin, username, requesting_user)
+        return SetAdminResult.OK
 
     def change_password(self, username: str, current_password: str, new_password: str) -> bool:
         username = username.strip().lower()
