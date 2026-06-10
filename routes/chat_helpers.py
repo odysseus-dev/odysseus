@@ -301,6 +301,25 @@ def extract_preset(chat_handler, preset_id) -> PresetInfo:
     )
 
 
+def expert_preset_info(expert_id, fallback: PresetInfo) -> PresetInfo:
+    """Build a :class:`PresetInfo` for the chosen multi-agent expert.
+
+    Returns ``fallback`` unchanged when ``expert_id`` is unknown so routing can
+    never produce an invalid preset.
+    """
+    from src.expert_router import EXPERTS
+
+    meta = EXPERTS.get(expert_id)
+    if not meta:
+        return fallback
+    return PresetInfo(
+        temperature=meta.get("temperature"),
+        max_tokens=meta.get("max_tokens"),
+        system_prompt=meta.get("system_prompt"),
+        character_name="",
+    )
+
+
 async def preprocess(
     chat_handler, message, att_ids, sess,
     auto_opened_docs: Optional[list] = None,
@@ -526,6 +545,24 @@ async def build_chat_context(
     """
     # Preset
     preset = extract_preset(chat_handler, preset_id)
+
+    # Multi-agent expert routing: when the "experts" orchestrator preset is
+    # selected, classify the user's message and swap in the chosen specialist's
+    # preset before any prompt is built. Classification failures fall back to a
+    # deterministic keyword match inside classify_expert, so this never breaks
+    # the chat flow.
+    from src.expert_router import ROUTER_PRESET_ID, classify_expert
+
+    if preset_id == ROUTER_PRESET_ID and allow_tool_preprocessing:
+        expert_id, _expert_reason = await classify_expert(
+            message,
+            sess.endpoint_url,
+            sess.model,
+            headers=getattr(sess, "headers", None),
+            session_id=session_id,
+        )
+        logger.info("Expert router selected '%s' (%s)", expert_id, _expert_reason)
+        preset = expert_preset_info(expert_id, preset)
 
     # Preprocess message (CoT, YouTube, VL images, build content). The
     # auto_opened_docs collector captures any docs created server-side
