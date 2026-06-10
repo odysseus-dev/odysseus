@@ -98,6 +98,11 @@ def _tool_path_roots() -> list[str]:
     from src.constants import DATA_DIR
     roots.append(DATA_DIR)
 
+    # Developer Mode: grant access to the project source code if enabled.
+    if os.environ.get("ODYSSEUS_DEVELOPER_MODE", "").lower() in ("1", "true", "yes"):
+        from src.constants import BASE_DIR
+        roots.append(BASE_DIR)
+
     # /tmp (and its macOS realpath /private/tmp).
     roots.append("/tmp")
     try:
