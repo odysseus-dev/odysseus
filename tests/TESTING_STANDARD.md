@@ -74,6 +74,16 @@ A test that genuinely spans categories (e.g. a route test that also pins a
 security invariant) is classified by its **primary** assertion target and may be
 split if it grows.
 
+## Fast lane policy
+
+The fast lane is `not slow`: `tests/run_focus.py --fast` selects every test that
+is not marked `slow`. The `slow` marker is **opt-in**, and slow marks must be
+**evidence-driven from `--durations` output** - mark a test slow only when its
+measured duration shows it is genuinely expensive, never by guessing. The fast
+lane exists for quick local and reviewer feedback; it is **not** a replacement
+for broader focused or full-suite validation before merge, and a test must never
+be marked `slow` to hide a failure or skip coverage.
+
 ## Determinism & isolation rules
 
 Do not mutate shared process state without a controlled helper and guaranteed
