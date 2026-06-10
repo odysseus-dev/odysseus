@@ -467,20 +467,6 @@ async def _document_tool_dispatch(
     return None
 
 
-async def _document_tool_dispatch(
-    tool: str,
-    content: str,
-    session_id: Optional[str] = None,
-    owner: Optional[str] = None,
-) -> Optional[Dict]:
-    """Route a document tool through TOOL_HANDLERS with the right ctx shape."""
-    from src.agent_tools import TOOL_HANDLERS
-    ctx = {"session_id": session_id, "owner": owner}
-    if tool in TOOL_HANDLERS:
-        return await TOOL_HANDLERS[tool](content, ctx)
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
