@@ -444,7 +444,7 @@ async def test_admin_agent_tools_require_admin(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.agent_tools.api_integration_tools import AppApiTool
 
     class UnexpectedAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -453,7 +453,7 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", UnexpectedAsyncClient)
 
     for path in ("/api/shell/exec", "api/shell/stream"):
-        result = await do_app_api(
+        result = await AppApiTool().execute(
             json.dumps(
                 {
                     "action": "call",
@@ -462,7 +462,7 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
                     "body": {"command": "echo should-not-run"},
                 }
             ),
-            owner="admin",
+            {"owner": "admin"},
         )
 
         assert result["exit_code"] == 1
@@ -473,7 +473,7 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monkeypatch):
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.agent_tools.api_integration_tools import AppApiTool
 
     class UnexpectedAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -500,7 +500,7 @@ async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monke
     )
 
     for path, body, error_text in blocked_calls:
-        result = await do_app_api(
+        result = await AppApiTool().execute(
             json.dumps(
                 {
                     "action": "call",
@@ -509,7 +509,7 @@ async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monke
                     "body": body,
                 }
             ),
-            owner="admin",
+            {"owner": "admin"},
         )
 
         assert result["exit_code"] == 1
@@ -520,7 +520,7 @@ async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monke
 async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
     _install_core_middleware_stub(monkeypatch)
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.agent_tools.api_integration_tools import AppApiTool
 
     class FakeResponse:
         def json(self):
@@ -548,7 +548,7 @@ async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
-    result = await do_app_api(json.dumps({"action": "endpoints"}), owner="admin")
+    result = await AppApiTool().execute(json.dumps({"action": "endpoints"}), {"owner": "admin"})
 
     assert result["exit_code"] == 0
     paths = {(endpoint["method"], endpoint["path"]) for endpoint in result["endpoints"]}
@@ -563,7 +563,7 @@ async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
 async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(monkeypatch):
     _install_core_middleware_stub(monkeypatch)
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.agent_tools.api_integration_tools import AppApiTool
 
     class FakeResponse:
         def json(self):
@@ -592,7 +592,7 @@ async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(mon
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
-    result = await do_app_api(json.dumps({"action": "endpoints", "filter": "cookbook"}), owner="admin")
+    result = await AppApiTool().execute(json.dumps({"action": "endpoints", "filter": "cookbook"}), {"owner": "admin"})
 
     assert result["exit_code"] == 0
     paths = {(endpoint["method"], endpoint["path"]) for endpoint in result["endpoints"]}
