@@ -73,6 +73,15 @@ binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
 only when you intentionally want LAN/reverse-proxy access.
 
+
+
+# TODO: [AQUI SERÁ IMPLEMENTADA A MELHORIA NA DOCUMENTAÇÃO]
+# Contribuidor: [João Vitor de Oliveira Francisco]
+
+print("=== INÍCIO DA ÁREA DE MELHORIA ===")
+print("Guia de troubleshooting do Docker será adicionado aqui")
+print("=== FIM DA ÁREA DE MELHORIA ===")
+
 ### Native Linux / macOS
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
