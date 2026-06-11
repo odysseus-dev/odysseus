@@ -115,9 +115,12 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
     def save(self, presets: Dict[str, Any]) -> bool:
         """Save presets to file"""
         try:
-            os.makedirs(os.path.dirname(self.presets_file), exist_ok=True)
-            with open(self.presets_file, 'w', encoding="utf-8") as f:
-                json.dump(presets, f, indent=2)
+            # Atomic write (tmp file + os.replace) so a crash or serialization
+            # error mid-write can't truncate presets.json and lose every saved
+            # preset. Lazy import keeps this module free of the heavy core
+            # package import graph at load time.
+            from core.atomic_io import atomic_write_json
+            atomic_write_json(self.presets_file, presets, indent=2)
             self.presets = presets
             return True
         except Exception as e:

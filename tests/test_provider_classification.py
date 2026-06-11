@@ -40,6 +40,7 @@ class TestDetectProvider:
         ("https://anthropic.com/v1", "anthropic"),
         ("https://openrouter.ai/api/v1", "openrouter"),
         ("https://api.groq.com/openai/v1", "groq"),
+        ("https://integrate.api.nvidia.com/v1", "nvidia"),
         ("http://localhost:11434/api", "ollama"),
         ("https://ollama.com", "ollama"),
         # xAI, DeepSeek and Gemini's OpenAI-compatible surface are NOT
@@ -84,6 +85,7 @@ class TestProviderLabel:
         ("https://api.openai.com/v1", "OpenAI"),
         ("https://openrouter.ai/api/v1", "OpenRouter"),
         ("https://api.groq.com/openai/v1", "Groq"),
+        ("https://integrate.api.nvidia.com/v1", "NVIDIA"),
         ("https://api.mistral.ai/v1", "Mistral"),
         ("https://api.deepseek.com", "DeepSeek"),
         ("https://generativelanguage.googleapis.com/v1beta/openai", "Google"),

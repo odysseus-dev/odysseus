@@ -13,7 +13,6 @@ import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
 import { svgifyEmoji } from './markdown.js';
-import planWindowModule from './planWindow.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
@@ -24,6 +23,8 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
+import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -109,35 +110,6 @@ import { createStreamRenderer } from './streamingRenderer.js';
   let _streamSessionId = null; // Session ID for the currently active reader loop
   let _lastReaderActivity = 0; // Timestamp of last reader.read() success — used to detect frozen streams
   let _webLockRelease = null;  // Function to release the Web Lock held during streaming
-  let _forcePlanOff = false;   // One-shot: suppress plan_mode for the next send (Approve & Run)
-
-  // ── Plan store: the latest proposed/approved checklist for the CURRENT chat ──
-  // Kept so (a) it can be sent back each turn and pinned in context (a long plan
-  // on a weak model survives history truncation), and (b) the plan window can be
-  // re-opened/docked at any time via the plan-button menu. Stored per session in
-  // localStorage so it survives a reload mid-execution.
-  function _setStoredPlan(text) {
-    const sid = sessionModule.getCurrentSessionId();
-    if (!sid || !text || !text.trim()) return;
-    Storage.setJSON(Storage.KEYS.PLAN, { sid, text });
-    // Live-refresh the plan window if it's open (shows progress as the agent
-    // restates the checklist with [x]).
-    try {
-      if (planWindowModule.isPlanWindowOpen && planWindowModule.isPlanWindowOpen()) {
-        planWindowModule.openPlanWindow(text, null);
-      }
-    } catch (_) {}
-  }
-  function _getStoredPlan() {
-    const sid = sessionModule.getCurrentSessionId();
-    const rec = Storage.getJSON(Storage.KEYS.PLAN, null);
-    return (rec && rec.sid === sid && rec.text) ? rec.text : '';
-  }
-  // A line like "- [ ] step" / "- [x] step" marks a GitHub-style checklist.
-  const _CHECKLIST_RE = /^\s*[-*]\s+\[[ xX]\]\s+/m;
-  // Exposed for app.js (plan-button menu) — re-open the stored plan window.
-  window._getStoredPlan = _getStoredPlan;
-  window.planWindowModule = planWindowModule;
 
   /** Check if an SSE reader is still actively connected for a session. */
   function hasActiveStream(sessionId) {
@@ -217,6 +189,19 @@ import { createStreamRenderer } from './streamingRenderer.js';
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
+
+    // ArrowUp on empty composer recalls last user message (like many chat apps).
+    const _wireArrowUpRecall = (composer) =>
+      wireArrowUpRecall(composer, () => getLastUserMessageFromChatHistory(), {
+        autoResize: uiModule?.autoResize,
+      });
+
+    const composer = document.getElementById('message');
+    if (!_wireArrowUpRecall(composer)) {
+      // Init can run before #message exists (templated UI); short retries only.
+      try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
+      setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -755,9 +740,11 @@ import { createStreamRenderer } from './streamingRenderer.js';
         const dismissBtn = document.createElement('button');
         dismissBtn.textContent = '\u00d7';
         dismissBtn.className = 'import-prompt-dismiss';
+        dismissBtn.setAttribute('aria-label', 'Dismiss');
+        dismissBtn.title = 'Dismiss';
         dismissBtn.addEventListener('click', () => banner.remove());
         banner.appendChild(dismissBtn);
-        const chatBar = document.getElementById('chat-bar');
+        const chatBar = document.querySelector('.chat-input-bar');
         if (chatBar) chatBar.parentNode.insertBefore(banner, chatBar);
         // Auto-dismiss after 15 seconds
         setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
@@ -815,31 +802,15 @@ import { createStreamRenderer } from './streamingRenderer.js';
         } else {
           fd.append('use_web', 'true');
         }
+      } else if (isAgentMode) {
+        fd.append('allow_web_search', 'false');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
         // Research always runs in chat mode — override agent if set
         fd.set('mode', 'chat');
       }
-      if (el('bash-toggle').checked) {
-        fd.append('allow_bash', 'true');
-      }
-      // Plan mode: agent investigates read-only and proposes a plan to approve.
-      // Only meaningful in agent mode, and never alongside deep research.
-      // _forcePlanOff is a one-shot set by "Approve & Run" so the execution turn
-      // runs with full tools even though the Plan toggle is still on.
-      const _planToggle = el('plan-toggle');
-      const planTurn = !_forcePlanOff && isAgentMode && _planToggle && _planToggle.checked && !el('research-toggle').checked;
-      _forcePlanOff = false;
-      if (planTurn) {
-        fd.append('plan_mode', 'true');
-        fd.set('mode', 'agent');
-      } else if (isAgentMode) {
-        // Executing (not proposing): send the stored plan back so the backend
-        // pins it in context and the agent can always re-reference it.
-        const _sp = _getStoredPlan();
-        if (_sp) fd.append('approved_plan', _sp);
-      }
+      fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -1115,7 +1086,7 @@ import { createStreamRenderer } from './streamingRenderer.js';
       let _lastToolName = '';
       const _searchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
       const _toolLabels = {
-        'web_search': _searchIcon + 'Searching',
+        'web_search': 'Searching',
         'bash': 'Running',
         'python': 'Running',
         'create_document': 'Writing',
@@ -1134,6 +1105,9 @@ import { createStreamRenderer } from './streamingRenderer.js';
         'deep_research': 'Researching',
         'list_models': 'Browsing',
         'ui_control': 'Adjusting',
+      };
+      const _toolIcons = {
+        'web_search': _searchIcon,
       };
       function _thinkingLabel() {
         if (!_lastToolName) {
@@ -1811,6 +1785,21 @@ import { createStreamRenderer } from './streamingRenderer.js';
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
                 }
+              } else if (json.type === 'workspace_rejected') {
+                // Server refused to bind the posted workspace (deleted folder,
+                // file path, sensitive dir, filesystem root). Clear the stored
+                // value so the pill stops claiming a confinement that is not in
+                // effect, and tell the user.
+                const _wsPath = (json.data && json.data.path) || '';
+                import('./workspace.js').then((m) => {
+                  const ws = m.default || m;
+                  if (ws && ws.setWorkspace) ws.setWorkspace('');
+                });
+                uiModule.showToast(
+                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; running without confinement`,
+                  6000
+                );
+                continue;
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback
                 var _fbData = json.data || {};
@@ -2082,10 +2071,11 @@ import { createStreamRenderer } from './streamingRenderer.js';
                 }
                 threadWrap.classList.add('streaming');
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
+                const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
                 const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${toolIcon}</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
@@ -2755,61 +2745,6 @@ import { createStreamRenderer } from './streamingRenderer.js';
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
         footerTarget.appendChild(createMsgFooter(footerTarget));
-        // Capture any checklist this message produced as the current plan — both
-        // the initial proposal AND restated progress during execution. Keeps the
-        // stored plan (and the docked plan window) in sync with the latest state.
-        if (accumulated && _CHECKLIST_RE.test(accumulated)) {
-          _setStoredPlan(accumulated);
-        }
-        // Plan mode: the agent has proposed a plan — offer to approve & execute it.
-        // Approving re-sends with plan_mode suppressed (full tools) for one turn.
-        if (planTurn && accumulated.trim()) {
-          const _planText = accumulated;
-          const _runApproved = () => {
-            _approveWrap.remove();
-            _forcePlanOff = true;
-            // Persist the approved plan for THIS chat so it's (a) re-sent and
-            // pinned in context every execution turn, and (b) re-openable via the
-            // plan-button menu. Do this BEFORE flipping the toggle, since the menu
-            // intercept keys off a stored plan existing.
-            _setStoredPlan(_planText);
-            // Approving exits plan mode for good — turn it OFF directly (NOT via
-            // the button's click, which would now open the plan menu instead of
-            // toggling) so execution and every follow-up keep full write tools.
-            try { if (window._setPlanMode) window._setPlanMode(false); } catch (_) {}
-            const _inp = el('message');
-            if (_inp) {
-              _inp.value = 'Approved — execute the plan. The full approved checklist is pinned '
-                + 'for you under "## ACTIVE PLAN"; do NOT go looking for it in tasks, notes, or '
-                + 'memory. Work through it in order, and after each step call the update_plan tool '
-                + 'with the full checklist and that step marked `- [x]`. Do the next unchecked item '
-                + 'until all are done.';
-              _inp.dispatchEvent(new Event('input'));
-            }
-            // Show a clean bubble; the full instruction still goes to the model.
-            _displayOverride = 'Approved the plan.';
-            handleChatSubmit({ preventDefault() {} });
-          };
-          var _approveWrap = document.createElement('div');
-          _approveWrap.className = 'plan-approve-bar';
-          const _approveBtn = document.createElement('button');
-          _approveBtn.type = 'button';
-          _approveBtn.className = 'plan-approve-btn';
-          _approveBtn.textContent = 'Approve & Run';
-          _approveBtn.addEventListener('click', _runApproved);
-          // Open the plan in a draggable, side-dockable window (reuses the
-          // shared modal framework). Approving from the window runs it too.
-          const _openBtn = document.createElement('button');
-          _openBtn.type = 'button';
-          _openBtn.className = 'plan-open-btn';
-          _openBtn.textContent = 'Open in window';
-          _openBtn.addEventListener('click', () => {
-            planWindowModule.openPlanWindow(_planText, _runApproved);
-          });
-          _approveWrap.appendChild(_approveBtn);
-          _approveWrap.appendChild(_openBtn);
-          footerTarget.appendChild(_approveWrap);
-        }
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);

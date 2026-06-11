@@ -14,9 +14,33 @@ Sub-modules:
 import logging
 from collections import namedtuple
 
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS
+from src.tool_utils import _truncate, get_mcp_manager, set_mcp_manager
 
 logger = logging.getLogger(__name__)
+
+from .subprocess_tools import BashTool, PythonTool
+from .web_tools import WebSearchTool, WebFetchTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
+from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+
+TOOL_HANDLERS = {
+    "bash": BashTool().execute,
+    "python": PythonTool().execute,
+    "web_search": WebSearchTool().execute,
+    "web_fetch": WebFetchTool().execute,
+    "read_file": ReadFileTool().execute,
+    "write_file": WriteFileTool().execute,
+    "edit_file": EditFileTool().execute,
+    "ls": LsTool().execute,
+    "glob": GlobTool().execute,
+    "grep": GrepTool().execute,
+    "create_document": CreateDocumentTool().execute,
+    "update_document": UpdateDocumentTool().execute,
+    "edit_document": EditDocumentTool().execute,
+    "suggest_document": SuggestDocumentTool().execute,
+    "manage_documents": ManageDocumentTool().execute,
+    "get_workspace": GetWorkspaceTool().execute,
+}
 
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
@@ -28,7 +52,7 @@ PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-             "grep", "glob", "ls",
+             "grep", "glob", "ls", "get_workspace",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",
@@ -65,33 +89,6 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 
 # ---------------------------------------------------------------------------
-# MCP Manager (kept here — used by execution and agent_loop)
-# ---------------------------------------------------------------------------
-_mcp_manager = None
-
-def set_mcp_manager(manager):
-    """Set the global MCP manager instance."""
-    global _mcp_manager
-    _mcp_manager = manager
-
-def get_mcp_manager():
-    """Get the global MCP manager instance."""
-    return _mcp_manager
-
-# ---------------------------------------------------------------------------
-# Helpers (kept here — used by sub-modules)
-# ---------------------------------------------------------------------------
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    # Callers treat the result as text, so always return a string: coerce a
-    # non-string (None -> "", otherwise str(...)) instead of returning it raw,
-    # which would just move the crash downstream.
-    if not isinstance(text, str):
-        text = "" if text is None else str(text)
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
-
-# ---------------------------------------------------------------------------
 # Re-exports from sub-modules
 # ---------------------------------------------------------------------------
 
@@ -119,15 +116,14 @@ from src.tool_execution import (  # noqa: E402, F401
     format_tool_result,
 )
 
+# Document functions
+from .document_tools import (
+    set_active_document, 
+    set_active_model
+)
+
 # Implementations
 from src.tool_implementations import (  # noqa: E402, F401
-    set_active_document,
-    set_active_model,
-    get_active_document,
-    do_create_document,
-    do_update_document,
-    do_edit_document,
-    do_suggest_document,
     do_search_chats,
     do_manage_skills,
     do_manage_tasks,
@@ -135,7 +131,6 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_mcp,
     do_manage_webhooks,
     do_manage_tokens,
-    do_manage_documents,
     do_manage_settings,
     do_api_call,
 )

@@ -38,9 +38,10 @@ from core.platform_compat import (
     pid_alive,
 )
 
-_DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
-_JOBS_DIR = _DATA_DIR / "bg_jobs"
-_STORE = _DATA_DIR / "bg_jobs.json"
+from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
+
+_JOBS_DIR = Path(BG_JOBS_DIR)
+_STORE = Path(BG_JOBS_FILE)
 
 # A job that runs longer than this is presumed stuck and reaped (the agent
 # still gets a "timed out" follow-up so nothing hangs forever).

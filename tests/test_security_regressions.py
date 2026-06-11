@@ -233,6 +233,43 @@ def test_q_empty_input():
     assert _q(None) == '""'
 
 
+# ── provider auth error normalization ──────────────────────────
+
+def _import_friendly_email_auth_error():
+    sys.modules.pop("routes.email_helpers", None)
+    from routes.email_helpers import _friendly_email_auth_error  # noqa: WPS433
+    return _friendly_email_auth_error
+
+
+def test_outlook_smtp_basic_auth_error_is_actionable():
+    normalize = _import_friendly_email_auth_error()
+    msg = normalize(
+        "SMTP",
+        "smtp.office365.com",
+        "(535, b'5.7.139 Authentication unsuccessful, basic authentication is disabled.')",
+    )
+
+    assert "Microsoft no longer accepts normal mailbox passwords" in msg
+    assert "OAuth/Graph" in msg
+    assert "535" not in msg
+
+
+def test_outlook_imap_authenticate_failed_is_actionable():
+    normalize = _import_friendly_email_auth_error()
+    msg = normalize("IMAP", "outlook.office365.com", "b'AUTHENTICATE failed.'")
+
+    assert "Microsoft no longer accepts normal mailbox passwords" in msg
+    assert "Outlook/Office 365" in msg
+
+
+def test_generic_auth_error_still_passes_through_truncated():
+    normalize = _import_friendly_email_auth_error()
+    msg = normalize("IMAP", "imap.example.com", "bad credentials " + ("x" * 300))
+
+    assert msg.startswith("bad credentials")
+    assert len(msg) == 200
+
+
 # ── compose-upload path traversal block ─────────────────────────
 
 @pytest.mark.parametrize(
@@ -946,7 +983,7 @@ def _import_mcp_routes():
 
 def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     resolved = Path(mcp_routes._resolve_mcp_oauth_path("gmail/credentials.json", "token_file"))
 
@@ -963,7 +1000,7 @@ def test_mcp_oauth_paths_reject_escapes(tmp_path, monkeypatch, raw_path):
     from fastapi import HTTPException
 
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     with pytest.raises(HTTPException) as exc:
         mcp_routes._resolve_mcp_oauth_path(raw_path, "token_file")
@@ -974,7 +1011,7 @@ def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
     from fastapi import HTTPException
 
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     safe_dir = mcp_routes._resolve_mcp_oauth_path("gmail", "dir")
     with pytest.raises(HTTPException):
@@ -983,7 +1020,7 @@ def test_mcp_oauth_filename_join_cannot_escape_base(tmp_path, monkeypatch):
 
 def test_mcp_oauth_config_sanitizes_paths_and_env(tmp_path, monkeypatch):
     mcp_routes = _import_mcp_routes()
-    monkeypatch.setattr(mcp_routes, "DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(mcp_routes, "MCP_OAUTH_DIR", str(tmp_path / "data" / "mcp_oauth"))
 
     cfg = mcp_routes._sanitize_mcp_oauth_config({
         "provider": "google",

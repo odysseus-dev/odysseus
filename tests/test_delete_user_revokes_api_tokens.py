@@ -114,3 +114,21 @@ def test_refused_delete_leaves_tokens_alone(manager, db_calls):
 def test_unknown_user_leaves_tokens_alone(manager, db_calls):
     assert manager.delete_user("ghost", "admin") is False
     assert db_calls == []
+
+
+def test_delete_user_fails_closed_when_api_token_purge_fails(manager, monkeypatch):
+    token = manager.create_session("bob", "secret-bob-pw")
+
+    @contextlib.contextmanager
+    def _failing_db_session():
+        raise RuntimeError("database unavailable")
+        yield
+
+    db_stub = types.ModuleType("core.database")
+    db_stub.get_db_session = _failing_db_session
+    db_stub.ApiToken = _FakeApiToken
+    monkeypatch.setitem(sys.modules, "core.database", db_stub)
+
+    assert manager.delete_user("bob", "admin") is False
+    assert "bob" in manager.users
+    assert manager.validate_token(token) is True

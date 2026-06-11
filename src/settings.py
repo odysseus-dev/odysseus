@@ -283,7 +283,7 @@ def load_features() -> dict:
         if not isinstance(saved, dict):
             raise ValueError("features must be an object")
         merged = {**DEFAULT_FEATURES, **saved}
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_FEATURES)
     _features_cache = (now, merged)
     return merged
