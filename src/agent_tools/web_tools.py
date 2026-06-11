@@ -37,18 +37,41 @@ class WebSearchTool:
             elif " news" in q_lc or q_lc.startswith("news ") or q_lc.endswith(" news"):
                 time_filter = "week"
         loop = asyncio.get_running_loop()
-        text, sources = await asyncio.wait_for(
-            loop.run_in_executor(
-                None,
-                lambda: comprehensive_web_search(
-                    query,
-                    max_pages=max_pages,
-                    time_filter=time_filter,
-                    return_sources=True,
+        text, sources = "", []
+        # Fast local path: snippet-first, with a tight lxml-parsed fetch only
+        # when snippets are thin. Fully self-contained in services.search.fast;
+        # any failure or empty result drops through to the original call below.
+        from src.settings import get_setting
+        if get_setting("web_search_fast", True):
+            try:
+                from services.search.fast import fast_web_search
+                text, sources = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: fast_web_search(
+                            query,
+                            max_pages=max_pages,
+                            time_filter=time_filter,
+                            return_sources=True,
+                        ),
+                    ),
+                    timeout=20,
+                )
+            except Exception:
+                text, sources = "", []
+        if not text:
+            text, sources = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: comprehensive_web_search(
+                        query,
+                        max_pages=max_pages,
+                        time_filter=time_filter,
+                        return_sources=True,
+                    ),
                 ),
-            ),
-            timeout=30,
-        )
+                timeout=30,
+            )
         output = text[:MAX_OUTPUT_CHARS] if len(text) > MAX_OUTPUT_CHARS else text
         if sources:
             output += "\n\n<!-- SOURCES:" + json.dumps(sources) + " -->"
