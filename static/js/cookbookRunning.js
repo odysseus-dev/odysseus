@@ -682,7 +682,7 @@ export function _addTask(sessionId, name, type, payload) {
   let tasks = _loadTasks();
   const remoteHost = (payload && payload.remote_host) || _envState.remoteHost || '';
   const sshPort = (payload && payload.ssh_port) || _getPort(remoteHost) || '';
-  const platform = (payload && payload.platform) || _getPlatform(remoteHost) || '';
+  const platform = (payload && payload.platform) || _getPlatform(remoteHost) || (!remoteHost ? (_envState.serverPlatform || '') : '');
   // Serving a model supersedes its finished download — clear the matching
   // finished download card (covers serving directly from the Serve tab, not just
   // via the download card's "Serve →" button).
@@ -811,6 +811,29 @@ function _winSessionCmd(task, tmuxArgs) {
     return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   return host ? `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
+}
+
+async function _stopCookbookSession(task) {
+  const repoId = task?.payload?.repo_id || task?.payload?.repoId || '';
+  const body = {
+    session_id: task.sessionId,
+    remote_host: task.remoteHost || '',
+    ssh_port: task.sshPort || '',
+    platform: task.platform || _getPlatform(task) || '',
+  };
+  if (repoId) body.repo_id = repoId;
+  try {
+    const r = await fetch('/api/cookbook/stop-session', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return { ok: false };
+    return await r.json();
+  } catch {
+    return { ok: false };
+  }
 }
 
 function _tmuxGracefulKill(task) {
@@ -1094,6 +1117,9 @@ export async function _syncFromServer() {
     }
     localStorage.setItem(TASKS_KEY, JSON.stringify(merged.map(_stripTaskSecrets)));
 
+    if (state.serverPlatform) {
+      _envState.serverPlatform = state.serverPlatform;
+    }
     if (state.env) {
       // The active server selection (remoteHost + its env/path/platform) is a
       // per-device, live choice. NEVER let the server's stored copy overwrite
@@ -1121,7 +1147,7 @@ export async function _syncFromServer() {
 // Bounded auto-retry counter for downloads, keyed by model — network blips on
 // big multi-file downloads are common and HF resumes from the .incomplete parts.
 const _dlRetryCount = new Map();
-const _DL_MAX_AUTO_RETRY = 2;
+const _DL_MAX_AUTO_RETRY = 0;
 
 // Kill + relaunch a task (download or serve). Shared by the ⋮ → Restart action
 // and the click-to-retry on a stalled download badge.
@@ -2382,14 +2408,22 @@ export function _renderRunningTab() {
           });
         } catch {}
       }
-      // Gracefully stop (C-c, then kill the session) so it's fully down...
+      let stopOk = true;
       try {
-        await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-        });
-      } catch {}
+        const result = await _stopCookbookSession(task);
+        stopOk = !!(result && result.ok);
+      } catch { stopOk = false; }
+      if (!stopOk) {
+        try { uiModule.showToast('Stop failed — download may still be running in the background', 'error'); } catch (_) {}
+        if (badge) {
+          badge.textContent = _statusLabel('running', task.type);
+          badge.className = 'cookbook-task-status cookbook-task-running';
+        }
+        el.dataset.status = 'running';
+        _updateTask(task.sessionId, { _userStopped: false, status: 'running' });
+        _reconnectTask(el, task);
+        return;
+      }
       // ...then smoothly fade/slide the card out and auto-remove it — no manual
       // ⋮ → Remove needed.
       _animateOutThenRemove(el, task.sessionId);
@@ -2415,31 +2449,22 @@ export function _renderRunningTab() {
       }
       let killOk = true;
       try {
-        const r = await fetch('/api/shell/exec', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
-        });
-        if (r.ok) {
-          const out = await r.json();
-          // Don't trust exit_code alone — tmux kill returns 0 even when
-          // there was nothing to kill. Verify the session is actually gone.
-          if (task.sessionId && isLive) {
-            try {
-              const probe = await fetch('/api/shell/exec', {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
-              });
-              if (probe.ok) {
-                const pj = await probe.json();
-                // has-session exits 0 when session STILL exists; non-zero = gone.
-                if ((pj.exit_code || 0) === 0) killOk = false;
-              }
-            } catch (_) { /* probe best-effort; trust kill */ }
-          }
-        } else {
-          killOk = false;
+        const result = await _stopCookbookSession(task);
+        killOk = !!(result && result.ok);
+        // tmux kill returns 0 even when there was nothing to kill — verify
+        // live serves are actually gone before removing the row.
+        if (killOk && task.sessionId && isLive && !_isWindows(task)) {
+          try {
+            const probe = await fetch('/api/shell/exec', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
+            });
+            if (probe.ok) {
+              const pj = await probe.json();
+              if ((pj.exit_code || 0) === 0) killOk = false;
+            }
+          } catch (_) { /* probe best-effort; trust stop-session */ }
         }
       } catch (_) { killOk = false; }
       if (!killOk) {
@@ -2972,6 +2997,13 @@ async function _reconnectTask(el, task) {
               badge.textContent = 'finishing';
               badge.className = 'cookbook-task-status cookbook-task-running';
             }
+            if (snapshot.includes('DOWNLOAD_STOPPED')) {
+              badge.textContent = _statusLabel('stopped', task.type);
+              badge.className = 'cookbook-task-status cookbook-task-stopped';
+              _updateTask(task.sessionId, { status: 'stopped', _userStopped: true });
+              el.dataset.status = 'stopped';
+              break;
+            }
             if (snapshot.includes('DOWNLOAD_FAILED')) {
               // The wrapper prints DOWNLOAD_FAILED but exits 0, and per-file
               // "Download complete"/"100%" lines make it look successful — so
@@ -2982,7 +3014,7 @@ async function _reconnectTask(el, task) {
               const _accessDenied = /Access to model.*is restricted|gated repo|GatedRepoError|401 Unauthorized|403 Forbidden|not in the authorized list|awaiting a review|must (?:be authenticated|have access)/i.test(snapshot);
               const _dlKey = task.payload?.repo_id || task.name;
               const _dlN = _dlRetryCount.get(_dlKey) || 0;
-              if (!controller.signal.aborted && !_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
+              if (!controller.signal.aborted && !task._userStopped && !_accessDenied && task.type === 'download' && task.payload && _dlN < _DL_MAX_AUTO_RETRY) {
                 // Auto-retry: kill the dead session and re-launch (resumes from
                 // the cached .incomplete files) after a short delay.
                 _dlRetryCount.set(_dlKey, _dlN + 1);
@@ -3381,7 +3413,8 @@ export async function _selfHealStaleTasks(opts = {}) {
   const tasks = _loadTasks();
   const candidates = tasks.filter(t => {
     if (t.type !== 'download') return false;
-    if (!['done', 'error', 'crashed', 'stopped'].includes(t.status)) return false;
+    if (t._userStopped) return false;
+    if (!['done', 'error', 'crashed'].includes(t.status)) return false;
     if (!t.sessionId || String(t.sessionId).startsWith('queue-')) return false;
     // Finished downloads with strong completion markers (DOWNLOAD_OK or HF
     // /snapshots/ resolution) are demonstrably done — do not flip them back
@@ -3560,7 +3593,9 @@ async function _pollBackgroundStatus() {
           if (nextStatus === 'done' && task.payload?._dep) completedDeps.push(task);
         }
         if ((live.status === 'running' || live.status === 'ready') && task.status !== live.status) {
-          updates.status = live.status === 'ready' ? 'ready' : 'running';
+          if (!task._userStopped) {
+            updates.status = live.status === 'ready' ? 'ready' : 'running';
+          }
         }
         if (live.progress && live.progress !== task.progress) updates.progress = live.progress;
         if (live.exit_code != null && live.exit_code !== task.exit_code) updates.exit_code = live.exit_code;

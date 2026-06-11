@@ -72,7 +72,7 @@ function _platformIcon(platform) {
   return '';
 }
 
-export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', defaultServer: '' };
+export let _envState = { env: 'none', envPath: '', hfToken: '', hfTokenConfigured: false, hfTokenMasked: '', gpus: '', remoteHost: '', servers: [], modelPaths: [], platform: '', serverPlatform: '', defaultServer: '' };
 let _lastCacheHostVal = null;
 let _cookbookOpeningSpinners = [];
 export function _lastCacheHost() { return _lastCacheHostVal; }
@@ -209,8 +209,14 @@ function _getPort(hostOrTask) {
 
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
-  if (!hostOrTask) return _envState.platform || '';
-  if (typeof hostOrTask === 'object') return hostOrTask.platform || _getPlatform(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  const _localPlatform = () => _envState.platform || _envState.serverPlatform || '';
+  if (!hostOrTask) return _localPlatform();
+  if (typeof hostOrTask === 'object') {
+    if (hostOrTask.platform) return hostOrTask.platform;
+    const host = hostOrTask.remoteServerKey || hostOrTask.remoteHost;
+    if (!host) return _localPlatform();
+    return _getPlatform(host);
+  }
   const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
   const srv = selected || _serverByVal(hostOrTask);
   return srv?.platform || '';

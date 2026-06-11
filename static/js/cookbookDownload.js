@@ -540,7 +540,8 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   // duplicate so we don't kick off a second concurrent download writing to
   // the same target dir.
   const zombieCandidate = tasks.find(t => sameDownload(t)
-    && ['done', 'error', 'crashed', 'stopped'].includes(t.status)
+    && ['done', 'error', 'crashed'].includes(t.status)
+    && !t._userStopped
     && t.sessionId && !String(t.sessionId).startsWith('queue-'));
   if (zombieCandidate) {
     try {
