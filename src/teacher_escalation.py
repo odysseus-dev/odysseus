@@ -29,6 +29,8 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+import src.turn_judge as turn_judge
+
 logger = logging.getLogger(__name__)
 
 
@@ -399,12 +401,18 @@ async def escalate_and_learn(
         logger.info("teacher declined to write a skill for this failure")
         return None
 
-    # Same regex eval applied to the teacher's response — if the
-    # teacher itself sounded uncertain ("I don't have a tool"), drop
-    # the skill rather than persist a sketchy one.
-    status, reason = evaluate_turn_regex([], response)
-    if status == "failure":
-        logger.info(f"teacher response failed eval, skipping skill save: {reason}")
+    # LLM judge on the teacher's response — if the teacher itself
+    # sounded uncertain, drop the skill rather than persist a sketchy one.
+    from src.ai_interaction import _resolve_model
+    _j_url, _j_model, _ = _resolve_model(teacher_spec, owner=owner) if teacher_spec else (None, None, None)
+    _jr = await turn_judge.evaluate_turn(
+        assistant_response=response or "",
+        tool_output_text="",
+        model=_j_model,
+        endpoint_url=_j_url,
+    )
+    if _jr["failure"]:
+        logger.info(f"teacher response failed eval, skipping skill save: {_jr['reason']}")
         return None
 
     # Tag the skill with the escalation source for auditability.
@@ -501,9 +509,15 @@ async def run_teacher_inline(
     except Exception:
         return
 
-    status, reason = evaluate_turn_regex(student_tool_events, student_reply)
-    if status != "failure":
+    _jr = await turn_judge.evaluate_turn(
+        assistant_response=student_reply or "",
+        tool_output_text=_format_trace(student_tool_events or [], student_reply or ""),
+        model=None,  # student model name isn't passed through; endpoint is enough
+        endpoint_url=student_endpoint_url,
+    )
+    if not _jr["failure"]:
         return
+    reason = _jr["reason"]
 
     # Extract original user request — last user-role message
     user_request = ""
@@ -600,13 +614,18 @@ async def run_teacher_inline(
         yield evt_str
 
     teacher_text = "".join(captured_text_parts).strip()
-    t_status, t_reason = evaluate_turn_regex(captured_tool_events, teacher_text)
-    if t_status == "failure":
-        logger.info(f"teacher also failed: {t_reason}")
+    _tjr = await turn_judge.evaluate_turn(
+        assistant_response=teacher_text or "",
+        tool_output_text=_format_trace(captured_tool_events, teacher_text or ""),
+        model=teacher_model,
+        endpoint_url=teacher_url,
+    )
+    if _tjr["failure"]:
+        logger.info("teacher also failed: %s", _tjr["reason"])
         yield (
             'data: ' + json.dumps({
                 "type": "escalation_failed",
-                "reason": t_reason,
+                "reason": _tjr["reason"],
             }) + '\n\n'
         )
         return
