@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from src.llm_core import stream_llm
 
@@ -75,21 +75,31 @@ async def evaluate_turn(
         }
     ]
 
+    if not endpoint_url or not model:
+        return _fallback_eval(assistant_response, tool_output_text)
+
     text = ""
-    async for chunk in stream_llm(
-        endpoint_url=endpoint_url,
-        model=model,
-        messages=messages,
-        schemas=schemas,
-    ):
-        if chunk is not None:
-            text += chunk
+    try:
+        async for chunk in stream_llm(
+            endpoint_url,
+            model,
+            messages,
+            tools=schemas,
+        ):
+            text += _extract_stream_text(chunk)
+    except Exception as exc:
+        logger.info("turn judge unavailable, using fallback: %s", exc)
+        return _fallback_eval(assistant_response, tool_output_text)
 
     result = _try_parse_json(text)
     if result and "failure" in result:
         return _normalize(result)
 
-    # Fallback: regex scan
+    return _fallback_eval(assistant_response, tool_output_text)
+
+
+def _fallback_eval(assistant_response: str, tool_output_text: str) -> dict[str, Any]:
+    """Cheap local fallback when the judge model is unavailable or unparsable."""
     combined = ((assistant_response or "") + "\n" + (tool_output_text or "")).lower()
     for kw in [
         "traceback",
@@ -110,6 +120,37 @@ async def evaluate_turn(
         "reason": "Fallback: no error pattern detected",
         "severity": "none",
     }
+
+
+def _extract_stream_text(chunk: Any) -> str:
+    """Extract text or function-call arguments from stream_llm SSE chunks."""
+    if chunk is None:
+        return ""
+    if not isinstance(chunk, str):
+        return str(chunk)
+    out = []
+    for line in chunk.splitlines():
+        line = line.strip()
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            out.append(payload)
+            continue
+        if isinstance(data, dict):
+            if isinstance(data.get("delta"), str):
+                out.append(data["delta"])
+            if data.get("type") == "tool_calls":
+                for call in data.get("calls") or []:
+                    if call.get("name") != "evaluate":
+                        continue
+                    args = call.get("arguments") or ""
+                    out.append(args if isinstance(args, str) else json.dumps(args))
+    return "".join(out)
 
 
 def _try_parse_json(text: str) -> dict | None:

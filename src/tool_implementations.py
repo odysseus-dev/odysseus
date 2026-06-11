@@ -946,6 +946,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "webhook template": "reminder_webhook_payload_template", "webhook payload": "reminder_webhook_payload_template",
             "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
             "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
+            "agent supervisor": "agent_supervisor_ladder", "supervisor": "agent_supervisor_ladder",
+            "supervisor ladder": "agent_supervisor_ladder", "agent verifier": "agent_supervisor_ladder",
             "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
             "hard max": "agent_input_token_hard_max",
             "token budget cap": "agent_input_token_hard_max",

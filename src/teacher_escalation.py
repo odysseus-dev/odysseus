@@ -391,7 +391,7 @@ async def escalate_and_learn(
         from src.constants import DATA_DIR
         from services.memory.skills import SkillsManager
         _sm = SkillsManager(DATA_DIR)
-        _all_skills = _sm.load_all()
+        _all_skills = _sm.load(owner=owner) if owner is not None else _sm.load_all()
         if _all_skills:
             _names = sorted(
                 f"{s['name']} ({s.get('category','?')})"
@@ -426,7 +426,7 @@ async def escalate_and_learn(
         from src.constants import DATA_DIR
         from services.memory.skills import SkillsManager
         _sm = SkillsManager(DATA_DIR)
-        _similar = _sm.find_similar(skill, threshold=0.65)
+        _similar = _sm.find_similar(skill, threshold=0.65, owner=owner)
         if _similar:
             _best_name = _similar[0][1].get("name", "?")
             _best_score = _similar[0][0]

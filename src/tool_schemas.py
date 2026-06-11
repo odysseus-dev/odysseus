@@ -1179,77 +1179,89 @@ FUNCTION_TOOL_SCHEMAS = [
         }
     },
     {
-        "name": "mkdir",
-        "description": "Create a directory (like mkdir -p). Creates parent directories if needed.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the directory to create, relative to workspace root.",
-                }
+        "type": "function",
+        "function": {
+            "name": "mkdir",
+            "description": "Create a directory (like mkdir -p). Creates parent directories if needed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the directory to create, relative to workspace root.",
+                    }
+                },
+                "required": ["path"],
             },
-            "required": ["path"],
         },
     },
     {
-        "name": "rm",
-        "description": "Remove a file or directory. Use recursive=True for directories (like rm -r).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file or directory to remove.",
+        "type": "function",
+        "function": {
+            "name": "rm",
+            "description": "Remove a file or directory. Use recursive=True for directories (like rm -r).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file or directory to remove.",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "If true and path is a directory, remove the entire tree.",
+                        "default": False,
+                    },
                 },
-                "recursive": {
-                    "type": "boolean",
-                    "description": "If true and path is a directory, remove the entire tree.",
-                    "default": False,
-                },
+                "required": ["path"],
             },
-            "required": ["path"],
         },
     },
     {
-        "name": "mv",
-        "description": "Move or rename a file or directory within the workspace. Both paths must be inside the workspace.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "source": {
-                    "type": "string",
-                    "description": "Current path of the file/directory.",
+        "type": "function",
+        "function": {
+            "name": "mv",
+            "description": "Move or rename a file or directory within the workspace. Both paths must be inside the workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Current path of the file/directory.",
+                    },
+                    "dest": {
+                        "type": "string",
+                        "description": "Target path (new name or location).",
+                    },
                 },
-                "dest": {
-                    "type": "string",
-                    "description": "Target path (new name or location).",
-                },
+                "required": ["source", "dest"],
             },
-            "required": ["source", "dest"],
         },
     },
     {
-        "name": "cp",
-        "description": "Copy a file or directory within the workspace. Use recursive=True for directories (like cp -r).",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "source": {
-                    "type": "string",
-                    "description": "Path to the source file/directory.",
+        "type": "function",
+        "function": {
+            "name": "cp",
+            "description": "Copy a file or directory within the workspace. Use recursive=True for directories (like cp -r).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": "Path to the source file/directory.",
+                    },
+                    "dest": {
+                        "type": "string",
+                        "description": "Destination path.",
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "description": "If true and source is a directory, copy recursively.",
+                        "default": False,
+                    },
                 },
-                "dest": {
-                    "type": "string",
-                    "description": "Destination path.",
-                },
-                "recursive": {
-                    "type": "boolean",
-                    "description": "If true and source is a directory, copy recursively.",
-                    "default": False,
-                },
+                "required": ["source", "dest"],
             },
-            "required": ["source", "dest"],
         },
     },
 ]

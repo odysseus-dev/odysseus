@@ -2462,7 +2462,12 @@ async def stream_agent_loop(
                     # from the action-snapshot (no doc body), so it false-rejects
                     # ("content not shown") and forces a costly extra round every
                     # effectful turn. Opt-in via setting for strong models.
-                    and get_setting("agent_verifier_subagent", False)):
+                    # agent_verifier_subagent is a legacy/internal key kept as
+                    # a fallback for hand-edited settings from older builds.
+                    and (
+                        get_setting("agent_supervisor_ladder", False)
+                        or get_setting("agent_verifier_subagent", False)
+                    )):
                 # Brief "working" indicator while the verifier runs.
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num})}\n\n'
                 _vfail = await _run_verifier_subagent(
