@@ -9,7 +9,7 @@ import ast
 import json
 import logging
 import re
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from src.agent_tools import ToolBlock, TOOL_TAGS
 
@@ -41,7 +41,7 @@ _TOOL_BLOCK_RE = re.compile(
 _CODE_FENCE_TAGS = frozenset({"bash", "python"})
 
 
-def _fenced_tool_call(m) -> Optional[tuple]:
+def _fenced_tool_call(m) -> Optional[Tuple[str, str]]:
     """Classify a Pattern-1 fence match: (tag, content) when it is an
     executable tool call, None when the fence must stay display text.
 

@@ -21,7 +21,12 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
 
-from src.tool_security import BUILTIN_EMAIL_TOOLS, is_public_blocked_tool, owner_is_admin_or_single_user
+from src.tool_security import (
+    BUILTIN_EMAIL_TOOLS,
+    email_tool_policy_names,
+    is_public_blocked_tool,
+    owner_is_admin_or_single_user,
+)
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
@@ -559,18 +564,11 @@ async def _execute_tool_block_impl(
     tool = block.tool_type
     content = block.content
 
-    # A bare email tool name is an alias for its MCP-qualified form (the
-    # dispatch below routes it to mcp__email__<name>). Policy sources spell
-    # email tools either way — plan mode and the MCP settings toggle write the
-    # qualified name into the denylist, chat-level toggles the bare one — so
-    # the block/disable gates below must match on BOTH spellings. Gating only
-    # the name the model happened to emit lets a bare fence slip past a
-    # qualified denylist entry (and vice versa).
-    policy_names = {tool}
-    if tool in BUILTIN_EMAIL_TOOLS:
-        policy_names.add(f"mcp__email__{tool}")
-    elif tool.startswith("mcp__email__") and tool[len("mcp__email__"):] in BUILTIN_EMAIL_TOOLS:
-        policy_names.add(tool[len("mcp__email__"):])
+    # The block/disable gates below must match every policy-equivalent
+    # spelling of the tool name (bare email names alias their mcp__email__
+    # form — see email_tool_policy_names), not just the spelling the model
+    # happened to emit.
+    policy_names = email_tool_policy_names(tool)
 
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.

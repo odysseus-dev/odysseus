@@ -13,6 +13,21 @@ from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 logger = logging.getLogger(__name__)
 
+# Tools granted to the default Assistant crew member created on first run.
+# Email names derive from BUILTIN_EMAIL_TOOLS so a tool added to the email
+# server is granted to new default assistants automatically; users can still
+# untick tools in the assistant settings UI.
+DEFAULT_ASSISTANT_ENABLED_TOOLS = (
+    "manage_calendar", "manage_notes", "manage_tasks", "manage_memory",
+    *sorted(BUILTIN_EMAIL_TOOLS),
+    "resolve_contact",
+    "search_chats", "web_search", "web_fetch", "read_file",
+    "create_document", "update_document", "edit_document",
+    "generate_image", "trigger_research",
+    "download_model", "serve_model", "list_served_models", "stop_served_model",
+    "edit_image",
+)
+
 
 def _utcnow() -> datetime:
     """Return naive UTC for task DB fields without using deprecated APIs."""
@@ -2293,19 +2308,7 @@ class TaskScheduler:
                 model=model,
                 endpoint_url=endpoint_url,
                 greeting=None,
-                enabled_tools=json.dumps([
-                    "manage_calendar", "manage_notes", "manage_tasks", "manage_memory",
-                    # Full built-in email tool set (single source of truth in
-                    # tool_security) so a tool added to the email server is
-                    # granted to new default assistants without touching this.
-                    *sorted(BUILTIN_EMAIL_TOOLS),
-                    "resolve_contact",
-                    "search_chats", "web_search", "web_fetch", "read_file",
-                    "create_document", "update_document", "edit_document",
-                    "generate_image", "trigger_research",
-                    "download_model", "serve_model", "list_served_models", "stop_served_model",
-                    "edit_image",
-                ]),
+                enabled_tools=json.dumps(list(DEFAULT_ASSISTANT_ENABLED_TOOLS)),
                 session_id=session_id,
                 is_active=True,
                 sort_order=0,

@@ -116,7 +116,23 @@ def test_frontend_tool_selector_covers_email_tools():
 
 def test_default_assistant_seed_covers_email_tools():
     """The default Assistant crew seed grants the full email set."""
-    source = (_REPO_ROOT / "src" / "task_scheduler.py").read_text()
-    assert "*sorted(BUILTIN_EMAIL_TOOLS)" in source, (
-        "default assistant enabled_tools no longer derives from BUILTIN_EMAIL_TOOLS"
-    )
+    from src.task_scheduler import DEFAULT_ASSISTANT_ENABLED_TOOLS
+
+    assert BUILTIN_EMAIL_TOOLS <= set(DEFAULT_ASSISTANT_ENABLED_TOOLS)
+
+
+def test_email_policy_name_aliases():
+    """The alias rule every execution gate relies on."""
+    from src.tool_security import email_tool_policy_names
+
+    assert email_tool_policy_names("list_emails") == {
+        "list_emails", "mcp__email__list_emails",
+    }
+    assert email_tool_policy_names("mcp__email__delete_email") == {
+        "delete_email", "mcp__email__delete_email",
+    }
+    # Non-email names alias only to themselves — including mcp__email__
+    # spellings of tools the email server doesn't expose.
+    assert email_tool_policy_names("bash") == {"bash"}
+    assert email_tool_policy_names("mcp__email__not_a_tool") == {"mcp__email__not_a_tool"}
+    assert email_tool_policy_names("mcp__other__list_emails") == {"mcp__other__list_emails"}

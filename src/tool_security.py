@@ -184,6 +184,28 @@ def plan_mode_disabled_tools() -> Set[str]:
     return (all_names | _PLAN_MODE_KNOWN_MUTATORS) - PLAN_MODE_READONLY_TOOLS
 
 
+def email_tool_policy_names(tool_name: str) -> frozenset:
+    """All policy-equivalent spellings of a tool name.
+
+    A bare built-in email tool name and its MCP-qualified mcp__email__<name>
+    form dispatch to the same email server tool, but policy sources spell
+    them either way — plan mode and the MCP settings toggle write qualified
+    names into denylists, chat-level toggles write bare ones. Every gate must
+    match against the full alias set, or a call in one spelling slips past a
+    denylist entry written in the other. Non-email names alias only to
+    themselves.
+    """
+    if not isinstance(tool_name, str):
+        return frozenset((tool_name,))
+    if tool_name in BUILTIN_EMAIL_TOOLS:
+        return frozenset((tool_name, f"mcp__email__{tool_name}"))
+    if tool_name.startswith("mcp__email__"):
+        bare = tool_name[len("mcp__email__"):]
+        if bare in BUILTIN_EMAIL_TOOLS:
+            return frozenset((tool_name, bare))
+    return frozenset((tool_name,))
+
+
 def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
     """Return True when a non-admin/public user must not execute this tool.
 
