@@ -45,13 +45,13 @@ jobs:
         with:
           script: |
             const title = context.payload.pull_request.title || "";
-            // Conventional Commits: type(optional-scope)(optional !): summary
-            const re = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([\w .\/-]+\))?!?: .+/;
+            // Conventional Commits: type(optional-scope)(optional !): summary (or type/summary)
+            const re = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([\w .\/-]+\))?!?[/:]\s*.+/i;
             if (!re.test(title)) {
               core.setFailed(
                 `PR title is not in Conventional Commits format:\n  "${title}"\n\n` +
-                `Expected: type(scope): summary\n` +
-                `Example:  fix(search): handle empty query\n` +
+                `Expected: type(scope): summary  OR  type/summary\n` +
+                `Example:  fix(search): handle empty query  OR  fix/handle-empty-query\n` +
                 `Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.`
               );
             } else {
