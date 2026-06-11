@@ -15,11 +15,10 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
-from src.constants import COOKBOOK_STATE_FILE
+from src.constants import COOKBOOK_STATE_FILE, BASE_DIR
 from pydantic import BaseModel
 
 from core.middleware import require_admin
-from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -30,15 +29,19 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.model_routes import _docker_host_gateway_reachable
 
 logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
-    _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
-    _validate_local_dir, _validate_gpus, _shell_path,
+    _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
+    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
+    _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
+    _append_realesrgan_py313_basicsr_workaround,
+    _append_pip_install_runner_lines,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
@@ -52,6 +55,22 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'Add one in Odysseus Settings -> Cookbook -> HuggingFace Token."; '
     'fi'
 )
+
+
+def _cookbook_llm_endpoint_host(remote: str | None, cmd: str | None = None) -> str:
+    """Return the host Odysseus should save for a Cookbook-served LLM endpoint."""
+    if remote:
+        return remote.split("@")[-1] if "@" in remote else remote
+
+    host_override = os.getenv("ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST", "").strip()
+    if host_override:
+        return host_override
+
+    if re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", cmd or ""):
+        return "host.docker.internal"
+
+    return "host.docker.internal" if _docker_host_gateway_reachable() else "localhost"
+
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
@@ -336,6 +355,22 @@ def setup_cookbook_routes() -> APIRouter:
             return await _remote_binary_available(remote, ssh_port, binary, windows=windows)
         return shutil.which(binary) is not None
 
+    async def _run_sequential_execs(cmds: list[list[str]], cwd: str | None = None) -> asyncio.subprocess.Process:
+        """Run a sequence of commands via exec (bypassing shell). Fails fast on the first error."""
+        proc = None
+        for argv in cmds:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+            await proc.wait()
+            if proc.returncode != 0:
+                return proc
+        return proc
+
+
     def _launch_local_detached(session_id: str, bash_lines: list[str]) -> dict:
         """Windows-native stand-in for a LOCAL tmux session (tmux doesn't exist
         on Windows). Mirrors shell_routes._generate_win_detached / bg_jobs.launch:
@@ -407,8 +442,8 @@ def setup_cookbook_routes() -> APIRouter:
         else:
             _validate_repo_id(req.repo_id)
             _validate_include(req.include)
-        validate_remote_host(req.remote_host)
-        req.ssh_port = validate_ssh_port(req.ssh_port)
+        _validate_remote_host(req.remote_host)
+        req.ssh_port = _validate_ssh_port(req.ssh_port)
         req.local_dir = _validate_local_dir(req.local_dir)
         req.hf_token = "" if is_ollama_download else (req.hf_token or _load_stored_hf_token())
         _validate_token(req.hf_token)
@@ -528,12 +563,12 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('      Write-Host "hf CLI not found, using Python huggingface_hub..."')
                 ps_lines.append('      python -m pip install -q hf_transfer 2>$null')
                 ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
-                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+                ps_lines.append(f"      python -c \"import os, json; from huggingface_hub import snapshot_download; snapshot_download({json.dumps(req.repo_id)}{_dl_pyarg}, max_workers=8)\"")
                 ps_lines.append('    }} else {{')
                 ps_lines.append('      Write-Host "Installing huggingface-hub..."')
                 ps_lines.append('      python -m pip install -q huggingface-hub hf_transfer')
                 ps_lines.append('      $env:HF_HUB_ENABLE_HF_TRANSFER = "1"')
-                ps_lines.append(f"      python -c \"import os; from huggingface_hub import snapshot_download; snapshot_download('{req.repo_id}'{_dl_pyarg}, max_workers=8)\"")
+                ps_lines.append(f"      python -c \"import os, json; from huggingface_hub import snapshot_download; snapshot_download({json.dumps(req.repo_id)}{_dl_pyarg}, max_workers=8)\"")
                 ps_lines.append('    }}')
                 ps_lines.append('  }}')
                 ps_lines.append('  if ($LASTEXITCODE -eq 0) {{ Write-Host ""; Write-Host "DOWNLOAD_OK" }}')
@@ -547,20 +582,20 @@ def setup_cookbook_routes() -> APIRouter:
 
             # scp the .ps1 script, then launch it as a detached process with log + pid files
             _port = req.ssh_port
-            _Pf = f"-P {_port} " if _port and _port != "22" else ""
-            _pf = f"-p {_port} " if _port and _port != "22" else ""
+            scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+            ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
             # Start-Process creates a fully detached process that survives SSH disconnect
             launch_ps = (
-                "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
+                "$sd = \"$env:TEMP\\odysseus-sessions\"; "
                 f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
-                f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
-                f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
+                f"-RedirectStandardOutput \"$sd\\{session_id}.log\" "
+                f"-RedirectStandardError \"$sd\\{session_id}.err.log\" "
+                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \"$sd\\{session_id}.pid\" }}"
             )
-            setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
-            )
+            setup_cmds = [
+                ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                ["ssh"] + ssh_port + [remote, f'powershell -Command "{launch_ps}"']
+            ]
 
         elif remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
@@ -656,12 +691,12 @@ def setup_cookbook_routes() -> APIRouter:
 
             # scp the runner script, then create tmux session on the remote
             _port = req.ssh_port
-            _pf = f"-P {_port} " if _port and _port != "22" else ""
-            _spf = f"-p {_port} " if _port and _port != "22" else ""
-            setup_cmd = (
-                f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
-            )
+            scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+            ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
+            setup_cmds = [
+                ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                ["ssh"] + ssh_port + [remote, f"chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\""]
+            ]
         else:
             # Local: run hf download in the background (tmux on POSIX, a detached
             # process + logfile on Windows where tmux doesn't exist).
@@ -692,12 +727,12 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 wrapper_script.chmod(0o755)
-            setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            setup_cmds = None if IS_WINDOWS else [["tmux", "new-session", "-d", "-s", session_id, str(wrapper_script)]]
 
         logger.info(f"Model download: {req.repo_id} (backend={'ollama' if is_ollama_download else 'hf'}, include={req.include}, session={session_id}, remote={remote})")
-        logger.info(f"Download setup_cmd: {setup_cmd}")
+        logger.info(f"Download setup_cmds: {setup_cmds}")
 
-        if setup_cmd is None:
+        if setup_cmds is None:
             # LOCAL Windows: launch the bash wrapper detached; no tmux setup_cmd.
             try:
                 _launch_local_detached(session_id, lines)
@@ -705,14 +740,9 @@ def setup_cookbook_routes() -> APIRouter:
                 logger.error(f"Local detached download launch failed: {e}")
                 return {"ok": False, "error": str(e), "session_id": session_id}
         else:
-            proc = await asyncio.create_subprocess_shell(
-                setup_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.wait()
+            proc = await _run_sequential_execs(setup_cmds)
 
-            if proc.returncode != 0:
+            if proc is not None and proc.returncode != 0:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
                 logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
                 return {"ok": False, "error": stderr, "session_id": session_id}
@@ -739,8 +769,9 @@ def setup_cookbook_routes() -> APIRouter:
         # Validate shell-bound inputs, matching the sibling list_gpus endpoint —
         # `host`/`ssh_port` are interpolated into an ssh command below, so an
         # unvalidated value (e.g. "x'; rm -rf ~ #") would be command injection.
-        host = validate_remote_host(host)
-        ssh_port = validate_ssh_port(ssh_port)
+        host = _validate_remote_host(host)
+        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
+            raise HTTPException(400, "Invalid ssh_port")
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         model_dirs = []
@@ -755,18 +786,19 @@ def setup_cookbook_routes() -> APIRouter:
         scan_py.write_text(paths_code, encoding="utf-8")
 
         if host:
-            _pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+            ssh_port_args = ["-p", str(ssh_port)] if ssh_port and str(ssh_port) != "22" else []
             if platform == "windows":
-                # Windows: use 'python' and pipe via stdin with double-quote wrapping
-                cmd = f'ssh {_pf}{host} "python -" < \'{scan_py}\''
+                ssh_args = ["ssh"] + ssh_port_args + [host, "python -"]
             else:
-                cmd = f"ssh {_pf}{host} 'python3 -' < '{scan_py}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
+                ssh_args = ["ssh"] + ssh_port_args + [host, "python3 -"]
+            proc = await asyncio.create_subprocess_exec(
+                *ssh_args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
             )
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(input=paths_code.encode("utf-8")), timeout=60)
         else:
             # LOCAL scan: use sys.executable (the venv Python Odysseus is already
             # running under) — it's guaranteed real Python on all platforms.
@@ -785,7 +817,7 @@ def setup_cookbook_routes() -> APIRouter:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.home()),
             )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
 
         models = []
         try:
@@ -889,16 +921,11 @@ def setup_cookbook_routes() -> APIRouter:
             # listening" check without requiring ss/netstat/nmap.
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if ssh_port and str(ssh_port) != "22":
-                try:
-                    ssh_port = validate_ssh_port(ssh_port)
-                except HTTPException:
+                if not _SSH_PORT_RE.match(str(ssh_port)):
                     return None
                 ssh_base.extend(["-p", str(ssh_port)])
-            try:
-                host_arg = validate_remote_host(remote)
-            except HTTPException:
-                return None
-            if not host_arg:
+            host_arg = remote
+            if not _REMOTE_HOST_RE.match(host_arg):
                 return None
             probe_ports = " ".join(str(start_port + i) for i in range(max_offset + 1))
             script = (
@@ -1063,20 +1090,12 @@ def setup_cookbook_routes() -> APIRouter:
         else:
             port = 8080  # llama.cpp's llama-server default — the Apple Silicon path
 
-        # Determine host. The cookbook tmux for `local=true` serves runs INSIDE
-        # the odysseus container — so the right URL for the in-container
-        # backend to reach it is `localhost`, NOT `host.docker.internal`
-        # (the latter points at the docker HOST, which doesn't have a server
-        # on that port). The previous host.docker.internal fallback only made
-        # sense for /setup-added external services like systemd Ollama on the
-        # host — and those go through manual setup, not this auto-register
-        # code path. For remote serves we still use the SSH host alias.
-        if remote:
-            host = remote.split("@")[-1] if "@" in remote else remote
-        elif re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", req.cmd or ""):
-            host = "host.docker.internal"
-        else:
-            host = "localhost"
+        # Determine host (mirrors the image path: SSH alias for remote serves).
+        # Default Docker installs keep the previous host.docker.internal
+        # behavior, because local model servers often run on the Docker host.
+        # Images that serve models inside the Odysseus container itself can opt
+        # into a container-local endpoint with ODYSSEUS_COOKBOOK_LOCAL_SERVE_HOST.
+        host = _cookbook_llm_endpoint_host(remote, req.cmd)
 
         base_url = f"http://{host}:{port}/v1"
 
@@ -1201,8 +1220,8 @@ def setup_cookbook_routes() -> APIRouter:
         """
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
-        validate_remote_host(req.remote_host)
-        req.ssh_port = validate_ssh_port(req.ssh_port)
+        _validate_remote_host(req.remote_host)
+        req.ssh_port = _validate_ssh_port(req.ssh_port)
         req.gpus = _validate_gpus(req.gpus)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
@@ -1219,6 +1238,22 @@ def setup_cookbook_routes() -> APIRouter:
             in_venv=sys.prefix != sys.base_prefix,
         )
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
+        is_windows = req.platform == "windows"
+        local_windows = IS_WINDOWS and not req.remote_host
+        llama_cpp_dependency_install = bool(
+            is_pip_install
+            and not is_windows
+            and not local_windows
+            and re.search(
+                r"(?<![A-Za-z0-9_.-])(?:llama_cpp|llama-cpp-python)(?![A-Za-z0-9_.-])",
+                req.cmd,
+            )
+        )
+        is_dependency_install = is_pip_install or llama_cpp_dependency_install
+        if llama_cpp_dependency_install:
+            req.repo_id = "llama-cpp"
+            req.cmd = "llama-server --help"
+            is_pip_install = False
         if is_pip_install:
             # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
             # pip cache so they don't fail mid-build with "No space left" (#1219)
@@ -1245,7 +1280,6 @@ def setup_cookbook_routes() -> APIRouter:
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host
-        is_windows = req.platform == "windows"
 
         # Ollama: if the user didn't pin a port, resolve the actual port we'll
         # bind to here (before runner construction) by probing the target host.
@@ -1310,6 +1344,8 @@ def setup_cookbook_routes() -> APIRouter:
             elif "vllm" in req.cmd:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
                 ps_lines.append('exit 1')
+            if is_pip_install:
+                _append_realesrgan_py313_basicsr_workaround(ps_lines, req.cmd, powershell=True)
             ps_lines.append(req.cmd)
             if is_pip_install:
                 ps_lines.append('if ($LASTEXITCODE -eq 0) { Write-Host ""; Write-Host "DOWNLOAD_OK" }')
@@ -1319,19 +1355,19 @@ def setup_cookbook_routes() -> APIRouter:
             runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
 
             _port = req.ssh_port
-            _Pf = f"-P {_port} " if _port and _port != "22" else ""
-            _pf = f"-p {_port} " if _port and _port != "22" else ""
+            scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+            ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
             launch_ps = (
-                "$sd = \\\"$env:TEMP\\odysseus-sessions\\\"; "
+                "$sd = \"$env:TEMP\\odysseus-sessions\"; "
                 f"Start-Process powershell -ArgumentList '-ExecutionPolicy','Bypass','-File','$HOME\\{remote_runner}' "
-                f"-RedirectStandardOutput \\\"$sd\\{session_id}.log\\\" "
-                f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
-                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
+                f"-RedirectStandardOutput \"$sd\\{session_id}.log\" "
+                f"-RedirectStandardError \"$sd\\{session_id}.err.log\" "
+                f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \"$sd\\{session_id}.pid\" }}"
             )
-            setup_cmd = (
-                f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
-            )
+            setup_cmds = [
+                ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                ["ssh"] + ssh_port + [remote, f'powershell -Command "{launch_ps}"']
+            ]
         else:
             # ── Linux/Termux: bash + tmux (existing flow) ──
             runner_lines = ["#!/bin/bash"]
@@ -1380,6 +1416,12 @@ def setup_cookbook_routes() -> APIRouter:
                 # ollama is found (otherwise macOS falls back to a slow source build).
                 # /opt/homebrew = Apple Silicon, /usr/local = Intel; harmless on Linux.
                 runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
+                if llama_cpp_dependency_install:
+                    runner_lines.append('echo "[odysseus] Installing native llama.cpp server (fresh build)..."')
+                    runner_lines.append('export ODYSSEUS_FORCE_LLAMA_CPP_BUILD=1')
+                    runner_lines.append('mkdir -p "$HOME/bin"')
+                    runner_lines.append('rm -f "$HOME/bin/llama-server"')
+                    runner_lines.append('rm -rf "$HOME/llama.cpp/build"')
                 runner_lines.append('if [ -d /data/data/com.termux ]; then')
                 runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
                 runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -1387,7 +1429,7 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
                 runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
                 runner_lines.append('  fi')
-                runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
+                runner_lines.append('elif [ "${ODYSSEUS_FORCE_LLAMA_CPP_BUILD:-}" = "1" ] || ! command -v llama-server &>/dev/null; then')
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
                 runner_lines.append('  mkdir -p ~/bin')
                 runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
@@ -1452,6 +1494,18 @@ def setup_cookbook_routes() -> APIRouter:
                 if remote and _ollama_host in ("0.0.0.0", "::"):
                     runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
                     runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
+                # Free GPU VRAM before starting Ollama: kill any orphaned vLLM
+                # engine cores left from previous launches. vLLM holds ~14.5 GB
+                # of VRAM even after the API server exits, starving Ollama.
+                # Idempotent and no-op if no vLLM process is running.
+                runner_lines.append('echo "[odysseus] Checking for orphaned vLLM processes hogging GPU VRAM..."')
+                runner_lines.append('_vllm_pids="$(pgrep -f "VLLM::EngineCore\|vllm serve" 2>/dev/null || true)"')
+                runner_lines.append('if [ -n "$_vllm_pids" ]; then')
+                runner_lines.append('  echo "[odysseus] Killing stale vLLM process(es): $_vllm_pids"')
+                runner_lines.append('  kill -9 $_vllm_pids 2>/dev/null || true')
+                runner_lines.append('  sleep 2')
+                runner_lines.append('  echo "[odysseus] VRAM freed for Ollama."')
+                runner_lines.append('fi')
                 runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
                 runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
                 runner_lines.append('_ody_exit=$?')
@@ -1509,25 +1563,30 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('exec bash -i')
 
             if not handled_ollama_serve and not handled_ollama_sidecar_probe:
+                if is_pip_install:
+                    _append_realesrgan_py313_basicsr_workaround(runner_lines, req.cmd)
                 _append_serve_preflight_exit_lines(
                     runner_lines,
                     keep_shell_open=not local_windows,
                 )
-                runner_lines.append(req.cmd)
+                if is_pip_install:
+                    _append_pip_install_runner_lines(runner_lines, req.cmd)
+                else:
+                    runner_lines.append(req.cmd)
                 if local_windows:
                     # Detached background process — no interactive shell to keep open.
                     # Print the exit marker the status poller looks for, then stop.
                     _append_serve_exit_code_lines(
                         runner_lines,
                         keep_shell_open=False,
-                        is_pip_install=is_pip_install,
+                        is_pip_install=is_dependency_install,
                     )
                 else:
                     # Keep shell open after exit so user can see errors
                     _append_serve_exit_code_lines(
                         runner_lines,
                         keep_shell_open=True,
-                        is_pip_install=is_pip_install,
+                        is_pip_install=is_dependency_install,
                     )
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
@@ -1542,30 +1601,28 @@ def setup_cookbook_routes() -> APIRouter:
             elif remote:
                 remote_runner = f".{session_id}_run.sh"
                 # If command references scripts/, scp those too
-                scp_extras = ""
+                scp_extras = []
                 _port = req.ssh_port
-                _Pf = f"-P {_port} " if _port and _port != "22" else ""
-                _pf = f"-p {_port} " if _port and _port != "22" else ""
+                scp_port = ["-P", str(_port)] if _port and str(_port) != "22" else []
+                ssh_port = ["-p", str(_port)] if _port and str(_port) != "22" else []
                 if "scripts/diffusion_server.py" in req.cmd:
-                    from core.constants import BASE_DIR
                     diff_script = Path(BASE_DIR) / "scripts" / "diffusion_server.py"
                     if diff_script.exists():
-                        scp_extras = f"scp -O {_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "
+                        scp_extras = [["scp", "-O", "-q"] + scp_port + [str(diff_script), f"{remote}:.diffusion_server.py"]]
                         runner_path.write_text(
                             runner_path.read_text(encoding="utf-8").replace(
                                 "scripts/diffusion_server.py", ".diffusion_server.py"
                             ),
                             encoding="utf-8",
                         )
-                setup_cmd = (
-                    f"{scp_extras}"
-                    f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                    f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
-                )
+                setup_cmds = scp_extras + [
+                    ["scp", "-O", "-q"] + scp_port + [str(runner_path), f"{remote}:{remote_runner}"],
+                    ["ssh"] + ssh_port + [remote, f"chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\""]
+                ]
             else:
-                setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
+                setup_cmds = [["tmux", "new-session", "-d", "-s", session_id, str(runner_path)]]
 
-        if setup_cmd is None:
+        if setup_cmds is None:
             # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
             try:
                 _launch_local_detached(session_id, runner_lines)
@@ -1573,14 +1630,9 @@ def setup_cookbook_routes() -> APIRouter:
                 logger.error(f"Local detached serve launch failed: {e}")
                 return {"ok": False, "error": str(e), "session_id": session_id}
         else:
-            proc = await asyncio.create_subprocess_shell(
-                setup_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.wait()
+            proc = await _run_sequential_execs(setup_cmds)
 
-            if proc.returncode != 0:
+            if proc is not None and proc.returncode != 0:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
                 return {"ok": False, "error": stderr, "session_id": session_id}
 
@@ -1592,7 +1644,7 @@ def setup_cookbook_routes() -> APIRouter:
         is_diffusion = "diffusion_server.py" in req.cmd
         if is_diffusion:
             endpoint_id = _auto_register_image_endpoint(req, remote)
-        elif not is_pip_install:
+        elif not is_dependency_install:
             endpoint_id = _auto_register_llm_endpoint(req, remote)
 
         # Crash watchdog: the auto-register above writes the endpoint row
@@ -1606,7 +1658,7 @@ def setup_cookbook_routes() -> APIRouter:
         # if N != 0 within the watch window, delete the endpoint we just
         # created. Skipped for diffusion (different image-endpoint cleanup
         # path) and pip-install tasks (no endpoint to drop).
-        if endpoint_id and not is_diffusion and not is_pip_install:
+        if endpoint_id and not is_diffusion and not is_dependency_install:
             asyncio.create_task(_serve_crash_watchdog(
                 endpoint_id=endpoint_id,
                 session_id=session_id,
@@ -1642,19 +1694,19 @@ def setup_cookbook_routes() -> APIRouter:
     async def server_setup(request: Request, req: SetupRequest):
         """Install required dependencies on a remote server via SSH."""
         require_admin(request)
-        host = validate_remote_host(req.host)
+        host = _validate_remote_host(req.host)
         if not host:
             raise HTTPException(400, "host is required")
         port = req.ssh_port
-        port = validate_ssh_port(port)
-        pf = f"-p {port} " if port and port != "22" else ""
-
+        if port is not None and port != "" and not re.fullmatch(r"\d{1,5}", port):
+            raise HTTPException(400, "Invalid ssh_port")
+        ssh_port_args = ["-p", str(port)] if port and str(port) != "22" else []
         # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
-        detect_cmd = f'ssh {pf}{host} "echo %OS%"'
         platform = "linux"
         try:
-            proc = await asyncio.create_subprocess_shell(
-                detect_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", *ssh_port_args, host, "echo %OS%",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
             out = stdout.decode().strip()
@@ -1662,9 +1714,9 @@ def setup_cookbook_routes() -> APIRouter:
                 platform = "windows"
             else:
                 # Check for Termux
-                detect_cmd2 = f"ssh {pf}{host} 'test -d /data/data/com.termux && echo termux || echo linux'"
-                proc2 = await asyncio.create_subprocess_shell(
-                    detect_cmd2, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                proc2 = await asyncio.create_subprocess_exec(
+                    "ssh", *ssh_port_args, host, "test -d /data/data/com.termux && echo termux || echo linux",
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
                 stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
                 platform = stdout2.decode().strip()
@@ -1675,14 +1727,13 @@ def setup_cookbook_routes() -> APIRouter:
             # Windows setup: ensure Python + pip + huggingface-hub via PowerShell
             # Also create the session directory for background tasks
             setup_script = (
-                'powershell -Command "'
-                "New-Item -ItemType Directory -Force -Path $env:TEMP\\odysseus-sessions | Out-Null; "
+                "powershell -Command "
+                "\"New-Item -ItemType Directory -Force -Path $env:TEMP\\odysseus-sessions | Out-Null; "
                 "try { python --version } catch { Write-Host 'ERROR: Python not found — install from python.org'; exit 1 }; "
                 "python -m pip install -q huggingface-hub 2>$null; "
-                "python -c \\\"from huggingface_hub import snapshot_download; print('OK')\\\""
-                '"'
+                "python -c \\\"from huggingface_hub import snapshot_download; print('OK')\\\"\""
             )
-            cmd = f'ssh {pf}{host} {setup_script}'
+            setup_args = ["ssh"] + ssh_port_args + [host, setup_script]
         elif platform == "termux":
             setup_script = (
                 "pkg install -y python tmux 2>/dev/null; "
@@ -1690,12 +1741,12 @@ def setup_cookbook_routes() -> APIRouter:
                 "pip install -q filelock fsspec packaging pyyaml tqdm typer httpx requests 2>/dev/null; "
                 "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
             )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+            setup_args = ["ssh"] + ssh_port_args + [host, setup_script]
         else:
             # Linux: auto-install tmux (via whichever package manager is available)
             # and huggingface_hub + hf_transfer (falling back to --user/--break-system-packages
             # on PEP-668 locked distros like Arch / newer Debian).
-            setup_script = (
+            setup_lines = [
                 # Install tmux if missing — try common package managers; skip if no sudo
                 "if ! command -v tmux >/dev/null 2>&1; then "
                 "  if command -v apt-get >/dev/null 2>&1; then sudo -n apt-get install -y tmux 2>/dev/null; "
@@ -1704,19 +1755,19 @@ def setup_cookbook_routes() -> APIRouter:
                 "  elif command -v apk >/dev/null 2>&1; then sudo -n apk add --no-interactive tmux 2>/dev/null; "
                 "  elif command -v zypper >/dev/null 2>&1; then sudo -n zypper --non-interactive install tmux 2>/dev/null; "
                 "  fi; "
-                "fi; "
-                "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'; "
-                # Install Python bits. Try system install first; fall back to --user --break-system-packages on PEP 668 systems.
-                "pip install -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "
-                "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "
-                "python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'"
-            )
-            cmd = f"ssh {pf}{host} '{setup_script}'"
+                "fi",
+                "command -v tmux >/dev/null 2>&1 || echo 'WARNING: tmux missing and auto-install failed (need passwordless sudo). Install manually.'",
+            ]
+            _append_pip_install_runner_lines(setup_lines, "pip install -q huggingface_hub hf_transfer 2>/dev/null")
+            _append_pip_install_runner_lines(setup_lines, "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")
+            _append_pip_install_runner_lines(setup_lines, "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")
+            setup_lines.append("python3 -c 'from huggingface_hub import snapshot_download; print(\"OK\")'")
+            setup_script = "\n".join(setup_lines)
+            setup_args = ["ssh"] + ssh_port_args + [host, setup_script]
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            proc = await asyncio.create_subprocess_exec(
+                *setup_args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             output = stdout.decode() + stderr.decode()
@@ -1732,10 +1783,10 @@ def setup_cookbook_routes() -> APIRouter:
     async def _run_nvidia_smi(query: str, host: str | None, ssh_port: str | None, timeout: int = 8):
         """Run nvidia-smi locally or over SSH. Returns (stdout, error_or_None)."""
         if host:
-            pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{query}'"
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            ssh_port_args = ["-p", str(ssh_port)] if ssh_port and str(ssh_port) != "22" else []
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", *ssh_port_args, host, query,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
         else:
             proc = await asyncio.create_subprocess_exec(
@@ -1755,7 +1806,7 @@ def setup_cookbook_routes() -> APIRouter:
     async def _run_gpu_shell(cmd_text: str, host: str | None, ssh_port: str | None, timeout: int = 8):
         """Run a small GPU probe shell command locally or over SSH."""
         if host:
-            pf = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+            ssh_port_args = ["-p", str(ssh_port)] if ssh_port and str(ssh_port) != "22" else []
             quoted_cmd = shlex.quote(cmd_text)
             remote_cmd = (
                 f"if command -v sh >/dev/null 2>&1; then sh -lc {quoted_cmd}; "
@@ -1763,9 +1814,9 @@ def setup_cookbook_routes() -> APIRouter:
                 f"elif command -v zsh >/dev/null 2>&1; then zsh -lc {quoted_cmd}; "
                 "else echo 'No POSIX shell found for GPU probe' >&2; exit 127; fi"
             )
-            cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} {shlex.quote(remote_cmd)}"
-            proc = await asyncio.create_subprocess_shell(
-                cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            proc = await asyncio.create_subprocess_exec(
+                "ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", *ssh_port_args, host, remote_cmd,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
         else:
             proc = await asyncio.create_subprocess_shell(
@@ -1890,8 +1941,9 @@ def setup_cookbook_routes() -> APIRouter:
         `busy` is True when free_mb/total_mb < 0.5.
         """
         require_admin(request)
-        host = validate_remote_host(host)
-        ssh_port = validate_ssh_port(ssh_port)
+        host = _validate_remote_host(host)
+        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
+            raise HTTPException(400, "Invalid ssh_port")
         gpu_query = "nvidia-smi --query-gpu=index,name,memory.free,memory.total,memory.used,utilization.gpu,uuid --format=csv,noheader,nounits"
         nvidia_error = None
         try:
@@ -2048,15 +2100,16 @@ def setup_cookbook_routes() -> APIRouter:
         sig = (req.signal or "TERM").upper()
         if sig not in ("TERM", "KILL", "INT"):
             raise HTTPException(400, "signal must be TERM, KILL, or INT")
-        host = validate_remote_host(req.host)
-        req.ssh_port = validate_ssh_port(req.ssh_port)
+        host = _validate_remote_host(req.host)
+        if req.ssh_port and not _SSH_PORT_RE.fullmatch(req.ssh_port):
+            raise HTTPException(400, "Invalid ssh_port")
         kill_cmd = f"kill -{sig} {req.pid}"
         try:
             if host:
-                pf = f"-p {req.ssh_port} " if req.ssh_port and req.ssh_port != "22" else ""
-                cmd = f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no {pf}{host} '{kill_cmd}'"
-                proc = await asyncio.create_subprocess_shell(
-                    cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                ssh_port_args = ["-p", str(req.ssh_port)] if req.ssh_port and str(req.ssh_port) != "22" else []
+                proc = await asyncio.create_subprocess_exec(
+                    "ssh", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=no", *ssh_port_args, host, kill_cmd,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
             elif IS_WINDOWS:
                 # No `kill` binary / POSIX signals on Windows. taskkill /F /T tears
@@ -2383,19 +2436,14 @@ def setup_cookbook_routes() -> APIRouter:
             host = (srv.get("host") or "").strip()
             if not host:
                 continue  # local-only entry; the /proc scan handles it
-            try:
-                host = validate_remote_host(host)
-            except HTTPException:
+            if not _REMOTE_HOST_RE.match(host):
                 continue
             sport = str(srv.get("port") or "").strip()
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if sport and sport != "22":
-                try:
-                    sport = validate_ssh_port(sport)
-                except HTTPException:
+                if not _SSH_PORT_RE.match(sport):
                     continue
-                if sport != "22":
-                    ssh_base.extend(["-p", sport])
+                ssh_base.extend(["-p", sport])
 
             try:
                 ls = subprocess.run(
@@ -2749,18 +2797,12 @@ def setup_cookbook_routes() -> APIRouter:
             if not _SESSION_ID_RE.match(session_id):
                 logger.warning(f"Skipping task with unsafe session_id: {session_id!r}")
                 continue
-            if remote:
-                try:
-                    remote = validate_remote_host(remote)
-                except HTTPException:
-                    logger.warning(f"Skipping task with unsafe remoteHost: {remote!r}")
-                    continue
-            if _tport:
-                try:
-                    _tport = validate_ssh_port(str(_tport))
-                except HTTPException:
-                    logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
-                    continue
+            if remote and not _REMOTE_HOST_RE.match(remote):
+                logger.warning(f"Skipping task with unsafe remoteHost: {remote!r}")
+                continue
+            if _tport and not _SSH_PORT_RE.match(str(_tport)):
+                logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
+                continue
             if task_platform == "windows" and remote:
                 # Windows: check PID file + Get-Process, read log tail
                 sd = "$env:TEMP\\odysseus-sessions"
