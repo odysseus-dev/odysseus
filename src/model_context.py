@@ -136,6 +136,8 @@ KNOWN_CONTEXT_WINDOWS = {
     'deepseek-coder': 64000,
     'deepseek-reasoner': 64000,
     'deepseek-r1': 64000,
+    'deepseek-v4-pro': 131072,
+    'deepseek-v4': 131072,
     'deepseek-v3': 64000,
     'deepseek-v2': 64000,
 

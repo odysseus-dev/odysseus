@@ -138,13 +138,12 @@ def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
         return text
 
     notice = (
-        "\n\n[Notice: the pasted message was too large for this model's context "
-        "window, so Odysseus kept the beginning and end.]"
+        "\n\n[Notice: the preceding portion of this message was trimmed to fit the "
+        "model context window. The most recent content is preserved below.]"
     )
     keep_chars = max(200, max_chars - len(notice))
-    head_len = max(100, int(keep_chars * 0.7))
-    tail_len = max(80, keep_chars - head_len)
-    return text[:head_len].rstrip() + notice + "\n\n" + text[-tail_len:].lstrip()
+    tail_len = max(80, keep_chars)
+    return notice + "\n" + text[-tail_len:].lstrip()
 
 
 def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
