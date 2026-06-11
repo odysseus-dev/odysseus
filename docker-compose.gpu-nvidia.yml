@@ -11,7 +11,12 @@
 # for setup details.
 services:
   odysseus:
-    build: .
+    build:
+      context: .
+      args:
+        PYTHON_BASE: ${ODYSSEUS_PYTHON_BASE:-python:3.12-slim-bookworm}
+        ODYSSEUS_LLAMA_CPP_CUDA: ${ODYSSEUS_LLAMA_CPP_CUDA:-}
+        ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR: ${ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR:-auto}
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
@@ -77,6 +82,8 @@ services:
       # NVIDIA overlay (from docker/gpu.nvidia.yml).
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - ODYSSEUS_LLAMA_CPP_CUDA=${ODYSSEUS_LLAMA_CPP_CUDA:-}
+      - ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR=${ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR:-auto}
     depends_on:
       searxng:
         condition: service_healthy

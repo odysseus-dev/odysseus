@@ -42,6 +42,7 @@ _confirm() {
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CUDA_TEST_IMAGE="${ODYSSEUS_DOCKER_GPU_TEST_IMAGE:-nvidia/cuda:12.4.1-base-ubuntu22.04}"
 
 # ─── arg parsing ─────────────────────────────────────────────────────────────
 
@@ -58,6 +59,12 @@ Informational:
                                 Container Toolkit commands without running them.
                                 Inspect these before deciding to install.
   --help                        Show this help.
+
+CUDA smoke-test image:
+  ODYSSEUS_DOCKER_GPU_TEST_IMAGE
+                                Override the CUDA image used only for the
+                                Docker GPU passthrough smoke test.
+                                Default: nvidia/cuda:12.4.1-base-ubuntu22.04
 
 Opt-in .env update (requires .env or .env.example in the repo root):
   --enable-nvidia-overlay       Write COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
@@ -165,7 +172,7 @@ _distro_label() {
 # Printed both by --print-install-commands and shown before --install runs.
 
 _debian_install_steps() {
-    cat <<'STEPS'
+    cat <<STEPS
 
   # 1. Install prerequisites
   sudo apt-get update
@@ -191,7 +198,7 @@ _debian_install_steps() {
   sudo systemctl restart docker
 
   # 7. Verify
-  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+  docker run --rm --gpus all ${CUDA_TEST_IMAGE} nvidia-smi
 
 STEPS
 }
@@ -236,9 +243,9 @@ _check_docker() {
 
 _check_gpu_passthrough() {
     _info "Testing GPU passthrough (may pull image on first run):"
-    _info "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+    _info "  docker run --rm --gpus all ${CUDA_TEST_IMAGE} nvidia-smi"
     echo
-    if docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi 2>&1; then
+    if docker run --rm --gpus all "${CUDA_TEST_IMAGE}" nvidia-smi 2>&1; then
         echo
         _GPU_PASSTHROUGH_OK=1
         _pass "GPU passthrough is working — the NVIDIA compose overlay should work."
@@ -422,7 +429,7 @@ _mode_print() {
                 echo "  sudo dnf install -y nvidia-container-toolkit"
                 echo "  sudo nvidia-ctk runtime configure --runtime=docker"
                 echo "  sudo systemctl restart docker"
-                echo "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+                echo "  docker run --rm --gpus all ${CUDA_TEST_IMAGE} nvidia-smi"
                 ;;
             opensuse*|sles)
                 _info "OpenSUSE/SLES — install commands:"
@@ -430,7 +437,7 @@ _mode_print() {
                 echo "  sudo zypper install nvidia-container-toolkit"
                 echo "  sudo nvidia-ctk runtime configure --runtime=docker"
                 echo "  sudo systemctl restart docker"
-                echo "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+                echo "  docker run --rm --gpus all ${CUDA_TEST_IMAGE} nvidia-smi"
                 ;;
             arch|manjaro|endeavouros)
                 _info "Arch Linux — install commands:"
@@ -438,7 +445,7 @@ _mode_print() {
                 echo "  sudo pacman -S nvidia-container-toolkit"
                 echo "  sudo nvidia-ctk runtime configure --runtime=docker"
                 echo "  sudo systemctl restart docker"
-                echo "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+                echo "  docker run --rm --gpus all ${CUDA_TEST_IMAGE} nvidia-smi"
                 ;;
             *)
                 _warn "Distro '${DISTRO_ID:-unknown}' is not specifically recognized."

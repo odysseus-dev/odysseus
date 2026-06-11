@@ -16,15 +16,26 @@
 # Verify with:
 #   docker info | grep -i nvidia
 #
-# This overlay only passes the host GPU through to the container.
-# The slim Odysseus image does not bundle CUDA userspace or inference
-# engines — install vLLM / llama-cpp-python / SGLang via
-# Cookbook -> Dependencies (or pip) before serving GPU models.
+# This overlay passes the host GPU through to the container. To also install
+# CUDA build tooling for Cookbook's native llama.cpp build, set:
+#   ODYSSEUS_LLAMA_CPP_CUDA=ON
+# The default build path uses python:3.12-slim-bookworm + CUDA 12.4. To try the
+# newer Debian 13/Trixie path, also set:
+#   ODYSSEUS_PYTHON_BASE=python:3.12-slim-trixie
+#   ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR=cuda13-trixie
 services:
   odysseus:
+    build:
+      context: .
+      args:
+        PYTHON_BASE: ${ODYSSEUS_PYTHON_BASE:-python:3.12-slim-bookworm}
+        ODYSSEUS_LLAMA_CPP_CUDA: ${ODYSSEUS_LLAMA_CPP_CUDA:-}
+        ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR: ${ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR:-auto}
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - ODYSSEUS_LLAMA_CPP_CUDA=${ODYSSEUS_LLAMA_CPP_CUDA:-}
+      - ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR=${ODYSSEUS_LLAMA_CPP_CUDA_FLAVOR:-auto}
     deploy:
       resources:
         reservations:

@@ -170,11 +170,18 @@ Safety notes:
 - `.env.bak.*` backups created by `--enable-nvidia-overlay` are ignored by
   Git and the Docker build context.
 
-To enable manually without the script, add this to `.env`:
+To enable manually without the script, copy `.env.example` to `.env` and
+uncomment one NVIDIA block:
 
 ```bash
-COMPOSE_FILE=docker-compose.yml:docker/gpu.nvidia.yml
+cp .env.example .env
 ```
+
+The NVIDIA section includes passthrough-only, Bookworm/CUDA 12.4, and
+Trixie/CUDA 13.3 variants. The CUDA variants enable the NVIDIA compose overlay
+(`COMPOSE_FILE`) and optional CUDA build tooling (`ODYSSEUS_LLAMA_CPP_CUDA=ON`).
+They do not install the host NVIDIA Container Toolkit; that still belongs to
+the host Docker daemon and can be checked with `scripts/check-docker-gpu.sh`.
 
 **AMD / ROCm.** AMD setup is read-only diagnostic plus manual `.env` edit. Run:
 
