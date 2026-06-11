@@ -1082,7 +1082,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let _lastToolName = '';
       const _searchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
       const _toolLabels = {
-        'web_search': _searchIcon + 'Searching',
+        'web_search': 'Searching',
         'bash': 'Running',
         'python': 'Running',
         'create_document': 'Writing',
@@ -1101,6 +1101,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         'deep_research': 'Researching',
         'list_models': 'Browsing',
         'ui_control': 'Adjusting',
+      };
+      const _toolIcons = {
+        'web_search': _searchIcon,
       };
       function _thinkingLabel() {
         if (!_lastToolName) {
@@ -2049,10 +2052,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 }
                 threadWrap.classList.add('streaming');
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
+                const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
                 const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${toolIcon}</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
