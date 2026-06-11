@@ -406,8 +406,34 @@ function _openVisionEditor(att, userMsgEl) {
 
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
-// Only strip fenced tool-call blocks that look like structured invocations, not regular code examples
-const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document)\s*\n[\s\S]*?```/gi;
+// Executable fenced tool-call blocks: must stay in sync with src/agent_tools/__init__.py TOOL_TAGS.
+// Excludes bash/python/ls which commonly appear as fenced-code language identifiers.
+const EXEC_TOOL_TAGS = [
+  'web_search', 'web_fetch', 'read_file', 'write_file', 'edit_file',
+  'grep', 'glob', 'get_workspace',
+  'create_document', 'update_document', 'edit_document',
+  'search_chats',
+  'chat_with_model', 'create_session', 'list_sessions', 'send_to_session',
+  'pipeline',
+  'manage_session', 'manage_memory', 'list_models',
+  'ui_control', 'generate_image', 'ask_user', 'update_plan',
+  'manage_tasks', 'api_call', 'ask_teacher', 'manage_skills',
+  'suggest_document',
+  'manage_endpoints', 'manage_mcp', 'manage_webhooks',
+  'manage_tokens', 'manage_documents', 'manage_settings',
+  'manage_notes', 'manage_calendar',
+  'resolve_contact', 'manage_contact', 'list_email_accounts', 'send_email',
+  'list_emails', 'read_email', 'reply_to_email', 'bulk_email',
+  'archive_email', 'delete_email', 'mark_email_read',
+  'download_model', 'serve_model', 'list_served_models', 'stop_served_model',
+  'list_downloads', 'cancel_download',
+  'search_hf_models', 'list_cached_models',
+  'list_serve_presets', 'serve_preset', 'adopt_served_model',
+  'list_cookbook_servers',
+  'edit_image', 'trigger_research', 'manage_research',
+  'app_api',
+];
+const EXEC_FENCE_RE = new RegExp('```(?:' + EXEC_TOOL_TAGS.join('|') + ')\\s*\\n[\\s\\S]*?```', 'gi');
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
