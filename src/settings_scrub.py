@@ -12,6 +12,8 @@ tunnel / reverse proxy. Scrubbing is deep (recurses nested dicts/lists) and keye
 on secret-shaped names.
 """
 
+import re
+
 _SECRET_KEY_PATTERNS = (
     "_api_key", "_apikey", "_password", "_passwd", "_pass", "_pwd",
     "_secret", "_client_secret", "_token", "_access_token", "_refresh_token",
@@ -26,8 +28,16 @@ _SENSITIVE_KEY_EXACT = (
 )
 
 
+def _canonical_key_name(name: str) -> str:
+    """Normalize common JS-style key names so secret matching is style-agnostic."""
+    n = (name or "").replace("-", "_")
+    n = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", n)
+    n = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", n)
+    return n.lower()
+
+
 def is_secret_key(name: str) -> bool:
-    n = (name or "").lower()
+    n = _canonical_key_name(name)
     if n in _SECRET_KEY_ALLOW:
         return False
     if n in _SENSITIVE_KEY_EXACT:

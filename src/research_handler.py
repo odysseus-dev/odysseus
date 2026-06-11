@@ -221,6 +221,22 @@ class ResearchHandler:
     # Task registry — background research with persistence
     # ------------------------------------------------------------------
 
+    def rename_owner(self, old_owner: str, new_owner: str) -> int:
+        """Move in-flight research tasks from one owner key to another."""
+        old_key = str(old_owner or "").strip().lower()
+        new_key = str(new_owner or "").strip().lower()
+        if not old_key or not new_key:
+            return 0
+
+        changed = 0
+        for entry in list(self._active_tasks.values()):
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("owner", "")).strip().lower() == old_key:
+                entry["owner"] = new_key
+                changed += 1
+        return changed
+
     def start_research(
         self,
         session_id: str,
