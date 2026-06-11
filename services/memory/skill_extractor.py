@@ -93,12 +93,23 @@ def _extract_json_object(text: str) -> Optional[dict]:
     obj = _as_dict(s)
     if obj is not None:
         return obj
-    # Otherwise scan each '{' candidate up to the last '}'.
+    # Otherwise scan each '{' candidate, using brace counting to find
+    # the *first* complete JSON object rather than always pairing with
+    # the last '}' (which silently picks a later object when the LLM
+    # emits multiple objects in one response).
     start = s.find("{")
     while 0 <= start < end:
-        obj = _as_dict(s[start : end + 1])
-        if obj is not None:
-            return obj
+        depth = 0
+        for i in range(start, len(s)):
+            if s[i] == "{":
+                depth += 1
+            elif s[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    obj = _as_dict(s[start : i + 1])
+                    if obj is not None:
+                        return obj
+                    break
         start = s.find("{", start + 1)
     return None
 
