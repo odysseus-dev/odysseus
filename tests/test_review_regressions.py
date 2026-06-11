@@ -635,6 +635,59 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
         assert "restricted to admin users" in result["error"]
 
 
+@pytest.mark.asyncio
+async def test_disabled_qualified_email_tool_blocks_bare_alias(monkeypatch):
+    """A bare email fence is an alias for its mcp__email__ form. Plan mode and
+    the MCP settings toggle write the QUALIFIED name into disabled_tools, so
+    the gate must block the bare spelling too — and never reach the MCP
+    manager (PR #3681 review follow-up)."""
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    def fail_get_mcp_manager():
+        raise AssertionError("blocked email tool must not reach the MCP manager")
+
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", fail_get_mcp_manager)
+
+    for bare, disabled in (
+        # qualified denylist entry blocks the bare alias…
+        ("list_emails", {"mcp__email__list_emails"}),
+        ("download_attachment", {"mcp__email__download_attachment"}),
+        # …and a bare denylist entry blocks the qualified spelling.
+        ("mcp__email__delete_email", {"delete_email"}),
+    ):
+        desc, result = await execute_tool_block(
+            SimpleNamespace(tool_type=bare, content="{}"),
+            owner="admin-user",
+            disabled_tools=disabled,
+        )
+        assert desc == f"{bare}: BLOCKED"
+        assert result["exit_code"] == 1
+        assert "disabled by user" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_tool_policy_qualified_email_block_covers_bare_alias(monkeypatch):
+    """Same aliasing rule for the turn ToolPolicy denylist."""
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+    from src.tool_policy import ToolPolicy
+
+    def fail_get_mcp_manager():
+        raise AssertionError("blocked email tool must not reach the MCP manager")
+
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", fail_get_mcp_manager)
+
+    policy = ToolPolicy(disabled_tools=frozenset({"mcp__email__send_email"}))
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="send_email", content="{}"),
+        owner="admin-user",
+        tool_policy=policy,
+    )
+    assert desc == "send_email: BLOCKED"
+    assert result["exit_code"] == 1
+
+
 def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     auth_mod = _install_core_auth_stub(monkeypatch)
     from src.tool_security import blocked_tools_for_owner

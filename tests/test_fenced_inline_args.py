@@ -58,6 +58,27 @@ def test_hyphenated_tag_is_not_a_tool_call():
     assert blocks == [], blocks
 
 
+def test_markdown_info_string_is_not_executable_python():
+    # ```python title="example.py" is Markdown fence metadata, not tool args.
+    # Same-line content other than JSON args ({...}/[...]) must not execute —
+    # otherwise a fence the model meant to display runs as code.
+    blocks = parse_tool_blocks('```python title="example.py"\nprint("hi")\n```')
+    assert blocks == [], blocks
+
+
+def test_markdown_info_string_is_not_executable_bash():
+    blocks = parse_tool_blocks('```bash title="setup"\necho hi\n```')
+    assert blocks == [], blocks
+
+
+def test_inline_json_array_args_still_parse():
+    # The narrowed same-line rule must keep accepting JSON args: { or [.
+    blocks = parse_tool_blocks('```bulk_email {"action": "archive", "uids": [1, 2]}\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [
+        ("bulk_email", '{"action": "archive", "uids": [1, 2]}')
+    ]
+
+
 def test_inline_args_fence_is_stripped_from_display():
     # strip must mirror parse: an executed inline-args fence must not leak
     # into the displayed text.
@@ -68,4 +89,11 @@ def test_inline_args_fence_is_stripped_from_display():
 def test_python3_fence_is_left_intact_in_display():
     # ...and a fence that did NOT parse as a tool call must stay visible.
     text = 'Example:\n```python3\nprint("hi")\n```'
+    assert strip_tool_blocks(text) == text
+
+
+def test_markdown_info_string_fence_is_left_intact_in_display():
+    # strip must mirror parse for info-string fences too: not executed,
+    # so not stripped from the displayed text.
+    text = 'Example:\n```python title="example.py"\nprint("hi")\n```'
     assert strip_tool_blocks(text) == text

@@ -19,13 +19,17 @@ logger = logging.getLogger(__name__)
 # Regex patterns
 # ---------------------------------------------------------------------------
 
-# Pattern 1: ```bash ... ``` fenced code blocks. The tag may be followed by
-# inline args on the same line (```list_email_accounts {}) or a newline.
+# Pattern 1: ```bash ... ``` fenced code blocks. The tag may be followed by a
+# newline (classic form) or by inline JSON args on the same line
+# (```list_email_accounts {}). Same-line content is accepted ONLY when it
+# starts with { or [ — anything else after the tag is a Markdown info string
+# (```python title="example.py"), which must stay display text rather than
+# become executable tool input.
 # (?![\w-]) keeps the alternation from prefix-matching longer fence tags:
 # without it, ```python3 would match as tool "python" with content "3\n..."
 # and execute as code.
 _TOOL_BLOCK_RE = re.compile(
-    r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])[ \t]*\n?([\s\S]*?)```",
+    r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])[ \t]*(?=\r?\n|[{\[])\r?\n?([\s\S]*?)```",
     re.IGNORECASE,
 )
 

@@ -559,6 +559,19 @@ async def _execute_tool_block_impl(
     tool = block.tool_type
     content = block.content
 
+    # A bare email tool name is an alias for its MCP-qualified form (the
+    # dispatch below routes it to mcp__email__<name>). Policy sources spell
+    # email tools either way — plan mode and the MCP settings toggle write the
+    # qualified name into the denylist, chat-level toggles the bare one — so
+    # the block/disable gates below must match on BOTH spellings. Gating only
+    # the name the model happened to emit lets a bare fence slip past a
+    # qualified denylist entry (and vice versa).
+    policy_names = {tool}
+    if tool in BUILTIN_EMAIL_TOOLS:
+        policy_names.add(f"mcp__email__{tool}")
+    elif tool.startswith("mcp__email__") and tool[len("mcp__email__"):] in BUILTIN_EMAIL_TOOLS:
+        policy_names.add(tool[len("mcp__email__"):])
+
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
     # Return a helpful error so the model retries with the correct format.
@@ -586,13 +599,13 @@ async def _execute_tool_block_impl(
             pass
 
     # Reject tools that the user has disabled for this request
-    if disabled_tools and tool in disabled_tools:
+    if disabled_tools and not policy_names.isdisjoint(disabled_tools):
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
         logger.info(f"Tool blocked by user: {tool}")
         return desc, result
 
-    if tool_policy and tool_policy.blocks(tool):
+    if tool_policy and any(tool_policy.blocks(name) for name in policy_names):
         desc = f"{tool}: BLOCKED"
         result = {
             "error": f"Execution of tool '{tool}' is forbade by the active guide-only policy.",
