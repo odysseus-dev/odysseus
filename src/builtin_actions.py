@@ -7,7 +7,7 @@ scheduler without needing an LLM call.
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
@@ -996,6 +996,29 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         return str(e), False
 
 
+def _local_to_utc_naive(dt, tz=None):
+    """Convert a naive LOCAL datetime to the matching naive UTC instant.
+
+    CalDAV-imported CalendarEvent rows store dtstart/dtend as naive UTC with
+    is_utc=True (caldav_sync._to_utc_naive), so local day-window bounds must
+    be converted before comparing against those rows. `tz` is injectable for
+    tests; None means the system timezone.
+    """
+    aware = dt.replace(tzinfo=tz) if tz else dt.astimezone()
+    return aware.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _event_local_start(dtstart, is_utc, tz=None):
+    """Return an event's start as naive LOCAL wall time for display.
+
+    Rows with is_utc=True hold UTC instants; legacy/local rows already hold
+    local wall time and pass through unchanged.
+    """
+    if is_utc and dtstart is not None:
+        return dtstart.replace(tzinfo=timezone.utc).astimezone(tz).replace(tzinfo=None)
+    return dtstart
+
+
 async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
     """Build a short morning digest: today's calendar events, unread email count
     + top-N senders/subjects, active todos."""
@@ -1003,12 +1026,19 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         from datetime import datetime as _dt, timedelta as _td
         import json as _json
 
+        from sqlalchemy import and_, or_
+
         from core.database import SessionLocal, CalendarEvent, CalendarCal, Note
         from routes.email_helpers import _imap_connect, _decode_header
 
         # ----- Calendar: today's events -----
         today = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow = today + _td(days=1)
+        # CalDAV-imported rows store UTC instants (is_utc=True); legacy/local
+        # rows store local wall time. Each kind needs the matching bounds or
+        # events near midnight land in the wrong day's brief.
+        today_utc = _local_to_utc_naive(today)
+        tomorrow_utc = _local_to_utc_naive(tomorrow)
         # v2 review HIGH-12: gate the OR-null branch on single-user
         # (unconfigured) deploys only. In a multi-user deploy, one
         # user's daily brief must not include another user's notes or
@@ -1021,13 +1051,26 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         db = SessionLocal()
         try:
             ev_q = db.query(CalendarEvent).join(CalendarCal).filter(
-                CalendarEvent.dtstart < tomorrow,
-                CalendarEvent.dtend > today,
+                or_(
+                    and_(
+                        CalendarEvent.is_utc == True,  # noqa: E712
+                        CalendarEvent.dtstart < tomorrow_utc,
+                        CalendarEvent.dtend > today_utc,
+                    ),
+                    and_(
+                        CalendarEvent.is_utc == False,  # noqa: E712
+                        CalendarEvent.dtstart < tomorrow,
+                        CalendarEvent.dtend > today,
+                    ),
+                ),
                 CalendarEvent.status != "cancelled",
             )
             if owner:
                 ev_q = owner_filter(ev_q, CalendarCal, owner, include_shared=_allow_null)
             events = ev_q.order_by(CalendarEvent.dtstart).all()
+            # Mixed UTC/local rows don't order correctly on the raw column;
+            # sort by the local wall time the brief actually displays.
+            events.sort(key=lambda ev: _event_local_start(ev.dtstart, ev.is_utc))
             # ----- Notes: pinned + non-archived todos with at least one undone item -----
             n_q = db.query(Note).filter(Note.archived == False)  # noqa: E712
             if owner:
@@ -1097,7 +1140,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         if events:
             plain.append("Calendar:")
             for e in events:
-                t = e.dtstart.strftime("%H:%M") if not e.all_day else "all day"
+                t = _event_local_start(e.dtstart, e.is_utc).strftime("%H:%M") if not e.all_day else "all day"
                 loc = f" @ {e.location}" if e.location else ""
                 plain.append(f"  {t}  {e.summary}{loc}")
             plain.append("")
