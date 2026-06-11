@@ -76,8 +76,29 @@ function findActiveToolFallback() {
   return document.querySelector('.tool-sortable-fallback');
 }
 
+/** Lowest Y for the drag mirror — top of #sidebar-tools-list, below the Tools header. */
+function resolveSidebarToolsDragFloor(fallbackTop) {
+  const toolsList = document.getElementById(SIDEBAR_TOOLS_LIST_ID);
+  if (toolsList) {
+    return toolsList.getBoundingClientRect().top;
+  }
+  const toolsSection = document.getElementById('tools-section');
+  if (!toolsSection) return fallbackTop;
+  const header = toolsSection.querySelector('.section-header-flex');
+  if (header) return header.getBoundingClientRect().bottom;
+  return fallbackTop;
+}
+
+function refreshSidebarDragLockTop() {
+  if (activeDragListRoot?.id !== SIDEBAR_TOOLS_LIST_ID || !sidebarDragBounds) return;
+  const container = document.getElementById('sidebar');
+  const fallbackTop = container?.getBoundingClientRect().top ?? sidebarDragBounds.top;
+  sidebarDragBounds.top = resolveSidebarToolsDragFloor(fallbackTop);
+}
+
 function captureDragBounds(sourceItem, listRoot) {
-  const container = listRoot.id === 'rail-tools-list'
+  const isSidebarList = listRoot.id === SIDEBAR_TOOLS_LIST_ID;
+  const container = listRoot.id === RAIL_TOOLS_LIST_ID
     ? document.getElementById('icon-rail')
     : document.getElementById('sidebar');
   if (!container || !sourceItem) {
@@ -87,13 +108,22 @@ function captureDragBounds(sourceItem, listRoot) {
   }
   const containerRect = container.getBoundingClientRect();
   const itemRect = sourceItem.getBoundingClientRect();
+  const lockTop = isSidebarList
+    ? resolveSidebarToolsDragFloor(containerRect.top)
+    : containerRect.top;
   sidebarDragBounds = {
-    top: containerRect.top,
+    top: lockTop,
     bottom: containerRect.bottom,
     left: itemRect.left,
     width: itemRect.width,
   };
   sidebarDragListBounds = listRoot.getBoundingClientRect();
+}
+
+function effectiveDragPointerY() {
+  if (!sidebarDragBounds) return sidebarDragPointerY;
+  const { top, bottom } = sidebarDragBounds;
+  return Math.max(top, Math.min(bottom, sidebarDragPointerY));
 }
 
 function clampTopToSidebar(desiredTop, height) {
@@ -204,9 +234,10 @@ function feedSortableEdgeSlot(listRoot) {
   const edge = pointerPastDragContentEdge(sidebarDragPointerY);
   if (!edge) return;
 
+  const minEdgeY = sidebarDragBounds?.top ?? sidebarDragContentTop;
   const clientY = edge === 'bottom'
     ? sidebarDragContentBottom + LIST_EDGE_SLACK_PX
-    : sidebarDragContentTop - LIST_EDGE_SLACK_PX;
+    : Math.max(minEdgeY, sidebarDragContentTop - LIST_EDGE_SLACK_PX);
   dispatchSortableListEdgeMove(lastPointerMoveEvent, clientY);
   forceSortableDragOver(listRoot);
 }
@@ -317,6 +348,7 @@ function clampSidebarFallbackPosition(fallbackEl) {
 }
 
 function sidebarClampLoop() {
+  refreshSidebarDragLockTop();
   const fallback = findActiveToolFallback();
   if (fallback) clampSidebarFallbackPosition(fallback);
   sidebarClampRafId = requestAnimationFrame(sidebarClampLoop);
@@ -618,7 +650,7 @@ function createSortableOptions(listRoot) {
       const targetKeys = pointerReorderTarget(
         listRoot,
         evt.item,
-        sidebarDragPointerY,
+        effectiveDragPointerY(),
       );
       if (!targetKeys) return;
       pointerReorderHandled = true;
@@ -633,7 +665,7 @@ function createSortableOptions(listRoot) {
       evt.item.classList.remove(TOOL_REORDER_SOURCE_HOLD);
     },
     onEnd(evt) {
-      const pointerY = sidebarDragPointerY;
+      const pointerY = effectiveDragPointerY();
       const sortableMoved = evt.oldIndex != null
         && evt.newIndex != null
         && evt.oldIndex !== evt.newIndex;
