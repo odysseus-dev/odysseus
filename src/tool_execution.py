@@ -440,7 +440,7 @@ async def execute_tool_block(
         do_list_downloads, do_cancel_download, do_search_hf_models, do_list_cached_models,
         do_list_serve_presets, do_serve_preset, do_adopt_served_model,
         do_list_cookbook_servers,
-        do_edit_image, do_trigger_research, do_manage_research, do_resolve_contact,
+        do_edit_image, do_resolve_contact,
         do_manage_contact,
         do_app_api,
     )
@@ -645,7 +645,8 @@ async def execute_tool_block(
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     elif tool in ("manage_tasks", "manage_skills", "manage_memory",
-                  "manage_rag", "pipeline", "ui_control"):
+                  "manage_rag", "pipeline", "ui_control",
+                  "trigger_research", "manage_research"):
         desc = tool
         from src.agent_tools import TOOL_HANDLERS
         result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
@@ -722,12 +723,6 @@ async def execute_tool_block(
     elif tool == "edit_file":
         result = await _direct_fallback(tool, content, workspace=workspace) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"
-    elif tool == "trigger_research":
-        desc = "trigger_research"
-        result = await do_trigger_research(content, owner=owner)
-    elif tool == "manage_research":
-        desc = "manage_research"
-        result = await do_manage_research(content, owner=owner)
     elif tool == "resolve_contact":
         desc = "resolve_contact"
         result = await do_resolve_contact(content, owner=owner)

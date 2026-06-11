@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from src.tool_implementations import do_manage_research
+from src.agent_tools.research_tools import ManageResearchTool
 from src.agent_loop import TOOL_SECTIONS
 
 _DATA_DIR = Path("data/deep_research")
@@ -42,7 +42,7 @@ def saved_report():
 
 
 async def test_manage_research_read_returns_report_text(saved_report):
-    res = await do_manage_research(json.dumps({"action": "read", "id": saved_report}))
+    res = await ManageResearchTool().execute(json.dumps({"action": "read", "id": saved_report}), ctx={})
     out = res.get("output", "")
     # The agent must get the actual report body (not HTML, not an error).
     assert "Geometry Nodes tutorials are trending" in out
@@ -53,7 +53,7 @@ async def test_manage_research_read_returns_report_text(saved_report):
 async def test_panel_launched_rp_id_is_valid_for_read(saved_report):
     # rp-* ids (panel-launched research) contain a hyphen; the read path's id
     # guard must accept them, not reject them as invalid.
-    res = await do_manage_research(json.dumps({"action": "read", "id": saved_report}))
+    res = await ManageResearchTool().execute(json.dumps({"action": "read", "id": saved_report}), ctx={})
     assert "error" not in res, res
 
 

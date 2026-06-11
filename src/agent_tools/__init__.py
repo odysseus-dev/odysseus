@@ -30,6 +30,7 @@ from .rag_tools import ManageRagTool
 from .pipeline_tools import PipelineTool
 from .ui_tools import UIControlTool
 from .vault_tools import VaultSearchTool, VaultGetTool, VaultUnlockTool
+from .research_tools import TriggerResearchTool, ManageResearchTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -57,6 +58,8 @@ TOOL_HANDLERS = {
     "vault_search": VaultSearchTool().execute,
     "vault_get": VaultGetTool().execute,
     "vault_unlock": VaultUnlockTool().execute,
+    "trigger_research": TriggerResearchTool().execute,
+    "manage_research": ManageResearchTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -96,7 +99,7 @@ _TOOL_TAGS = {
     "search_hf_models", "list_cached_models",
     "list_serve_presets", "serve_preset", "adopt_served_model",
     "list_cookbook_servers",
-    "edit_image", "trigger_research", "manage_research",
+    "edit_image",  # "trigger_research", "manage_research",
     "app_api",
 }
 
