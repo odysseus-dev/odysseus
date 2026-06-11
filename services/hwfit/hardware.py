@@ -707,6 +707,9 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "gpu_name": None,
             "gpu_vram_gb": None,
             "gpu_count": 0,
+            "gpus": [],
+            "gpu_groups": [],
+            "homogeneous": True,
             "backend": backend,
             # Set when nvidia-smi exists but failed (e.g. driver/library
             # version mismatch) — lets the UI say "GPU driver error" instead
@@ -715,6 +718,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
         }
 
     _remote_host = None
+    _remote_port = None
     _remote_platform = None
     _cache_by_host[cache_key] = (now, result)
     return result
