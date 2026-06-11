@@ -86,6 +86,10 @@ _COMMON_TOOL_NAMES = {
     "web_fetch",
     "web_search",
     "write_file",
+    "mkdir",
+    "rm",
+    "mv",
+    "cp",
 }
 
 

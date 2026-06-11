@@ -417,3 +417,213 @@ class GrepTool:
         if len(lines) >= max_hits:
             out += f"\n... [capped at {max_hits} matches]"
         return {"output": _truncate(out), "exit_code": 0}
+
+
+class MkdirTool:
+    """Tool: mkdir - create directories (like mkdir -p). Path is workspace-confined."""
+
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import (
+            _resolve_tool_path,
+            _resolve_tool_path_in_workspace,
+            _resolve_search_root,
+            _truncate
+        )
+        workspace = ctx.get('workspace')
+        raw_path = ''
+        _s = (content or '').strip()
+        if _s.startswith('{'):
+            try:
+                raw_path = str(json.loads(_s).get('path', '')).strip()
+            except (json.JSONDecodeError, TypeError):
+                raw_path = ''
+        else:
+            raw_path = _s.split(chr(10), 1)[0].strip()
+        if not raw_path:
+            return {'error': 'mkdir: path required', 'exit_code': 1}
+        try:
+            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
+                    if workspace else _resolve_tool_path(raw_path))
+        except ValueError as e:
+            return {'error': f'mkdir: {e}', 'exit_code': 1}
+        try:
+            def _do():
+                os.makedirs(path, exist_ok=True)
+            import asyncio
+            await asyncio.to_thread(_do)
+            return {'output': f"Created directory '{raw_path}' (or confirmed exists).", 'exit_code': 0}
+        except OSError as e:
+            return {'error': f'mkdir: {e}', 'exit_code': 1}
+
+
+class MkdirTool:
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import (
+            _resolve_tool_path,
+            _resolve_tool_path_in_workspace,
+            _resolve_search_root,
+            _truncate
+        )
+        workspace = ctx.get("workspace")
+        raw_path = ""
+        _s = (content or "").strip()
+        if _s.startswith("{"):
+            try:
+                raw_path = str(json.loads(_s).get("path", "")).strip()
+            except (json.JSONDecodeError, TypeError):
+                raw_path = ""
+        else:
+            raw_path = _s.split("
+", 1)[0].strip()
+        if not raw_path:
+            return {"error": "mkdir: path required", "exit_code": 1}
+        try:
+            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
+                    if workspace else _resolve_tool_path(raw_path))
+        except ValueError as e:
+            return {"error": f"mkdir: {e}", "exit_code": 1}
+        try:
+            def _do():
+                os.makedirs(path, exist_ok=True)
+            await asyncio.to_thread(_do)
+            return {"output": f"Created directory '{raw_path}' (or confirmed exists).", "exit_code": 0}
+        except OSError as e:
+            return {"error": f"mkdir: {e}", "exit_code": 1}
+
+
+class RmTool:
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import (
+            _resolve_tool_path,
+            _resolve_tool_path_in_workspace,
+            _resolve_search_root,
+            _truncate
+        )
+        workspace = ctx.get("workspace")
+        raw_path = ""
+        recursive = False
+        _s = (content or "").strip()
+        if _s.startswith("{"):
+            try:
+                parsed = json.loads(_s)
+                raw_path = str(parsed.get("path", "")).strip()
+                recursive = bool(parsed.get("recursive", False))
+            except (json.JSONDecodeError, TypeError):
+                raw_path = ""
+        else:
+            raw_path = _s.split("
+", 1)[0].strip()
+        if not raw_path:
+            return {"error": "rm: path required", "exit_code": 1}
+        try:
+            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
+                    if workspace else _resolve_tool_path(raw_path))
+        except ValueError as e:
+            return {"error": f"rm: {e}", "exit_code": 1}
+        if not os.path.exists(path):
+            return {"error": f"rm: {raw_path}: not found", "exit_code": 1}
+        try:
+            def _do():
+                if os.path.isdir(path):
+                    if not recursive:
+                        raise IsADirectoryError(f"{raw_path} is a directory - use recursive=True to remove")
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+            await asyncio.to_thread(_do)
+            return {"output": f"Removed '{raw_path}'.", "exit_code": 0}
+        except IsADirectoryError as e:
+            return {"error": f"rm: {e}", "exit_code": 1}
+        except OSError as e:
+            return {"error": f"rm: {e}", "exit_code": 1}
+
+
+class MvTool:
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import (
+            _resolve_tool_path,
+            _resolve_tool_path_in_workspace,
+            _resolve_search_root,
+            _truncate
+        )
+        workspace = ctx.get("workspace")
+        source = ""
+        dest = ""
+        _s = (content or "").strip()
+        if _s.startswith("{"):
+            try:
+                parsed = json.loads(_s)
+                source = str(parsed.get("source", "")).strip()
+                dest = str(parsed.get("dest", "")).strip()
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if not source or not dest:
+            return {"error": "mv: source and dest required", "exit_code": 1}
+        try:
+            src_path = (_resolve_tool_path_in_workspace(workspace, source)
+                        if workspace else _resolve_tool_path(source))
+            dst_path = (_resolve_tool_path_in_workspace(workspace, dest)
+                        if workspace else _resolve_tool_path(dest))
+        except ValueError as e:
+            return {"error": f"mv: {e}", "exit_code": 1}
+        if not os.path.exists(src_path):
+            return {"error": f"mv: {source}: not found", "exit_code": 1}
+        try:
+            def _do():
+                d = os.path.dirname(dst_path)
+                if d:
+                    os.makedirs(d, exist_ok=True)
+                shutil.move(src_path, dst_path)
+            await asyncio.to_thread(_do)
+            return {"output": f"Moved '{source}' to '{dest}'.", "exit_code": 0}
+        except OSError as e:
+            return {"error": f"mv: {e}", "exit_code": 1}
+
+
+class CpTool:
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import (
+            _resolve_tool_path,
+            _resolve_tool_path_in_workspace,
+            _resolve_search_root,
+            _truncate
+        )
+        workspace = ctx.get("workspace")
+        source = ""
+        dest = ""
+        recursive = False
+        _s = (content or "").strip()
+        if _s.startswith("{"):
+            try:
+                parsed = json.loads(_s)
+                source = str(parsed.get("source", "")).strip()
+                dest = str(parsed.get("dest", "")).strip()
+                recursive = bool(parsed.get("recursive", False))
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if not source or not dest:
+            return {"error": "cp: source and dest required", "exit_code": 1}
+        try:
+            src_path = (_resolve_tool_path_in_workspace(workspace, source)
+                        if workspace else _resolve_tool_path(source))
+            dst_path = (_resolve_tool_path_in_workspace(workspace, dest)
+                        if workspace else _resolve_tool_path(dest))
+        except ValueError as e:
+            return {"error": f"cp: {e}", "exit_code": 1}
+        if not os.path.exists(src_path):
+            return {"error": f"cp: {source}: not found", "exit_code": 1}
+        if os.path.isdir(src_path) and not recursive:
+            return {"error": f"cp: {source} is a directory - use recursive=True to copy directories", "exit_code": 1}
+        try:
+            def _do():
+                d = os.path.dirname(dst_path)
+                if d:
+                    os.makedirs(d, exist_ok=True)
+                if os.path.isdir(src_path):
+                    shutil.copytree(src_path, dst_path, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            await asyncio.to_thread(_do)
+            return {"output": f"Copied '{source}' to '{dest}'.", "exit_code": 0}
+        except OSError as e:
+            return {"error": f"cp: {e}", "exit_code": 1}

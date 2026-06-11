@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
-from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, MkdirTool, RmTool, MvTool, CpTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 
 TOOL_HANDLERS = {
@@ -39,6 +39,10 @@ TOOL_HANDLERS = {
     "edit_document": EditDocumentTool().execute,
     "suggest_document": SuggestDocumentTool().execute,
     "manage_documents": ManageDocumentTool().execute,
+    "mkdir": MkdirTool().execute,
+    "rm": RmTool().execute,
+    "mv": MvTool().execute,
+    "cp": CpTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -83,6 +87,10 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
+             "mkdir",
+             "rm",
+             "mv",
+             "cp",
              "app_api"}
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
