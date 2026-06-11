@@ -62,6 +62,33 @@ def _stream_set(session_id: str, **fields) -> None:
     rec.update(fields)
 
 
+def _resolve_request_workspace(request, raw_value) -> tuple:
+    """Resolve the posted workspace for this request: (workspace, rejected).
+
+    Privilege is checked BEFORE the path ever touches the filesystem. Only
+    admin/single-user callers can use the workspace-backed file/shell tools,
+    so only they get vet_workspace() and the workspace_rejected signal. For
+    any other caller the submitted value is dropped uniformly, with no vetting
+    and no event: otherwise the presence/absence of workspace_rejected would
+    let a non-admin chat caller probe which host paths exist.
+
+    vet_workspace rejects non-directories, sensitive roots (.ssh, .gnupg,
+    ...), and filesystem roots; on rejection there is no confinement and the
+    default tool-path allowlist applies. The rejected value is surfaced so the
+    stream can tell an admin client (which believes a workspace is active)
+    that it was dropped.
+    """
+    requested = (raw_value or "").strip()
+    if not requested:
+        return "", ""
+    from src.tool_security import owner_is_admin_or_single_user
+    if not owner_is_admin_or_single_user(get_current_user(request)):
+        return "", ""
+    from src.tool_execution import vet_workspace
+    workspace = vet_workspace(requested) or ""
+    return workspace, (requested if not workspace else "")
+
+
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     if not session_url or not endpoint_base:
         return False
@@ -457,6 +484,10 @@ def setup_chat_routes(
         # manual form posts that still send plan_mode=true.
         plan_mode = False
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        # Workspace: confine the agent's file/shell tools to this folder.
+        workspace, workspace_rejected = _resolve_request_workspace(
+            request, form_data.get("workspace")
+        )
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
@@ -760,6 +791,13 @@ def setup_chat_routes(
 
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
+
+            # The client sent a workspace the server refused to bind (deleted
+            # folder, file path, sensitive dir, filesystem root). Tell it up
+            # front so the UI can clear the pill instead of displaying a
+            # confinement that is not actually in effect.
+            if workspace_rejected:
+                yield f"data: {json.dumps({'type': 'workspace_rejected', 'data': {'path': workspace_rejected}})}\n\n"
 
             if ctx.preprocessed.attachment_meta:
                 yield f"data: {json.dumps({'type': 'attachments', 'data': ctx.preprocessed.attachment_meta})}\n\n"
@@ -1138,6 +1176,7 @@ def setup_chat_routes(
                         fallbacks=_fallback_candidates,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
+                        workspace=workspace or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

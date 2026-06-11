@@ -416,6 +416,17 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         except Exception as e:
             logger.warning("Failed to rename memory.json owner references %s -> %s: %s", old_username, new_username, e)
 
+        # uploads.json: upload rows use owner metadata for access checks and
+        # owner-prefixed index keys for dedupe. Rename both so attachments keep
+        # resolving after the account username changes.
+        try:
+            upload_handler = getattr(request.app.state, "upload_handler", None)
+            rename_owner = getattr(upload_handler, "rename_owner", None)
+            if callable(rename_owner):
+                rename_owner(old_username, new_username)
+        except Exception as e:
+            logger.warning("Failed to rename upload owner references %s -> %s: %s", old_username, new_username, e)
+
         # skills: SKILL.md frontmatter carries owner: <username>; the usage
         # sidecar (_usage.json) keys entries as owner::skill-name. Both must
         # be updated or the renamed user's Skills panel goes empty.

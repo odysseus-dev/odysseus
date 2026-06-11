@@ -1,4 +1,4 @@
-"""Renaming a user must update all three owner caches, not just the SQL DB.
+"""Renaming a user must update non-SQL owner stores, not just the SQL DB.
 
 The DB owner-rename loop in the rename_user route updates every SQL-backed
 owner column, but three file-backed / in-memory stores are left stale:
@@ -16,6 +16,9 @@ owner column, but three file-backed / in-memory stores are left stale:
 
 4. data/memory.json  — a flat array where every entry has an `owner` field;
    memory_manager.load(owner=user) filters on it, so all memories vanish.
+
+5. data/uploads/uploads.json — each upload row carries an `owner` field and
+   owner-prefixed index key; stale metadata denies renamed users their uploads.
 
 Regression coverage: these bugs are invisible in unit tests that mock the DB
 loop but don't exercise the file/cache patches added to the route.
@@ -67,11 +70,12 @@ def rename_endpoint(monkeypatch, tmp_path):
     return _route(ar.setup_auth_routes(am), "rename_user"), am, tmp_path
 
 
-def _request(tmp_path, session_manager=None, token="t", research_handler=None):
+def _request(tmp_path, session_manager=None, token="t", research_handler=None, upload_handler=None):
     state = SimpleNamespace(
         invalidate_token_cache=lambda: None,
         session_manager=session_manager,
         research_handler=research_handler,
+        upload_handler=upload_handler,
     )
     return SimpleNamespace(
         cookies={"odysseus_session": token},
@@ -415,7 +419,56 @@ def test_rename_no_memory_json_does_not_crash(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 4. Skills (SKILL.md frontmatter + _usage.json sidecar)
+# 4. uploads.json
+# ---------------------------------------------------------------------------
+
+def test_rename_updates_upload_metadata_owner(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+    from src.upload_handler import UploadHandler
+
+    upload_dir = tmp_path / "uploads"
+    dated = upload_dir / "2026" / "06" / "09"
+    dated.mkdir(parents=True)
+    upload_id = "a" * 32 + ".txt"
+    upload_path = dated / upload_id
+    upload_path.write_text("alice private upload", encoding="utf-8")
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    handler._atomic_write_json(
+        str(upload_dir / "uploads.json"),
+        {
+            "alice:hash-alice": {
+                "id": upload_id,
+                "path": str(upload_path),
+                "mime": "text/plain",
+                "size": upload_path.stat().st_size,
+                "name": "note.txt",
+                "hash": "hash-alice",
+                "original_name": "note.txt",
+                "uploaded_at": "2026-06-09T10:00:00",
+                "last_accessed": "2026-06-09T10:00:00",
+                "client_ip": "127.0.0.1",
+                "owner": "alice",
+            },
+        },
+    )
+
+    asyncio.run(
+        endpoint(
+            "alice",
+            SimpleNamespace(username="alice2"),
+            _request(tmp_path, upload_handler=handler),
+        )
+    )
+
+    updated = json.loads((upload_dir / "uploads.json").read_text(encoding="utf-8"))
+    assert "alice:hash-alice" not in updated
+    assert updated["alice2:hash-alice"]["owner"] == "alice2"
+    assert handler.resolve_upload(upload_id, owner="alice2")["path"] == str(upload_path)
+    assert handler.resolve_upload(upload_id, owner="alice") is None
+
+
+# ---------------------------------------------------------------------------
+# 5. Skills (SKILL.md frontmatter + _usage.json sidecar)
 # ---------------------------------------------------------------------------
 
 _SKILL_MD = """\
@@ -522,7 +575,7 @@ def test_rename_usage_keys_case_insensitive(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 5. Rollback: auth rename must be restored if SQL owner migration fails
+# 6. Rollback: auth rename must be restored if SQL owner migration fails
 # ---------------------------------------------------------------------------
 
 def test_owner_migration_failure_rolls_back_auth_rename(monkeypatch, tmp_path):
@@ -583,7 +636,7 @@ def test_self_rename_owner_migration_failure_rolls_back_auth_session(monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# 6. P1 regression: rejected auth rename must not mutate file-backed stores
+# 7. P1 regression: rejected auth rename must not mutate file-backed stores
 # ---------------------------------------------------------------------------
 
 def test_rejected_rename_does_not_mutate_files(monkeypatch, tmp_path):
