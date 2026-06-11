@@ -11,7 +11,7 @@ clear_fake_database_modules()
 from core.database import Base, Session as DbSession, ChatMessage as DbChatMessage
 from core.session_manager import SessionManager
 from src.topic_analyzer import analyze_topics
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def _sm(*messages):
@@ -59,15 +59,15 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
         model="gpt-4",
         owner="alice",
         message_count=1,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
     )
     m = DbChatMessage(
         id="msg-1",
         session_id=session_id,
         role="user",
         content="I love writing python code.",
-        timestamp=datetime.utcnow()
+        timestamp=datetime.now(timezone.utc).replace(tzinfo=None)
     )
     
     db.add(s)

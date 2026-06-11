@@ -73,7 +73,7 @@ async def test_negative_offset_does_not_fire_early(schedule):
     value = stored(res["id"])
     # on the old code the raw "-05:00" string compared as 3h+(-5h offset)
     # in the past and fired on the next poller tick
-    assert not value <= datetime.utcnow().isoformat()
+    assert not value <= datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 @pytest.mark.asyncio
@@ -92,7 +92,7 @@ async def test_z_suffix_stored_without_suffix(schedule):
 @pytest.mark.asyncio
 async def test_naive_utc_send_at_unchanged(schedule):
     endpoint, stored = schedule
-    naive = (datetime.utcnow() + timedelta(days=1)).isoformat()
+    naive = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1)).isoformat()
     res = await endpoint(
         {"to": "a@example.com", "body": "b", "send_at": naive}, owner="alice"
     )
