@@ -1,4 +1,4 @@
-from src.search.ranking import rank_search_results
+from services.search.ranking import rank_search_results
 
 
 def test_news_queries_prefer_news_sources_over_sports_and_social_results():

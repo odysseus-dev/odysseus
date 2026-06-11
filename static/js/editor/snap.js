@@ -37,7 +37,8 @@ export function computeSnap(layer, nx, ny, ctx) {
     { y: ch, label: 'canvas-b' },
     { y: ch / 2, label: 'canvas-cy' },
   ];
-  for (const other of ctx.otherLayers) {
+  const otherLayers = Array.isArray(ctx.otherLayers) ? ctx.otherLayers : [];
+  for (const other of otherLayers) {
     if (!other.visible || other.id === layer.id) continue;
     const o = other.offset || { x: 0, y: 0 };
     const ow = other.canvas.width, oh = other.canvas.height;

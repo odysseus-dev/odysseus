@@ -39,7 +39,7 @@ from routes.email_helpers import (
     _extract_attachment_text, _extract_text,
     _pre_retrieve_context,
     _attach_compose_uploads, _cleanup_compose_uploads, _q,
-    SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE,
+    SCHEDULED_DB, _EMAIL_REPLY_SYS_PROMPT_BASE, _email_cache_owner_clause,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,36 @@ async def _run_auto_summarize_once(do_summary: bool = True, do_reply: bool = Tru
         for k, v in prev.items():
             s2[k] = v
         _save_settings(s2)
+
+
+def _latest_inbox_fallback_uids(conn, reconnect):
+    """Latest INBOX UIDs via ``SEARCH ALL``, with a poisoned-socket guard (#1613).
+
+    On a large Gmail mailbox the fallback ``SEARCH ALL`` can time out mid-reply,
+    leaving its enormous ``* SEARCH <uids…>`` line unread on the socket. The next
+    command (the downstream re-select / EXAMINE) then reads those leftover bytes
+    and fails with ``EXAMINE => unexpected response: b'325188 …'``. Reconnecting
+    on failure guarantees the downstream command starts from a clean socket.
+
+    Returns ``(uids, conn)`` — ``conn`` is the live connection to keep using: the
+    same one on success, a fresh one (via ``reconnect()``) if we had to recover.
+    """
+    try:
+        conn.select("INBOX", readonly=True)
+        status, data = conn.uid("SEARCH", None, "ALL")
+        uids = []
+        if status == "OK" and data and data[0]:
+            for u in reversed(data[0].split()[-8:]):
+                uids.append(("INBOX", u))
+            logger.info("Email task SINCE scan found no messages; fell back to latest INBOX messages")
+        return uids, conn
+    except Exception as _e:
+        logger.warning(f"Latest-INBOX fallback scan failed: {_e}")
+        try:
+            conn.logout()
+        except Exception:
+            pass
+        return [], reconnect()
 
 
 async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None, progress_cb=None) -> str:
@@ -180,7 +210,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if auto_cal:
             for sent_name in ("Sent", "INBOX/Sent", "Sent Items", "[Gmail]/Sent Mail"):
                 try:
-                    st, _ = conn.select(sent_name, readonly=True)
+                    st, _ = conn.select(_q(sent_name), readonly=True)
                     if st == "OK":
                         folders_to_scan.append(sent_name)
                         break
@@ -201,24 +231,27 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # the latest visible inbox messages so Clear cache -> Run again can
         # actually repopulate AI reply/summary/tag caches.
         if not uid_list:
-            try:
-                conn.select("INBOX", readonly=True)
-                status, data = conn.uid("SEARCH", None, "ALL")
-                if status == "OK" and data and data[0]:
-                    for u in reversed(data[0].split()[-8:]):
-                        uid_list.append(("INBOX", u))
-                    logger.info("Email task SINCE scan found no messages; fell back to latest INBOX messages")
-            except Exception as _e:
-                logger.warning(f"Latest-INBOX fallback scan failed: {_e}")
-        # Re-select INBOX as default for downstream code
+            _fb_uids, conn = _latest_inbox_fallback_uids(
+                conn, lambda: _imap_connect(account_id, owner=account_owner)
+            )
+            uid_list.extend(_fb_uids)
+        # Re-select INBOX as default for downstream code (on a clean socket even
+        # if the SEARCH ALL fallback above failed — see #1613).
         conn.select("INBOX", readonly=True)
         if not uid_list:
             return "No recent emails"
         await _emit_progress(progress_cb, f"Found {len(uid_list)} recent email(s); checking cache…")
 
         _c = _sql3.connect(SCHEDULED_DB)
-        _sum_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_summaries").fetchall()}
-        _reply_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_ai_replies").fetchall()}
+        _cache_owner_clause, _cache_owner_params = _email_cache_owner_clause(account_owner)
+        _sum_existing = {r[0] for r in _c.execute(
+            f"SELECT message_id FROM email_summaries WHERE {_cache_owner_clause}",
+            _cache_owner_params,
+        ).fetchall()}
+        _reply_existing = {r[0] for r in _c.execute(
+            f"SELECT message_id FROM email_ai_replies WHERE {_cache_owner_clause}",
+            _cache_owner_params,
+        ).fetchall()}
         if auto_tag or auto_spam:
             if account_owner:
                 _tag_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_tags WHERE owner=?", (account_owner,)).fetchall()}
@@ -226,12 +259,18 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 _tag_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_tags WHERE owner='' OR owner IS NULL").fetchall()}
         else:
             _tag_existing = set()
-        _cal_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_calendar_extractions").fetchall()} if auto_cal else set()
+        _cal_existing = {r[0] for r in _c.execute(
+            f"SELECT message_id FROM email_calendar_extractions WHERE {_cache_owner_clause}",
+            _cache_owner_params,
+        ).fetchall()} if auto_cal else set()
         # Urgency is handled by the built-in `check_email_urgency` task. Keep
         # this legacy poller path disabled so users don't get two independent
         # urgent-email systems.
         auto_urgent = False
-        _urgent_existing = {r[0] for r in _c.execute("SELECT message_id FROM email_urgency_alerts").fetchall()} if auto_urgent else set()
+        _urgent_existing = {r[0] for r in _c.execute(
+            f"SELECT message_id FROM email_urgency_alerts WHERE {_cache_owner_clause}",
+            _cache_owner_params,
+        ).fetchall()} if auto_urgent else set()
         _c.close()
 
         # Hoist the self-address lookup OUT of the per-email loop — fetching
@@ -389,9 +428,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 _c = _sql3.connect(SCHEDULED_DB)
                                 _c.execute("""
                                     INSERT OR REPLACE INTO email_summaries
-                                    (message_id, uid, folder, subject, sender, summary, model_used, created_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
+                                    (message_id, owner, uid, folder, subject, sender, summary, model_used, created_at)
+                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, subject, sender, summary, model, datetime.utcnow().isoformat()))
                                 _c.commit()
                                 _c.close()
                                 _sum_existing.add(message_id)
@@ -432,9 +471,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             _c = _sql3.connect(SCHEDULED_DB)
                             _c.execute("""
                                 INSERT OR REPLACE INTO email_ai_replies
-                                (message_id, uid, folder, reply, model_used, created_at)
-                                VALUES (?, ?, ?, ?, ?, ?)
-                            """, (message_id, uid.decode() if isinstance(uid, bytes) else str(uid), _folder, reply, model, datetime.utcnow().isoformat()))
+                                (message_id, owner, uid, folder, reply, model_used, created_at)
+                                VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), _folder, reply, model, datetime.utcnow().isoformat()))
                             _c.commit()
                             _c.close()
                             _reply_existing.add(message_id)
@@ -649,8 +688,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                         _cc = _sql3.connect(SCHEDULED_DB)
                         _cc.execute(
                             "INSERT OR REPLACE INTO email_calendar_extractions "
-                            "(message_id, uid, events_created, created_at) VALUES (?, ?, ?, ?)",
-                            (message_id, uid.decode() if isinstance(uid, bytes) else str(uid),
+                            "(message_id, owner, uid, events_created, created_at) VALUES (?, ?, ?, ?, ?)",
+                            (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid),
                              _cal_run_count, datetime.utcnow().isoformat())
                         )
                         _cc.commit()
@@ -707,9 +746,9 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 _uc = _sql3.connect(SCHEDULED_DB)
                                 _uc.execute(
                                     "INSERT OR REPLACE INTO email_urgency_alerts "
-                                    "(message_id, uid, folder, subject, sender, urgency, reason, alerted, created_at) "
-                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                    (message_id, uid.decode() if isinstance(uid, bytes) else str(uid),
+                                    "(message_id, owner, uid, folder, subject, sender, urgency, reason, alerted, created_at) "
+                                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                    (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid),
                                      _folder, subject, sender, urgency, reason,
                                      1 if urgency in ("critical", "high") else 0,
                                      datetime.utcnow().isoformat())
@@ -731,8 +770,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     from src.settings import load_settings as _ls
                                     _pub = (_ls().get("app_public_url") or "").rstrip("/")
                                     uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-                                    from urllib.parse import quote as _q
-                                    open_url = f"{_pub}/#email={_q(_folder, safe='')}:{uid_str}" if _pub else ""
+                                    from urllib.parse import quote as _url_q
+                                    open_url = f"{_pub}/#email={_url_q(_folder, safe='')}:{uid_str}" if _pub else ""
 
                                     alert_subject = f"[{urgency.upper()}] {subject}"
                                     alert_body = (
@@ -829,7 +868,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             _req.post, url, json=payload, headers=req_headers, timeout=120
                         )
                         if not resp.ok:
-                            logger.warning(f"Auto-classify {uid.decode()} HTTP {resp.status_code}: {resp.text[:200]}")
+                            logger.warning(f"Auto-classify {uid.decode() if isinstance(uid, bytes) else str(uid)} HTTP {resp.status_code}: {resp.text[:200]}")
                         else:
                             rdata = resp.json()
                             m = (rdata.get("choices") or [{}])[0].get("message", {})
@@ -860,7 +899,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                 if is_spam and auto_spam and spam_folder:
                                     if _imap_move(uid, spam_folder, account_id=account_id, owner=account_owner):
                                         moved_to = spam_folder
-                                        logger.info(f"Auto-spam moved uid={uid.decode()} to {spam_folder}: {spam_reason}")
+                                        logger.info(f"Auto-spam moved uid={uid.decode() if isinstance(uid, bytes) else str(uid)} to {spam_folder}: {spam_reason}")
 
                                 _c = _sql3.connect(SCHEDULED_DB)
                                 _c.execute("""
@@ -868,7 +907,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                     (message_id, owner, uid, folder, subject, sender, tags, spam_verdict,
                                      spam_reason, moved_to, model_used, created_at)
                                     VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
-                                """, (message_id, account_owner or "", uid.decode(), subject, sender,
+                                """, (message_id, account_owner or "", uid.decode() if isinstance(uid, bytes) else str(uid), subject, sender,
                                       json.dumps(tags), 1 if is_spam else 0,
                                       spam_reason, moved_to, model, datetime.utcnow().isoformat()))
                                 _c.commit()
@@ -1007,7 +1046,7 @@ def _scheduled_poll_once() -> dict:
                 try:
                     with _imap(row_account_id, owner=row_owner) as imap:
                         sent_folder = _detect_sent_folder(imap)
-                        imap.append(sent_folder, "\\Seen", None, outer.as_bytes())
+                        imap.append(_q(sent_folder), "\\Seen", None, outer.as_bytes())
                 except Exception as e:
                     logger.warning(f"Failed to append scheduled {sid} to Sent: {e}")
 

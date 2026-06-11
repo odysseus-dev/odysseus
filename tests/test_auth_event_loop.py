@@ -15,6 +15,7 @@ import os
 import sys
 import types
 import asyncio
+import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -64,8 +65,13 @@ def _ensure_stub(name: str, **attrs):
     return mod
 
 
-_ensure_stub("core.database", SessionLocal=MagicMock())
-_ensure_stub("core.auth", AuthManager=MagicMock())
+@pytest.fixture(autouse=True)
+def _event_loop_stubs(monkeypatch):
+    db = _ensure_stub("core.database", SessionLocal=MagicMock())
+    auth = _ensure_stub("core.auth", AuthManager=MagicMock())
+    monkeypatch.setitem(sys.modules, "core.database", db)
+    monkeypatch.setitem(sys.modules, "core.auth", auth)
+
 
 from routes.auth_routes import setup_auth_routes, LoginRequest
 
@@ -89,7 +95,7 @@ def test_login_offloads_bcrypt_bearing_calls(monkeypatch):
     monkeypatch.setattr("routes.auth_routes.asyncio.to_thread", fake_to_thread)
     auth.verify_password.return_value = True
     auth.totp_enabled.return_value = False
-    auth.create_session.return_value = "tok-123"
+    auth.create_session_trusted.return_value = "tok-123"
 
     login = _login_endpoint(auth)
 
@@ -101,7 +107,7 @@ def test_login_offloads_bcrypt_bearing_calls(monkeypatch):
 
     assert result["ok"] is True
     auth.verify_password.assert_called_once()
-    auth.create_session.assert_called_once()
+    auth.create_session_trusted.assert_called_once()
     # The whole point: the expensive bcrypt-bearing calls go through
     # asyncio.to_thread rather than running inline in the request coroutine.
-    assert calls == [auth.verify_password, auth.create_session]
+    assert calls == [auth.verify_password, auth.create_session_trusted]

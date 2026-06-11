@@ -1,5 +1,3 @@
-import importlib.machinery
-import importlib.util
 import io
 import tarfile
 from pathlib import Path
@@ -7,14 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.helpers.cli_loader import load_script
+
 
 def _load_backup_cli():
-    path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-backup"
-    loader = importlib.machinery.SourceFileLoader("odysseus_backup_under_test", str(path))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
+    return load_script("odysseus-backup")
 
 
 def _patch_repo(module, monkeypatch, root: Path):
@@ -28,6 +23,17 @@ def _restore_args(path: Path):
 
 def _verify_args(path: Path):
     return SimpleNamespace(path=str(path), pretty=False)
+
+
+def test_snapshot_rejects_output_inside_data_dir(tmp_path, monkeypatch):
+    backup = _load_backup_cli()
+    repo = tmp_path / "repo"
+    data = repo / "data"
+    data.mkdir(parents=True)
+    _patch_repo(backup, monkeypatch, repo)
+
+    with pytest.raises(SystemExit):
+        backup._reject_output_inside_data(data / "self.tar.gz")
 
 
 def test_restore_rejects_symlink_escape(tmp_path, monkeypatch):

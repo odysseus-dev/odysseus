@@ -58,6 +58,8 @@ def _resolve(name: str) -> Path | None:
     """Match a log by exact filename, basename-without-extension, or
     substring. Returns the most-recently-modified match if there are
     ties."""
+    if not isinstance(name, str):
+        return None
     candidates = []
     for base in (_APP_LOGS, _TMUX_LOGS):
         if not base.is_dir():

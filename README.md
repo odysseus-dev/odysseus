@@ -1,5 +1,7 @@
 # Odysseus
 
+> **Branch note:** `dev` is the default branch and contains the latest development changes, but it may be unstable. For the more stable curated branch, use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main).
+
 ```
 ───────────────────────────────────────────────
  ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Odysseus vers. 1.0
@@ -11,7 +13,7 @@
 A self-hosted AI workspace -- meant to be the self-hosted version of the UI experience you get from ChatGPT and Claude. But with more jank and fun. Running on your own hardware, with your own data -- local-first, privacy-first, and no trojan.
 
 ## Features
-  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI</sub>
+  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI · GitHub Copilot</sub>
   - **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
   - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
   - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
@@ -64,6 +66,8 @@ cd odysseus
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
+To include optional extras in the image (PDF viewer, Office extraction; includes AGPL PyMuPDF), build with `docker compose build --build-arg INSTALL_OPTIONAL=true` before `up`.
+
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
@@ -82,8 +86,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
 downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
-connect to API or remote model servers instead. Use `--host 0.0.0.0` only when
-you intentionally want LAN/reverse-proxy access.
+connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an
@@ -189,6 +192,20 @@ RENDER_GID=989
 
 For NVIDIA/AMD GPU support, also read the comments in the selected overlay file: docker/gpu.nvidia.yml or docker/gpu.amd.yml.
 
+**Stack-management UIs (Portainer, Coolify, Dockhand, etc.).** These tools
+often accept only a single Compose file and do not reliably honor `COMPOSE_FILE`
+or multiple `-f` overlays. CLI users should keep using the `COMPOSE_FILE`
+overlay workflow above. For stack UIs, point the stack at one of the standalone
+files instead, which bundle the base stack plus the GPU settings:
+
+- `docker-compose.gpu-nvidia.yml` — still requires the NVIDIA Container Toolkit
+  on the host.
+- `docker-compose.gpu-amd.yml` — still requires host ROCm/kfd/DRI setup, the
+  `video`/`render` group membership, and `RENDER_GID` when needed.
+
+The base `docker-compose.yml` plus the `docker/gpu.*.yml` overlays remain the
+source of truth; the standalone files mirror them for single-file deployments.
+
 Verify after enabling either overlay:
 
 ```bash
@@ -221,6 +238,13 @@ Ollama must listen outside its own loopback interface:
 ```bash
 OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
+
+This connects Odysseus in Docker to an Ollama server that is already running on
+your host machine; it does not start Ollama inside the container.
+`host.docker.internal` is Docker's hostname for the host machine from inside the
+container. Cookbook **Serve** is a separate workflow for serving downloaded
+models through Odysseus/llama.cpp, so Windows users with an existing Ollama
+install usually only need to add the endpoint in Settings.
 
 **Useful checks.**
 
@@ -273,6 +297,47 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
+
+## Troubleshooting & Advanced Setup
+
+### `chromadb-client` conflicts with embedded ChromaDB
+If `chromadb-client` (the lightweight HTTP-only package) is installed alongside the full `chromadb` package, Odysseus starts but ChromaDB silently falls back to HTTP-only mode and fails.
+
+**Fix:** uninstall `chromadb-client` and force-reinstall the full package:
+```bash
+./venv/bin/pip uninstall chromadb-client -y
+./venv/bin/pip install --force-reinstall chromadb
+```
+
+### HTTPS + LAN/Tailscale exposure
+To expose Odysseus on a local network or Tailscale with HTTPS:
+1. Change the bind address to `0.0.0.0` in `.env` (`APP_BIND=0.0.0.0` or `ODYSSEUS_HOST=0.0.0.0`).
+2. Generate a locally-trusted cert for your LAN/Tailscale IPs using [mkcert](https://github.com/FiloSottile/mkcert):
+   ```bash
+   mkcert -install
+   mkcert -cert-file cert.pem -key-file key.pem 192.168.1.100 tailscale-ip
+   ```
+3. Run `uvicorn` with the generated certs:
+   ```bash
+   python -m uvicorn app:app --host 0.0.0.0 --port 7000 --ssl-certfile=cert.pem --ssl-keyfile=key.pem
+   ```
+4. Install the `mkcert` CA on any other device you want to access Odysseus from (e.g., for iOS, email the `rootCA.pem` to yourself, install the profile, and trust it in Certificate Trust Settings).
+
+### Optional Dependencies
+`requirements-optional.txt` contains packages that unlock extra features. It is not installed by default.
+
+| Package | Feature unlocked |
+|---------|-----------------|
+| `faster-whisper` | Local speech-to-text (microphone -> text) via the "local" STT provider. |
+| `ddgs` | DuckDuckGo as a search provider option. |
+| `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
+| `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
+
+### Outlook / Office 365 email
+Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
+and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox
+passwords will fail. See [docs/email-outlook.md](docs/email-outlook.md) for the
+current limitation and the planned integration direction.
 
 ## Security Notes
 Odysseus is a self-hosted workspace with powerful local tools: shell access, file uploads, model downloads, web research, email/calendar integrations, and API tokens. Treat it like an admin console.
@@ -337,6 +402,16 @@ Key settings:
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
 | `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
 | `EMBEDDING_URL` | -- | OpenAI-compatible embeddings endpoint |
+| `ODYSSEUS_CHAT_UPLOAD_MAX_BYTES` | `10485760` | Chat/agent attachment cap in bytes. Raise for larger local PDFs or text documents. |
+| `ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES` | `104857600` | Gallery image upload cap in bytes (100 MB). |
+| `ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES` | `26214400` | Gallery transform input cap in bytes (25 MB). |
+| `ODYSSEUS_MEMORY_IMPORT_MAX_BYTES` | `10485760` | Memory import file cap in bytes (10 MB). |
+| `ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES` | `26214400` | Personal document upload cap in bytes (25 MB). |
+| `ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES` | `26214400` | Email compose attachment cap in bytes (25 MB). |
+| `ODYSSEUS_STT_MAX_AUDIO_BYTES` | `26214400` | Speech-to-text audio cap in bytes (25 MB). |
+| `ODYSSEUS_ICS_MAX_BYTES` | `10485760` | Calendar `.ics` import cap in bytes (10 MB). |
+
+All upload-limit vars are validated (must be a positive integer) and optional; an invalid value fails fast at startup.
 
 ### Built-in MCP servers (optional setup)
 
@@ -376,7 +451,7 @@ All user data lives in `data/` (gitignored): `app.db` (sessions, messages, docum
 </a>
 
 ## License
-MIT -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
+AGPL-3.0-or-later -- see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
 
 ```
                                   |

@@ -18,6 +18,8 @@ import {
   _lastCacheHost,
   _setLastCacheHost,
   _serverByVal,
+  _serverKey,
+  _currentServerValue,
   _shellQuote,
   _MODELDIR_CHECK_ON,
   _MODELDIR_CHECK_OFF,
@@ -153,14 +155,31 @@ export function _renderGpuToggles(system) {
   }
   const validCounts = _validTpCounts(poolSize);
   const maxGpu = validCounts.length ? validCounts[validCounts.length - 1] : 0;
+  // Commit the data layer to maxGpu on initial render so it matches the
+  // visual highlight. Before this, _activeCount stayed undefined → no
+  // gpu_count param sent → backend's fallback could rank against RAM on
+  // mixed-resource boxes ("tightest" sorted by RAM instead of GPU).
+  if (container._activeCount === undefined && validCounts.length) {
+    container._activeCount = maxGpu;
+  }
   html += '<button class="hwfit-gpu-btn" data-count="0" title="CPU / RAM only">RAM</button>';
   const hasExplicitCount = typeof container._activeCount === 'number';
   for (const n of validCounts) {
     const text = n === 1 ? 'GPU' : n + ' GPU';
-    const isActive = hasExplicitCount ? (n === container._activeCount) : (container._activeCount === undefined && n === maxGpu);
+    const isActive = hasExplicitCount && n === container._activeCount;
     html += `<button class="hwfit-gpu-btn${isActive ? ' active' : ''}" data-count="${n}" title="${n} GPU${n > 1 ? 's' : ''}">${text}</button>`;
   }
+  // Also mark the RAM button active when the user explicitly chose RAM (0)
+  // — the loop above only handles GPU buttons.
+  if (container._activeCount === 0) {
+    const ramBtn = container.querySelector('.hwfit-gpu-btn[data-count="0"]');
+    // (we just set innerHTML so we re-mark below after assignment)
+  }
   container.innerHTML = html;
+  if (container._activeCount === 0) {
+    const ramBtn = container.querySelector('.hwfit-gpu-btn[data-count="0"]');
+    if (ramBtn) ramBtn.classList.add('active');
+  }
 
   // Pool dropdown: switch pools, reset the count to the new pool's max, rebuild.
   const sel = container.querySelector('#hwfit-gpu-group');
@@ -188,9 +207,12 @@ export function _renderGpuToggles(system) {
       } else {
         btn.classList.add('active');
         container._activeCount = count;
-        // Auto-set quant based on hardware selection
+        // Auto-suggest a quant based on hardware selection — but ONLY when the
+        // user has already picked a specific quant. When they're on "All"
+        // (value === ""), leave them on All: toggling a GPU shouldn't silently
+        // yank them out of the All view they wanted to see.
         const quantSel = document.getElementById('hwfit-quant');
-        if (quantSel) {
+        if (quantSel && quantSel.value !== '') {
           if (count <= 1) {
             quantSel.value = 'Q4_K_M'; // RAM or 1 GPU -> Q4 sweet spot
           } else if (String(system?.backend || '').toLowerCase() === 'rocm') {
@@ -218,6 +240,9 @@ const _CTX_PRESETS = [8192, 16384, 32768, 50000, 131072, 0]; // 0 = model max
 const _SCAN_CACHE_MAX = 12;            // keep the newest N signatures
 const _SCAN_CACHE_TTL = 6 * 3600 * 1000; // 6 h — hardware rarely changes
 
+// Ctx slider helpers (ported from origin/main). The slider picks an INDEX into
+// _CTX_PRESETS; _ctxValue() resolves it to a token count (0 = "Max"). The label
+// next to the slider re-renders to "8k" / "16k" / … / "Max".
 function _ctxLabel(value) {
   const n = Number(value) || 0;
   if (!n) return 'Max';
@@ -335,6 +360,7 @@ function _scanSig() {
   const tc = document.getElementById('hwfit-gpu-toggles');
   return JSON.stringify({
     h: _envState.remoteHost || '',
+    hk: _currentServerValue(),
     u: document.getElementById('hwfit-usecase')?.value || '',
     s: document.getElementById('hwfit-search')?.value?.trim() || '',
     o: sortEl?.value || 'score',
@@ -390,15 +416,97 @@ function _hwfitShowError(list, host, detail) {
   if (rb) rb.addEventListener('click', () => { _resetGpuToggleState(); _hwfitFetch(true); });
 }
 
-// Client-side "Engine" filter (llama.cpp / vLLM / SGLang). Empty = show all.
-// Uses the same _detectBackend() the serve commands use, so what you filter to
-// is exactly what would be launched. Pure view filter — no refetch needed.
+// Client-side "Engine" filter (llama.cpp / vLLM / SGLang / Ollama). Empty =
+// show all. Uses the same _detectBackend() the serve commands use, so what you
+// filter to is exactly what would be launched. Pure view filter — no refetch
+// needed. Ollama rows are merged into the main list (see _ensureOllamaLib +
+// _ollamaToHwfitRows below) so the filter handles all engines uniformly.
 function _applyEngineFilter(models) {
   const want = document.getElementById('hwfit-engine')?.value || '';
   if (!want || !Array.isArray(models)) return models || [];
   return models.filter(m => {
     try { return _detectBackend(m).backend === want; } catch { return true; }
   });
+}
+
+// Ollama library cache (per-page). Filled lazily on first _hwfitFetch; the raw
+// list is the same shape returned by /api/cookbook/ollama/library, then turned
+// into per-tag hwfit rows so they slot into the main list grid alongside HF
+// scan results.
+let _ollamaLibCache = null;
+async function _ensureOllamaLib() {
+  if (_ollamaLibCache) return _ollamaLibCache;
+  try {
+    const res = await fetch('/api/cookbook/ollama/library');
+    const data = await res.json();
+    _ollamaLibCache = Array.isArray(data?.models) ? data.models : [];
+  } catch { _ollamaLibCache = []; }
+  return _ollamaLibCache;
+}
+
+// Convert an Ollama library entry's sizes into per-tag hwfit rows. Shape
+// matches what _hwfitRenderList expects (fit_level, parameter_count,
+// required_gb, score, …) so the rows render identically to HF results.
+function _olParseSize(s) {
+  // "14b" → 14, "1.5b" → 1.5, "8x7b" → 56 (rough), "135m" → 0.135, "latest" → null
+  if (!s) return null;
+  const low = s.toLowerCase();
+  let m = low.match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)b$/);
+  if (m) return parseFloat(m[1]) * parseFloat(m[2]);
+  m = low.match(/^(\d+(?:\.\d+)?)b$/);
+  if (m) return parseFloat(m[1]);
+  m = low.match(/^(\d+(?:\.\d+)?)m$/);
+  if (m) return parseFloat(m[1]) / 1000;
+  return null;
+}
+function _ollamaToHwfitRows(libModels, vramAvail, ramAvail) {
+  const out = [];
+  if (!Array.isArray(libModels)) return out;
+  for (const m of libModels) {
+    const sizes = (Array.isArray(m.sizes) && m.sizes.length) ? m.sizes : ['latest'];
+    for (const sz of sizes) {
+      const params = _olParseSize(sz);
+      // Ollama default GGUF is ~Q4_K_M. Rough VRAM estimate: 0.6 GB / B.
+      const vramGb = params ? params * 0.6 : 0;
+      let fitLevel = 'no_fit';
+      if (vramGb && vramAvail) {
+        if (vramGb <= vramAvail * 0.6) fitLevel = 'perfect';
+        else if (vramGb <= vramAvail) fitLevel = 'good';
+        else if (ramAvail && vramGb <= ramAvail) fitLevel = 'marginal';
+        else fitLevel = 'too_tight';
+      } else if (vramGb && ramAvail && vramGb <= ramAvail) {
+        fitLevel = 'marginal';
+      }
+      const tag = `${m.name}:${sz}`;
+      const paramsLabel = params
+        ? (params >= 1 ? params.toFixed(params >= 10 ? 0 : 1) + 'B' : (params * 1000).toFixed(0) + 'M')
+        : '?';
+      // A modest score so Ollama rows still sort sensibly in the default
+      // score view — bigger models get a slightly higher base, but they
+      // always come in below well-scored HF results. Sort by Fit or VRAM
+      // to surface them more aggressively.
+      const score = params ? Math.min(30 + params * 0.3, 60) : 25;
+      out.push({
+        name: tag,
+        repo_id: tag,
+        quant: 'Q4_K_M',
+        parameter_count: paramsLabel,
+        params_b: params || 0,
+        required_gb: vramGb,
+        fit_level: fitLevel,
+        score,
+        speed_tps: 0,
+        context: 0,
+        is_gguf: true,
+        backend: 'ollama',
+        _isOllama: true,
+        _olName: m.name,
+        _olSize: sz,
+        _description: m.description || '',
+      });
+    }
+  }
+  return out;
 }
 
 export async function _hwfitFetch(fresh = false) {
@@ -420,6 +528,9 @@ export async function _hwfitFetch(fresh = false) {
   if (_cached) {
     _hwfitCache = _cached;
     _hwfitRenderHw(hw, _cached.system);
+    if (!remoteHost && _cached.system && _cached.system.platform) {
+      _envState.platform = _cached.system.platform;
+    }
     _hwfitRenderList(list, _applyEngineFilter(_cached.models));
   } else {
     // Show spinner while scanning — stack the spinner above a text label
@@ -441,15 +552,23 @@ export async function _hwfitFetch(fresh = false) {
     _hwfitCache = null;   // no instant paint — clear until the fetch returns
   }
   // Only fetch cached model IDs when server changes, not on every search/sort
-  if (!_cachedModelIds || _lastCacheHost() !== remoteHost) {
-    _setLastCacheHost(remoteHost);
-    const _cacheSrv = _envState.servers.find(s => s.host === remoteHost);
+  const remoteKey = _currentServerValue();
+  if (!_cachedModelIds || _lastCacheHost() !== remoteKey) {
+    _setLastCacheHost(remoteKey);
+    const _cacheSrv = _serverByVal(_envState.remoteServerKey || remoteHost);
     const _cachePort = _cacheSrv?.port || '';
-    const _cacheParams = new URLSearchParams({ host: remoteHost }); if (_cachePort) _cacheParams.set('ssh_port', _cachePort); if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
+    const _cacheParams = new URLSearchParams();
+    if (remoteHost) {
+      _cacheParams.set('host', remoteHost);
+      if (_cachePort) _cacheParams.set('ssh_port', _cachePort);
+      if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
+    }
     fetch(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' })
       .then(r => r.json())
       .then(d => {
-        _cachedModelIds = new Set((d.models || []).map(m => m.repo_id));
+        // Exclude stalled (download-shell) entries — a 12 KB README-only
+        // folder shouldn't count as "downloaded" in the Scan/Download list.
+        _cachedModelIds = new Set((d.models || []).filter(m => m.status !== 'stalled').map(m => m.repo_id));
         // Re-mark rows if already rendered
         list.querySelectorAll('.hwfit-row[data-model]').forEach(row => {
           const name = row.dataset.model;
@@ -482,7 +601,7 @@ export async function _hwfitFetch(fresh = false) {
     if (search) params.set('search', search);
     if (remoteHost) {
       params.set('host', remoteHost);
-      const _srv = _envState.servers.find(s => s.host === remoteHost);
+      const _srv = _serverByVal(_envState.remoteServerKey || remoteHost);
       const _hp = _srv?.port || '';
       if (_hp) params.set('ssh_port', _hp);
       if (_srv?.platform) params.set('platform', _srv.platform);
@@ -502,13 +621,27 @@ export async function _hwfitFetch(fresh = false) {
       if (useCase) params.set('use_case', useCase);
       if (quantPref) params.set('quant', quantPref);
       if (targetCtx) params.set('ctx', String(targetCtx));
+      // Fit-only filter — set by the dot in the Fit column header.
+      const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
+      if (_fitOnly) params.set('fit_only', '1');
     }
     const endpoint = isImageMode ? `/api/hwfit/image-models?${params}` : `/api/hwfit/models?${params}`;
     const res = await fetch(endpoint);
     // A newer scan started while this one was in flight (user switched servers
     // mid-probe) — drop this stale response so it can't clobber the new one.
     if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      let msg = '';
+      try {
+        const payload = JSON.parse(body);
+        msg = payload && (payload.detail || payload.error || payload.message);
+      } catch {
+        msg = body;
+      }
+      msg = typeof msg === 'string' ? msg.trim() : '';
+      throw new Error(`HTTP ${res.status} ${res.statusText}${msg ? `: ${msg}` : ''}`);
+    }
     let data = await res.json();
     if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
     if (!isImageMode && quantPref && !data.error && Array.isArray(data.models) && data.models.length === 0) {
@@ -548,8 +681,30 @@ export async function _hwfitFetch(fresh = false) {
       if (!_cached) { _hwfitShowError(list, remoteHost, data.error); if (hw) hw.innerHTML = ''; }
       return;
     }
+    // Merge Ollama library rows into the main list so they appear with the
+    // same Fit/Param/Quant/VRAM/Mode columns as HF results and respond to the
+    // Engine filter. Skipped in image-gen mode (Ollama doesn't serve diffusers).
+    if (!isImageMode) {
+      const _vramAvail = data.system?.gpu_vram_gb || 0;
+      const _ramAvail = data.system?.total_ram_gb || 0;
+      const _lib = await _ensureOllamaLib();
+      const _olRows = _ollamaToHwfitRows(_lib, _vramAvail, _ramAvail);
+      // Search filter on Ollama rows: HF API already filters by search; do the
+      // same client-side over Ollama name + description so the search box
+      // works consistently across both sources.
+      const _s = (search || '').trim().toLowerCase();
+      const _olFiltered = _s
+        ? _olRows.filter(r => r.name.toLowerCase().includes(_s) || (r._description || '').toLowerCase().includes(_s))
+        : _olRows;
+      data.models = (data.models || []).concat(_olFiltered);
+    }
     _hwfitCache = data;
     _hwfitRenderHw(hw, data.system);
+    // Propagate local platform from hardware probe so _isWindows(task) works
+    // for local tasks (menu items, shell commands, etc.).
+    if (!remoteHost && data.system && data.system.platform) {
+      _envState.platform = data.system.platform;
+    }
     // Sort client-side by the active column so the highest↔lowest toggle is
     // deterministic (the previous array .reverse() didn't reliably flip).
     // 1st click on a column = highest first; clicking it again = lowest first.
@@ -845,6 +1000,13 @@ export function _hwfitRenderList(el, models) {
   const sortSel = document.getElementById('hwfit-sort');
   const currentSort = sortSel?.value || 'score';
   const isReversed = sortSel?.dataset.reverse === '1';
+  // Active budget for the Fit column label \u2014 make it obvious whether the
+  // ranking is against GPU or RAM so "tightest" can't be ambiguous on a
+  // mixed-resource box.
+  const tc = document.getElementById('hwfit-gpu-toggles');
+  const _budget = (tc && typeof tc._activeCount === 'number')
+    ? (tc._activeCount === 0 ? 'RAM' : (tc._activeCount === 1 ? 'GPU' : tc._activeCount + ' GPU'))
+    : null;
   let html = '<div class="hwfit-row hwfit-header">';
   for (const col of _hwfitColumns) {
     const sortable = col.key ? ' hwfit-sortable' : '';
@@ -856,7 +1018,16 @@ export function _hwfitRenderList(el, models) {
       arrow = isReversed ? ' \u25B2' : ' \u25BC';
     }
     const dataAttr = col.key ? ` data-sort="${col.key}"` : '';
-    html += `<span class="hwfit-col ${col.cls}${sortable}${active}"${dataAttr}>${col.label}${arrow}</span>`;
+    // Fit column gets a small dot to its left that toggles "show only models
+    // that fit" — replaces the old Fits On/Off button next to the toolbar.
+    let label = col.label;
+    if (col.cls === 'hwfit-fit') {
+      const _fitOnly = (() => { try { return localStorage.getItem('hwfit_fit_only_v1') === '1'; } catch { return false; } })();
+      label = `<span class="hwfit-fit-dot${_fitOnly ? ' active' : ''}" title="${_fitOnly ? 'Showing only models that fit. Click to also show too-tight rows.' : 'Click to show only models that fit your hardware.'}" data-fit-dot>●</span>${col.label}`;
+      // (Budget tag removed — the GPU/RAM/N-GPU suffix next to "Fit" was noise;
+      // the toggle row already shows which budget is active.)
+    }
+    html += `<span class="hwfit-col ${col.cls}${sortable}${active}"${dataAttr}>${label}${arrow}</span>`;
   }
   html += '</div>';
   for (const m of models) {
@@ -875,9 +1046,31 @@ export function _hwfitRenderList(el, models) {
     const dlDot = (_cachedModelIds && (_cachedModelIds.has(m.name) || [..._cachedModelIds].some(id => id === m.name?.split('/').pop()))) ? '<span class="hwfit-dl-dot" title="Downloaded">\u25CF</span>' : '';
     html += `<div class="hwfit-row" data-model="${esc(m.name)}">`;
     html += `<span class="hwfit-col hwfit-fit" style="color:${fitColor}">${esc(fitLabel)}</span>`;
-    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(m.name?.split('/').pop() || m.name)}${moeBadge}${imgBadge}${dlDot}</span>`;
+    // Append quant to the title when it's not already in the repo name. The
+    // suffix strips quant-parts the name already contains — e.g. for
+    // QuantTrio/MiniMax-M2-AWQ + quant=AWQ-4bit we just show "(4bit)", not
+    // "(AWQ-4bit)". DeepSeek-V4-Flash + FP4-MoE-Mixed keeps the full tag
+    // (none of those parts are in the repo id).
+    const _short = m.name?.split('/').pop() || m.name || '';
+    const _quantTag = (m.quant || '').trim();
+    const _lowerShort = _short.toLowerCase();
+    let _quantSuffix = '';
+    if (_quantTag) {
+      const _parts = _quantTag.split(/[-_]/).filter(Boolean);
+      const _remaining = _parts.filter(p => !_lowerShort.includes(p.toLowerCase()));
+      if (_remaining.length && _remaining.length < _parts.length + 1) {  // at least one part is new
+        let _display = _remaining.join('-');
+        if (_display.length > 9) _display = _display.slice(0, 9) + '…';
+        _quantSuffix = ` <span class="hwfit-name-quant" title="${esc(_quantTag)} — full storage format">(${esc(_display)})</span>`;
+      }
+    }
+    html += `<span class="hwfit-col hwfit-name">${modelLogo(m.name)}${esc(_short)}${_quantSuffix}${moeBadge}${imgBadge}${dlDot}</span>`;
     html += `<span class="hwfit-col hwfit-c-params">${esc(pcount)}</span>`;
-    html += `<span class="hwfit-col hwfit-c-quant">${esc(m.quant || '?')}</span>`;
+    // Truncate the Quant cell to 9 chars + ellipsis so long tags like
+    // "FP4-MoE-Mixed" don't push neighboring columns. Full tag stays in title.
+    const _qRaw = m.quant || '?';
+    const _qShort = _qRaw.length > 9 ? _qRaw.slice(0, 9) + '…' : _qRaw;
+    html += `<span class="hwfit-col hwfit-c-quant" title="${esc(_qRaw)}">${esc(_qShort)}</span>`;
     html += `<span class="hwfit-col hwfit-c-vram">${vramLabel}</span>`;
     html += `<span class="hwfit-col hwfit-c-ctx">${m.is_image_gen ? '\u2014' : ctx}</span>`;
     html += `<span class="hwfit-col hwfit-c-speed">${m.is_image_gen ? '\u2014' : tps + ' t/s'}</span>`;
@@ -886,20 +1079,61 @@ export function _hwfitRenderList(el, models) {
     html += `</div>`;
   }
   el.innerHTML = html;
-  // Click row → expand inline action panel
+  // Click row → expand inline action panel. Exception: Ollama rows skip the
+  // expand panel (no HF metadata to power it) and just fill the Download
+  // input with the `<name>:<size>` tag — one click → ready to pull.
   el.querySelectorAll('.hwfit-row:not(.hwfit-header)').forEach(row => {
     row.addEventListener('click', () => {
       const name = row.dataset.model;
       if (!name) return;
-      // Find model data from cache
       const modelData = (_hwfitCache?.models || []).find(m => m.name === name);
       if (!modelData) return;
+      if (modelData._isOllama) {
+        // Force-open the Download card if it's been collapsed — otherwise
+        // filling the (hidden) input silently swallows the click.
+        const dlBody = document.getElementById('cookbook-download-card-body');
+        const dlArrow = document.getElementById('cookbook-download-card-arrow');
+        if (dlBody && dlBody.style.display === 'none') {
+          dlBody.style.display = 'block';
+          if (dlArrow) dlArrow.style.transform = 'rotate(90deg)';
+        }
+        const dlInput = document.getElementById('cookbook-dl-repo');
+        if (dlInput) {
+          dlInput.value = modelData.name;
+          dlInput.focus();
+          // Briefly highlight so the user sees what got filled even when the
+          // download card sits far above the (long) hwfit list.
+          dlInput.classList.add('cookbook-dl-flash');
+          setTimeout(() => dlInput.classList.remove('cookbook-dl-flash'), 800);
+          dlInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        return;
+      }
       _expandModelRow(row, modelData);
     });
   });
   // Clickable header columns → sort (click again to toggle direction)
   el.querySelectorAll('.hwfit-header .hwfit-sortable').forEach(col => {
-    col.addEventListener('click', () => {
+    col.addEventListener('click', (e) => {
+      // The little dot inside the Fit header is its own toggle (fit-only
+      // filter), don't let it fall through to a sort click.
+      if (e.target.closest('[data-fit-dot]')) {
+        const on = !e.target.classList.contains('active');
+        try { localStorage.setItem('hwfit_fit_only_v1', on ? '1' : '0'); } catch {}
+        // Un-toggling the fit filter (off → showing too-tight rows again) is
+        // typically because the user wants to see the LARGE models they can't
+        // run yet — re-sort by VRAM descending so the biggest surface first.
+        if (!on) {
+          const sortSel = document.getElementById('hwfit-sort');
+          if (sortSel) {
+            sortSel.value = 'vram';
+            sortSel.dataset.reverse = '0';   // descending (biggest first)
+          }
+        }
+        _hwfitCache = null;
+        _hwfitFetch();
+        return;
+      }
       const sortKey = col.dataset.sort;
       if (!sortKey) return;
       const sel = document.getElementById('hwfit-sort');
@@ -931,11 +1165,13 @@ function _syncHostFromScanDropdown() {
   let host = '';
   if (ss.value === 'local') {
     _envState.remoteHost = '';
+    _envState.remoteServerKey = '';
   } else {
     const s = _serverByVal(ss.value);
     if (s) {
       host = s.host;
       _envState.remoteHost = s.host;
+      _envState.remoteServerKey = _serverKey(s);
       _envState.env = s.env;
       _envState.envPath = s.envPath;
       _envState.platform = s.platform || '';
@@ -983,7 +1219,16 @@ export function _expandModelRow(row, modelData) {
   if (modelData.is_image_gen) {
     html += `<div style="font-size:10px;opacity:0.5;margin-top:4px;">${esc((modelData.capabilities || []).join(' \u00B7 ') || '')}${modelData.description ? ' \u2014 ' + esc(modelData.description) : ''}</div>`;
   } else if (_requiresAcceleratorBackend(modelData)) {
-    html += `<div class="hwfit-panel-note">This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.</div>`;
+    // Only show the "needs CUDA/ROCm" note when the host doesn't already have
+    // one. With a visible CUDA/ROCm accelerator the note is noise — the user
+    // can already serve the model and reading the warning on every row makes
+    // the panel feel like everything's broken.
+    const _sys = _hwfitCache?.system || {};
+    const _backend = (_sys.backend || '').toLowerCase();
+    const _hasGpuAccel = !!_sys.has_gpu && (_backend === 'cuda' || _backend === 'rocm');
+    if (!_hasGpuAccel) {
+      html += `<div class="hwfit-panel-note">This is a safetensors GPU-serving format. Use vLLM/SGLang with a visible CUDA/ROCm accelerator, or pick a GGUF download for llama.cpp/Ollama.</div>`;
+    }
   }
   html += `</div>`;
 
@@ -1107,7 +1352,7 @@ export function _expandModelRow(row, modelData) {
       // Launch via serve API. Field names must match the backend ServeRequest
       // schema (repo_id + cmd) — sending `command`/`model` failed Pydantic
       // validation (422), which is why Run silently did nothing.
-      const _srv = (_envState.servers || []).find(s => s.host === host);
+      const _srv = _serverByVal(_envState.remoteServerKey || host);
       const payload = {
         repo_id: modelData.name,
         cmd: cmd,
@@ -1189,7 +1434,7 @@ export function _hwfitInit() {
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
   if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
   // Engine filter is a pure client-side view filter over the already-fetched
-  // list, so just re-render from cache instead of re-probing hardware.
+  // list (HF + Ollama merged), so just re-render from cache.
   const engine = document.getElementById('hwfit-engine');
   if (engine) engine.addEventListener('change', () => {
     const list = document.getElementById('hwfit-list');
@@ -1207,11 +1452,15 @@ export function _hwfitInit() {
     ctx.addEventListener('change', () => {
       const targetCtx = _ctxValue();
       try { localStorage.setItem(_CTX_KEY, String(targetCtx)); } catch {}
+      // Ctx drag affects sort mode: a specific ctx target (anything < Max)
+      // implies "what runs at this context length" — sort by VRAM ascending
+      // so the cheapest-fitting models surface first. Dragging back to Max
+      // releases the constraint → go back to the default score ranking.
       const sortSel = document.getElementById('hwfit-sort');
       if (sortSel) {
         if (targetCtx) {
-          sortSel.value = 'fit';
-          sortSel.dataset.reverse = '1';
+          sortSel.value = 'vram';
+          sortSel.dataset.reverse = '1';   // ascending = smallest VRAM first
         } else {
           sortSel.value = 'score';
           sortSel.dataset.reverse = '';
@@ -1322,7 +1571,7 @@ export function _hwfitInit() {
     // dropdown still showed odysseus. The user's selection must only change via
     // an explicit dropdown pick. Here we just refresh env/path if we can match
     // the current host; otherwise leave remoteHost untouched.
-    const sel = _envState.servers.find(s => s.host === _envState.remoteHost);
+    const sel = _serverByVal(_envState.remoteServerKey || _envState.remoteHost);
     if (sel) { _envState.env = sel.env; _envState.envPath = sel.envPath; }
     _persistEnvState();
   }
@@ -1498,15 +1747,16 @@ export function _hwfitInit() {
         // (inline — _applyServerSelection lives in cookbook.js and isn't imported here).
         const _dk = _envState.defaultServer;
         if (_dk) {
-          if (_dk === 'local') { _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
-          else { const _s = (_envState.servers || []).find(x => x.host === _dk); if (_s) { _envState.remoteHost = _s.host; _envState.env = _s.env || 'none'; _envState.envPath = _s.envPath || ''; _envState.platform = _s.platform || ''; } }
+          if (_dk === 'local') { _envState.remoteHost = ''; _envState.remoteServerKey = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
+          else { const _s = _serverByVal(_dk); if (_s) { _envState.remoteHost = _s.host; _envState.remoteServerKey = _serverKey(_s); _envState.env = _s.env || 'none'; _envState.envPath = _s.envPath || ''; _envState.platform = _s.platform || ''; } }
           _persistEnvState();
           document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
-            if (sel && sel.tagName === 'SELECT') sel.value = _envState.remoteHost || 'local';
+            if (sel && sel.tagName === 'SELECT') sel.value = _currentServerValue();
           });
         }
+        const defaultSrv = _serverByVal(_envState.defaultServer);
         uiModule.showToast(_envState.defaultServer
-          ? 'Default server: ' + (_envState.defaultServer === 'local' ? 'Local' : _envState.defaultServer)
+          ? 'Default server: ' + (_envState.defaultServer === 'local' ? 'Local' : (defaultSrv?.name || defaultSrv?.host || 'selected server'))
           : 'Default server cleared');
       });
     }
@@ -1581,6 +1831,15 @@ export function _hwfitInit() {
       saveBtn.addEventListener('click', () => {
         _syncServers();
         _rebuildServerSelect();
+        // Broadcast for anything outside the settings tab that depends on
+        // the server list (Serve dialog host picker, Running tasks, etc.).
+        // Without this the user had to hard-refresh to see the new entry
+        // in those other places.
+        try {
+          document.dispatchEvent(new CustomEvent('cookbook:servers-changed', {
+            detail: { servers: _envState.servers.slice() },
+          }));
+        } catch (_) {}
         saveBtn.classList.add('saved');
         saveBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>Saved';
       });
@@ -1600,6 +1859,11 @@ export function _hwfitInit() {
       entry.remove();
       _syncServers();
       _rebuildServerSelect();
+      try {
+        document.dispatchEvent(new CustomEvent('cookbook:servers-changed', {
+          detail: { servers: _envState.servers.slice() },
+        }));
+      } catch (_) {}
       _hwfitCache = null;
       _hwfitFetch();
     });
@@ -1760,12 +2024,14 @@ export function _hwfitInit() {
       const val = serverSelect.value;
       if (val === 'local') {
         _envState.remoteHost = '';
+        _envState.remoteServerKey = '';
         _envState.env = 'none';
         _envState.envPath = '';
       } else {
         const s = _serverByVal(val);
         if (s) {
           _envState.remoteHost = s.host;
+          _envState.remoteServerKey = _serverKey(s);
           _envState.env = s.env;
           _envState.envPath = s.envPath;
         }
@@ -1775,10 +2041,9 @@ export function _hwfitInit() {
       // download-input button reads #hwfit-dl-server *directly*, so without this
       // it kept its old value and downloads went to the wrong host even
       // though the scan here correctly switched to the selected server.
-      // Option values are host strings now ('local' for the local box).
       document.querySelectorAll('#hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
         if (!sel || sel.tagName !== 'SELECT') return;
-        sel.value = _envState.remoteHost || 'local';
+        sel.value = _currentServerValue();
       });
       _hwfitCache = null;
       // Reset GPU-toggle state (no flicker) so the new server's hardware re-renders.

@@ -16,6 +16,23 @@ _hosts_cache_time: float = 0
 _HOSTS_CACHE_TTL = 60  # seconds
 
 
+def _parse_tailscale_status(raw: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _first_tailscale_ipv4(value: Any) -> Optional[str]:
+    if not isinstance(value, list):
+        return None
+    for ip in value:
+        if isinstance(ip, str) and "." in ip:
+            return ip
+    return None
+
+
 def discover_tailscale_hosts() -> List[str]:
     """Discover online Tailscale peers, returning their IPv4 addresses."""
     global _hosts_cache, _hosts_cache_time
@@ -27,23 +44,26 @@ def discover_tailscale_hosts() -> List[str]:
     hosts = []
     try:
         result = subprocess.run(
-            ["tailscale", "status", "--json"],
-            capture_output=True, text=True, timeout=5
+            ["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5
         )
         if result.returncode != 0:
             return hosts
 
-        data = json.loads(result.stdout)
+        data = _parse_tailscale_status(result.stdout)
+        if not data:
+            return hosts
 
         # Add self
-        self_ips = data.get("Self", {}).get("TailscaleIPs", [])
-        for ip in self_ips:
-            if "." in ip:  # IPv4 only
-                hosts.append(ip)
-                break
+        self_data = data.get("Self") if isinstance(data.get("Self"), dict) else {}
+        self_ip = _first_tailscale_ipv4(self_data.get("TailscaleIPs"))
+        if self_ip:
+            hosts.append(self_ip)
 
         # Add online peers (skip funnel-ingress-nodes and android devices)
-        for peer in data.get("Peer", {}).values():
+        peers = data.get("Peer") if isinstance(data.get("Peer"), dict) else {}
+        for peer in peers.values():
+            if not isinstance(peer, dict):
+                continue
             if not peer.get("Online"):
                 continue
             hostname = peer.get("HostName", "")
@@ -52,11 +72,9 @@ def discover_tailscale_hosts() -> List[str]:
             os_name = peer.get("OS", "")
             if os_name == "android":
                 continue
-            peer_ips = peer.get("TailscaleIPs", [])
-            for ip in peer_ips:
-                if "." in ip:  # IPv4 only
-                    hosts.append(ip)
-                    break
+            peer_ip = _first_tailscale_ipv4(peer.get("TailscaleIPs"))
+            if peer_ip:
+                hosts.append(peer_ip)
 
         _hosts_cache = hosts
         _hosts_cache_time = now
@@ -135,9 +153,13 @@ class ModelDiscovery:
             r = httpx.get(f"http://{host}:{port}/api/v1/models", timeout=1.5)
             if r.is_success:
                 models = (r.json() or {}).get("models")
-                if (isinstance(models, list) and models
-                        and isinstance(models[0], dict)
-                        and "key" in models[0] and "architecture" in models[0]):
+                if (
+                    isinstance(models, list)
+                    and models
+                    and isinstance(models[0], dict)
+                    and "key" in models[0]
+                    and "architecture" in models[0]
+                ):
                     return "lmstudio"
         except Exception:
             pass
@@ -173,12 +195,15 @@ class ModelDiscovery:
         logger.info(f"Scanning {len(hosts)} hosts for models: {hosts}")
 
         # Well-known ports: 8000-8020 (vLLM, llama.cpp, SGLang, Cookbook),
-        # 1234 (LM Studio), 11434 (Ollama)
-        ports = list(range(8000, 8021)) + [1234, 11434]
+        # 1234 (LM Studio), 11434 (Ollama), 11435 for APFEL as its default port is
+        # occupied by Ollama. The env vars can add more ports which will be merged in.
+        ports = list(range(8000, 8021)) + [1234, 11434, 11435]
         ports += [p for p in sorted(self._extra_ports) if p not in ports]
         targets = [(h, p) for h in hosts for p in ports]
 
-        seen_models = set()  # dedupe by (port, model_ids) to avoid same machine via different IPs
+        seen_models = (
+            set()
+        )  # dedupe by (port, model_ids) to avoid same machine via different IPs
 
         with ThreadPoolExecutor(max_workers=50) as pool:
             futures = {pool.submit(self._check_port, h, p): (h, p) for h, p in targets}
@@ -193,8 +218,29 @@ class ModelDiscovery:
         # Sort by host then port for consistent ordering
         items.sort(key=lambda x: (x["host"], x["port"]))
 
-        logger.info(f"Discovered {len(items)} model endpoints across {len(hosts)} hosts")
+        logger.info(
+            f"Discovered {len(items)} model endpoints across {len(hosts)} hosts"
+        )
         return {"hosts": hosts, "items": items}
+
+    def warmup_ping_urls(self, limit: int = 5) -> List[str]:
+        """The ``/models`` URLs of up to ``limit`` discovered endpoints.
+
+        Used by the startup warmup / keepalive loop to prime connections. Each
+        discovered item already carries a ``/v1/chat/completions`` url; swap the
+        suffix for the cheap ``/models`` probe. Failures degrade to an empty list
+        so warmup never crashes the caller.
+        """
+        try:
+            items = (self.discover_models() or {}).get("items", [])
+        except Exception:
+            return []
+        urls: List[str] = []
+        for ep in items[:limit]:
+            url = (ep.get("url") or "").replace("/chat/completions", "/models")
+            if url:
+                urls.append(url)
+        return urls
 
     def get_providers(self) -> Dict[str, Any]:
         """Get all available providers"""
@@ -204,15 +250,23 @@ class ModelDiscovery:
 
         if self.openai_api_key:
             openai_models = [
-                "gpt-5.2-codex", "gpt-4o-mini", "gpt-image-1.5",
-                "gpt-4o", "gpt-5.2", "gpt-5.2-pro",
+                "gpt-5.2-codex",
+                "gpt-4o-mini",
+                "gpt-image-1.5",
+                "gpt-4o",
+                "gpt-5.2",
+                "gpt-5.2-pro",
             ]
-            providers.append({
-                "provider": "openai",
-                "items": [{
-                    "url": "https://api.openai.com/v1/chat/completions",
-                    "models": openai_models
-                }]
-            })
+            providers.append(
+                {
+                    "provider": "openai",
+                    "items": [
+                        {
+                            "url": "https://api.openai.com/v1/chat/completions",
+                            "models": openai_models,
+                        }
+                    ],
+                }
+            )
 
         return {"providers": providers}

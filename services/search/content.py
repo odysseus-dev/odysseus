@@ -39,7 +39,17 @@ _PRIVATE_NETWORKS = (
 
 
 def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
-    return addr.is_private or addr.is_loopback or addr.is_link_local or any(addr in net for net in _PRIVATE_NETWORKS)
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
+        addr = addr.ipv4_mapped
+    return (
+        addr.is_private
+        or addr.is_loopback
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+        or any(addr in net for net in _PRIVATE_NETWORKS)
+    )
 
 
 def _resolve_hostname_ips(hostname: str) -> list[ipaddress._BaseAddress]:
@@ -249,6 +259,9 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             raise RateLimitError(f"Rate limit hit for {url} (attempt {retry_attempt})")
 
         response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        error_logger.warning(f"HTTP {e.response.status_code} fetching {url}: {e}")
+        return _empty_result(url, f"HTTP {e.response.status_code}: {e}")
     except httpx.RequestError as e:
         error_logger.error(f"NetworkError fetching {url} (attempt {retry_attempt}): {e}")
         return _empty_result(url, f"NetworkError: {e}")
@@ -282,6 +295,40 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
             "js_message": "",
             "success": bool(pdf_text),
             "error": "" if pdf_text else "Failed to extract PDF text",
+        }
+        _cache_result(cache_file, cache_key, result, url)
+        return result
+
+    # Plain-text / Markdown / JSON handling. Sources like
+    # raw.githubusercontent.com serve Markdown as `text/plain`, JSON APIs and
+    # raw config files serve `application/json`, and a lot of code and tool
+    # docs live in `.md` / `.txt`. These have no HTML structure, so the HTML
+    # branch below would extract nothing and report "no readable text content".
+    # Return the body verbatim instead. The `is_html` guard keeps real HTML
+    # (including `application/xhtml+xml`) on the parsing path; the `json` check
+    # covers `application/json` and `+json` suffixes; the URL-suffix fallback
+    # catches servers that mislabel text files as `application/octet-stream`.
+    is_html = "html" in content_type
+    is_json = "json" in content_type
+    url_path = url.lower().split("?", 1)[0].split("#", 1)[0]
+    looks_like_text_file = url_path.endswith(
+        (".md", ".markdown", ".txt", ".text", ".json", ".jsonl")
+    )
+    if not is_html and (content_type.startswith("text/") or is_json or looks_like_text_file):
+        text_body = (response.text or "").strip()
+        result = {
+            "url": url,
+            "title": os.path.basename(url_path) or url,
+            "content": text_body,
+            "lists": [],
+            "tables": [],
+            "code_blocks": [],
+            "meta_description": "",
+            "meta_keywords": "",
+            "js_rendered": False,
+            "js_message": "",
+            "success": bool(text_body),
+            "error": "" if text_body else "Empty response body",
         }
         _cache_result(cache_file, cache_key, result, url)
         return result

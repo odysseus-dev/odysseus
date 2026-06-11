@@ -9,7 +9,21 @@ import httpx
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+from src.constants import TTS_CACHE_DIR
+
 logger = logging.getLogger(__name__)
+
+
+def _safe_speed(value, default: float = 1.0) -> float:
+    """Parse the stored tts_speed defensively. The settings layer tolerates
+    corrupt/agent-written config, so a non-numeric or empty value (e.g. an agent
+    setting "speech speed" = "fast", or a hand-edited settings.json) must not
+    crash synthesis or the stats endpoint with a ValueError."""
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return speed if speed > 0 else default
 
 
 class TTSService:
@@ -23,7 +37,7 @@ class TTSService:
       "endpoint:<id>"   — OpenAI-compatible /audio/speech via ModelEndpoint
     """
 
-    def __init__(self, cache_dir: str = "data/tts_cache"):
+    def __init__(self, cache_dir: str = TTS_CACHE_DIR):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._kokoro = None  # lazy-init
@@ -136,7 +150,7 @@ class TTSService:
         provider = settings["tts_provider"]
         model = settings["tts_model"]
         voice = settings["tts_voice"]
-        speed = float(settings.get("tts_speed", "1"))
+        speed = _safe_speed(settings.get("tts_speed", "1"))
 
         if provider in ("disabled", "browser"):
             return None
@@ -198,7 +212,7 @@ class TTSService:
             "provider": provider,
             "model": settings["tts_model"],
             "voice": settings["tts_voice"],
-            "speed": float(settings.get("tts_speed", "1")),
+            "speed": _safe_speed(settings.get("tts_speed", "1")),
             "cache_entries": len(cache_files),
             "cache_size_mb": round(cache_size / (1024 * 1024), 2),
         }
