@@ -18,6 +18,12 @@ from src.auth_helpers import require_user
 from pydantic import BaseModel
 
 from core.middleware import require_admin
+from routes._validators import (
+    validate_remote_host,
+    validate_ssh_port,
+    _REMOTE_HOST_RE,
+    _SSH_PORT_RE,
+)
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -32,19 +38,17 @@ from routes.shell_routes import TMUX_LOG_DIR
 logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
-    _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
+    _SESSION_ID_RE,
     _git_bash_path,
-    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
-    _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
+    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
+    _validate_local_dir, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     load_stored_hf_token,
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
-    _diagnose_serve_output, run_ssh_command_async,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
-    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    run_ssh_command_async,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -648,8 +652,8 @@ def setup_cookbook_routes() -> APIRouter:
         else:
             _validate_repo_id(req.repo_id)
             _validate_include(req.include)
-        _validate_remote_host(req.remote_host)
-        req.ssh_port = _validate_ssh_port(req.ssh_port)
+        validate_remote_host(req.remote_host)
+        req.ssh_port = validate_ssh_port(req.ssh_port)
         req.local_dir = _validate_local_dir(req.local_dir)
         req.hf_token = "" if is_ollama_download else (req.hf_token or _load_stored_hf_token())
         _validate_token(req.hf_token)
@@ -1023,7 +1027,7 @@ def setup_cookbook_routes() -> APIRouter:
         # Validate shell-bound inputs, matching the sibling list_gpus endpoint —
         # `host`/`ssh_port` are interpolated into an ssh command below, so an
         # unvalidated value (e.g. "x'; rm -rf ~ #") would be command injection.
-        host = _validate_remote_host(host)
+        host = validate_remote_host(host)
         if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
             raise HTTPException(400, "Invalid ssh_port")
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -1481,8 +1485,8 @@ def setup_cookbook_routes() -> APIRouter:
         """
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
-        _validate_remote_host(req.remote_host)
-        req.ssh_port = _validate_ssh_port(req.ssh_port)
+        validate_remote_host(req.remote_host)
+        req.ssh_port = validate_ssh_port(req.ssh_port)
         req.gpus = _validate_gpus(req.gpus)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
@@ -1922,7 +1926,7 @@ def setup_cookbook_routes() -> APIRouter:
     async def server_setup(request: Request, req: SetupRequest):
         """Install required dependencies on a remote server via SSH."""
         require_admin(request)
-        host = _validate_remote_host(req.host)
+        host = validate_remote_host(req.host)
         if not host:
             raise HTTPException(400, "host is required")
         port = req.ssh_port
@@ -2171,7 +2175,7 @@ def setup_cookbook_routes() -> APIRouter:
         `busy` is True when free_mb/total_mb < 0.5.
         """
         require_admin(request)
-        host = _validate_remote_host(host)
+        host = validate_remote_host(host)
         if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
             raise HTTPException(400, "Invalid ssh_port")
         gpu_query = "nvidia-smi --query-gpu=index,name,memory.free,memory.total,memory.used,utilization.gpu,uuid --format=csv,noheader,nounits"
@@ -2331,8 +2335,8 @@ def setup_cookbook_routes() -> APIRouter:
         whether a local task is tmux-backed or a Windows detached process tree.
         """
         require_admin(request)
-        _validate_remote_host(req.remote_host)
-        sport = _validate_ssh_port(req.ssh_port)
+        validate_remote_host(req.remote_host)
+        sport = validate_ssh_port(req.ssh_port)
         if req.repo_id:
             _validate_repo_id(req.repo_id)
         return await _stop_cookbook_session_impl(
@@ -2357,7 +2361,7 @@ def setup_cookbook_routes() -> APIRouter:
         sig = (req.signal or "TERM").upper()
         if sig not in ("TERM", "KILL", "INT"):
             raise HTTPException(400, "signal must be TERM, KILL, or INT")
-        host = _validate_remote_host(req.host)
+        host = validate_remote_host(req.host)
         if req.ssh_port and not _SSH_PORT_RE.fullmatch(req.ssh_port):
             raise HTTPException(400, "Invalid ssh_port")
         kill_cmd = f"kill -{sig} {req.pid}"
