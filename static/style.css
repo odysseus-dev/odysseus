@@ -2001,7 +2001,7 @@ body.bg-pattern-sparkles {
       border: 1px solid var(--bubble-border, var(--border));
       border-radius: 18px 18px 0 18px;
       align-self: flex-end;
-      width: fit-content;
+      width: 85%;
       max-width: 85%;
       min-width: 80px;
       word-wrap: break-word;
