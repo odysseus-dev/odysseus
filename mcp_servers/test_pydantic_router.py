@@ -8,7 +8,7 @@ class AgentRouter(BaseModel):#This is the way that the AI formats its response s
 
 
     
-async def Route(prompt, Agent_Hashmap:dict, system_prompt, model):
+async def test_Route(prompt, Agent_Hashmap:dict, system_prompt, model):
     response = await asyncio.to_thread(ollama.generate,                    #ollama.generate is synchronous so I created a new thread to carry out the execution.
     model=model,
     prompt= prompt,
