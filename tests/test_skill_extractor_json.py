@@ -41,3 +41,18 @@ def test_non_object_json_returns_none():
 
 def test_empty_input_returns_none():
     assert skill_extractor._extract_json_object("") is None
+
+
+def test_multiple_objects_returns_none():
+    # Two complete valid non-overlapping JSON objects should return None (fail closed).
+    resp = '{"title": "Restart", "steps": []} and {"title": "Stop", "steps": []}'
+    assert skill_extractor._extract_json_object(resp) is None
+
+
+def test_trailing_stray_brace_is_recovered():
+    # A single valid JSON object followed by trailing text containing a stray brace should be recovered.
+    resp = '{"title": "Restart the service", "steps": ["a"]} }'
+    data = skill_extractor._extract_json_object(resp)
+    assert isinstance(data, dict)
+    assert data["title"] == "Restart the service"
+
