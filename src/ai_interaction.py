@@ -972,16 +972,15 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             memories = [m for m in memories if m.get("category", "").lower() == category_filter]
         if not memories:
             return {"results": "No memories found" + (f" in category '{category_filter}'" if category_filter else "") + "."}
+
         result_lines = [f"Found {len(memories)} memory entries:\n"]
-        for m in memories[:100]:
+        for m in memories:
             cat = m.get("category", "fact")
             mid = m.get("id", "?")[:8]
             text = m.get("text", "")
             if len(text) > 150:
                 text = text[:150] + "..."
             result_lines.append(f"- [{cat}] `{mid}` — {text}")
-        if len(memories) > 100:
-            result_lines.append(f"... and {len(memories) - 100} more")
         return {"results": "\n".join(result_lines)}
 
     elif action == "add":
