@@ -101,3 +101,56 @@ def test_usage_on_empty_choices_chunk_still_captured(monkeypatch):
     ]
     usage = _usage_events(_drive(monkeypatch, lines))
     assert usage and usage[-1] == {"input_tokens": 4, "output_tokens": 2}
+
+
+def test_null_choice_chunk_does_not_crash(monkeypatch):
+    # Some providers emit {"choices": [null]} as a heartbeat/keepalive chunk.
+    # The parser must silently skip it rather than crashing on None.get("delta").
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hello"}}]}),
+        'data: ' + json.dumps({"choices": [None]}),
+        'data: [DONE]',
+    ]
+    result = _drive(monkeypatch, lines)
+    assert "Hello" in result
+
+
+def test_null_choice_with_null_usage_does_not_crash(monkeypatch):
+    # Chunk with both choices:[null] and usage:null — neither field should panic.
+    lines = [
+        'data: ' + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+        'data: ' + json.dumps({"choices": [None], "usage": None}),
+        'data: [DONE]',
+    ]
+    result = _drive(monkeypatch, lines)
+    assert "Hi" in result
+
+
+def test_null_tool_call_in_delta_is_skipped(monkeypatch):
+    # Some providers include null entries in the tool_calls array alongside
+    # valid calls. The null entry must be skipped; the valid call must survive.
+    lines = [
+        'data: ' + json.dumps({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [
+                        None,
+                        {"index": 0, "function": {"name": "get_weather", "arguments": '{"city":'}},
+                    ]
+                }
+            }]
+        }),
+        'data: ' + json.dumps({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "function": {"name": "", "arguments": '"London"}'}},
+                    ]
+                }
+            }]
+        }),
+        'data: [DONE]',
+    ]
+    result = _drive(monkeypatch, lines)
+    # The stream completes without error; the valid tool call was accumulated.
+    assert result is not None

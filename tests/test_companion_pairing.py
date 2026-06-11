@@ -78,7 +78,12 @@ from core.middleware import require_admin  # noqa: E402
 
 # --- token minting: shown once, hashed at rest -----------------------------
 
-def test_mint_token_returns_raw_once_and_stores_only_a_hash():
+def test_mint_token_returns_raw_once_and_stores_only_a_hash(monkeypatch):
+    monkeypatch.setitem(sys.modules, "core.database", _db)
+    parent = sys.modules.get("core")
+    if parent is not None:
+        monkeypatch.setattr(parent, "database", _db, raising=False)
+
     token_id, raw = P.mint_token("alice")
     assert raw.startswith("ody_")
     # The persisted row stores a bcrypt hash + prefix, never the plaintext.
@@ -113,10 +118,11 @@ def test_pairing_payload_shape():
 
 @pytest.mark.parametrize("payload", ["[]", '{"users": []}'])
 def test_find_admin_user_ignores_invalid_auth_shape(tmp_path, monkeypatch, payload):
-    data_dir = tmp_path / "data"
-    data_dir.mkdir()
-    (data_dir / "auth.json").write_text(payload)
-    monkeypatch.chdir(tmp_path)
+    auth_file = tmp_path / "auth.json"
+    auth_file.write_text(payload)
+    # find_admin_user reads the import-time AUTH_FILE constant, so redirect that
+    # rather than relying on cwd.
+    monkeypatch.setattr(P, "AUTH_FILE", str(auth_file))
 
     assert P.find_admin_user() is None
 

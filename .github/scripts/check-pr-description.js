@@ -32,7 +32,7 @@ module.exports = async ({ github, context, core }) => {
   //    keyword + #NNN, or a full issue URL (e.g. .../issues/123) — the strict
   //    keyword-prefixed form previously false-flagged correctly-linked PRs.
   const linkedSection = section('Linked Issue');
-  const hasIssueRef = /#\d+/.test(linkedSection) || /\/issues\/\d+/.test(linkedSection);
+  const hasIssueRef = /#\d+\b/.test(linkedSection) || /\/issues\/\d+/.test(linkedSection);
   if (!linkedSection || !hasIssueRef) {
     problems.push('**Linked Issue** — add a reference like `Fixes #NNN`, a bare `#NNN`, or a link to the issue.');
   }
@@ -48,10 +48,12 @@ module.exports = async ({ github, context, core }) => {
     problems.push('**Checklist** — check the duplicate-search box to confirm you searched existing issues and PRs.');
   }
 
-  // 5. How to Test must have at least one numbered step.
+  // 5. How to Test must contain enough real detail for a reviewer to act on.
+  //    Any format is fine — numbered steps, prose, the commands you ran, or a
+  //    code block — so we only require non-trivial content, not a specific shape.
   const howTo = section('How to Test');
-  if (!howTo || !/\d+\.\s*\S/.test(howTo)) {
-    problems.push('**How to Test** — add at least one numbered step a reviewer can follow to verify this works.');
+  if (howTo.length < 30) {
+    problems.push('**How to Test** — explain how a reviewer can verify this change. Numbered steps, the commands you ran, or a short code block all work — give a sentence or two of real detail (not just "tested locally").');
   }
 
   // ── Comment ──────────────────────────────────────────────────────────────
@@ -101,14 +103,21 @@ module.exports = async ({ github, context, core }) => {
 
   async function swapLabel(num, add, remove) {
     if (await labelExists(add)) {
-      await github.rest.issues.addLabels({ owner, repo, issue_number: num, labels: [add] });
+      try {
+        await github.rest.issues.addLabels({ owner, repo, issue_number: num, labels: [add] });
+      } catch (e) {
+        // Fail soft on a token that can't write labels so a label permission
+        // problem never masks the actual description verdict.
+        if (e.status !== 403) throw e;
+        core.warning(`Could not add "${add}" — token lacks label write here; skipping.`);
+      }
     } else {
       core.warning(`Label "${add}" does not exist in the repo — skipping. Create it once to enable labelling.`);
     }
     try {
       await github.rest.issues.removeLabel({ owner, repo, issue_number: num, name: remove });
     } catch (e) {
-      if (e.status !== 404 && e.status !== 410) throw e;
+      if (e.status !== 404 && e.status !== 410 && e.status !== 403) throw e;
     }
   }
 

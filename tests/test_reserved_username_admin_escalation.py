@@ -11,17 +11,15 @@ is reserved for the same reason (bearer-token owner attribution collision).
 See the privilege-escalation finding from the 2026-06 code review.
 """
 
-import sys
-
 import pytest
+
+from tests.helpers.import_state import clear_module
 
 
 def _fresh_auth_manager(tmp_path):
     # Same import dance as test_security_regressions: drop any cached stub so
     # we exercise the real module from disk rather than a conftest mock.
-    sys.modules.pop("core.auth", None)
-    if "core" in sys.modules and hasattr(sys.modules["core"], "auth"):
-        delattr(sys.modules["core"], "auth")
+    clear_module("core.auth")
     from core.auth import AuthManager
 
     return AuthManager(str(tmp_path / "auth.json"))
@@ -58,6 +56,62 @@ def test_rename_into_reserved_username_is_blocked(tmp_path):
     assert mgr.rename_user("bob", "internal-tool", "admin") is False
     assert "internal-tool" not in mgr.users
     assert "bob" in mgr.users
+
+
+def test_legacy_reserved_username_is_removed_on_load(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        '{"users": {"internal-tool": {"password_hash": "unused", "is_admin": false}, '
+        '"admin": {"password_hash": "unused", "is_admin": true}}}',
+        encoding="utf-8",
+    )
+    mgr = _fresh_auth_manager(tmp_path)
+
+    assert "internal-tool" not in mgr.users
+    assert "admin" in mgr.users
+    assert "internal-tool" not in auth_path.read_text(encoding="utf-8")
+
+
+def test_legacy_reserved_username_session_cannot_authenticate(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    sessions_path = tmp_path / "sessions.json"
+    auth_path.write_text(
+        '{"users": {"internal-tool": {"password_hash": "unused", "is_admin": false}}}',
+        encoding="utf-8",
+    )
+    sessions_path.write_text(
+        '{"tok": {"username": "internal-tool", "expiry": 9999999999}}',
+        encoding="utf-8",
+    )
+    mgr = _fresh_auth_manager(tmp_path)
+
+    assert mgr.validate_token("tok") is False
+    assert mgr.get_username_for_token("tok") is None
+
+
+def test_legacy_reserved_single_user_migrates_to_admin(tmp_path):
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        '{"username": "internal-tool", "password_hash": "unused"}',
+        encoding="utf-8",
+    )
+    mgr = _fresh_auth_manager(tmp_path)
+
+    assert "internal-tool" not in mgr.users
+    assert "admin" in mgr.users
+    assert mgr.is_admin("admin") is True
+
+
+def test_token_cache_owner_normalization_requires_current_user():
+    clear_module("core.auth")
+    from core.auth import normalize_known_username
+
+    users = {"alice": {}, "admin": {}}
+
+    assert normalize_known_username(users, " Alice ") == "alice"
+    assert normalize_known_username(users, "internal-tool") is None
+    assert normalize_known_username(users, "api") is None
+    assert normalize_known_username(users, "") is None
 
 
 def test_normal_usernames_still_allowed(tmp_path):

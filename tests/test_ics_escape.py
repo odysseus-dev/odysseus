@@ -23,3 +23,19 @@ def test_newlines_become_literal_backslash_n():
 def test_empty_and_none_safe():
     assert _esc()("") == ""
     assert _esc()(None) == ""
+
+
+def test_safe_ics_filename_strips_header_metacharacters():
+    safe_filename = _import_calendar_helpers()._safe_ics_filename
+
+    assert (
+        safe_filename('Work\r\nX-Injected: yes";/..\\evil')
+        == "Work__X-Injected__yes___.._evil.ics"
+    )
+
+
+def test_safe_ics_filename_falls_back_for_empty_names():
+    safe_filename = _import_calendar_helpers()._safe_ics_filename
+
+    assert safe_filename("////") == "calendar.ics"
+    assert safe_filename(None) == "calendar.ics"
