@@ -51,10 +51,11 @@ Every new or refactored test should be:
 
 ## Test taxonomy
 
-Tests are classified by the categories below. Today the suite is flat under
-`tests/`; the **Target dir** column is the phased layout from #2523 that we move
-toward *after* helpers and determinism are stable. Until a category is moved,
-new tests in that category stay in flat `tests/` but should still follow this
+Tests are classified by the categories below. Today the suite is mostly flat
+under `tests/` (the current `area_cli` set has moved to `tests/cli/`); the
+**Target dir** column is the phased layout from #2523 that we move toward
+*after* helpers and determinism are stable. Until a category is moved, new
+tests in that category stay in flat `tests/` but should still follow this
 standard.
 
 | Category | What it covers | Examples today | Target dir |
