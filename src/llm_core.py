@@ -681,6 +681,27 @@ def _restricts_temperature(model: str) -> bool:
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
 
+# Anthropic removed the sampling parameters (temperature, top_p, top_k) starting
+# with Claude Opus 4.7. On Opus 4.7 and later, sending `temperature` at all —
+# even 0.0 — returns HTTP 400. Earlier Claude models (Opus 4.6 and below, every
+# Sonnet/Haiku) still accept temperature in [0.0, 1.0], so the omission must be
+# version-gated rather than applied to all `claude-*` models.
+def _anthropic_rejects_temperature(model: str) -> bool:
+    """Check if a native-Anthropic model rejects the temperature field (Opus 4.7+)."""
+    if not isinstance(model, str) or not model:
+        return False
+    # `(?<![a-z])` anchors "opus" to a word boundary so a substring match like
+    # `oct-opus`/`octopus-4-8` can't be read as Opus (it would otherwise strip
+    # temperature). Cap the minor at 1-2 digits and forbid a trailing digit so a
+    # dated id like `claude-opus-4-20250514` (Opus 4.0) parses as major-only (no
+    # minor match, kept) instead of reading the date `20250514` as a giant minor
+    # that would falsely test >= 4.7. Dated 4.7+ snapshots (`claude-opus-4-7-
+    # 20260201`) keep their explicit minor and are still matched.
+    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", model.lower())
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2))) >= (4, 7)
+
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
 
@@ -784,8 +805,11 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
         "model": model,
         "messages": chat_messages,
         "max_tokens": max_tokens if max_tokens and max_tokens > 0 else 4096,
-        "temperature": temperature,
     }
+    # Opus 4.7+ removed the sampling parameters — sending `temperature` (even 0.0)
+    # returns HTTP 400. Omit it for those models; older Claude models still take it.
+    if not _anthropic_rejects_temperature(model):
+        payload["temperature"] = temperature
     if system_parts:
         system_text = "\n\n".join(system_parts)
         # Send `system` as a structured text block so we can attach a prompt-cache
