@@ -11,6 +11,9 @@ class AgentRouter(BaseModel):#This is the way that the AI formats its response s
 
     
 async def test_Route(prompt, Agent_Hashmap:dict, system_prompt, model):
+    """For the agent Hashmap the format should be given like this
+    {AgentName:AgentFileName.py for mcp agent.} 
+    """
     response = await asyncio.to_thread(ollama.generate,                    #ollama.generate is synchronous so I created a new thread to carry out the execution.
     model=model,
     prompt= prompt,
@@ -26,4 +29,8 @@ async def test_Route(prompt, Agent_Hashmap:dict, system_prompt, model):
     transport = StdioTransport(sys.executable, args=[filepath])
     calling_agent = MCPToolset(transport)
     return calling_agent
+
+
+
+
     
