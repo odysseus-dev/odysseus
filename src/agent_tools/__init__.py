@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
-from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .chat_history_tools import SearchChatsTool
 from .task_tools import ManageTasksTool
@@ -66,6 +66,7 @@ TOOL_HANDLERS = {
     "app_api": AppApiTool().execute,
     "edit_image": EditImageTool().execute,
     "generate_image": GenerateImageTool().execute,
+    "get_workspace": GetWorkspaceTool().execute,
 }
 
 # ---------------------------------------------------------------------------

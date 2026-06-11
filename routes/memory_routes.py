@@ -105,6 +105,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if memory_manager.find_duplicates(text, user_mem):
             return {"ok": True, "count": len(user_mem), "message": "Memory already exists"}
 
+        if memory_data.session_id:
+            try:
+                session_obj = session_manager.get_session(memory_data.session_id)
+            except KeyError:
+                raise HTTPException(404, "Session not found")
+            _assert_session_owner(session_obj, user)
+
         new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user)
         if memory_data.session_id:
             new_entry["session_id"] = memory_data.session_id
@@ -163,8 +170,17 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
             session_id = memory.get("session_id")
             if session_id and session_id in session_manager.sessions:
-                session = session_manager.get_session(session_id)
-                memory["session_name"] = session.name if session else f"Session {session_id[:6]}"
+                try:
+                    session = session_manager.get_session(session_id)
+                    if session:
+                        _assert_session_owner(session, user)
+                    memory["session_name"] = session.name if session else f"Session {session_id[:6]}"
+                except KeyError:
+                    memory["session_name"] = "Unknown"
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+                    memory["session_name"] = "Unknown"
             else:
                 memory["session_name"] = "Unknown"
 
