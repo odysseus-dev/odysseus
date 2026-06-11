@@ -621,9 +621,15 @@ function renderSkillsList() {
   const showBuiltin = false;
 
   if (!sorted.length && !showBuiltin) {
+    const selectBtn = document.getElementById('skills-select-btn');
+    if (selectBtn) selectBtn.disabled = true;
+    if (_selectMode) _exitSelectMode();
     container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? 'No skills yet, use agent for it to auto extract them.' : 'Loading…'}</div>`;
     return;
   }
+
+  const selectBtn = document.getElementById('skills-select-btn');
+  if (selectBtn) selectBtn.disabled = false;
 
   // Library-style cards: a compact bar that expands in-place to show the
   // SKILL.md, with a footer (Delete left; Edit / Run / Approve right).
@@ -884,10 +890,10 @@ function renderSkillsList() {
     });
   }
 
-  // Background-load the visible skills' SKILL.md so expanding any of them is
-  // instant (no first-time async fetch → no jump). Deferred so it never
-  // competes with the render/cascade paint.
-  setTimeout(_preloadVisibleMarkdown, 0);
+  // Do not eager-load every visible SKILL.md. On large skill libraries this
+  // creates dozens of simultaneous /api/skills/<name>/markdown requests during
+  // app startup and can peg uvicorn. Markdown is fetched lazily when a card is
+  // expanded.
 }
 
 // ---- Card expand / edit / actions ----
@@ -1067,9 +1073,8 @@ async function _deleteSkill(name, card = null) {
       card.classList.add('doclib-card-deleting');
       card.addEventListener('transitionend', () => card.remove(), { once: true });
       setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
-    } else {
-      await loadSkills();
     }
+    await loadSkills();
     uiModule.showToast('Skill deleted');
   } catch (e) { uiModule.showError('Delete failed: ' + e.message); }
 }
@@ -1818,6 +1823,35 @@ async function _showSkillSource(name) {
   });
 }
 
+async function importSkillFromUrl() {
+  const input = document.getElementById('skill-import-url');
+  const url = (input?.value || '').trim();
+  if (!url) {
+    uiModule.showError('Paste a GitHub or skills.sh URL first');
+    return;
+  }
+  const btn = document.getElementById('skill-import-url-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(`${API}/api/skills/import-from-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+    if (input) input.value = '';
+    await loadSkills();
+    const name = data.skill?.name || 'skill';
+    uiModule.showToast(`Imported ${name} (${data.files || 1} file(s))`);
+    if (name) openSkill(name);
+  } catch (err) {
+    uiModule.showError('Import failed: ' + err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function addSkill() {
   const name = document.getElementById('new-skill-name')?.value.trim()
     || document.getElementById('new-skill-title')?.value.trim();
@@ -1866,6 +1900,10 @@ async function addSkill() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('skill-import-url-btn')?.addEventListener('click', importSkillFromUrl);
+  document.getElementById('skill-import-url')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') importSkillFromUrl();
+  });
   document.getElementById('add-skill-btn')?.addEventListener('click', addSkill);
   document.getElementById('skills-search')?.addEventListener('input', renderSkillsList);
   document.getElementById('skills-sort')?.addEventListener('change', (e) => {

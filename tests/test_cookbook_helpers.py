@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -8,6 +9,7 @@ from fastapi import HTTPException
 from routes.cookbook_helpers import (
     _cached_model_scan_script,
     _append_llama_cpp_linux_accel_build_lines,
+    _append_pip_install_runner_lines,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
@@ -20,10 +22,12 @@ from routes.cookbook_helpers import (
     _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
     _validate_gpus,
+    _validate_local_dir,
     _validate_repo_id,
     _validate_serve_cmd,
     _validate_serve_model_id,
-    _validate_ssh_port,
+    _shell_path,
+    run_ssh_command_async,
 )
 
 
@@ -32,6 +36,56 @@ def test_safe_env_prefix_accepts_quoted_venv_path():
         _safe_env_prefix("source '~/vllm-env/bin/activate'")
         == '[ -f "$HOME/vllm-env/bin/activate" ] && source "$HOME/vllm-env/bin/activate" || true'
     )
+
+
+@pytest.mark.asyncio
+async def test_run_ssh_command_executes_with_stdin_and_returns_output(monkeypatch):
+    captured = {}
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self, input=None):
+            captured["input"] = input
+            return b"stdout", b"stderr"
+
+    async def _fake_exec(*args, **kwargs):
+        captured["args"] = list(args)
+        captured["stdin"] = kwargs.get("stdin")
+        captured["stdout"] = kwargs.get("stdout")
+        captured["stderr"] = kwargs.get("stderr")
+        return _Proc()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _fake_exec)
+
+    rc, out, err = await run_ssh_command_async(
+        "alice@gpu-box",
+        "2222",
+        "python -",
+        timeout=5,
+        connect_timeout=4,
+        strict_host_key_checking=False,
+        stdin_data=b"python -m pip install vllm",
+    )
+
+    assert rc == 0
+    assert out == b"stdout"
+    assert err == b"stderr"
+    assert captured["args"] == [
+        "ssh",
+        "-o",
+        "ConnectTimeout=4",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-p",
+        "2222",
+        "alice@gpu-box",
+        "python -",
+    ]
+    assert captured["stdin"] is not None
+    assert captured["stdout"] is not None
+    assert captured["stderr"] is not None
+    assert captured["input"] == b"python -m pip install vllm"
 
 
 def test_safe_env_prefix_leaves_compound_conda_prefix_unchanged():
@@ -51,10 +105,87 @@ def test_safe_env_prefix_accepts_powershell_activation_path():
     )
 
 
-def test_validate_ssh_port_rejects_shell_payload():
-    with pytest.raises(HTTPException):
-        _validate_ssh_port("22; touch /tmp/pwned")
-    assert _validate_ssh_port("2222") == "2222"
+def test_validate_local_dir_accepts_external_drive_paths_with_spaces():
+    path = "/Volumes/T7 2TB/AI Models/llamacpp"
+
+    assert _validate_local_dir(path) == path
+    assert _validate_local_dir(f'"{path}"') == path
+    assert _shell_path(f"{path}/Qwen3-8B") == '"/Volumes/T7 2TB/AI Models/llamacpp/Qwen3-8B"'
+
+
+def test_validate_local_dir_accepts_windows_drive_paths_with_spaces():
+    backslash_path = r"D:\AI Models\llamacpp"
+    slash_path = "D:/AI Models/llamacpp"
+
+    assert _validate_local_dir(backslash_path) == backslash_path
+    assert _validate_local_dir(f"'{backslash_path}'") == backslash_path
+    assert _validate_local_dir(slash_path) == slash_path
+    assert _shell_path(backslash_path + r"\Qwen3-8B") == '"D:\\AI Models\\llamacpp\\Qwen3-8B"'
+
+
+def test_validate_local_dir_still_rejects_shell_metacharacters():
+    for path in [
+        "/Volumes/T7 2TB/AI Models; touch /tmp/pwned",
+        "/Volumes/T7 2TB/AI Models/$(touch pwned)",
+        "/Volumes/T7 2TB/AI Models/`touch pwned`",
+        "/Volumes/T7 2TB/AI Models/model\nnext",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
+
+
+def test_validate_local_dir_rejects_windows_shell_metacharacters():
+    for path in [
+        r"D:\AI Models\llamacpp; touch C:\pwned",
+        r"D:\AI Models\llamacpp\$(touch pwned)",
+        r"D:\AI Models\llamacpp\`touch pwned`",
+        "D:\\AI Models\\llamacpp\nnext",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
+
+
+def test_validate_local_dir_accepts_non_ascii_unicode_paths():
+    # Folder names are routinely non-ASCII on localized systems; the validator
+    # must accept them the same way it accepts spaces (see issue: spaces AND
+    # non-ASCII chars were both rejected by the old ASCII-only allowlist).
+    for path in [
+        "/Volumes/Модели/llamacpp",   # Cyrillic (POSIX / external drive)
+        "/home/josé/models",          # accented Latin
+        "/Volumes/モデル/llm",         # CJK
+        r"D:\AI Models\Модели",       # Cyrillic (Windows drive path)
+    ]:
+        assert _validate_local_dir(path) == path
+
+
+def test_validate_local_dir_rejects_metacharacters_in_unicode_paths():
+    # Widening the allowlist to Unicode must not reopen the injection surface:
+    # shell metacharacters stay rejected even alongside non-ASCII segments.
+    for path in [
+        "/Volumes/Модели; touch /tmp/pwned",
+        "/Volumes/Модели/$(touch pwned)",
+        "/Volumes/Модели/`touch pwned`",
+        "/Volumes/Модели/a|b",
+        "/Volumes/Модели\nnext",
+        r"D:\Модели\llamacpp & calc.exe",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
+
+
+def test_validate_local_dir_rejects_leading_dash_segments():
+    # A path segment starting with '-' could be parsed as a CLI option by hf/etc.
+    # (option injection) even when quoted, since quoting doesn't stop a value from
+    # being read as a flag. The validator must reject it on every platform.
+    for path in [
+        "/models/-rf",
+        "/models/-rf/llamacpp",
+        "/-oStrictHostKeyChecking=no",
+        r"D:\models\-rf",
+        "D:/models/-rf",
+    ]:
+        with pytest.raises(HTTPException):
+            _validate_local_dir(path)
 
 
 def test_validate_gpus_accepts_indexes_only():
@@ -96,7 +227,9 @@ def test_pip_install_fallback_chain_prefers_venv_safe_install():
     # First attempt: plain install, wrapped in status-preserving subshell
     assert chain.startswith("bash -c '")
     assert "python3 -m pip install -q -U huggingface_hub" in chain
-    # Second attempt: --user --break-system-packages, also wrapped
+    # Fallback: --user first, then guarded --break-system-packages for PEP-668 pip.
+    assert "python3 -m pip install --user -q -U huggingface_hub" in chain
+    assert "python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages" in chain
     assert "--user --break-system-packages" in chain
     assert "python3 -m pip install --user --break-system-packages -q -U huggingface_hub" in chain
     # No bare `| tail` (which would mask pip's exit code)
@@ -111,11 +244,23 @@ def test_pip_install_fallback_chain_prefers_venv_safe_install():
 def test_pip_install_fallback_chain_allows_custom_python_command():
     chain = _pip_install_fallback_chain("hf_transfer", python_cmd="pip", upgrade=False)
     assert "pip install -q hf_transfer" in chain
+    assert "pip install --user -q hf_transfer" in chain
+    assert "pip install --help 2>/dev/null | grep -q -- --break-system-packages" in chain
     assert "pip install --user --break-system-packages -q hf_transfer" in chain
     # venv check uses the python executable derived from the pip command
     assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in chain
-    # Both attempts are wrapped in bash -c subshells
-    assert chain.count("bash -c '") == 2
+    # All install attempts are wrapped in bash -c subshells
+    assert chain.count("bash -c '") == 3
+
+
+def test_pip_install_fallback_chain_accepts_python_executable():
+    chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="python")
+
+    assert "python -m pip install -q 'llama-cpp-python[server]'" in chain
+    assert "python -m pip install --user -q 'llama-cpp-python[server]'" in chain
+    assert "python -m pip install --help 2>/dev/null | grep -q -- --break-system-packages" in chain
+    assert "python install " not in chain
+    assert 'python -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)"' in chain
 
 
 def test_pip_install_fallback_chain_propagates_failure_in_venv():
@@ -167,8 +312,10 @@ def test_pip_install_fallback_chain_quotes_extras_spec():
     (which pulls in starlette_context for ``python -m llama_cpp.server``) is
     actually installed instead of a bare ``llama-cpp-python`` (issue #730)."""
     chain = _pip_install_fallback_chain("llama-cpp-python[server]", python_cmd="pip")
-    # Quoted in both the plain and the --user attempt.
-    assert chain.count("'llama-cpp-python[server]'") == 2
+    # Quoted in the plain, --user, and guarded --break-system-packages attempts.
+    assert chain.count("'llama-cpp-python[server]'") == 3
+    # llama-cpp installs must prefer prebuilt wheels to avoid fragile source builds.
+    assert "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu" in chain
     # Never the unquoted form (bracket-glob risk).
     assert "install -q llama-cpp-python[server]" not in chain
     # A plain package name is still passed through unquoted (no regression).
@@ -193,6 +340,17 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
 
 
+def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
+    assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
+    assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
+
+
 def test_vllm_preflight_reports_cli_and_version():
     lines = []
 
@@ -214,6 +372,27 @@ def test_venv_safe_local_pip_install_strips_user_flags_only_for_local_venv():
     assert cleaned == "python3 -m pip install -U vllm"
     assert _venv_safe_local_pip_install_cmd(cmd, local=False, in_venv=True) == cmd
     assert _venv_safe_local_pip_install_cmd(cmd, local=True, in_venv=False) == cmd
+
+
+def test_pip_install_runner_guards_break_system_packages():
+    lines = []
+    _append_pip_install_runner_lines(
+        lines,
+        'python3 -m pip install --no-cache-dir --user --break-system-packages "llama-cpp-python[server]"',
+    )
+    script = "\n".join(lines)
+
+    assert "python3 -m pip install --help 2>/dev/null | grep -q -- --break-system-packages" in script
+    assert 'python3 -m pip install --no-cache-dir --user --break-system-packages "llama-cpp-python[server]"' in script
+    assert "python3 -m pip install --no-cache-dir --user 'llama-cpp-python[server]'" in script
+    assert "pip does not support --break-system-packages" in script
+
+
+def test_pip_install_runner_leaves_plain_commands_unchanged():
+    lines = []
+    _append_pip_install_runner_lines(lines, "python3 -m pip install --no-cache-dir vllm")
+
+    assert lines == ["python3 -m pip install --no-cache-dir vllm"]
 
 
 def test_pip_install_attempt_wraps_in_status_preserving_subshell():
@@ -288,6 +467,7 @@ def test_local_tooling_path_export_converts_windows_paths_for_bash():
 def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
     script = "\n".join(_user_shell_path_bootstrap())
     assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+    assert 'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }' in script
 
 
 def test_serve_preflight_failure_keeps_tmux_pane_visible():
@@ -557,6 +737,36 @@ def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):
     assert ggufs[3]["quant"] == "BF16"
 
 
+def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):
+    """Docker recreates can leave the persisted HF cache outside HOME.
+    The Serve scanner should honor the cache env path instead of only ~/.cache.
+    """
+    hf_cache = tmp_path / "app-cache" / "hub"
+    model = hf_cache / "models--Qwen--Qwen3.6-35B"
+    (model / "blobs").mkdir(parents=True)
+    (model / "blobs" / "weights.safetensors").write_bytes(b"weights")
+    (model / "snapshots" / "abc").mkdir(parents=True)
+    (model / "snapshots" / "abc" / "config.json").write_text("{}", encoding="utf-8")
+
+    empty_home = tmp_path / "home"
+    empty_home.mkdir()
+    scan_py = tmp_path / "scan_cache_env.py"
+    scan_py.write_text(_cached_model_scan_script(), encoding="utf-8")
+    env = dict(os.environ)
+    env["HOME"] = str(empty_home)
+    env["HUGGINGFACE_HUB_CACHE"] = str(hf_cache)
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    by_repo = {m["repo_id"]: m for m in json.loads(proc.stdout)}
+    assert by_repo["Qwen/Qwen3.6-35B"]["path"] == str(hf_cache)
+
+
 # ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──
 
 def test_pip_install_no_cache_injects_flag():
@@ -575,3 +785,35 @@ def test_pip_install_no_cache_is_idempotent_and_scoped():
     # not a pip install -> unchanged
     assert _pip_install_no_cache("vllm serve --model x") == "vllm serve --model x"
     assert _pip_install_no_cache("") == ""
+
+
+def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
+    extra_cache = tmp_path / "extra_hf_cache"
+    model_dir = extra_cache / "models--acme--sample-7b"
+    snap = model_dir / "snapshots" / "rev-1"
+    snap.mkdir(parents=True)
+    weights = snap / "model.safetensors"
+    weights.write_bytes(b"abc123")
+
+    scan_py = tmp_path / "scan_cache.py"
+    scan_py.write_text(
+        _cached_model_scan_script(add_hf_cache=str(extra_cache)),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(scan_py)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    models = json.loads(proc.stdout)
+    by_repo = {m["repo_id"]: m for m in models}
+
+    assert "acme/sample-7b" in by_repo
+    rec = by_repo["acme/sample-7b"]
+    assert rec["path"] == str(extra_cache)
+    assert rec["nb_files"] == 1
+    assert rec["size_bytes"] == len(b"abc123")
+    assert rec["has_incomplete"] is False
+    assert rec["is_diffusion"] is False

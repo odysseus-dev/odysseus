@@ -82,6 +82,32 @@ def _usage_event(monkeypatch, lines):
     return asyncio.run(run())
 
 
+def _stream_events(monkeypatch, lines):
+    """Drive stream_llm and return all JSON data events."""
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeClient(lines))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda u: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+    monkeypatch.setattr(llm_core, "_clear_host_dead", lambda *a, **k: None)
+
+    async def run():
+        events = []
+        async for chunk in llm_core.stream_llm(
+            "http://127.0.0.1:8081/v1/chat/completions",
+            "openrouter/auto",
+            [{"role": "user", "content": "hi"}],
+        ):
+            for ln in chunk.split("\n"):
+                ln = ln.strip()
+                if ln.startswith("data: ") and ln[6:] != "[DONE]":
+                    try:
+                        events.append(json.loads(ln[6:]))
+                    except ValueError:
+                        pass
+        return events
+
+    return asyncio.run(run())
+
+
 # A real llama.cpp final chunk carries `usage` (delta empty / choices []) with a
 # sibling `timings` block. The decode speed here (78.91) is far above the
 # wall-clock figure the old code would have shown.
@@ -125,6 +151,31 @@ def test_stream_llm_omits_tps_when_backend_has_no_timings(monkeypatch):
     assert usage is not None
     assert "gen_tps" not in usage
     assert "prefill_tps" not in usage
+
+
+def test_stream_llm_surfaces_provider_resolved_model(monkeypatch):
+    events = _stream_events(monkeypatch, [
+        'data: ' + json.dumps({
+            "model": "meta-llama/llama-3.3-70b-instruct:free",
+            "choices": [{"index": 0, "delta": {"content": "Hi"}}],
+        }),
+        'data: ' + json.dumps({
+            "model": "meta-llama/llama-3.3-70b-instruct:free",
+            "choices": [],
+            "usage": {"prompt_tokens": 8, "completion_tokens": 5},
+        }),
+        "data: [DONE]",
+    ])
+
+    actual = [e for e in events if e.get("type") == "model_actual"]
+    assert actual == [{
+        "type": "model_actual",
+        "requested_model": "openrouter/auto",
+        "model": "meta-llama/llama-3.3-70b-instruct:free",
+    }]
+    usage = [e["data"] for e in events if e.get("type") == "usage"][0]
+    assert usage["requested_model"] == "openrouter/auto"
+    assert usage["model"] == "meta-llama/llama-3.3-70b-instruct:free"
 
 
 # --- _compute_final_metrics preference logic --------------------------------

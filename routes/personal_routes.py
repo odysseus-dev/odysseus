@@ -6,16 +6,14 @@ import uuid
 from typing import List, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Depends
 from src.request_models import DirectoryRequest
-from core.constants import BASE_DIR, PERSONAL_DIR
+from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
 from src.rag_singleton import get_rag_manager
-from src.auth_helpers import get_current_user, require_user
+from src.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
 from src.upload_handler import secure_filename
+from src.upload_limits import PERSONAL_UPLOAD_MAX_BYTES
 
-UPLOADS_DIR = os.path.join(BASE_DIR, "data", "personal_uploads")
-MAX_PERSONAL_UPLOAD_BYTES = int(
-    os.getenv("ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024))
-)
+UPLOADS_DIR = PERSONAL_UPLOADS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +192,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     @router.post("/upload")
     async def upload_files_to_rag(request: Request, files: List[UploadFile] = File(...)):
         """Upload files directly into RAG. Supports text and PDF."""
-        user = get_current_user(request)
+        user = require_privilege(request, "can_use_documents")
         rag = _rag()
         if not rag:
             raise HTTPException(503, "RAG system is not available — is the embedding service running?")
@@ -208,8 +206,8 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
         for upload in files:
             try:
                 file_path, stored_name, safe_name = _unique_personal_upload_path(upload_dir, upload.filename)
-                content_bytes = await upload.read(MAX_PERSONAL_UPLOAD_BYTES + 1)
-                if len(content_bytes) > MAX_PERSONAL_UPLOAD_BYTES:
+                content_bytes = await upload.read(PERSONAL_UPLOAD_MAX_BYTES + 1)
+                if len(content_bytes) > PERSONAL_UPLOAD_MAX_BYTES:
                     logger.warning(f"Rejected oversized personal upload: {upload.filename!r}")
                     total_failed += 1
                     continue
@@ -286,9 +284,12 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             except ValueError:
                 # commonpath raises on mixed drives / non-comparable paths
                 in_uploads = False
-            if in_uploads and abs_target != base_abs and os.path.exists(abs_target):
-                os.remove(abs_target)
-                deleted_from_disk = True
+            if in_uploads and abs_target != base_abs:
+                try:
+                    os.remove(abs_target)
+                    deleted_from_disk = True
+                except FileNotFoundError:
+                    pass  # already gone — race with another request or cleanup
 
             # Exclude the file from the listing (persists across restarts)
             personal_docs_manager.exclude_file(filepath)

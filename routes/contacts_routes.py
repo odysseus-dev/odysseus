@@ -25,9 +25,10 @@ from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-SETTINGS_FILE = DATA_DIR / "settings.json"
-LOCAL_CONTACTS_FILE = DATA_DIR / "contacts.json"
+from src.constants import DATA_DIR as _DATA_DIR, SETTINGS_FILE as _SETTINGS_FILE, CONTACTS_FILE as _CONTACTS_FILE
+DATA_DIR = Path(_DATA_DIR)
+SETTINGS_FILE = Path(_SETTINGS_FILE)
+LOCAL_CONTACTS_FILE = Path(_CONTACTS_FILE)
 
 
 def _load_settings():
@@ -728,8 +729,11 @@ def setup_contacts_routes():
     @router.post("/import")
     async def import_vcf(data: dict, _admin: str = Depends(require_admin)):
         """Import contacts from .vcf or CSV. Body: {"vcf": "..."} or {"csv": "..."}."""
-        text = data.get("vcf") or data.get("text") or ""
-        csv_text = data.get("csv") or ""
+        # Coerce defensively: a non-string vcf/text/csv (e.g. a number or list
+        # in the JSON body) would otherwise reach .strip() and 500 with an
+        # AttributeError instead of degrading to a clean "no data" response.
+        text = str(data.get("vcf") or data.get("text") or "")
+        csv_text = str(data.get("csv") or "")
         if text.strip():
             if "BEGIN:VCARD" not in text.upper():
                 return {"success": False, "error": "No vCard data found"}

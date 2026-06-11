@@ -1,4 +1,4 @@
-"""Shared test configuration — ensure project root is on sys.path and stub heavy deps."""
+"""Shared test configuration - ensure project root is on sys.path and stub heavy deps."""
 import sys
 import os
 import types
@@ -9,12 +9,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Importing core.database below runs init_db() at import time, and its default
 # (sqlite:///./data/app.db) can't be opened in a clean worktree because SQLite
-# won't create the missing ./data parent dir — pytest then dies during
+# won't create the missing ./data parent dir - pytest then dies during
 # collection, before any test module loads. Default to an in-memory DB for the
 # test session so collection is deterministic and writes no repo-local
 # artifacts. An explicit DATABASE_URL (a real test/CI database) is preserved.
 # This only unblocks collection/import-time init; it does not provide a shared
-# file-backed DB across processes — tests needing that must set DATABASE_URL.
+# file-backed DB across processes - tests needing that must set DATABASE_URL.
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 # Pre-import real heavy modules BEFORE any test file's module-level stubs can
@@ -27,7 +27,7 @@ try:
     import sqlalchemy.orm  # noqa: F401
     import core.database  # noqa: F401
 except ImportError:
-    pass  # not installed — the stubs below will handle it
+    pass  # not installed - the stubs below will handle it
 
 def _has_module(mod_name: str) -> bool:
     try:
@@ -54,3 +54,41 @@ if "src.database" not in sys.modules:
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()
     sys.modules["src.database"] = _db
+
+# Pre-import core.models before test_agent_loop.py's module-level stubs
+# run (it replaces sys.modules['core.models'] with a MagicMock during
+# collection, which breaks session import in subsequent tests).
+import core.models  # noqa: E402
+
+def pytest_configure(config):
+    """Register the dynamic taxonomy ``sub_*`` markers before collection.
+
+    The stable ``area_*`` markers are declared in ``pyproject.toml``. The
+    per-file ``sub_*`` markers are derived from the test filenames here so that
+    unknown-mark warnings still surface genuine typos outside the taxonomy. This
+    only registers marker names; it imports no production module.
+    """
+    import pathlib
+    from tests._taxonomy import discover_markers
+
+    tests_dir = pathlib.Path(__file__).parent
+    paths = list(tests_dir.rglob("test_*.py")) + list(tests_dir.rglob("*_test.py"))
+    for marker_name in discover_markers(paths):
+        if marker_name.startswith("sub_"):
+            config.addinivalue_line("markers", f"{marker_name}: taxonomy sub-area marker")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Tag each collected test with its taxonomy ``area_*`` and ``sub_*`` markers.
+
+    Collection-time only: this adds markers and nothing else. It does not skip,
+    reorder, or deselect tests, mutate fixtures or the environment, or import any
+    production module. See ``tests/_taxonomy.py`` for the classification rules.
+    """
+    import pytest
+    from tests._taxonomy import markers_for_path
+
+    for item in items:
+        path = getattr(item, "path", None) or item.fspath
+        for marker_name in markers_for_path(path):
+            item.add_marker(getattr(pytest.mark, marker_name))
