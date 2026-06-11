@@ -1,0 +1,61 @@
+# CodeQL code scanning
+#
+# Purpose: GitHub's own static analysis engine reads the application source
+# (Python backend + the JavaScript frontend) and looks for real
+# vulnerabilities -- SQL/command injection, path traversal, auth mistakes,
+# unsafe deserialization. Findings appear in the repo's Security tab. This is
+# the deepest check in the suite and the most valuable for a high-profile
+# target.
+#
+# It runs on every push to main and on a weekly schedule (to catch newly
+# disclosed query patterns against unchanged code). It deliberately does NOT
+# run on pull requests: most PRs here come from forks, whose read-only token
+# cannot publish results, which would produce confusing failures. To scan pull
+# requests too, a maintainer can instead enable CodeQL "default setup" in
+# Settings -> Security -> Code scanning (one toggle, no file needed) -- see
+# docs/security-ci.md.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, Monday 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # publish results to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both are interpreted, so CodeQL needs no build step (build-mode none).
+        language: [python, javascript-typescript]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@03e4368ac7daa2bd82b3e85262f3bf87ee112f57  # v3.36.0
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@03e4368ac7daa2bd82b3e85262f3bf87ee112f57  # v3.36.0
+        with:
+          category: "/language:${{ matrix.language }}"
