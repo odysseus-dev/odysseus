@@ -366,6 +366,10 @@ def _ssh_exec_argv(
     strict_host_key_checking: bool | None = None,
 ) -> list[str]:
     """Build a consistent ssh argv for remote command execution."""
+    remote_value = str(remote or "").strip()
+    remote_host = remote_value.rsplit("@", 1)[-1]
+    if not remote_value or remote_value.startswith("-") or not remote_host or remote_host.startswith("-"):
+        raise ValueError("Invalid SSH remote host")
     argv = ["ssh"]
     if connect_timeout is not None:
         argv.extend(["-o", f"ConnectTimeout={int(connect_timeout)}"])
