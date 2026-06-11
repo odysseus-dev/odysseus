@@ -8,10 +8,36 @@ from typing import Optional, Set
 logger = logging.getLogger(__name__)
 
 
+# Every tool exposed by the built-in email MCP server
+# (mcp_servers/email_server.py). Single source of truth: the fence tags
+# (TOOL_TAGS), bare-name dispatch (tool_execution), native-call mapping
+# (tool_schemas), and the non-admin blocklist below all derive from this set,
+# so a tool added to the email server can't become reachable under its bare
+# name without also being blocked for non-admins.
+BUILTIN_EMAIL_TOOLS = frozenset({
+    "list_email_accounts",
+    "list_emails",
+    "read_email",
+    "search_emails",
+    "send_email",
+    "reply_to_email",
+    "draft_email",
+    "draft_email_reply",
+    "ai_draft_email_reply",
+    "archive_email",
+    "delete_email",
+    "mark_email_read",
+    "bulk_email",
+    "download_attachment",
+})
+
+
 # Tools regular/public users must not execute directly. These either expose
 # server/runtime access, sensitive user data, external messaging, persistent
-# state changes, or generic loopback/integration surfaces.
-NON_ADMIN_BLOCKED_TOOLS = {
+# state changes, or generic loopback/integration surfaces. All email tools are
+# included (SECURITY.md: email/MCP capabilities are privileged admin
+# functionality).
+NON_ADMIN_BLOCKED_TOOLS = BUILTIN_EMAIL_TOOLS | {
     "bash",
     "python",
     "read_file",
@@ -32,10 +58,6 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "manage_settings",
     "api_call",
     "app_api",
-    "send_email",
-    "reply_to_email",
-    "list_emails",
-    "read_email",
     "resolve_contact",
     "manage_contact",
     "manage_calendar",

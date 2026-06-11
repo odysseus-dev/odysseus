@@ -616,7 +616,16 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    for tool_name in ("send_email", "read_file", "mcp__email__send_email"):
+    # Every bare email tool name is spelled out (not imported from
+    # BUILTIN_EMAIL_TOOLS) so accidentally dropping one from that set fails
+    # here instead of silently shrinking the blocklist.
+    bare_email_tools = (
+        "list_email_accounts", "list_emails", "read_email", "search_emails",
+        "send_email", "reply_to_email", "draft_email", "draft_email_reply",
+        "ai_draft_email_reply", "archive_email", "delete_email",
+        "mark_email_read", "bulk_email", "download_attachment",
+    )
+    for tool_name in bare_email_tools + ("read_file", "mcp__email__send_email"):
         desc, result = await execute_tool_block(
             SimpleNamespace(tool_type=tool_name, content="{}"),
             owner="regular-user",

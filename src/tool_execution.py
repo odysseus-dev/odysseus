@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
 
-from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
+from src.tool_security import BUILTIN_EMAIL_TOOLS, is_public_blocked_tool, owner_is_admin_or_single_user
 from src.tool_policy import ToolPolicy
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.tool_utils import _truncate, get_mcp_manager
@@ -767,11 +767,10 @@ async def execute_tool_block(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
-    elif tool in {"list_email_accounts", "send_email", "list_emails", "read_email",
-                  "reply_to_email", "bulk_email", "archive_email", "delete_email",
-                  "mark_email_read", "search_emails", "draft_email", "draft_email_reply",
-                  "ai_draft_email_reply", "download_attachment"}:
-        # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server
+    elif tool in BUILTIN_EMAIL_TOOLS:
+        # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server.
+        # Non-admin owners never reach here: BUILTIN_EMAIL_TOOLS ⊆ NON_ADMIN_BLOCKED_TOOLS,
+        # so is_public_blocked_tool() above already rejected them.
         mcp = get_mcp_manager()
         qualified = f"mcp__email__{tool}"
         if mcp:

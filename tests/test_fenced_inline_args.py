@@ -1,0 +1,71 @@
+"""PR #3681 — fenced tool calls with inline args, and the fence-tag boundary.
+
+Local fenced-block models (Ollama etc.) emit calls like ```list_email_accounts {}
+with the args on the same line as the tag; the parser must execute those. The
+relaxed tag pattern must NOT prefix-match longer fence tags: ```python3 is a
+language hint, not a "python" tool call with content "3\n...".
+"""
+import sys
+from unittest.mock import MagicMock
+
+for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution']:
+    sys.modules.pop(mod, None)
+for mod in [
+    'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
+    'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
+    'src.database', 'core.models', 'core.database', 'core.auth'
+]:
+    if mod not in sys.modules:
+        sys.modules[mod] = MagicMock()
+
+import src.agent_tools  # noqa: E402, F401
+from src.tool_parsing import parse_tool_blocks, strip_tool_blocks  # noqa: E402
+
+
+def test_inline_args_on_tag_line_parse():
+    # The original bug: ```list_email_accounts {}  (args on the tag line)
+    # never matched because the regex required a newline right after the tag.
+    blocks = parse_tool_blocks('```list_email_accounts {}\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [("list_email_accounts", "{}")]
+
+
+def test_inline_json_args_parse_for_email_tools():
+    blocks = parse_tool_blocks('```list_emails {"max_results": 5}\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [("list_emails", '{"max_results": 5}')]
+
+
+def test_next_line_content_still_parses():
+    # No regression for the classic shape: tag, newline, content.
+    blocks = parse_tool_blocks('```manage_memory\nadd\nsome text\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [("manage_memory", "add\nsome text")]
+
+
+def test_plain_bash_fence_still_parses():
+    blocks = parse_tool_blocks('```bash\necho hello\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [("bash", "echo hello")]
+
+
+def test_python3_language_hint_is_not_a_python_tool_call():
+    # ```python3 must not prefix-match the "python" fence tag — without the
+    # (?![\w-]) boundary it parsed as tool "python" with content "3\nprint(...)"
+    # and executed as code.
+    blocks = parse_tool_blocks('```python3\nprint("hi")\n```')
+    assert blocks == [], blocks
+
+
+def test_hyphenated_tag_is_not_a_tool_call():
+    blocks = parse_tool_blocks('```bash-session\n$ ls\n```')
+    assert blocks == [], blocks
+
+
+def test_inline_args_fence_is_stripped_from_display():
+    # strip must mirror parse: an executed inline-args fence must not leak
+    # into the displayed text.
+    text = 'Checking now.\n```list_email_accounts {}\n```\nDone.'
+    assert strip_tool_blocks(text) == 'Checking now.\n\nDone.'
+
+
+def test_python3_fence_is_left_intact_in_display():
+    # ...and a fence that did NOT parse as a tool call must stay visible.
+    text = 'Example:\n```python3\nprint("hi")\n```'
+    assert strip_tool_blocks(text) == text

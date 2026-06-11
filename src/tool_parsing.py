@@ -19,9 +19,13 @@ logger = logging.getLogger(__name__)
 # Regex patterns
 # ---------------------------------------------------------------------------
 
-# Pattern 1: ```bash ... ``` fenced code blocks
+# Pattern 1: ```bash ... ``` fenced code blocks. The tag may be followed by
+# inline args on the same line (```list_email_accounts {}) or a newline.
+# (?![\w-]) keeps the alternation from prefix-matching longer fence tags:
+# without it, ```python3 would match as tool "python" with content "3\n..."
+# and execute as code.
 _TOOL_BLOCK_RE = re.compile(
-    r"```(" + "|".join(TOOL_TAGS) + r")[ \t]*\n?([\s\S]*?)```",
+    r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])[ \t]*\n?([\s\S]*?)```",
     re.IGNORECASE,
 )
 
