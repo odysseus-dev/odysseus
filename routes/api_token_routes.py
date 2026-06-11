@@ -159,6 +159,8 @@ def setup_api_token_routes() -> APIRouter:
             payload = await request.json()
         except Exception:
             payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
         with get_db_session() as db:
             token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
             if not token:
