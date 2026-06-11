@@ -47,6 +47,95 @@ function _dockOwnerSurface(owner) {
   return owner?.closest?.('.notes-pane-backdrop') || owner;
 }
 
+function _zIndexForElement(el, fallback = 250) {
+  const raw = el ? window.getComputedStyle(el).zIndex : '';
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function _isUsableDockOwner(owner) {
+  if (!owner || !owner.isConnected) return false;
+  if (owner.classList?.contains('hidden')) return false;
+  if (owner.classList?.contains('modal-minimized')) return false;
+  if (owner.style?.display === 'none') return false;
+  const content = _resolveDockNodes(owner)?.content;
+  if (!content || !content.isConnected) return false;
+  if (content.classList?.contains('hidden')) return false;
+  if (content.style?.display === 'none') return false;
+  const r = content.getBoundingClientRect?.();
+  return !!r && r.width > 0 && r.height > 0;
+}
+
+function _dockOwnersForSide(side) {
+  if (side !== 'left' && side !== 'right') return [];
+  return Array.from(document.querySelectorAll(`.${_dockClassForSide(side)}`)).filter(_isUsableDockOwner);
+}
+
+function _activeDockOwnerForSide(side) {
+  let best = null;
+  let bestZ = -Infinity;
+  _dockOwnersForSide(side).forEach((owner) => {
+    const z = _zIndexForElement(_dockOwnerSurface(owner), 250);
+    if (z >= bestZ) {
+      best = owner;
+      bestZ = z;
+    }
+  });
+  return best;
+}
+
+function _applyDockWidthToOwner(owner, side, width, left = _leftNavRight()) {
+  const content = _resolveDockNodes(owner)?.content;
+  if (!content || !width) return;
+  const w = Math.round(width);
+  content._userDockWidth = w;
+  if (side === 'right') {
+    content.style.left = 'auto';
+    content.style.right = '0';
+    content.style.width = w + 'px';
+    content.style.maxWidth = w + 'px';
+    if (_shouldAutoCollapseSidebar(w)) {
+      _collapseSidebarToRail();
+      if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
+    }
+  } else {
+    content._emailDocSplitUserW = w;
+    content.style.left = left + 'px';
+    content.style.right = 'auto';
+    content.style.width = w + 'px';
+    content.style.maxWidth = w + 'px';
+  }
+}
+
+function _syncDockSideWidth(side, requestedWidth, owners = _dockOwnersForSide(side)) {
+  if (side !== 'left' && side !== 'right') return 0;
+  if (!owners.length) return 0;
+  if (side === 'left'
+      && document.body.classList.contains('email-doc-split-active')
+      && document.body.classList.contains('doc-view')) {
+    _positionEdgeDockResizeHandles();
+    return requestedWidth || _activeDockWidth(side);
+  }
+  let w = 0;
+  if (side === 'right') {
+    w = _clampRightDockWidth(requestedWidth || _activeDockWidth('right') || _defaultDockWidth());
+    document.body.classList.add('right-dock-active');
+    document.documentElement.style.setProperty('--right-dock-w', w + 'px');
+    owners.forEach((owner) => _applyDockWidthToOwner(owner, side, w));
+  } else {
+    const left = _leftNavRight();
+    w = _clampLeftDockWidth(requestedWidth || _activeDockWidth('left') || _defaultDockWidth(), left);
+    document.body.classList.add('left-dock-active');
+    document.documentElement.style.setProperty(
+      '--left-dock-w',
+      document.body.classList.contains('email-doc-split-active') ? '0px' : w + 'px',
+    );
+    owners.forEach((owner) => _applyDockWidthToOwner(owner, side, w, left));
+  }
+  _positionEdgeDockResizeHandles();
+  return w;
+}
+
 function _hasOtherDockedWindow(side, owner) {
   const cls = _dockClassForSide(side);
   return Array.from(document.querySelectorAll(`.${cls}`)).some((el) => {
@@ -359,6 +448,7 @@ function _applyDockInternal(modal, side, dockClass) {
   if (!nodes) return 0;
   const content = nodes.content;
   if (!content) return 0;
+  const existingSideWidth = _hasOtherDockedWindow(side, modal) ? _activeDockWidth(side) : 0;
   // If the modal is currently docked on the OTHER side (e.g. the user
   // manually docked it right, then a reply re-docks it left), clear that
   // side's class + body push first. Otherwise both sides' state coexist —
@@ -521,7 +611,13 @@ function _applyDockInternal(modal, side, dockClass) {
   }
   content._dockSide = side;
   content._dockOwner = modal;
-  _positionEdgeDockResizeHandles();
+  const sideOwners = _dockOwnersForSide(side);
+  if (sideOwners.length > 1) {
+    const syncedWidth = _syncDockSideWidth(side, existingSideWidth || w, sideOwners);
+    if (syncedWidth) w = syncedWidth;
+  } else {
+    _positionEdgeDockResizeHandles();
+  }
   // Watch for the docked modal disappearing (removed from DOM or hidden
   // via .hidden class) and clean up the body padding + sidebar in that
   // case. Without this, closing a docked window leaves a phantom strip
@@ -816,12 +912,6 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
 
   const _ownerSurface = _dockOwnerSurface;
 
-  const _zIndexFor = (el, fallback = 250) => {
-    const raw = el ? window.getComputedStyle(el).zIndex : '';
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? n : fallback;
-  };
-
   const _topToolZ = (exclude = null) => {
     const skip = new Set([exclude, _ownerSurface(exclude)].filter(Boolean));
     let top = 300;
@@ -829,7 +919,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       if (!el || skip.has(el)) return;
       if (el.classList?.contains('hidden')) return;
       if (el.style?.display === 'none') return;
-      top = Math.max(top, _zIndexFor(el, 250));
+      top = Math.max(top, _zIndexForElement(el, 250));
     });
     return top;
   };
@@ -843,24 +933,6 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         detail: { id: owner?.id || '', modal: owner },
       }));
     } catch (_) {}
-  };
-
-  const _isVisibleDockOwner = (owner) => {
-    if (!owner || !owner.isConnected) return false;
-    if (owner.classList?.contains('hidden')) return false;
-    if (owner.classList?.contains('modal-minimized')) return false;
-    if (owner.style?.display === 'none') return false;
-    const content = _resolveDockNodes(owner)?.content;
-    if (!content || !content.isConnected) return false;
-    if (content.classList?.contains('hidden')) return false;
-    if (content.style?.display === 'none') return false;
-    const r = content.getBoundingClientRect?.();
-    return !!r && r.width > 0 && r.height > 0;
-  };
-
-  const _ownersForSide = (side) => {
-    const cls = _dockClassForSide(side);
-    return Array.from(document.querySelectorAll(`.${cls}`)).filter(_isVisibleDockOwner);
   };
 
   const _simpleTitleForOwner = (owner) => {
@@ -902,7 +974,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     let best = null;
     let bestZ = -Infinity;
     owners.forEach((owner) => {
-      const z = _zIndexFor(_ownerSurface(owner), 250);
+      const z = _zIndexForElement(_ownerSurface(owner), 250);
       if (z >= bestZ) {
         best = owner;
         bestZ = z;
@@ -938,7 +1010,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   };
 
   const _renderSide = (side) => {
-    const owners = _enabled() && window.innerWidth > 768 ? _ownersForSide(side) : [];
+    const owners = _enabled() && window.innerWidth > 768 ? _dockOwnersForSide(side) : [];
     if (owners.length < 2) {
       _hideBar(side);
       return;
@@ -1052,33 +1124,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     document.body.appendChild(handle);
   }
 
-  const _isUsableDockOwner = (owner) => {
-    if (!owner || !owner.isConnected) return false;
-    if (owner.classList?.contains('hidden')) return false;
-    if (owner.style?.display === 'none') return false;
-    const nodes = _resolveDockNodes(owner);
-    const content = nodes?.content;
-    if (!content || !content.isConnected) return false;
-    if (content.classList?.contains('hidden')) return false;
-    if (content.style?.display === 'none') return false;
-    const r = content.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  };
-
-  const _activeDockOwner = (side) => {
-    const cls = _dockClassForSide(side);
-    const all = Array.from(document.querySelectorAll(`.${cls}`));
-    for (const owner of all.reverse()) {
-      if (_isUsableDockOwner(owner)) return owner;
-    }
-    return null;
-  };
-
-  const _zIndexFor = (el, fallback = 250) => {
-    const raw = el ? window.getComputedStyle(el).zIndex : '';
-    const n = parseInt(raw, 10);
-    return Number.isFinite(n) ? n : fallback;
-  };
+  const _activeDockOwner = (side) => _activeDockOwnerForSide(side);
 
   const _hasVisibleFloatingModal = (owner) => {
     const all = Array.from(document.querySelectorAll('.modal:not(.hidden):not(.modal-minimized)'));
@@ -1095,40 +1141,18 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     });
   };
 
-  const _setWidth = (owner, side, clientX) => {
-    const nodes = _resolveDockNodes(owner);
-    const content = nodes?.content;
-    if (!content) return 0;
+  const _setWidth = (owner, side, clientX, resizeOwners = null) => {
+    const targets = (resizeOwners && resizeOwners.length) ? resizeOwners : [owner].filter(Boolean);
+    if (!targets.length) return 0;
     let w = 0;
     if (side === 'right') {
       w = _clampRightDockWidth(window.innerWidth - clientX);
-      content._userDockWidth = w;
-      content.style.left = 'auto';
-      content.style.right = '0';
-      content.style.width = w + 'px';
-      content.style.maxWidth = w + 'px';
-      document.body.classList.add('right-dock-active');
-      document.documentElement.style.setProperty('--right-dock-w', w + 'px');
-      if (_shouldAutoCollapseSidebar(w)) {
-        _collapseSidebarToRail();
-        if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
-      }
+      _syncDockSideWidth(side, w, targets);
     } else {
       const left = _leftNavRight();
       w = _clampLeftDockWidth(clientX - left, left);
-      content._userDockWidth = w;
-      content._emailDocSplitUserW = w;
-      content.style.left = left + 'px';
-      content.style.right = 'auto';
-      content.style.width = w + 'px';
-      content.style.maxWidth = w + 'px';
-      document.body.classList.add('left-dock-active');
-      document.documentElement.style.setProperty(
-        '--left-dock-w',
-        document.body.classList.contains('email-doc-split-active') ? '0px' : w + 'px',
-      );
+      _syncDockSideWidth(side, w, targets);
     }
-    _positionEdgeDockResizeHandles();
     return w;
   };
 
@@ -1160,7 +1184,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       }
       _setStyle(handle, 'display', 'block');
       _setStyle(handle, 'left', (x - 5) + 'px');
-      _setStyle(handle, 'zIndex', String(_zIndexFor(owner) + 1));
+      _setStyle(handle, 'zIndex', String(_zIndexForElement(_dockOwnerSurface(owner), 250) + 1));
     }
   };
 
@@ -1175,15 +1199,17 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       handle.setPointerCapture?.(e.pointerId);
       const nodes = _resolveDockNodes(owner);
       const content = nodes?.content;
+      const resizeOwners = _dockOwnersForSide(side);
+      if (!resizeOwners.includes(owner)) resizeOwners.push(owner);
       const prevCursor = document.body.style.cursor;
       const prevUserSelect = document.body.style.userSelect;
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
       document.body.classList.add('edge-dock-resizing');
-      _setWidth(owner, side, e.clientX);
+      _setWidth(owner, side, e.clientX, resizeOwners);
       const onMove = (ev) => {
         ev.preventDefault();
-        _setWidth(owner, side, ev.clientX);
+        _setWidth(owner, side, ev.clientX, resizeOwners);
       };
       const onUp = (ev) => {
         try { handle.releasePointerCapture?.(e.pointerId); } catch (_) {}
@@ -1196,7 +1222,12 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         const finalW = side === 'right'
           ? parseFloat(document.documentElement.style.getPropertyValue('--right-dock-w')) || content?.getBoundingClientRect?.().width || 0
           : content?.getBoundingClientRect?.().width || 0;
-        if (finalW) _saveDockWidth(owner, content, side, finalW);
+        if (finalW) {
+          resizeOwners.forEach((dockOwner) => {
+            const dockContent = _resolveDockNodes(dockOwner)?.content;
+            if (dockContent) _saveDockWidth(dockOwner, dockContent, side, finalW);
+          });
+        }
         ev.preventDefault();
       };
       document.addEventListener('pointermove', onMove, true);
