@@ -407,6 +407,11 @@ class AuthManager:
         request, so unlike delete/rename no session or token revocation is
         needed — a demoted admin simply fails the next is_admin() gate.
 
+        Promotion stashes the user's current privilege map and demotion
+        restores it, so a temporary admin stint can't silently broaden a
+        user's non-admin access; users without a stash (created as admin,
+        or promoted before stashing existed) demote to DEFAULT_PRIVILEGES.
+
         Counting admins and flipping the flag happen in one critical section
         so two concurrent demotions can't race the admin count to zero.
         """
@@ -426,10 +431,31 @@ class AuthManager:
                 admin_count = sum(1 for d in self.users.values() if d.get("is_admin"))
                 if admin_count <= 1:
                     return SetAdminResult.LAST_ADMIN
-            target["is_admin"] = is_admin
-            target["privileges"] = dict(
-                ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES
-            )
+            # Write order matters for lock-free readers: get_privileges()
+            # reads without _config_lock and trusts is_admin, so the admin
+            # flag must be flipped while the stored map is safe to expose —
+            # before writing admin privileges on promote, after restoring
+            # the pre-admin map on demote.
+            if is_admin:
+                target["is_admin"] = True
+                # Stash the pre-admin map so a later demotion can restore it.
+                # While is_admin is set the stored map is inert: get_privileges
+                # short-circuits to ADMIN_PRIVILEGES and set_privileges refuses
+                # admins, so only set_admin ever touches the stash.
+                target["privileges_before_admin"] = dict(
+                    target.get("privileges") or DEFAULT_PRIVILEGES
+                )
+                target["privileges"] = dict(ADMIN_PRIVILEGES)
+            else:
+                # Restore the stashed pre-admin map. Fall back to defaults for
+                # users created as admins (their stored map is ADMIN_PRIVILEGES,
+                # which must not leak past demotion — e.g. can_use_bash) and
+                # for admins promoted before the stash existed.
+                target["privileges"] = dict(
+                    target.pop("privileges_before_admin", None)
+                    or DEFAULT_PRIVILEGES
+                )
+                target["is_admin"] = False
             self._save()
         logger.info("Set is_admin=%s for '%s' (by '%s')", is_admin, username, requesting_user)
         return SetAdminResult.OK

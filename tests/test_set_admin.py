@@ -1,7 +1,7 @@
 """Promote/demote users to/from admin (issue #2958).
 
 Covers AuthManager.set_admin (the core logic + last-admin lockout guard +
-privilege reset on a real role change + no-op preservation) and the
+privilege stash/restore on a real role change + no-op preservation) and the
 PUT /api/auth/users/{username}/admin route's status/envelope mapping.
 """
 
@@ -136,6 +136,73 @@ def test_noop_demote_of_regular_user_preserves_custom_privileges(tmp_path):
     assert result is auth_mod.SetAdminResult.OK
     # Privileges must NOT have been reset to defaults by the no-op.
     assert mgr.users["bob"]["privileges"]["can_use_bash"] is True
+
+
+def test_demote_restores_pre_admin_privilege_restrictions(tmp_path):
+    auth_mod, mgr = _fresh_auth_manager(tmp_path)
+    mgr.create_user("admin", "pw-123456", is_admin=True)
+    mgr.create_user("bob", "pw-123456")
+    # Tighten bob below the defaults before promoting him.
+    assert mgr.set_privileges("bob", {
+        "can_use_agent": False,
+        "can_generate_images": False,
+        "max_messages_per_day": 50,
+    }) is True
+    restricted = mgr.get_privileges("bob")
+
+    assert mgr.set_admin("bob", True, "admin") is auth_mod.SetAdminResult.OK
+    assert mgr.set_admin("bob", False, "admin") is auth_mod.SetAdminResult.OK
+
+    # Demotion must restore the pre-admin policy, not reset to defaults.
+    assert mgr.get_privileges("bob") == restricted
+    assert mgr.get_privileges("bob")["can_use_agent"] is False
+    assert mgr.get_privileges("bob")["max_messages_per_day"] == 50
+
+
+def test_promote_demote_round_trip_is_stable_and_cleans_up_stash(tmp_path):
+    auth_mod, mgr = _fresh_auth_manager(tmp_path)
+    mgr.create_user("admin", "pw-123456", is_admin=True)
+    mgr.create_user("bob", "pw-123456")
+    assert mgr.set_privileges("bob", {"can_use_browser": False}) is True
+    restricted = mgr.get_privileges("bob")
+
+    for _ in range(2):  # two full promote/demote cycles
+        assert mgr.set_admin("bob", True, "admin") is auth_mod.SetAdminResult.OK
+        assert mgr.set_admin("bob", False, "admin") is auth_mod.SetAdminResult.OK
+
+    assert mgr.get_privileges("bob") == restricted
+    # The stash is promotion-time bookkeeping; it must not linger on the row.
+    assert "privileges_before_admin" not in mgr.users["bob"]
+
+
+def test_redundant_promote_does_not_clobber_stash(tmp_path):
+    auth_mod, mgr = _fresh_auth_manager(tmp_path)
+    mgr.create_user("admin", "pw-123456", is_admin=True)
+    mgr.create_user("bob", "pw-123456")
+    assert mgr.set_privileges("bob", {"can_use_agent": False}) is True
+    restricted = mgr.get_privileges("bob")
+
+    assert mgr.set_admin("bob", True, "admin") is auth_mod.SetAdminResult.OK
+    # A second promote is a no-op and must not re-stash ADMIN_PRIVILEGES.
+    assert mgr.set_admin("bob", True, "admin") is auth_mod.SetAdminResult.OK
+    assert mgr.set_admin("bob", False, "admin") is auth_mod.SetAdminResult.OK
+
+    # Demotion must still restore the original pre-admin restrictions.
+    assert mgr.get_privileges("bob") == restricted
+    assert mgr.get_privileges("bob")["can_use_agent"] is False
+
+
+def test_pre_admin_privileges_survive_manager_reload(tmp_path):
+    auth_mod, mgr = _fresh_auth_manager(tmp_path)
+    mgr.create_user("admin", "pw-123456", is_admin=True)
+    mgr.create_user("bob", "pw-123456")
+    assert mgr.set_privileges("bob", {"can_use_research": False}) is True
+    assert mgr.set_admin("bob", True, "admin") is auth_mod.SetAdminResult.OK
+
+    # Fresh manager on the same auth.json — the stash must round-trip disk.
+    mgr2 = auth_mod.AuthManager(str(tmp_path / "auth.json"))
+    assert mgr2.set_admin("bob", False, "admin") is auth_mod.SetAdminResult.OK
+    assert mgr2.get_privileges("bob")["can_use_research"] is False
 
 
 # ---------------------------------------------------------------------------
