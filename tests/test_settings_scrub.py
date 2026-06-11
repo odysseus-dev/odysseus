@@ -40,7 +40,8 @@ def test_secret_in_list_of_dicts_blanked():
 
 def test_non_secret_keys_preserved():
     s = {"keybinds": {"send": "Enter"}, "theme": "dark", "image_model": "x",
-         "default_endpoint_id": "ep1", "search_result_count": 5, "tts_enabled": True}
+         "default_endpoint_id": "ep1", "search_result_count": 5, "tts_enabled": True,
+         "tokenId": "public-id", "keyId": "public-key-id"}
     assert scrub_settings(s) == s  # untouched
 
 
@@ -69,6 +70,23 @@ def test_empty_and_nonstring_secret_values_untouched():
 def test_exact_name_matches():
     out = scrub_settings({"password": "p", "token": "t", "secret": "s", "apikey": "a", "key": "k"})
     assert all(v == "" for v in out.values()), out
+
+
+def test_camel_case_secret_keys_blanked():
+    out = scrub_settings({
+        "apiKey": "api-secret",
+        "accessToken": "access-secret",
+        "refreshToken": "refresh-secret",
+        "clientSecret": "client-secret",
+        "hfToken": "hf-secret",
+        "nested": {"privateKey": "private-secret"},
+    })
+    assert out["apiKey"] == ""
+    assert out["accessToken"] == ""
+    assert out["refreshToken"] == ""
+    assert out["clientSecret"] == ""
+    assert out["hfToken"] == ""
+    assert out["nested"]["privateKey"] == ""
 
 
 def test_non_object_settings_return_empty_mapping():
