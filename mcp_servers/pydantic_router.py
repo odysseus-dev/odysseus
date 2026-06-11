@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from pydantic_ai.mcp import MCPToolset
 from fastmcp.client.transports import StdioTransport
 import asyncio
-class AgentRouter(BaseModel):
+class AgentRouter(BaseModel):#This is the way that the AI formats its response so that values are easy to compare.
    Agent:str
 
 
@@ -32,7 +32,7 @@ async def Route():
      )
     Output = AgentRouter.model_validate_json(response['response']).Agent.lower()
     print(Output)
-    IdentifyingAgent = ODYSSEUS_SERVERS.get(Output)
+    IdentifyingAgent = ODYSSEUS_SERVERS.get(Output)#Maps it out with dictionary to look at what mcp agent should be called
     if not IdentifyingAgent:
         return 
-    CallingAgent = MCPToolset(StdioTransport("python", args=[f"mcpservers/{IdentifyingAgent}"]))
+    CallingAgent = MCPToolset(StdioTransport("python", args=[f"mcpservers/{IdentifyingAgent}"]))#Calls the agent.
