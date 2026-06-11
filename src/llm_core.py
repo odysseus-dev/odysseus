@@ -457,15 +457,25 @@ def _detect_provider(url: str) -> str:
 
 def _is_self_hosted_openai_compatible(url: str) -> bool:
     """True for custom/local OpenAI-compatible servers (llama.cpp, LM Studio,
-    vLLM, text-generation-webui, etc.) as opposed to api.openai.com itself.
+    vLLM, text-generation-webui, etc.) as opposed to cloud APIs.
 
     Used to gate llama.cpp-server-specific payload extras (``session_id``,
-    ``cache_prompt``) — sending unrecognized top-level fields to OpenAI's
-    actual API returns a 400 ("Unrecognized request argument"), but
-    self-hosted servers generally ignore unknown fields and many (notably
-    llama.cpp's server) use them for KV-cache slot affinity (issue #2927).
+    ``cache_prompt``) used for KV-cache slot affinity (issue #2927). Strict
+    cloud providers reject unrecognized top-level fields (api.openai.com
+    returns 400, Mistral returns 422 "extra_forbidden", issue #3793), and any
+    unknown OpenAI-compatible host used to be treated as self-hosted, so those
+    fields leaked to every strict provider added as a custom endpoint.
+
+    A server only counts as self-hosted when it also resolves as local:
+    loopback/private/tailscale host, or the endpoint explicitly configured
+    with kind "local". A self-hosted server exposed via a public hostname
+    loses the affinity hint unless its endpoint kind is set to "local" -
+    a lost perf hint, versus a hard 4xx on every request the other way.
     """
-    return _detect_provider(url) == "openai" and not _host_match(url, "openai.com")
+    if _detect_provider(url) != "openai" or _host_match(url, "openai.com"):
+        return False
+    from src.model_context import is_local_endpoint
+    return is_local_endpoint(url)
 
 
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
