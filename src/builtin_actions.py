@@ -1309,6 +1309,41 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+async def action_self_improve(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Run the self-improvement analysis cycle.
+
+    Analyses logged agent failures for recurring patterns, proposes fixes,
+    and returns a summary. Does NOT auto-create PRs — those require
+    maintainer approval via the self-improvement status panel.
+    """
+    try:
+        from src.self_improve import auto_improve, get_status
+        status = get_status()
+        if status["total_failures"] == 0:
+            raise TaskNoop("no logged agent failures to analyze")
+
+        fixes = auto_improve(create_prs=False, force=True)
+        if not fixes:
+            return (
+                f"Self-improvement: analyzed {status['total_failures']} failures, "
+                f"{len(status.get('top_patterns', []))} patterns detected, "
+                "no new fixes to propose.",
+                True,
+            )
+
+        fix_titles = [f["title"] for f in fixes]
+        return (
+            f"Self-improvement: proposed {len(fixes)} fix(es):\n" +
+            "\n".join(f"- {t}" for t in fix_titles),
+            True,
+        )
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"self_improve action failed: {e}")
+        return str(e), False
+
+
 async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
     """Background note-due scanner. Fires a reminder for any note whose
     `due_date` falls in the current ±5-minute window and hasn't been pinged
@@ -2239,6 +2274,7 @@ BUILTIN_ACTIONS = {
     "audit_skills": action_audit_skills,
     "check_email_urgency": action_check_email_urgency,
     "cookbook_serve": action_cookbook_serve,
+    "self_improve": action_self_improve,
     # ping_notes removed from the registry — runs only inside `_note_pings_loop`.
 }
 
@@ -2259,4 +2295,5 @@ BUILTIN_ACTION_INFO = {
     "test_skills": "Run the per-skill Test on every skill: agent run + LLM judge → records verdict on the skill (pass/needs_work/fail/inconclusive). Advisory only — never rewrites or demotes anything.",
     "audit_skills": "Audit unaudited skills after enough new skills are added: test, narrow metadata, self-edit/retry, optional teacher rewrite, tag duplicates/trivial skills, and publish/draft using the auto-approve threshold.",
     "check_email_urgency": "Scan unread emails hourly, tag urgent/reply-soon/newsletter/marketing/spam, and send a reminder when a new email needs a fast reply.",
+    "self_improve": "Analyze logged agent tool failures for recurring patterns, propose code fixes, and optionally generate PRs",
 }

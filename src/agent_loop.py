@@ -2743,6 +2743,21 @@ async def stream_agent_loop(
                     )
                 desc, result = await _tool_task
 
+            # Self-improvement: log tool failures for pattern analysis.
+            if result and result.get("error"):
+                try:
+                    from src.self_improve import maybe_log_tool_failure
+                    import asyncio as _sched_asyncio
+                    _sched_asyncio.create_task(
+                        maybe_log_tool_failure(
+                            result,
+                            tool_name=block.tool_type,
+                            session_id=session_id,
+                        )
+                    )
+                except Exception:
+                    pass
+
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
             # first so the <!-- SOURCES:…--> marker is found and stripped even
