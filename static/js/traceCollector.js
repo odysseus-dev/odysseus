@@ -128,7 +128,17 @@ async function triggerTraceExport(sessionId, label) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || "Export failed");
 
+    // Download the JSON file
+    const data = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(result.data, null, "\t")) || {};
+    const downloadAnchorNode = document.createElement("a");
+    downloadAnchorNode.setAttribute("href", data);
+    downloadAnchorNode.setAttribute("download", `trace_${sessionId}_${label}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    document.body.removeChild(downloadAnchorNode);
+    
     alert(`Data marked as '${label}' exported successfully!`);
+
   } catch (error) {
     alert(`Failed to export: ${error.message}`);
   } finally {
