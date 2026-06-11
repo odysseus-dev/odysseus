@@ -974,6 +974,7 @@ def _patch_create_deps(monkeypatch, db):
     monkeypatch.setattr(model_routes, "_normalize_base", lambda b: b)
     monkeypatch.setattr(model_routes, "_rewrite_loopback_for_docker", lambda b, **k: b)
     monkeypatch.setattr(model_routes, "_load_settings", lambda: {"default_endpoint_id": "exists"})
+    monkeypatch.setattr(model_routes, "_save_settings", lambda settings: None)
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda u: u)
     monkeypatch.setattr(auth_helpers, "get_current_user", lambda req: None)
 
@@ -1018,6 +1019,121 @@ def test_post_creates_endpoint_with_pinned_models(monkeypatch):
     # Persisted onto the created row.
     assert len(db.added) == 1
     assert json.loads(db.added[0].pinned_models) == ["deploy-1", "deploy-2"]
+
+
+def test_post_creates_endpoint_replaces_disabled_default_endpoint(monkeypatch):
+    old_default = _make_endpoint(
+        id="old-default",
+        base_url="http://old-host:1234/v1",
+        is_enabled=False,
+        cached_models=json.dumps(["old-model"]),
+    )
+    db = _PinnedFakeDb([old_default])
+    _patch_create_deps(monkeypatch, db)
+    saved = []
+    monkeypatch.setattr(
+        model_routes,
+        "_load_settings",
+        lambda: {"default_endpoint_id": "old-default", "default_model": "old-model"},
+    )
+    monkeypatch.setattr(model_routes, "_save_settings", lambda settings: saved.append(dict(settings)))
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["gpt-4o-mini"])
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://new-host:1234/v1",
+        **_create_form_kwargs(skip_probe="false"),
+    )
+
+    assert len(db.added) == 1
+    assert saved == [
+        {
+            "default_endpoint_id": db.added[0].id,
+            "default_model": "gpt-4o-mini",
+        }
+    ]
+
+
+def test_post_creates_endpoint_replaces_missing_default_endpoint(monkeypatch):
+    db = _PinnedFakeDb([])
+    _patch_create_deps(monkeypatch, db)
+    saved = []
+    monkeypatch.setattr(
+        model_routes,
+        "_load_settings",
+        lambda: {"default_endpoint_id": "missing-default", "default_model": "old-model"},
+    )
+    monkeypatch.setattr(model_routes, "_save_settings", lambda settings: saved.append(dict(settings)))
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["gpt-4o-mini"])
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://new-host:1234/v1",
+        **_create_form_kwargs(skip_probe="false"),
+    )
+
+    assert len(db.added) == 1
+    assert saved == [
+        {
+            "default_endpoint_id": db.added[0].id,
+            "default_model": "gpt-4o-mini",
+        }
+    ]
+
+
+def test_post_creates_endpoint_seeds_empty_default_endpoint(monkeypatch):
+    db = _PinnedFakeDb([])
+    _patch_create_deps(monkeypatch, db)
+    saved = []
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
+    monkeypatch.setattr(model_routes, "_save_settings", lambda settings: saved.append(dict(settings)))
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["gpt-4o-mini"])
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://new-host:1234/v1",
+        **_create_form_kwargs(skip_probe="false"),
+    )
+
+    assert len(db.added) == 1
+    assert saved == [
+        {
+            "default_endpoint_id": db.added[0].id,
+            "default_model": "gpt-4o-mini",
+        }
+    ]
+
+
+def test_post_creates_endpoint_keeps_enabled_default_endpoint(monkeypatch):
+    active_default = _make_endpoint(
+        id="active-default",
+        base_url="http://old-host:1234/v1",
+        is_enabled=True,
+        cached_models=json.dumps(["old-model"]),
+    )
+    db = _PinnedFakeDb([active_default])
+    _patch_create_deps(monkeypatch, db)
+    saved = []
+    monkeypatch.setattr(
+        model_routes,
+        "_load_settings",
+        lambda: {"default_endpoint_id": "active-default", "default_model": "old-model"},
+    )
+    monkeypatch.setattr(model_routes, "_save_settings", lambda settings: saved.append(dict(settings)))
+    monkeypatch.setattr(model_routes, "_probe_endpoint", lambda *a, **k: ["gpt-4o-mini"])
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://new-host:1234/v1",
+        **_create_form_kwargs(skip_probe="false"),
+    )
+
+    assert len(db.added) == 1
+    assert saved == []
 
 
 def test_post_dedupe_existing_merges_and_returns_pinned(monkeypatch):

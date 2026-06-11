@@ -123,6 +123,19 @@ def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
     return cleared_users
 
 
+def _should_seed_default_endpoint(db, endpoint_id: str) -> bool:
+    """Return True when the global default endpoint is empty, missing, or disabled."""
+    endpoint_id = str(endpoint_id or "").strip()
+    if not endpoint_id:
+        return True
+    try:
+        current = db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id).first()
+    except Exception as e:
+        logger.debug(f"Default endpoint lookup failed for {endpoint_id}: {e}")
+        return False
+    return current is None or not bool(getattr(current, "is_enabled", False))
+
+
 # Loopback hosts a user might type for a local model server (LM Studio,
 # llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
 # host the server actually runs on.
@@ -1732,7 +1745,7 @@ def setup_model_routes(model_discovery):
             # global default to an embedding/tts/etc. entry a provider happens
             # to list first.
             settings = _load_settings()
-            if not settings.get("default_endpoint_id"):
+            if _should_seed_default_endpoint(db, settings.get("default_endpoint_id", "")):
                 from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
                 settings["default_model"] = _first_chat_model(model_ids) or ""
