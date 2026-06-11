@@ -136,3 +136,31 @@ def test_markdown_info_string_fence_is_left_intact_in_display():
     # so not stripped from the displayed text.
     text = 'Example:\n```python title="example.py"\nprint("hi")\n```'
     assert strip_tool_blocks(text) == text
+
+
+def test_parse_strip_mirror_across_fence_shape_grid():
+    # Invariant for ANY single fence: either it executes AND is stripped, or
+    # it doesn't execute AND stays fully visible. The one allowed exception is
+    # an empty tool-shaped fence (no header, no body): never executed, but
+    # stripped as noise — pre-PR behavior, kept deliberately.
+    from src.agent_tools import TOOL_TAGS
+
+    tags = ["bash", "python", "list_emails", "bulk_email", "manage_memory",
+            "python3", "bash-session", "notatool"]
+    headers = ["", " ", ' title="x"', ' {title="x"}', ' {"a": 1}', " [1, 2]",
+               " {bad json", ' {"a": 1} extra']
+    bodies = ["", "content line\n", '{"k": "v"}\n']
+
+    for tag in tags:
+        for header in headers:
+            for body in bodies:
+                text = f"before\n```{tag}{header}\n{body}```\nafter"
+                blocks = parse_tool_blocks(text)
+                stripped = strip_tool_blocks(text)
+                case = (tag, header, body)
+                if blocks:
+                    assert stripped == "before\n\nafter", case
+                elif stripped != text:
+                    assert (
+                        tag in TOOL_TAGS and not header.strip() and not body.strip()
+                    ), f"non-executed fence was stripped: {case}"

@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
+from src.tool_security import BUILTIN_EMAIL_TOOLS
+
 logger = logging.getLogger(__name__)
 
 
@@ -2293,8 +2295,11 @@ class TaskScheduler:
                 greeting=None,
                 enabled_tools=json.dumps([
                     "manage_calendar", "manage_notes", "manage_tasks", "manage_memory",
-                    "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "archive_email",
-                    "mark_email_read", "delete_email", "resolve_contact",
+                    # Full built-in email tool set (single source of truth in
+                    # tool_security) so a tool added to the email server is
+                    # granted to new default assistants without touching this.
+                    *sorted(BUILTIN_EMAIL_TOOLS),
+                    "resolve_contact",
                     "search_chats", "web_search", "web_fetch", "read_file",
                     "create_document", "update_document", "edit_document",
                     "generate_image", "trigger_research",
