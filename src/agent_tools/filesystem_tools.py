@@ -437,8 +437,7 @@ class MkdirTool:
             except (json.JSONDecodeError, TypeError):
                 raw_path = ""
         else:
-            raw_path = _s.split("
-", 1)[0].strip()
+            raw_path = _s.split(chr(10), 1)[0].strip()
         if not raw_path:
             return {"error": "mkdir: path required", "exit_code": 1}
         try:
@@ -475,8 +474,7 @@ class RmTool:
             except (json.JSONDecodeError, TypeError):
                 raw_path = ""
         else:
-            raw_path = _s.split("
-", 1)[0].strip()
+            raw_path = _s.split(chr(10), 1)[0].strip()
         if not raw_path:
             return {"error": "rm: path required", "exit_code": 1}
         try:
