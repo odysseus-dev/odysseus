@@ -120,6 +120,8 @@ class SessionManager:
             history=[],
             owner=getattr(db_session, "owner", None),
             is_important=getattr(db_session, "is_important", False) or False,
+            reasoning_effort=getattr(db_session, "reasoning_effort", None),
+            verbosity=getattr(db_session, "verbosity", None),
         )
         session.message_count = getattr(db_session, "message_count", 0) or 0
         return session
@@ -178,6 +180,8 @@ class SessionManager:
             history=history,
             owner=getattr(db_session, 'owner', None),
             is_important=getattr(db_session, 'is_important', False) or False,
+            reasoning_effort=getattr(db_session, 'reasoning_effort', None),
+            verbosity=getattr(db_session, 'verbosity', None),
         )
 
         session.message_count = getattr(db_session, 'message_count', len(history))
@@ -463,7 +467,9 @@ class SessionManager:
         endpoint_url: str,
         model: str,
         rag: bool = False,
-        owner: str = None
+        owner: str = None,
+        reasoning_effort: str = None,
+        verbosity: str = None,
     ) -> Session:
         """Create a new session and save to database."""
         db = SessionLocal()
@@ -476,6 +482,8 @@ class SessionManager:
                 rag=rag,
                 headers={},
                 owner=owner,
+                reasoning_effort=reasoning_effort,
+                verbosity=verbosity,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             )
@@ -490,6 +498,8 @@ class SessionManager:
                 rag=rag,
                 headers={},
                 owner=owner,
+                reasoning_effort=reasoning_effort,
+                verbosity=verbosity,
             )
 
             self.sessions[session_id] = session

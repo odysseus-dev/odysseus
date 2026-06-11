@@ -128,6 +128,8 @@ class Session(TimestampMixin, Base):
     total_input_tokens = Column(Integer, default=0)
     total_output_tokens = Column(Integer, default=0)
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
+    reasoning_effort = Column(String, nullable=True)
+    verbosity = Column(String, nullable=True)
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
 
     # Relationship to chat messages
@@ -156,6 +158,8 @@ class Session(TimestampMixin, Base):
             'folder': self.folder,
             'total_input_tokens': self.total_input_tokens or 0,
             'total_output_tokens': self.total_output_tokens or 0,
+            'reasoning_effort': self.reasoning_effort,
+            'verbosity': self.verbosity,
             'crew_member_id': self.crew_member_id,
         }
 
@@ -1072,6 +1076,35 @@ def _migrate_add_mode_column():
         except Exception:
             pass
 
+def _migrate_add_session_model_control_columns():
+    """Add per-session model control columns if missing."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        changed = False
+        if "reasoning_effort" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT")
+            changed = True
+        if "verbosity" not in columns:
+            conn.execute("ALTER TABLE sessions ADD COLUMN verbosity TEXT")
+            changed = True
+        if changed:
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added session model control columns")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"session model control migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 def _migrate_add_folder_column():
     """Add folder column to sessions table if it doesn't exist."""
     import sqlite3
@@ -1746,6 +1779,7 @@ def init_db():
     _migrate_add_folder_column()
     _migrate_add_token_columns()
     _migrate_add_mode_column()
+    _migrate_add_session_model_control_columns()
     _migrate_add_multiuser_owner_columns()
     _migrate_add_api_token_scopes_column()
     _migrate_backfill_document_owner_from_session()

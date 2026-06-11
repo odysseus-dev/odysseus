@@ -228,6 +228,7 @@ function initializeEventListeners() {
     document.querySelectorAll(
       '.skill-kebab-menu, .note-reminder-menu, .task-dropdown, .doclib-card-dropdown, .email-card-dropdown, .msg-overflow-menu'
     ).forEach(m => { if (m !== except) m.remove(); });
+    document.dispatchEvent(new CustomEvent('model-control-close-all'));
   };
   // Window-opening / nav controls (rail buttons, sidebar tool rows + session
   // rows, section headers) count as "other actions" — dismiss popups when one
@@ -1700,6 +1701,291 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+
+  // Per-chat model controls. Auto is the default and is omitted from requests.
+  (function initModelControls() {
+    const controls = [
+      {
+        key: 'reasoning_effort',
+        name: 'Reasoning',
+        btnId: 'reasoning-control-btn',
+        menuId: 'reasoning-control-menu',
+        labelId: 'reasoning-control-label',
+        labels: {
+          auto: 'Auto',
+          off: 'Off',
+          on: 'On',
+          minimal: 'Min',
+          low: 'Low',
+          medium: 'Med',
+          high: 'High',
+        },
+      },
+      {
+        key: 'verbosity',
+        name: 'Verbosity',
+        btnId: 'verbosity-control-btn',
+        menuId: 'verbosity-control-menu',
+        labelId: 'verbosity-control-label',
+        labels: {
+          auto: 'Auto',
+          low: 'Low',
+          medium: 'Med',
+          high: 'High',
+        },
+      },
+    ];
+
+    const normalizeValue = (value, labels) => {
+      const v = String(value || 'auto').toLowerCase();
+      return Object.prototype.hasOwnProperty.call(labels, v) ? v : 'auto';
+    };
+
+    const isThinkingModel = model => {
+      const m = String(model || '').toLowerCase();
+      return ['qwen3', 'qwq', 'deepseek-r1', 'deepseek-reasoner', 'minimax', 'm2-reap', 'gemma']
+        .some(part => m.includes(part));
+    };
+
+    const isOllamaEndpoint = url => {
+      const u = String(url || '').toLowerCase();
+      return u.includes('11434') || u.includes('ollama');
+    };
+
+    const isChatGptSubscriptionEndpoint = url => {
+      const u = String(url || '').toLowerCase();
+      return u.includes('chatgpt.com') || u.includes('chatgpt-subscription');
+    };
+
+    const isOSeriesReasoningModel = model => {
+      const m = String(model || '').toLowerCase();
+      return /(^|[/\s_-])o\d/.test(m);
+    };
+
+    const isGpt5Family = model => {
+      const m = String(model || '').toLowerCase();
+      return /(^|[/\s_-])gpt[\s_-]*5/.test(m);
+    };
+
+    const gpt5MinorVersion = model => {
+      const match = String(model || '').toLowerCase().match(/(?:^|[/\s_-])gpt[\s_-]*5(?:[._-](\d+))?/);
+      if (!match) return null;
+      if (match[1] == null) return 0;
+      const parsed = Number.parseInt(match[1], 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const supportsOpenAiNoneReasoning = model => {
+      const minor = gpt5MinorVersion(model);
+      return minor != null && minor >= 1;
+    };
+
+    function currentModelContext(override = null) {
+      const sid = sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+      const sessions = sessionModule && sessionModule.getSessions ? sessionModule.getSessions() : [];
+      const meta = sid ? sessions.find(s => s.id === sid) : null;
+      const pending = sessionModule && sessionModule.getPendingChat ? sessionModule.getPendingChat() : null;
+      return {
+        sessionId: sid,
+        meta,
+        model: (override && override.model) || (meta && meta.model) || (pending && pending.modelId) || '',
+        endpointUrl: (override && override.endpointUrl) || (meta && meta.endpoint_url) || (pending && pending.url) || '',
+      };
+    }
+
+    function capabilitiesFor(key, override = null) {
+      const ctx = currentModelContext(override);
+      const model = ctx.model || '';
+      const endpointUrl = ctx.endpointUrl || '';
+      if (!model) {
+        return { supported: false, allowed: new Set(['auto']), reason: 'Select a model first' };
+      }
+      const chatgptSubscription = isChatGptSubscriptionEndpoint(endpointUrl);
+      if (key === 'reasoning_effort') {
+        if (chatgptSubscription && (isGpt5Family(model) || isOSeriesReasoningModel(model))) {
+          const allowed = new Set(['auto', 'low', 'medium', 'high']);
+          if (isGpt5Family(model)) allowed.add('minimal');
+          if (supportsOpenAiNoneReasoning(model)) allowed.add('off');
+          return { supported: true, allowed, reason: '' };
+        }
+        if (isOllamaEndpoint(endpointUrl) && isThinkingModel(model)) {
+          return { supported: true, allowed: new Set(['auto', 'off', 'on']), reason: '' };
+        }
+        return { supported: false, allowed: new Set(['auto']), reason: 'Reasoning controls are unavailable for this model endpoint' };
+      }
+      if (key === 'verbosity') {
+        if (chatgptSubscription && isGpt5Family(model)) {
+          return { supported: true, allowed: new Set(['auto', 'low', 'medium', 'high']), reason: '' };
+        }
+        return { supported: false, allowed: new Set(['auto']), reason: 'Verbosity controls are unavailable for this model endpoint' };
+      }
+      return { supported: false, allowed: new Set(['auto']), reason: '' };
+    }
+
+    async function persistSessionControl(key, value) {
+      const sid = sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+      if (!sid) return;
+      const fd = new FormData();
+      fd.append(key, value || 'auto');
+      try {
+        const res = await fetch(`${API_BASE}/api/session/${sid}`, { method: 'PATCH', body: fd });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const payload = await res.json().catch(() => ({}));
+        const sessions = sessionModule && sessionModule.getSessions ? sessionModule.getSessions() : [];
+        const meta = sessions.find(s => s.id === sid);
+        if (meta) {
+          meta.reasoning_effort = payload.reasoning_effort || null;
+          meta.verbosity = payload.verbosity || null;
+        }
+      } catch (err) {
+        console.warn('Failed to save model control setting:', err);
+        if (uiModule && uiModule.showToast) uiModule.showToast('Could not save model setting');
+      }
+    }
+
+    function positionMenu(btn, menu) {
+      const r = btn.getBoundingClientRect();
+      const naturalHeight = menu.scrollHeight || 0;
+      const naturalWidth = menu.offsetWidth || 118;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - naturalWidth - 8));
+      const top = Math.max(8, r.top - naturalHeight - 8);
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    }
+
+    const registry = {};
+
+    function refreshCapabilities(override = null) {
+      Object.values(registry).forEach(api => api.refreshCapability(override));
+    }
+
+    controls.forEach(config => {
+      const btn = el(config.btnId);
+      const menu = el(config.menuId);
+      const label = el(config.labelId);
+      if (!btn || !menu || !label) return;
+      const ownerWrap = menu.parentElement;
+      const wrapper = btn.closest('.model-control-wrapper');
+      const options = Array.from(menu.querySelectorAll('.model-control-option'));
+      let currentValue = 'auto';
+
+      function setValue(value, optionsArg = {}) {
+        const capability = capabilitiesFor(config.key, optionsArg.contextOverride || null);
+        let normalized = normalizeValue(value, config.labels);
+        if (!capability.allowed.has(normalized)) normalized = 'auto';
+        currentValue = normalized;
+        const state = loadToggleState();
+        state[config.key] = normalized;
+        saveToggleState(state);
+        label.textContent = config.labels[normalized] || 'Auto';
+        const active = normalized !== 'auto';
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', String(active));
+        btn.title = `${config.name}: ${config.labels[normalized] || 'Auto'}`;
+        options.forEach(opt => {
+          opt.classList.toggle('active', opt.dataset.value === normalized);
+        });
+        if (optionsArg.persist !== false) {
+          persistSessionControl(config.key, normalized);
+        }
+      }
+
+      function refreshCapability(override = null) {
+        const capability = capabilitiesFor(config.key, override);
+        const disabled = !capability.supported;
+        if (wrapper) wrapper.classList.toggle('disabled', disabled);
+        btn.disabled = disabled;
+        btn.title = disabled
+          ? capability.reason
+          : `${config.name}: ${config.labels[currentValue] || 'Auto'}`;
+        options.forEach(opt => {
+          const allowed = capability.allowed.has(opt.dataset.value);
+          opt.disabled = !allowed;
+          opt.classList.toggle('disabled', !allowed);
+          opt.title = allowed ? '' : capability.reason;
+        });
+        if (!capability.allowed.has(currentValue)) {
+          setValue('auto', { persist: false, contextOverride: override });
+        }
+      }
+
+      function closeMenu() {
+        if (menu.classList.contains('hidden')) return;
+        menu.classList.add('hidden');
+        btn.classList.remove('expanded');
+        btn.setAttribute('aria-expanded', 'false');
+        if (ownerWrap && menu.parentElement !== ownerWrap) {
+          ownerWrap.appendChild(menu);
+        }
+      }
+
+      function openMenu() {
+        document.dispatchEvent(new CustomEvent('model-control-close-all', { detail: { except: config.menuId } }));
+        menu.classList.remove('hidden');
+        document.body.appendChild(menu);
+        btn.classList.add('expanded');
+        btn.setAttribute('aria-expanded', 'true');
+        positionMenu(btn, menu);
+      }
+
+      btn.addEventListener('pointerdown', e => e.preventDefault());
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (btn.disabled) return;
+        if (menu.classList.contains('hidden')) openMenu();
+        else closeMenu();
+      });
+      options.forEach(opt => {
+        opt.addEventListener('pointerdown', e => e.preventDefault());
+        opt.addEventListener('click', e => {
+          e.stopPropagation();
+          if (opt.disabled) return;
+          setValue(opt.dataset.value);
+          closeMenu();
+        });
+      });
+      document.addEventListener('model-control-close-all', e => {
+        if (e.detail && e.detail.except === config.menuId) return;
+        closeMenu();
+      });
+      document.addEventListener('click', e => {
+        if (menu.contains(e.target) || btn.contains(e.target)) return;
+        closeMenu();
+      });
+      document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeMenu();
+      });
+      window.addEventListener('resize', () => {
+        if (!menu.classList.contains('hidden')) positionMenu(btn, menu);
+      });
+
+      const state = loadToggleState();
+      registry[config.key] = { setValue, refreshCapability };
+      setValue(state[config.key] || 'auto', { persist: false });
+    });
+
+    refreshCapabilities();
+
+    window.odysseusModelControls = {
+      applySession(meta = {}) {
+        if (registry.reasoning_effort) {
+          registry.reasoning_effort.setValue(meta.reasoning_effort || 'auto', { persist: false });
+        }
+        if (registry.verbosity) {
+          registry.verbosity.setValue(meta.verbosity || 'auto', { persist: false });
+        }
+        refreshCapabilities();
+      },
+      refreshCapabilities,
+    };
+
+    document.addEventListener('odysseus:model-picked', e => {
+      const detail = (e && e.detail) || {};
+      refreshCapabilities({ model: detail.mid, endpointUrl: detail.url });
+      setTimeout(() => refreshCapabilities(), 250);
+    });
+  })();
+
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)

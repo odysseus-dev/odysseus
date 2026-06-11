@@ -2359,6 +2359,102 @@ body.bg-pattern-sparkles {
       color: var(--fg);
       background: color-mix(in srgb, var(--fg) 9%, transparent);
     }
+    .model-control-wrapper {
+      flex-shrink: 0;
+      position: relative;
+    }
+    .model-control-btn {
+      gap: 4px;
+      min-width: 54px;
+      height: 28px;
+      padding: 0 7px;
+      border: 1px solid transparent;
+      box-sizing: border-box;
+    }
+    .model-control-btn.active,
+    .model-control-btn.expanded {
+      border-color: color-mix(in srgb, var(--accent, var(--red)) 28%, transparent);
+      background: color-mix(in srgb, var(--accent, var(--red)) 11%, transparent);
+    }
+    .model-control-btn svg {
+      flex-shrink: 0;
+      opacity: 0.8;
+    }
+    .model-control-label {
+      font-size: 10px;
+      font-weight: 600;
+      line-height: 1;
+      white-space: nowrap;
+      max-width: 48px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .model-control-menu {
+      position: fixed;
+      z-index: 10020;
+      min-width: 118px;
+      padding: 5px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      transform-origin: bottom left;
+      animation: overflow-menu-pop 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .model-control-menu.hidden {
+      display: none;
+    }
+    .model-control-option {
+      appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      min-height: 26px;
+      padding: 0 8px;
+      border: none;
+      border-radius: 6px;
+      background: none;
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+      text-align: left;
+    }
+    .model-control-option:hover,
+    .model-control-option.active {
+      color: var(--fg);
+      background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+    }
+    .model-control-wrapper.disabled {
+      opacity: 0.58;
+    }
+    .model-control-btn:disabled {
+      cursor: not-allowed;
+    }
+    .model-control-option:disabled,
+    .model-control-option.disabled {
+      color: color-mix(in srgb, var(--muted) 70%, transparent);
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+    .model-control-option:disabled:hover,
+    .model-control-option.disabled:hover {
+      color: color-mix(in srgb, var(--muted) 70%, transparent);
+      background: none;
+    }
+    .model-control-option.active::after {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent, var(--red));
+      margin-left: 10px;
+      flex-shrink: 0;
+    }
     /* GitHub-style task lists (- [ ] / - [x]) */
     li.task-item {
       list-style: none;

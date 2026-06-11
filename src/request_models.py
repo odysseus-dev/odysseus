@@ -125,6 +125,8 @@ class SessionResponse(BaseModel):
     model: str = Field(..., description="Model being used")
     rag: bool = Field(default=False, description="RAG enabled")
     archived: bool = Field(default=False, description="Whether session is archived")
+    reasoning_effort: Optional[str] = Field(default=None, description="Per-session reasoning control")
+    verbosity: Optional[str] = Field(default=None, description="Per-session verbosity control")
 
 
 class MemoryResponse(BaseModel):

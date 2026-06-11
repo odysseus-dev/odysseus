@@ -796,6 +796,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
+      const reasoningEffort = (toggleState.reasoning_effort || 'auto').toLowerCase();
+      if (reasoningEffort && reasoningEffort !== 'auto') {
+        fd.append('reasoning_effort', reasoningEffort);
+      }
+      const verbosity = (toggleState.verbosity || 'auto').toLowerCase();
+      if (verbosity && verbosity !== 'auto') {
+        fd.append('verbosity', verbosity);
+      }
       if (el('web-toggle').checked) {
         if (isAgentMode) {
           fd.append('allow_web_search', 'true');

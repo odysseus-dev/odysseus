@@ -1524,6 +1524,9 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
+    if (window.odysseusModelControls && window.odysseusModelControls.applySession) {
+      window.odysseusModelControls.applySession(meta || {});
+    }
 
     // Detach any in-flight stream to background instead of aborting
     try {
@@ -1776,6 +1779,14 @@ export function createDirectChat(url, modelId, endpointId) {
 
   // Don't hit the API — just store the model info and prepare the UI
   _pendingChat = { url, modelId, endpointId };
+  if (window.odysseusModelControls && window.odysseusModelControls.applySession) {
+    window.odysseusModelControls.applySession({
+      model: modelId || '',
+      endpoint_url: url || '',
+      reasoning_effort: null,
+      verbosity: null,
+    });
+  }
   _skipAutoSelect = true;
   currentSessionId = null;
   Storage.remove('lastSessionId');
@@ -1837,6 +1848,15 @@ export async function materializePendingSession() {
   }
   if (pending.endpointId) {
     fd.append('endpoint_id', pending.endpointId);
+  }
+  const modelControls = Storage.loadToggleState();
+  const reasoningEffort = String(modelControls.reasoning_effort || 'auto').toLowerCase();
+  const verbosity = String(modelControls.verbosity || 'auto').toLowerCase();
+  if (reasoningEffort && reasoningEffort !== 'auto') {
+    fd.append('reasoning_effort', reasoningEffort);
+  }
+  if (verbosity && verbosity !== 'auto') {
+    fd.append('verbosity', verbosity);
   }
 
   let res;
