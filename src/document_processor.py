@@ -120,23 +120,30 @@ def _process_text_file(path: str) -> str:
         return result
 
 
+_PDF_FULLPAGE_OCR_PAGE_CAP = 5
+
+
 def _process_pdf(path: str, owner: str | None = None) -> str:
-    """Process PDF file with text extraction (pypdf). Uses VL model for image-heavy pages."""
+    """Process PDF file with text extraction (pypdf). Uses VL model for image-heavy pages and full-page OCR for scanned pages."""
     try:
         from pypdf import PdfReader
         pdf_text = ""
         reader = PdfReader(path)
+        had_any_content = False
 
         for page_num, page in enumerate(reader.pages):
             page_text = (page.extract_text() or "").strip()
             if page_text:
                 pdf_text += f"\n\n[Page {page_num + 1} text]:\n{page_text}"
+                had_any_content = True
 
             # For pages with images but little text, try VL model
             try:
                 images = list(page.images)
             except Exception:
                 images = []
+            if images:
+                had_any_content = True
             if images and len(page_text) < 50:
                 for img_index, img in enumerate(images[:3]):  # cap at 3 images per page
                     try:
@@ -155,6 +162,43 @@ def _process_pdf(path: str, owner: str | None = None) -> str:
                     except Exception as e:
                         logger.warning(f"Failed to analyze image in PDF: {e}")
                         continue
+
+        # Full-page OCR fallback: when pypdf found no extractable content at all,
+        # render every page via PyMuPDF and run VL-based OCR (scanned PDF path).
+        if not had_any_content:
+            ocr_attempts = 0
+            try:
+                from src.pdf_runtime import load_pymupdf_for_pdf_viewer
+                fitz = load_pymupdf_for_pdf_viewer()
+                pdf_doc = fitz.open(path)
+                try:
+                    for page_num, fitz_page in enumerate(pdf_doc):
+                        if ocr_attempts >= _PDF_FULLPAGE_OCR_PAGE_CAP:
+                            break
+                        try:
+                            pix = fitz_page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                                temp_ocr_path = tmp.name
+                            try:
+                                pix.save(temp_ocr_path)
+                                ocr_attempts += 1
+                                ocr_text = analyze_image_with_vl(temp_ocr_path, owner=owner)
+                                if ocr_text and "unavailable" not in ocr_text.lower():
+                                    pdf_text += f"\n\n[Page {page_num + 1} OCR]:\n{ocr_text}"
+                            finally:
+                                try:
+                                    os.unlink(temp_ocr_path)
+                                except OSError:
+                                    pass
+                        except Exception as e:
+                            logger.warning(f"Failed to OCR page {page_num + 1} in PDF: {e}")
+                            continue
+                finally:
+                    pdf_doc.close()
+            except RuntimeError:
+                # PyMuPDF not available -- skip full-page OCR
+                # (the existing "no readable content" fallback applies)
+                pass
 
         if pdf_text:
             if len(pdf_text) > 15000:
@@ -443,7 +487,9 @@ def _resolve_vl_model(configured: str, owner: str | None = None) -> tuple:
     ]
     for candidate in candidates:
         try:
-            return _resolve_model(candidate, owner=owner)
+            result = _resolve_model(candidate, owner=owner)
+            if _openrouter_free_or_non_openrouter(result):
+                return result
         except (ValueError, Exception):
             continue
 

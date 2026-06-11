@@ -534,6 +534,12 @@ class DeepResearcher:
                 if len(urls_to_fetch) >= self.max_urls_per_round * len(queries):
                     break
 
+        # Track the URLs we selected for analysis
+        self.analyzed_urls = [
+            {"url": r["url"], "title": r.get("title", "") or r["url"]}
+            for r in urls_to_fetch
+        ]
+
         if self._cancelled or self._time_exceeded():
             return all_findings
 

@@ -631,6 +631,7 @@ async def _direct_fallback(
         ctx = {
             "progress_cb": progress_cb,
             "subproc_env": _subproc_env,
+            "workspace": workspace,
         }
 
         from src.agent_tools import TOOL_HANDLERS

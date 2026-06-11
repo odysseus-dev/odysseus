@@ -97,7 +97,8 @@ def test_unified_search_respects_type_filter():
     assert calls == {"chat": 1, "document": 0}
 
 
-def test_unified_search_is_admin_gated():
+def test_unified_search_is_admin_gated(monkeypatch):
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
     app = _app_with_searchers({"chat": lambda *args: []}, allow_admin=False)
     res = TestClient(app).get("/api/search/all?q=anything")
 

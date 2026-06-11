@@ -68,6 +68,7 @@ def _ensure_stub(name: str, **attrs):
 
 @pytest.fixture(autouse=True)
 def _auth_regressions_stubs(monkeypatch):
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
     db = _ensure_stub("core.database",
         SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
         ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),

@@ -32,8 +32,8 @@ def test_cap_extracted_rejects_empty():
 
 
 def test_cap_extracted_truncates_long_docs():
-    out = _cap_extracted("x" * 60_000)
-    assert len(out) <= 48_000 + 64
+    out = _cap_extracted("x" * 500_000)
+    assert len(out) <= 400_000 + 64
     assert "truncated" in out
 def test_split_document_chunks_single():
     assert split_document_chunks("short doc") == ["short doc"]

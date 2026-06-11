@@ -12,20 +12,20 @@ SERVE_JS = ROOT / "static/js/cookbookServe.js"
 RUNNING_JS = ROOT / "static/js/cookbookRunning.js"
 
 
-def test_vllm_max_num_batched_tokens_is_wired_through_command_and_edit_paths():
+def test_vllm_core_serve_flags_wired_through_command_and_edit_paths():
     cookbook = COOKBOOK_JS.read_text(encoding="utf-8")
     serve = SERVE_JS.read_text(encoding="utf-8")
     running = RUNNING_JS.read_text(encoding="utf-8")
 
-    assert "--max-num-batched-tokens" in cookbook
-    assert 'data-field="max_batched_tokens"' in serve
-    assert "max_batched_tokens: _ex(/--max-num-batched-tokens" in serve
-    assert "max_batched_tokens: ex(/--max-num-batched-tokens" in running
+    assert "--gpu-memory-utilization" in cookbook
+    assert 'data-field="max_seqs"' in serve
+    assert "max_seqs: _ex(/--max-num-seqs" in serve
+    assert "max_seqs: ex(/--max-num-seqs" in running
 
 
-def test_vllm_sglang_launch_warns_when_selected_gpus_are_below_memory_target():
+def test_vllm_sglang_launch_probes_gpu_before_start():
     serve = SERVE_JS.read_text(encoding="utf-8")
 
-    assert "GPU memory already in use" in serve
-    assert "free / total < _gpuTarget" in serve
+    assert "No GPU detected" in serve
     assert "['vllm', 'sglang'].includes(serveState.backend)" in serve
+    assert "/api/cookbook/gpus" in serve

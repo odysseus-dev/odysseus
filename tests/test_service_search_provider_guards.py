@@ -164,7 +164,7 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
         seen["data"] = kwargs["data"]
         return _Response()
 
-    monkeypatch.setitem(sys.modules, "duckduckgo_search", None)
+    monkeypatch.setitem(sys.modules, "ddgs", None)
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "off"})
     monkeypatch.setattr(providers.httpx, "post", fake_post)
 
@@ -203,7 +203,7 @@ def test_duckduckgo_html_fallback_parses_lite_results_when_html_empty(monkeypatc
             return _Response(challenge_html)
         return _Response(lite_html)
 
-    monkeypatch.setitem(sys.modules, "duckduckgo_search", None)
+    monkeypatch.setitem(sys.modules, "ddgs", None)
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "strict"})
     monkeypatch.setattr(providers.httpx, "post", fake_post)
 
@@ -217,7 +217,7 @@ def test_duckduckgo_html_fallback_parses_lite_results_when_html_empty(monkeypatc
 
 
 def _install_fake_ddgs(monkeypatch, text_impl, *, constructor_warning: str = ""):
-    fake_mod = types.ModuleType("duckduckgo_search")
+    fake_mod = types.ModuleType("ddgs")
 
     class _FakeDDGS:
         def __init__(self):
@@ -228,7 +228,7 @@ def _install_fake_ddgs(monkeypatch, text_impl, *, constructor_warning: str = "")
             return text_impl(*args, **kwargs)
 
     fake_mod.DDGS = _FakeDDGS
-    monkeypatch.setitem(sys.modules, "duckduckgo_search", fake_mod)
+    monkeypatch.setitem(sys.modules, "ddgs", fake_mod)
 
 
 def _html_response(url="https://html.example/result"):

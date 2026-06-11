@@ -616,12 +616,17 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
+    _BUILTIN_EMAIL_TOOLS = {
+        "send_email", "list_emails", "read_email", "reply_to_email",
+        "archive_email", "delete_email", "mark_email_read",
+    }
     for tool_name in ("send_email", "read_file", "mcp__email__send_email"):
         desc, result = await execute_tool_block(
             SimpleNamespace(tool_type=tool_name, content="{}"),
             owner="regular-user",
         )
-        assert desc == f"{tool_name}: BLOCKED"
+        expected_name = f"mcp__email__{tool_name}" if tool_name in _BUILTIN_EMAIL_TOOLS else tool_name
+        assert desc == f"{expected_name}: BLOCKED"
         assert result["exit_code"] == 1
         assert "restricted to admin users" in result["error"]
 

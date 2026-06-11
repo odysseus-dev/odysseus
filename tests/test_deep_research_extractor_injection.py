@@ -231,17 +231,6 @@ async def test_fetch_and_extract_sandboxes_webpage_content(monkeypatch):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="Shared-helper delimiter-spoof hardening tracked in #3056: "
-           "untrusted_context_message does not yet neutralize embedded "
-           "<<<END_UNTRUSTED_SOURCE_DATA>>> markers, so a page can still break "
-           "out of the guard. Flip to a normal assertion once #3056 lands. "
-           "raises=AssertionError keeps the xfail tightly scoped — an unrelated "
-           "exception (e.g. a broken extractor) surfaces as a real failure, not "
-           "a silently-absorbed XFAIL.",
-)
 @pytest.mark.asyncio
 async def test_extractor_resists_delimiter_spoofing(monkeypatch):
     """Adversarial sibling of the regression test: a page that embeds the literal

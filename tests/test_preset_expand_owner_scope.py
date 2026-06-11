@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from routes.preset_routes import setup_preset_routes
+from starlette.datastructures import Headers
 
 
 class _FakeRequest:
@@ -18,6 +19,7 @@ class _FakeRequest:
     def __init__(self, body, **state):
         self._body = body
         self.state = SimpleNamespace(**state)
+        self.headers = Headers({})
 
     async def json(self):
         return self._body

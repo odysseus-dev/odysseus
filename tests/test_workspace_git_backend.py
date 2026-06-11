@@ -20,7 +20,7 @@ def _git(repo, *args, check=True):
 
 def _init_repo(path):
     path.mkdir(parents=True, exist_ok=True)
-    _git(path, "init")
+    _git(path, "init", "--initial-branch=master")
     _git(path, "config", "user.email", "tests@example.test")
     _git(path, "config", "user.name", "Workspace Tests")
     return path
@@ -393,7 +393,7 @@ def test_git_discard_reports_tracked_restore_failure(monkeypatch, tmp_path):
 def test_git_commit_branches_and_local_remote_actions(monkeypatch, tmp_path):
     client = _client(monkeypatch)
     remote = tmp_path / "remote.git"
-    _git(tmp_path, "init", "--bare", str(remote))
+    _git(tmp_path, "init", "--bare", "--initial-branch=master", str(remote))
     repo = _init_repo(tmp_path / "repo")
     _git(repo, "remote", "add", "origin", str(remote))
     (repo / "file.txt").write_text("base\n", encoding="utf-8")
@@ -568,7 +568,7 @@ def test_repo_wide_mutations_reject_nested_workspace(monkeypatch, tmp_path):
 def test_git_status_and_branches_report_upstream_ahead_behind(monkeypatch, tmp_path):
     client = _client(monkeypatch)
     remote = tmp_path / "remote.git"
-    _git(tmp_path, "init", "--bare", str(remote))
+    _git(tmp_path, "init", "--bare", "--initial-branch=master", str(remote))
     repo = _init_repo(tmp_path / "repo")
     _git(repo, "remote", "add", "origin", str(remote))
     (repo / "file.txt").write_text("base\n", encoding="utf-8")

@@ -218,6 +218,8 @@ class Document(TimestampMixin, Base):
     source_email_folder      = Column(String, nullable=True)
     source_email_account_id  = Column(String, nullable=True)
     source_email_message_id  = Column(String, nullable=True, index=True)
+    tags                     = Column(String, nullable=True, default="")
+    ai_tags                  = Column(String, nullable=True, default="")
 
     session  = relationship("Session", backref=backref("documents", cascade="save-update, merge"))
     versions = relationship("DocumentVersion", back_populates="document",
@@ -1846,6 +1848,22 @@ def _migrate_add_session_project_id():
         logging.getLogger(__name__).warning("session project_id migration: %s", e)
 
 
+def _migrate_add_document_tags_columns():
+    """Add tags and ai_tags columns to documents table if they do not exist. Idempotent."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(documents)"))]
+            if "tags" not in cols:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN tags TEXT DEFAULT ''"))
+            if "ai_tags" not in cols:
+                conn.execute(text("ALTER TABLE documents ADD COLUMN ai_tags TEXT DEFAULT ''"))
+            if "tags" in cols or "ai_tags" in cols:
+                pass  # columns already exist — noop
+            conn.commit()
+    except Exception as e:
+        logging.getLogger(__name__).warning("document tags migration: %s", e)
+
+
 # WARNING: Foreign-key enforcement is enabled globally for all SQLite connections.
 # Any future migrations or schema changes that temporarily violate foreign-key
 # constraints will fail. To perform such operations, foreign_keys must be
@@ -1904,6 +1922,7 @@ def init_db():
     _migrate_add_project_memories_table()
     _migrate_add_session_project_id()
     _migrate_add_email_oauth_columns()
+    _migrate_add_document_tags_columns()
 
 
 def _migrate_add_email_oauth_columns():

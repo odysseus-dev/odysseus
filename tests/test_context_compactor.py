@@ -341,6 +341,7 @@ class TestMaybeCompactFourthMessage:
                     model="local-model",
                     messages=list(messages),
                     headers={},
+                    owner=session.owner,
                 )
             )
         finally:

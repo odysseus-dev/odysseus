@@ -1143,6 +1143,39 @@ def _default_chat_model(visible):
     return _first_chat_model(visible) or visible[0]
 
 
+def invalidate_model_endpoint_caches():
+    """Clear in-memory model endpoint caches after CRUD operations.
+    Overridden inside setup_model_routes() with the real implementation."""
+    pass
+
+
+def find_endpoint_for_dedupe(db, base_url, owner=None, api_key=""):
+    """Find an existing endpoint matching base_url that is visible to *owner*.
+    Matches by api_key: same key → match; empty-key existing + incoming has key → fill.
+    Uses the module-level ModelEndpoint so tests can monkeypatch it.
+    Returns the ModelEndpoint row or None."""
+    rows = (
+        db.query(ModelEndpoint)
+        .filter(ModelEndpoint.base_url == base_url)
+        .filter((ModelEndpoint.owner.is_(None)) | (ModelEndpoint.owner == owner))
+        .order_by(ModelEndpoint.owner.desc())
+        .all()
+    )
+    existing = None
+    empty_key_existing = None
+    incoming_key = (api_key or "").strip()
+    for candidate in rows:
+        candidate_key = (getattr(candidate, "api_key", None) or "").strip()
+        if candidate_key == incoming_key:
+            existing = candidate
+            break
+        if incoming_key and not candidate_key and empty_key_existing is None:
+            empty_key_existing = candidate
+    if existing is None and incoming_key and empty_key_existing is not None:
+        existing = empty_key_existing
+    return existing
+
+
 def setup_model_routes(model_discovery):
     router = APIRouter(prefix="/api")
 
@@ -1160,6 +1193,11 @@ def setup_model_routes(model_discovery):
         affects the visible endpoint list (CRUD on ModelEndpoint, prefs
         flip)."""
         _models_cache.clear()
+
+    # Wire up module-level function so external callers (e.g. tool_implementations)
+    # can invalidate caches after programmatic endpoint edits.
+    import routes.model_routes as _self_ref
+    _self_ref.invalidate_model_endpoint_caches = _invalidate_models_cache
 
     # Track model-list refreshes by URL+key. This prevents repeated picker/API
     # opens from starting duplicate /models probes, and gives slow/offline

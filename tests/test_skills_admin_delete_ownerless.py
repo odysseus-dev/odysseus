@@ -65,18 +65,18 @@ async def test_admin_can_delete_ownerless_skill(tmp_path, monkeypatch):
     sm = SkillsManager(str(tmp_path))
     router = setup_skills_routes(sm)
     
-    # Mock auth_mgr.is_admin to return True for "admin-user"
+    # Mock AuthManager.is_admin to return True for "admin-user"
     mock_auth_mgr = MagicMock()
     mock_auth_mgr.is_admin.side_effect = lambda u: u == "admin-user"
-    
-    # We need to ensure core.middleware.auth_mgr is our mock
-    import core.middleware
-    monkeypatch.setattr(core.middleware, "auth_mgr", mock_auth_mgr)
+    mock_auth_mgr.is_configured = True
+
+    import core.auth
+    monkeypatch.setattr(core.auth, "AuthManager", lambda: mock_auth_mgr)
     
     # Find the delete route handler endpoint
     delete_route_handler = next(
         route.endpoint for route in router.routes
-        if route.path == "/{skill_id}" and "DELETE" in route.methods
+        if route.path.endswith("/{skill_id}") and "DELETE" in route.methods
     )
     
     # 1. Non-admin user tries to delete ownerless skill -> 404
@@ -111,12 +111,13 @@ async def test_admin_list_includes_ownerless_skills(tmp_path, monkeypatch):
     
     mock_auth_mgr = MagicMock()
     mock_auth_mgr.is_admin.side_effect = lambda u: u == "admin-user"
-    import core.middleware
-    monkeypatch.setattr(core.middleware, "auth_mgr", mock_auth_mgr)
+    mock_auth_mgr.is_configured = True
+    import core.auth
+    monkeypatch.setattr(core.auth, "AuthManager", lambda: mock_auth_mgr)
     
     list_handler = next(
         route.endpoint for route in router.routes
-        if route.path == "" and "GET" in route.methods
+        if route.path == "/api/skills" and "GET" in route.methods
     )
     
     # 1. Alice sees only her skill

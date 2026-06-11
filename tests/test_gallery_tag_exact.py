@@ -32,6 +32,7 @@ def _route(router, path):
 
 @pytest.fixture
 def library(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     import routes.gallery_routes as gr
     monkeypatch.setattr(gr, "SessionLocal", _TS)
     monkeypatch.setattr(gr, "get_current_user", lambda request: None, raising=False)

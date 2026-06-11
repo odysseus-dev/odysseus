@@ -507,6 +507,7 @@ def test_require_user_rejects_unauthenticated(monkeypatch):
     didn't attach a user AND auth is configured. Mirrors the
     defense-in-depth check on /api/contacts/*, /api/personal/*,
     /api/email/*."""
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)
     sys.modules.pop("src.auth_helpers", None)
     from fastapi import HTTPException
 

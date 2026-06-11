@@ -1815,10 +1815,12 @@ class TaskScheduler:
         # primary endpoint won't silently yield `(no output)` — same recipe
         # chat uses but with the utility list (`utility_model_fallbacks`).
         try:
-            from src.endpoint_resolver import resolve_utility_fallback_candidates
+            from src.endpoint_resolver import resolve_utility_fallback_candidates, resolve_timeout_by_url as _task_rtbu
             _task_fallbacks = resolve_utility_fallback_candidates(owner=task.owner or None)
         except Exception:
             _task_fallbacks = []
+            _task_rtbu = lambda u: 60
+        _task_ep_timeout = _task_rtbu(endpoint_url)
         async for event_str in stream_agent_loop(
             endpoint_url=endpoint_url,
             model=model,
@@ -1830,7 +1832,6 @@ class TaskScheduler:
             disabled_tools=disabled_tools,
             relevant_tools=relevant_tools,
             fallbacks=_task_fallbacks,
-            endpoint_timeout=_task_ep_timeout,
         ):
             if event_str.startswith("data: ") and not event_str.startswith("data: [DONE]"):
                 try:

@@ -1,4 +1,7 @@
 import os
+# Save original so we can restore after the module's imports then use
+# monkeypatch inside the test function to avoid env var leakage to other files.
+_ORIG_AUTH_ENABLED = os.environ.get("AUTH_ENABLED")
 os.environ["AUTH_ENABLED"] = "false"
 
 import core.database
@@ -14,7 +17,16 @@ init_db()
 
 client = TestClient(app)
 
-def test_todo_slash_command_payload():
+# Restore env var immediately — the imports above that need AUTH_ENABLED=false
+# have already run, so downstream test modules won't inherit the leak.
+if _ORIG_AUTH_ENABLED is None:
+    os.environ.pop("AUTH_ENABLED", None)
+else:
+    os.environ["AUTH_ENABLED"] = _ORIG_AUTH_ENABLED
+
+
+def test_todo_slash_command_payload(monkeypatch):
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     # Simulate the /todo <text> payload that the frontend now sends
     payload = {
         "title": "",

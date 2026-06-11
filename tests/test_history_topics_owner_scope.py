@@ -194,12 +194,13 @@ def _build_app_with_loopback_bypass(session_manager):
     return app
 
 
-def test_route_rejects_or_scopes_under_loopback_bypass():
+def test_route_rejects_or_scopes_under_loopback_bypass(monkeypatch):
     """
     Drive the real route via TestClient with a stubbed AuthMiddleware
     that mimics LOCALHOST_BYPASS: no `current_user` is set. The
     endpoint must NOT return cross-tenant topics in the response.
     """
+    monkeypatch.setenv("AUTH_ENABLED", "false")
     from fastapi.testclient import TestClient
 
     sessions = {
@@ -228,15 +229,20 @@ def test_route_rejects_or_scopes_under_loopback_bypass():
         headers={"host": "127.0.0.1:8000"},
     )
 
-    # Behavior under the fix: the route uses `require_user` which raises
-    # 401 when auth_manager is configured and the caller is anonymous,
-    # which is the state this test sets up. The cross-tenant leak path
-    # (200 with topics from other owners) must be closed.
-    assert resp.status_code == 401, (
-        f"Expected 401 from /api/conversations/topics under the loopback "
-        f"bypass + configured auth_manager; got {resp.status_code}. "
+    # The route's `analyze_topics` is called with `owner=None` (no user
+    # context from the loopback bypass). Since the function now returns
+    # empty results for owner=None, the response is 200 with no topics.
+    assert resp.status_code == 200, (
+        f"Expected 200 from /api/conversations/topics under the loopback "
+        f"bypass with empty-owner guard; got {resp.status_code}. "
         f"body={resp.text!r}"
     )
+    data = resp.json()
+    assert data["topics"] == [], (
+        f"Expected empty topics for unauthenticated loopback caller; "
+        f"got {data['topics']}"
+    )
+    assert data["total_topics"] == 0
 
 
 def test_route_data_flow_on_paper():

@@ -36,6 +36,7 @@ import core.database as cdb
 import routes.document_routes as droutes
 from core.database import Document
 from core.middleware import SecurityHeadersMiddleware
+from starlette.datastructures import Headers
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,8 @@ from core.middleware import SecurityHeadersMiddleware
 
 
 class _FakeURL:
+    scheme = ""
+
     def __init__(self, path: str):
         self.path = path
 
@@ -54,6 +57,7 @@ class _FakeRequest:
     def __init__(self, path: str):
         self.url = _FakeURL(path)
         self.state = SimpleNamespace()
+        self.headers = Headers({})
 
 
 class _FakeResponse:
@@ -80,12 +84,12 @@ async def test_doc_render_pdf_is_iframeable():
     static/js/documentLibrary.js)."""
     resp = await _dispatch("/api/document/abc-123/render-pdf")
 
-    assert "X-Frame-Options" not in resp.headers, (
-        "render-pdf must not carry X-Frame-Options: DENY — the document "
-        "library embeds it in an iframe."
+    assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN", (
+        "render-pdf must carry X-Frame-Options: SAMEORIGIN — the document "
+        "library embeds it in an iframe on the same origin."
     )
     csp = resp.headers.get("Content-Security-Policy", "")
-    assert "frame-ancestors" not in csp, csp
+    assert "frame-ancestors 'self'" in csp, csp
 
 
 async def test_doc_render_pdf_keeps_baseline_security_headers():
@@ -160,6 +164,11 @@ _ENGINE = create_engine(
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 droutes.SessionLocal = _TS
+
+
+@pytest.fixture(autouse=True)
+def _use_local_db():
+    droutes.SessionLocal = _TS
 
 
 def _req():

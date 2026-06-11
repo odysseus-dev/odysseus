@@ -653,6 +653,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
 async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict:
     """Manage model endpoints: list, add, delete, enable, disable."""
     from core.database import SessionLocal, ModelEndpoint
+    from src.tool_security import owner_is_admin_or_single_user
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -668,22 +669,69 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             return {"response": f"{len(items)} endpoints", "endpoints": items, "exit_code": 0}
 
         elif action == "add":
+            if not owner_is_admin_or_single_user(owner):
+                return {"error": "Only admin can manage endpoints", "exit_code": 1}
+            import json as _json
             import uuid as _uuid
-            name = args.get("name", "")
             base_url = args.get("base_url", "")
-            api_key = args.get("api_key", "")
             if not base_url:
                 return {"error": "base_url is required", "exit_code": 1}
+            api_key = args.get("api_key", "")
+            skip_probe = args.get("skip_probe", False)
+
+            from routes.model_routes import find_endpoint_for_dedupe, invalidate_model_endpoint_caches
+            existing = find_endpoint_for_dedupe(db, base_url, owner, api_key)
+            if existing is not None:
+                changed = False
+                supports_tools = args.get("supports_tools")
+                if supports_tools is not None:
+                    existing.supports_tools = supports_tools
+                    changed = True
+                raw_diag = args.get("diagnostics_paths")
+                if raw_diag is not None:
+                    if isinstance(raw_diag, dict):
+                        existing.diagnostics_paths = _json.dumps(raw_diag)
+                    elif isinstance(raw_diag, str):
+                        existing.diagnostics_paths = raw_diag
+                    changed = True
+                if api_key.strip() and not existing.api_key:
+                    existing.api_key = api_key.strip()
+                    changed = True
+                if changed:
+                    db.commit()
+                invalidate_model_endpoint_caches()
+                from routes.model_routes import _endpoint_diagnostics_sections
+                return {
+                    "existing": True,
+                    "supports_tools": getattr(existing, "supports_tools", None),
+                    "diagnostics_sections": _endpoint_diagnostics_sections(existing),
+                    "exit_code": 0,
+                }
+
+            name = args.get("name", "")
             eid = str(_uuid.uuid4())[:8]
             from datetime import datetime
             ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
-                               api_key=api_key, is_enabled=True,
+                               api_key=api_key or None, is_enabled=True,
                                created_at=datetime.utcnow(), updated_at=datetime.utcnow())
+            supports_tools = args.get("supports_tools")
+            if supports_tools is not None:
+                ep.supports_tools = supports_tools
+            raw_diag = args.get("diagnostics_paths")
+            if raw_diag is not None:
+                import json as _json
+                if isinstance(raw_diag, dict):
+                    ep.diagnostics_paths = _json.dumps(raw_diag)
+                elif isinstance(raw_diag, str):
+                    ep.diagnostics_paths = raw_diag
             db.add(ep)
             db.commit()
+            invalidate_model_endpoint_caches()
             return {"response": f"Added endpoint '{name or base_url}' (id: {eid})", "exit_code": 0}
 
         elif action == "delete":
+            if not owner_is_admin_or_single_user(owner):
+                return {"error": "Only admin can manage endpoints", "exit_code": 1}
             eid = args.get("endpoint_id", "")
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == eid).first()
             if not ep:
@@ -691,15 +739,21 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             name = ep.name
             db.delete(ep)
             db.commit()
+            from routes.model_routes import invalidate_model_endpoint_caches
+            invalidate_model_endpoint_caches()
             return {"response": f"Deleted endpoint '{name}'", "exit_code": 0}
 
         elif action in ("enable", "disable"):
+            if not owner_is_admin_or_single_user(owner):
+                return {"error": "Only admin can manage endpoints", "exit_code": 1}
             eid = args.get("endpoint_id", "")
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == eid).first()
             if not ep:
                 return {"error": f"Endpoint {eid} not found", "exit_code": 1}
             ep.is_enabled = (action == "enable")
             db.commit()
+            from routes.model_routes import invalidate_model_endpoint_caches
+            invalidate_model_endpoint_caches()
             return {"response": f"Endpoint '{ep.name}' {action}d", "exit_code": 0}
 
         else:
@@ -4065,25 +4119,26 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
 
     contacts = {}  # email -> {name, source}
 
-    # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
-    # server-side httpx GET to /api/contacts/search carries no session
-    # cookie and would 401 under require_user.
-    try:
-        import asyncio
-        from routes import contacts_routes as cc
-        all_contacts = await asyncio.to_thread(cc._fetch_contacts)
-        q = name.lower()
-        for c in (all_contacts or []):
-            hay_name = (c.get("name") or "").lower()
-            match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
-            if not match:
-                continue
-            for email in (c.get("emails") or []):
-                email = (email or "").strip().lower()
-                if email and "@" in email:
-                    contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
-    except Exception:
-        pass
+    # 1. CardDAV (Radicale) — structured contacts. Only admin/single-user
+    # may read the shared address book to prevent cross-owner contact leak.
+    from src.tool_security import owner_is_admin_or_single_user
+    if owner_is_admin_or_single_user(owner):
+        try:
+            import asyncio
+            from routes import contacts_routes as cc
+            all_contacts = await asyncio.to_thread(cc._fetch_contacts)
+            q = name.lower()
+            for c in (all_contacts or []):
+                hay_name = (c.get("name") or "").lower()
+                match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
+                if not match:
+                    continue
+                for email in (c.get("emails") or []):
+                    email = (email or "").strip().lower()
+                    if email and "@" in email:
+                        contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+        except Exception:
+            pass
 
     async with httpx.AsyncClient(timeout=30) as client:
         # 2. Email history (sent/received)
@@ -4116,6 +4171,9 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
+    from src.tool_security import owner_is_admin_or_single_user
+    if not owner_is_admin_or_single_user(owner):
+        return {"error": "Only admin can manage contacts", "exit_code": 1}
     action = (args.get("action") or "").strip().lower()
     try:
         from routes import contacts_routes as cc

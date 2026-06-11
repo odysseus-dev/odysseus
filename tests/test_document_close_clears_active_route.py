@@ -21,6 +21,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from unittest.mock import MagicMock
 
+import os
+# Clear any leaked AUTH_ENABLED from prior test module imports so auth remains
+# enabled (the route handlers expect auth checks to pass).
+os.environ.pop("AUTH_ENABLED", None)
+
 from tests.helpers.import_state import clear_fake_database_modules
 
 clear_fake_database_modules()
@@ -41,6 +46,14 @@ _ENGINE = create_engine(
 cdb.Base.metadata.create_all(_ENGINE)
 _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 droutes.SessionLocal = _TS  # route handlers resolve SessionLocal at call time
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _use_local_db():
+    droutes.SessionLocal = _TS
 
 
 def _req():

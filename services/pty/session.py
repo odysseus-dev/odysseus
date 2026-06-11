@@ -141,6 +141,10 @@ class PtySession:
             close_fds=True,
         )
         os.close(slave_fd)  # parent keeps only the master side
+        # Make the master fd non-blocking so read() never hangs.
+        import fcntl
+        fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
         self._master_fd = master_fd
 
     # ---- io --------------------------------------------------------------

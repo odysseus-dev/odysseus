@@ -34,7 +34,7 @@ def test_local_windows_session_commands_use_local_powershell_log_dir():
     assert "const host = task.remoteHost;" in source
     assert "host ? '$env:TEMP\\\\odysseus-sessions' : '$env:TEMP\\\\odysseus-tmux'" in source
     assert "return host ? `ssh ${pf}${host}" in source
-    assert ": `powershell -Command \"${ps}\"`;" in source
+    assert ": `powershell -Command \"Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\\\" in source
 
 
 def test_dep_install_success_recognized_from_exit_sentinel():

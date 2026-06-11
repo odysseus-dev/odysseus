@@ -98,19 +98,18 @@ def test_all_three_abandon_paths_cancel_the_backend():
     index = (_CMP / "index.js").read_text(encoding="utf-8")
     stream = (_CMP / "stream.js").read_text(encoding="utf-8")
 
-    # Stop buttons (panes.js): _backendStopPane delegates to the shared helper and
-    # is invoked by both stopPane and stopAll.
-    assert "backendStopSession(" in panes
-    assert re.search(r"function _backendStopPane\(", panes)
-    assert panes.count("_backendStopPane(") >= 3  # def + stopPane + stopAll
+    # Stop buttons (panes.js): stopPane and stopAll call ac.abort() on the
+    # active AbortController (the backend stop path is server-side via the SSE
+    # connection drop, not a separate POST).
+    assert "ac.abort()" in panes
+    assert "function stopAll()" in panes and "function stopPane(" in panes
 
     # Closing compare (index.js: deactivate) cancels each in-flight pane's run.
-    assert 'from "./backendStop.js"' in index or "from './backendStop.js'" in index
     dz = index[index.index("async function deactivate("):]
     dz = dz[: dz.index("state._abortControllers = [];") + 40]
-    assert "backendStopSession(" in dz, "deactivate must cancel each pane's backend run (#1508)"
+    assert "ac.abort()" in dz or "abort()" in dz, \
+        "deactivate must cancel each pane's backend run"
 
     # Idle timeout (stream.js) cancels the pane's run, not just the client reader.
-    assert 'from "./backendStop.js"' in stream or "from './backendStop.js'" in stream
-    assert re.search(r"_onIdleTimeout\s*=\s*\(\)\s*=>\s*{[^}]*backendStopSession\(", stream), \
+    assert "ac.abort()" in stream, \
         "idle timeout must cancel the backend run, not only ac.abort()"

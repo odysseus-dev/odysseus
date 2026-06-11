@@ -14,7 +14,8 @@ def test_calendar_name_handles_missing_relation(monkeypatch):
 
 
 def test_calendar_event_count_handles_bad_relationship(monkeypatch):
-    cli = _load_cli(monkeypatch)
+    make_core_db_stub(monkeypatch, models=["CalendarCal", "CalendarEvent"])
+    cli = load_script("odysseus-calendar")
 
     assert cli._calendar_event_count(SimpleNamespace(events=[1, 2])) == 2
     assert cli._calendar_event_count(SimpleNamespace(events=None)) == 0

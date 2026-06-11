@@ -53,8 +53,7 @@ def main() -> int:
     reader.start()
 
     time.sleep(0.5)  # let the shell banner/prompt come up
-    newline = "\r\n" if os.name == "nt" else "\n"
-    session.write(f"echo {MARKER}{newline}")
+    session.write(f"echo {MARKER}\r\n")
 
     deadline = time.time() + 15
     found = False

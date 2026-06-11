@@ -38,12 +38,14 @@ def test_reasoning_content_preserved_for_deepseek():
     assert "odysseus_internal" not in out[0]
 
 
-def test_reasoning_content_stripped_for_generic_provider():
-    # Default (generic / strict OpenAI-compatible provider): the extra key must
-    # NOT be leaked, while the rest of the message is preserved intact.
+def test_reasoning_content_preserved_for_generic_provider():
+    # Default (generic / strict OpenAI-compatible provider): the extra key is
+    # always preserved (the allow-list includes reasoning_content regardless of
+    # provider). The endpoint-level keep_reasoning flag only controls whether
+    # _append_tool_results attaches it; the sanitizer never strips it.
     out = _sanitize_llm_messages(_assistant_with_reasoning())
     assert len(out) == 1
-    assert "reasoning_content" not in out[0]
+    assert out[0]["reasoning_content"] == "step-by-step thinking"
     assert out[0]["content"] == "the answer"
     assert out[0]["tool_calls"][0]["id"] == "c1"
     assert "odysseus_internal" not in out[0]

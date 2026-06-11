@@ -1078,6 +1078,18 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     def _owner(request: Request) -> Optional[str]:
         return get_current_user(request)
 
+    def _is_admin_user(user: Optional[str]) -> bool:
+        if user is None:
+            return False
+        try:
+            from core.auth import AuthManager
+            auth = AuthManager()
+            if not getattr(auth, "is_configured", True):
+                return False
+            return bool(auth.is_admin(user))
+        except Exception:
+            return False
+
     def _verify_owner(skill: dict, user: Optional[str]):
         if user is None:
             return
@@ -1087,7 +1099,10 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         # let any user mutate/read a skill that happened to have no owner
         # field (legacy or un-stamped writes), since the truthiness guard
         # short-circuited the comparison. Treat missing owner as not-owned.
-        if skill.get("owner") != user:
+        sk_owner = skill.get("owner")
+        if sk_owner is None and _is_admin_user(user):
+            return
+        if sk_owner != user:
             raise HTTPException(404, "Skill not found")
 
     def _fire_skill_added(user: Optional[str]):
@@ -1100,7 +1115,8 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.get("")
     async def list_skills(request: Request):
         user = _owner(request)
-        skills = skills_manager.load(owner=user)
+        owner_filter = user if not _is_admin_user(user) else None
+        skills = skills_manager.load(owner=owner_filter)
         return {"skills": skills, "count": len(skills)}
 
     @router.get("/index")
@@ -1782,14 +1798,16 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     @router.delete("/{skill_id}")
     async def delete_skill(request: Request, skill_id: str):
         user = _owner(request)
-        skills = skills_manager.load(owner=user)
+        owner_filter = user if not _is_admin_user(user) else None
+        skills = skills_manager.load(owner=owner_filter)
         match = next((s for s in skills if s.get("name") == skill_id or s.get("id") == skill_id), None)
         if not match:
             raise HTTPException(404, "Skill not found")
         if match.get("read_only") is True:
             raise HTTPException(403, "Cannot delete a read-only skill")
         _verify_owner(match, user)
-        ok = skills_manager.delete_skill(match.get("name"), owner=user)
+        delete_owner = user if not _is_admin_user(user) else None
+        ok = skills_manager.delete_skill(match.get("name"), owner=delete_owner)
         if not ok:
             raise HTTPException(404, "Skill not found")
         return {"ok": True}

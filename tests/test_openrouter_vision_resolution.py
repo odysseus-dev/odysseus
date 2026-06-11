@@ -52,7 +52,7 @@ def test_openrouter_paid_resolved_candidate_is_skipped(monkeypatch):
 
     monkeypatch.setattr(dp, "_resolve_cached_vision_model", lambda *args, **kwargs: None)
 
-    def fake_resolve_model(candidate):
+    def fake_resolve_model(candidate, owner=None):
         if candidate.endswith(":free"):
             raise ValueError("free candidate not available")
         if candidate == "gpt-4o":

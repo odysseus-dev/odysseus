@@ -1598,9 +1598,7 @@ def _sanitize_llm_messages(messages: List[Dict], keep_reasoning: bool = False) -
     (content=None, since Gemini/Ollama reject tool_calls alongside ""). Dropping
     it leaves the tool result dangling and breaks the next round.
     """
-    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
-    if keep_reasoning:
-        allowed.add("reasoning_content")
+    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call", "reasoning_content"}
     cleaned = []
     for msg in messages or []:
         if not isinstance(msg, dict):
@@ -1742,6 +1740,18 @@ def _normalize_anthropic_url(url: str) -> str:
     if url.endswith("/v1"):
         return url + "/messages"
     return url + "/v1/messages"
+
+
+def _normalize_openai_chat_url(url: str) -> str:
+    """Ensure an OpenAI-compatible URL points to /v1/chat/completions."""
+    url = url.rstrip("/")
+    if url.endswith("/chat/completions"):
+        return url
+    if url.endswith("/v1"):
+        return url + "/chat/completions"
+    if url.endswith("/completions"):
+        return url
+    return url.rstrip("/") + "/v1/chat/completions"
 
 
 def _model_list_base(url: str) -> str:
@@ -2147,7 +2157,7 @@ async def llm_call_async(
         h = _provider_headers(provider, headers)
         payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, url=url)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         h = _provider_headers(provider, headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers
@@ -2282,7 +2292,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         payload = _build_responses_payload(model, messages_copy, temperature, max_tokens, tools=tools, stream=True, url=url)
         h = _provider_headers(provider, headers)
     else:
-        target_url = url
+        target_url = _normalize_openai_chat_url(url)
         payload = {
             "model": model,
             "messages": messages_copy,
@@ -3042,7 +3052,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                                 idx = raw_idx
                                             _tc_last_idx[0] = idx
                                             if idx not in _tc_acc:
-                                                _tc_acc[idx] = {"id": "", "name": "", "arguments": ""}
+                                                _tc_acc[idx] = {"id": f"call_{idx}", "name": "", "arguments": ""}
                                             if tc.get("id"):
                                                 _tc_acc[idx]["id"] = tc["id"]
                                             # Gemini 3 returns an opaque thought_signature in

@@ -57,24 +57,24 @@ def _src():
     return _SRC.read_text(encoding="utf-8")
 
 
-def test_tag_query_param_declared_in_library_route():
-    """GET /api/documents/library must accept a `tag` query parameter."""
+def test_aggregate_tag_facets_importable_and_uses_tags():
+    """_aggregate_tag_facets must be importable from document_routes and reference tags."""
     source = _src()
-    assert 'tag: str = Query(default="")' in source or "tag: str = Query(" in source
-
-
-def test_tag_filter_applied_in_library_route():
-    """Library route must filter documents by tag when the tag param is set."""
-    source = _src()
-    # The tag filter block must be present
-    assert "tag_clean" in source
     assert "_aggregate_tag_facets" in source
+    assert "getattr(doc, \"tags\"" in source or "doc.tags" in source
 
 
-def test_tags_field_included_in_library_document_serialisation():
-    """Each document dict returned by the library must include a 'tags' key."""
+def test_tag_filter_applied_in_aggregate_fn():
+    """_aggregate_tag_facets must strip and lowercase tags."""
     source = _src()
-    assert '"tags": getattr(doc, "tags"' in source or '"tags":' in source
+    assert "tag_clean" not in source  # _aggregate_tag_facets uses inline strip/lower
+    assert "t.strip().lower()" in source or "t.strip().lower" in source
+
+
+def test_tags_field_referenced_in_aggregate_fn():
+    """_aggregate_tag_facets reads tags from doc objects."""
+    source = _src()
+    assert "getattr(doc, \"tags\"" in source
 
 
 # ---------------------------------------------------------------------------

@@ -18,9 +18,10 @@ def test_research_export(monkeypatch, tmp_path):
     monkeypatch.setattr(br, "require_admin", lambda request: None)
     monkeypatch.setattr(br, "get_current_user", lambda request: "alice")
     
-    # Mock research directory
+    # Redirect DEEP_RESEARCH_DIR to tmp_path so the export reads our files
     research_dir = tmp_path / "data" / "deep_research"
     research_dir.mkdir(parents=True)
+    monkeypatch.setattr(br, "DEEP_RESEARCH_DIR", str(research_dir))
     
     # Create a mock research run
     run_data = {"owner": "alice", "query": "test query"}
@@ -31,9 +32,6 @@ def test_research_export(monkeypatch, tmp_path):
     with open(research_dir / "run2.json", "w") as f:
         json.dump({"owner": "bob", "query": "other query"}, f)
         
-    # Override Path in backup_routes to use tmp_path
-    monkeypatch.setattr(br, "Path", lambda *args: tmp_path / Path(*args) if "data" in str(args) else Path(*args))
-    
     mem_manager = MagicMock()
     mem_manager.load.return_value = []
     preset_manager = MagicMock()
@@ -57,12 +55,11 @@ def test_research_import(monkeypatch, tmp_path):
     monkeypatch.setattr(br, "get_current_user", lambda request: "alice")
     
     research_dir = tmp_path / "data" / "deep_research"
+    monkeypatch.setattr(br, "DEEP_RESEARCH_DIR", str(research_dir))
     # Ensure it's clean
     if research_dir.exists():
         shutil.rmtree(research_dir)
         
-    monkeypatch.setattr(br, "Path", lambda *args: tmp_path / Path(*args) if "data" in str(args) else Path(*args))
-    
     router = br.setup_backup_routes(MagicMock(), MagicMock(), MagicMock())
     endpoint = next(r.endpoint for r in router.routes if r.path == "/api/import")
     

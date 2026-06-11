@@ -819,7 +819,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
         from routes.email_helpers import _email_cache_owner_clause, _imap_connect, SCHEDULED_DB
-        from src.endpoint_resolver import resolve_endpoint
+        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
         from src.llm_core import llm_call_async
 
         # 1. Pull recent UIDs + From headers cheaply (header-only fetch).

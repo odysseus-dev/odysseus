@@ -8,16 +8,35 @@ the sessions table — otherwise the live token sits at rest as
 ProviderAuthSession is allowed to persist.
 """
 
+import os
+os.environ.pop("AUTH_ENABLED", None)
+
 import types
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import routes.chat_helpers as chat_helpers
 import src.endpoint_resolver as endpoint_resolver
+import src.chatgpt_subscription as chatgpt_subscription
 from core.database import Base, ModelEndpoint, Session as DbSession
 
 _CODEX_BASE = "https://chatgpt.com/backend-api/codex"
+
+
+def _patch_runtime_creds(monkeypatch):
+    """Patch resolve_runtime_credentials (called by resolve_endpoint_runtime)
+    instead of resolve_endpoint_runtime itself, because resolve_session_auth
+    uses a local `from ... import` that bypasses module-level monkeypatches
+    when another test has replaced sys.modules['src.endpoint_resolver']."""
+    monkeypatch.setattr(
+        chatgpt_subscription, "resolve_runtime_credentials",
+        lambda auth_id, owner=None, force_refresh=False: {
+            "base_url": _CODEX_BASE,
+            "api_key": "live-access-token",
+        },
+    )
 
 
 def _mem_db(monkeypatch):
@@ -31,6 +50,7 @@ def _mem_db(monkeypatch):
 
 def test_chatgpt_subscription_auth_is_not_written_to_sessions_table(monkeypatch):
     TestSessionLocal = _mem_db(monkeypatch)
+    _patch_runtime_creds(monkeypatch)
     db = TestSessionLocal()
     try:
         db.add(ModelEndpoint(
@@ -44,12 +64,6 @@ def test_chatgpt_subscription_auth_is_not_written_to_sessions_table(monkeypatch)
         db.commit()
     finally:
         db.close()
-
-    # A live access token is resolved at request time.
-    monkeypatch.setattr(
-        endpoint_resolver, "resolve_endpoint_runtime",
-        lambda ep, owner=None: (_CODEX_BASE, "live-access-token"),
-    )
 
     sess = types.SimpleNamespace(
         id="sess1", endpoint_url=_CODEX_BASE, model="gpt-5.1-codex",
@@ -97,6 +111,8 @@ def test_non_subscription_auth_is_still_persisted_to_sessions_table(monkeypatch)
     finally:
         db.close()
 
+    # Monkeypatch direct endpoint_resolver for non-subscription path since
+    # the function-local import issue only affects the subscription path.
     monkeypatch.setattr(
         endpoint_resolver, "resolve_endpoint_runtime",
         lambda ep, owner=None: (base, "sk-static"),
@@ -125,6 +141,7 @@ def test_non_subscription_auth_is_still_persisted_to_sessions_table(monkeypatch)
 def test_chatgpt_subscription_clears_previously_persisted_bearer(monkeypatch):
     """A bearer left at rest by an older code path is stripped on next resolve."""
     TestSessionLocal = _mem_db(monkeypatch)
+    _patch_runtime_creds(monkeypatch)
     db = TestSessionLocal()
     try:
         db.add(ModelEndpoint(
@@ -140,12 +157,6 @@ def test_chatgpt_subscription_clears_previously_persisted_bearer(monkeypatch):
         db.commit()
     finally:
         db.close()
-
-    monkeypatch.setattr(
-        endpoint_resolver,
-        "resolve_endpoint_runtime",
-        lambda ep, owner=None: (_CODEX_BASE, "live-access-token"),
-    )
 
     sess = types.SimpleNamespace(
         id="sess1", endpoint_url=_CODEX_BASE, model="gpt-5.1-codex",
@@ -168,6 +179,7 @@ def test_chatgpt_subscription_clears_previously_persisted_bearer(monkeypatch):
 def test_chatgpt_subscription_fallback_auth_is_not_written_to_sessions_table(monkeypatch):
     """Fallback endpoint selection must keep the resolved bearer request-local."""
     TestSessionLocal = _mem_db(monkeypatch)
+    _patch_runtime_creds(monkeypatch)
     db = TestSessionLocal()
     try:
         db.add(ModelEndpoint(
@@ -182,12 +194,6 @@ def test_chatgpt_subscription_fallback_auth_is_not_written_to_sessions_table(mon
         db.commit()
     finally:
         db.close()
-
-    monkeypatch.setattr(
-        endpoint_resolver,
-        "resolve_endpoint_runtime",
-        lambda ep, owner=None: (_CODEX_BASE, "live-access-token"),
-    )
 
     sess = types.SimpleNamespace(
         id="sess1", endpoint_url="https://old.example/v1", model="old-model",

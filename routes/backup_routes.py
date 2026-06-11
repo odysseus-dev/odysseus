@@ -1,12 +1,14 @@
-"""Backup routes — export/import user data (memories, presets, settings, skills, preferences)."""
+"""Backup routes — export/import user data (memories, presets, settings, skills, preferences, research)."""
 
 import json
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
+from src.constants import DEEP_RESEARCH_DIR
 from src.settings import load_settings, save_settings, load_features, save_features
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,19 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         from routes.prefs_routes import _load_for_user
         preferences = _load_for_user(user)
 
+        # Research (on-disk JSON files, one per session)
+        research = []
+        data_dir = Path(DEEP_RESEARCH_DIR)
+        if data_dir.exists():
+            for p in sorted(data_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+                try:
+                    d = json.loads(p.read_text(encoding="utf-8"))
+                    if user and d.get("owner") != user:
+                        continue
+                    research.append({"id": p.stem, "data": d})
+                except Exception:
+                    continue
+
         export_data = {
             "version": 1,
             "exported_at": datetime.now().isoformat(),
@@ -50,6 +65,7 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
             "settings": settings,
             "features": features,
             "preferences": preferences,
+            "research": research,
         }
 
         filename = f"odysseus_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -203,6 +219,29 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
             current.update(body["preferences"])
             _save_for_user(user, current)
             imported.append("preferences")
+
+        # ── Research ──
+        if "research" in body and isinstance(body["research"], list):
+            data_dir = Path(DEEP_RESEARCH_DIR)
+            data_dir.mkdir(parents=True, exist_ok=True)
+            added = 0
+            for entry in body["research"]:
+                if not isinstance(entry, dict):
+                    continue
+                rid = entry.get("id")
+                if not rid:
+                    continue
+                data = entry.get("data", {})
+                if not isinstance(data, dict):
+                    continue
+                if user and not data.get("owner"):
+                    data["owner"] = user
+                path = data_dir / f"{rid}.json"
+                if path.exists():
+                    continue
+                path.write_text(json.dumps(data), encoding="utf-8")
+                added += 1
+            imported.append(f"{added} research sessions")
 
         if not imported:
             return {"ok": False, "message": "No recognized data found in the file"}

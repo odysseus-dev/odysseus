@@ -46,7 +46,7 @@ def test_sanitize_preserves_reasoning_content_on_assistant_tool_call():
         },
     ]
 
-    out = _sanitize_llm_messages(messages)
+    out = _sanitize_llm_messages(messages, keep_reasoning=True)
     assistant = next(m for m in out if m["role"] == "assistant")
 
     assert assistant.get("reasoning_content") == "Let me think about which tool to use...", (
@@ -67,7 +67,7 @@ def test_sanitize_preserves_reasoning_content_on_plain_assistant():
         },
     ]
 
-    out = _sanitize_llm_messages(messages)
+    out = _sanitize_llm_messages(messages, keep_reasoning=True)
     assert len(out) == 1
     assert out[0]["reasoning_content"] == "Internal reasoning that should be kept for the next turn."
 
@@ -84,7 +84,7 @@ def test_sanitize_strips_unknown_fields_but_keeps_reasoning_content():
         },
     ]
 
-    out = _sanitize_llm_messages(messages)
+    out = _sanitize_llm_messages(messages, keep_reasoning=True)
     assert len(out) == 1
     assert "reasoning_content" in out[0], "reasoning_content was stripped"
     assert "some_custom_field" not in out[0], "custom field was not stripped"

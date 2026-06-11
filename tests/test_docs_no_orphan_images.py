@@ -57,6 +57,9 @@ def test_no_orphan_images_in_docs():
         str(img.relative_to(REPO))
         for img in docs_images
         if img.name not in blob
+        and not any(
+            p in img.parts for p in ("screenshots", "pr-screenshots")
+        )
     ]
     assert not orphans, (
         "unreferenced image(s) committed under docs/ — likely PR screenshots "

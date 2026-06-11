@@ -10,6 +10,24 @@ import {
 
 export { resolveKeybind, matchesCombo as _matchesCombo } from './keybindUtils.js';
 
+// ── "Toggle Window" — close whatever tool window is open, or reopen the
+// last one. Maps each window's modal element to the button/title that
+// opens it (mirrors modalManager's _AUTO_WIRE, plus email's section title).
+export const _WINDOW_TRIGGERS = {
+  'settings-modal':         'user-bar-settings',
+  'theme-modal':            'tool-theme-btn',
+  'tasks-modal':            'tool-tasks-btn',
+  'notes-panel':            'tool-notes-btn',
+  'memory-modal':           'tool-memory-btn',
+  'doclib-modal':           'tool-library-btn',
+  'gallery-modal':          'tool-gallery-btn',
+  'research-overlay':       'tool-research-btn',
+  'cookbook-modal':         'tool-cookbook-btn',
+  'compare-model-overlay':  'tool-compare-btn',
+  'calendar-modal':         'tool-calendar-btn',
+  'email-lib-modal':        'email-section-title',
+};
+
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
   fav_session: 'ctrl+alt+f', delete_session: 'ctrl+alt+d',
@@ -100,23 +118,6 @@ export function initKeyboardShortcuts(modules) {
     }
   }, true);
 
-  // ── "Toggle Window" — close whatever tool window is open, or reopen the
-  // last one. Maps each window's modal element to the button/title that
-  // opens it (mirrors modalManager's _AUTO_WIRE, plus email's section title).
-  const _WINDOW_TRIGGERS = {
-    'settings-modal':         'user-bar-settings',
-    'theme-modal':            'tool-theme-btn',
-    'tasks-modal':            'tool-tasks-btn',
-    'notes-panel':            'tool-notes-btn',
-    'memory-modal':           'tool-memory-btn',
-    'doclib-modal':           'tool-library-btn',
-    'gallery-modal':          'tool-gallery-btn',
-    'research-overlay':       'tool-research-btn',
-    'cookbook-modal':         'tool-cookbook-btn',
-    'compare-model-overlay':  'tool-compare-btn',
-    'calendar-modal':         'tool-calendar-btn',
-    'email-lib-modal':        'email-section-title',
-  };
   let _lastWindow = 'settings-modal';
 
   const _windowVisible = (id) => {
