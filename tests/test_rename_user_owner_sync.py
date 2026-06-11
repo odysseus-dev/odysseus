@@ -11,7 +11,10 @@ owner column, but three file-backed / in-memory stores are left stale:
    research_routes filters by `d.get("owner") == user`, making every report
    invisible after rename.
 
-3. data/memory.json  — a flat array where every entry has an `owner` field;
+3. research_handler._active_tasks — in-flight research jobs carry the same
+   owner key while status/cancel/active routes filter by it.
+
+4. data/memory.json  — a flat array where every entry has an `owner` field;
    memory_manager.load(owner=user) filters on it, so all memories vanish.
 
 Regression coverage: these bugs are invisible in unit tests that mock the DB
@@ -64,10 +67,11 @@ def rename_endpoint(monkeypatch, tmp_path):
     return _route(ar.setup_auth_routes(am), "rename_user"), am, tmp_path
 
 
-def _request(tmp_path, session_manager=None, token="t"):
+def _request(tmp_path, session_manager=None, token="t", research_handler=None):
     state = SimpleNamespace(
         invalidate_token_cache=lambda: None,
         session_manager=session_manager,
+        research_handler=research_handler,
     )
     return SimpleNamespace(
         cookies={"odysseus_session": token},
@@ -232,6 +236,108 @@ def test_rename_no_deep_research_dir_does_not_crash(rename_endpoint):
     # No deep_research dir — must not crash.
     res = asyncio.run(endpoint("alice", SimpleNamespace(username="alice2"), _request(tmp_path)))
     assert res["ok"] is True
+
+
+def test_rename_updates_active_research_task_owner(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+
+    from routes.research_routes import setup_research_routes
+    from src.research_handler import ResearchHandler
+
+    rh = ResearchHandler.__new__(ResearchHandler)
+    rh._active_tasks = {
+        "alice-task": {
+            "owner": "Alice",
+            "status": "running",
+            "query": "q",
+            "progress": {},
+            "started_at": 1,
+        },
+        "carol-task": {
+            "owner": "carol",
+            "status": "running",
+            "query": "q2",
+            "progress": {},
+            "started_at": 2,
+        },
+    }
+
+    asyncio.run(endpoint(
+        "alice",
+        SimpleNamespace(username="alice2"),
+        _request(tmp_path, research_handler=rh),
+    ))
+
+    assert rh._active_tasks["alice-task"]["owner"] == "alice2"
+    assert rh._active_tasks["carol-task"]["owner"] == "carol"
+
+    router = setup_research_routes(rh)
+    active = next(
+        r.endpoint for r in router.routes
+        if getattr(r, "path", "") == "/api/research/active"
+    )
+
+    alice2 = asyncio.run(active(
+        SimpleNamespace(state=SimpleNamespace(current_user="alice2")),
+    ))
+    alice = asyncio.run(active(
+        SimpleNamespace(state=SimpleNamespace(current_user="alice")),
+    ))
+
+    assert [item["session_id"] for item in alice2["active"]] == ["alice-task"]
+    assert alice["active"] == []
+
+
+def test_research_handler_rename_owner_canonicalizes_new_owner():
+    from src.research_handler import ResearchHandler
+
+    rh = ResearchHandler.__new__(ResearchHandler)
+    rh._active_tasks = {
+        "task": {"owner": "Alice", "status": "running"},
+    }
+
+    changed = rh.rename_owner("alice", "Alice2")
+    assert changed == 1
+    assert rh._active_tasks["task"]["owner"] == "alice2"
+
+
+def test_research_handler_rename_owner_uses_auth_lower_contract_not_casefold():
+    from src.research_handler import ResearchHandler
+
+    rh = ResearchHandler.__new__(ResearchHandler)
+    rh._active_tasks = {
+        "task-strasse": {"owner": "strasse", "status": "running"},
+        "task-sharp-s": {"owner": "straße", "status": "running"},
+    }
+
+    changed = rh.rename_owner("straße", "renamed")
+
+    assert changed == 1
+    assert rh._active_tasks["task-strasse"]["owner"] == "strasse"
+    assert rh._active_tasks["task-sharp-s"]["owner"] == "renamed"
+
+
+def test_rename_updates_active_research_before_completed_json_sweep(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+
+    dr_dir = tmp_path / "deep_research"
+    dr_dir.mkdir()
+    report = dr_dir / "race-window.json"
+    report.write_text(json.dumps({"owner": "alice", "status": "done"}), encoding="utf-8")
+    owner_seen_by_active_hook = []
+
+    class FakeResearchHandler:
+        def rename_owner(self, _old, _new):
+            owner_seen_by_active_hook.append(json.loads(report.read_text(encoding="utf-8"))["owner"])
+
+    asyncio.run(endpoint(
+        "alice",
+        SimpleNamespace(username="alice2"),
+        _request(tmp_path, research_handler=FakeResearchHandler()),
+    ))
+
+    assert owner_seen_by_active_hook == ["alice"]
+    assert json.loads(report.read_text(encoding="utf-8"))["owner"] == "alice2"
 
 
 def test_rename_research_respects_custom_data_dir(monkeypatch, tmp_path):
