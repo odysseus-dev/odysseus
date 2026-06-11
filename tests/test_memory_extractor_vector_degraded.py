@@ -86,8 +86,12 @@ def test_extraction_persists_facts_when_vector_store_fails_at_runtime(monkeypatc
 
 
 def test_healthy_vector_store_still_dedups_normally(monkeypatch):
-    """Control: when find_similar reports a match, that fact is skipped — the
-    try/except added around it must not swallow a legitimate dedup hit."""
+    """Control: a vector hit on the user's OWN memory is honored (deduped) and
+    add is not called. The vector store is a shared collection with no owner
+    metadata, so a hit is only treated as a duplicate when the matched id
+    resolves to this user's own (or legacy unowned) memory — otherwise the
+    fact would be a cross-tenant false drop. Here the match is alice's own
+    memory, so the dedup must still fire."""
 
     async def _fake_llm(url, model, messages, **kwargs):
         return '[{"text": "Alice lives in Lisbon", "category": "fact"}]'
@@ -95,19 +99,27 @@ def test_healthy_vector_store_still_dedups_normally(monkeypatch):
     monkeypatch.setattr(src.llm_core, "llm_call_async", _fake_llm)
     monkeypatch.setattr(src.event_bus, "fire_event", lambda *a, **k: None)
 
-    class _DedupVectorStore:
-        healthy = True
-
-        def find_similar(self, text, threshold=0.72):
-            return "existing-id"  # claim it already exists
-
-        def add(self, memory_id, text):  # pragma: no cover - should not run
-            raise AssertionError("add should not be called for a deduped fact")
-
     with tempfile.TemporaryDirectory() as data_dir:
         mgr = MemoryManager(data_dir)
+        # Seed alice's own memory (persisted so load_all sees it) and point
+        # find_similar at its real id.
+        seeded = mgr.add_entry("Alice's home city is Lisbon", source="auto",
+                               category="fact", owner="alice")
+        mgr.save([seeded])
+
+        class _DedupVectorStore:
+            healthy = True
+
+            def find_similar(self, text, threshold=0.72):
+                return seeded["id"]  # matches alice's own seeded memory
+
+            def add(self, memory_id, text):  # pragma: no cover - should not run
+                raise AssertionError("add should not be called for a deduped fact")
+
         _run(extract_and_store(
             _FakeSession(), mgr, _DedupVectorStore(),
             endpoint_url="http://x", model="m", headers=None,
         ))
-        assert mgr.load(owner="alice") == []
+        # The new fact was deduped against alice's own memory, so only the
+        # seeded entry remains (no duplicate added).
+        assert [e["text"] for e in mgr.load(owner="alice")] == ["Alice's home city is Lisbon"]

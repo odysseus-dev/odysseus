@@ -149,3 +149,23 @@ def test_sparse_integer_indices_then_null_do_not_collide(monkeypatch):
     events = _drive(monkeypatch, lines)
     calls = next(e["calls"] for e in events if e.get("type") == "tool_calls")
     assert sorted(c["name"] for c in calls) == ["f0", "f2", "fn"], f"collision: {calls}"
+
+
+def test_null_arguments_delta_does_not_drop_sibling_calls(monkeypatch):
+    # A gateway can emit a tool_call delta whose `arguments` is JSON null. The
+    # accumulator did `"" += None`, raising TypeError caught by the broad except
+    # that wraps the whole chunk — so it abandoned the rest of the tool_calls
+    # loop, silently dropping every LATER call in the same delta. Here the first
+    # call has arguments: null; the second (same delta) must still survive.
+    lines = [
+        _sse({"tool_calls": [
+            {"index": 0, "id": "a", "type": "function",
+             "function": {"name": "first", "arguments": None}},
+            {"index": 1, "id": "b", "type": "function",
+             "function": {"name": "second", "arguments": "{}"}},
+        ]}),
+        "data: [DONE]",
+    ]
+    events = _drive(monkeypatch, lines, model="gpt-4o-test")
+    calls = next(e["calls"] for e in events if e.get("type") == "tool_calls")
+    assert sorted(c["name"] for c in calls) == ["first", "second"], calls

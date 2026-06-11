@@ -18,7 +18,7 @@ def node_available():
         pytest.skip("node binary not on PATH")
 
 
-def _run_markdown_case(markdown: str) -> str:
+def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
     script = textwrap.dedent(
         r"""
         import fs from 'node:fs';
@@ -27,6 +27,15 @@ def _run_markdown_case(markdown: str) -> str:
         globalThis.document = {
           readyState: 'loading',
           addEventListener() {},
+          createElement(tag) {
+            if (tag !== 'template') throw new Error(`unsupported element: ${tag}`);
+            return {
+              _html: '',
+              content: { querySelectorAll() { return []; } },
+              set innerHTML(value) { this._html = value; },
+              get innerHTML() { return this._html; },
+            };
+          },
         };
         globalThis.MutationObserver = class { observe() {} };
 
@@ -41,6 +50,18 @@ def _run_markdown_case(markdown: str) -> str:
             return (row || '').replace(/^\\s*\\|/, '').replace(/\\|\\s*$/, '').split('|').map(c => c.trim());
           }`
         );
+        // markdown.js imports the emoji-shortcode helpers relatively (issue #345),
+        // which a data: URL module can't resolve. Inline the REAL helpers (minus
+        // their export keywords) so the renderer's shortcode pass behaves exactly
+        // as it does in the browser.
+        const emojiSource = fs.readFileSync('./static/js/emojiShortcodes.js', 'utf8')
+          .replace(/^export default .*$/m, '')
+          .replace(/export const /g, 'const ')
+          .replace(/export function /g, 'function ');
+        source = source.replace(
+          /import \{ replaceEmojiShortcodes, hasEmojiShortcode \} from ['"]\.\/emojiShortcodes\.js['"];/,
+          () => emojiSource
+        );
         source = source.replace(
           /var escapeHtml = uiModule\.esc;/,
           `var escapeHtml = (value) => String(value ?? '')
@@ -54,9 +75,9 @@ def _run_markdown_case(markdown: str) -> str:
         const moduleUrl = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
         const mod = await import(moduleUrl);
         const input = JSON.parse(process.argv[1]);
-        console.log(JSON.stringify({ html: mod.mdToHtml(input) }));
+        console.log(JSON.stringify({ html: __RENDER_EXPR__ }));
         """
-    )
+    ).replace("__RENDER_EXPR__", render_expr)
     result = subprocess.run(
         ["node", "--input-type=module", "-e", script, json.dumps(markdown)],
         cwd=_REPO,
@@ -99,3 +120,68 @@ def test_table_separator_row_not_rendered_as_data(node_available):
     assert "<th" in html
     assert "<td" in html
     assert "---" not in html
+
+
+def test_process_with_thinking_handles_gemma4_thought_channel(node_available):
+    html = _run_markdown_case(
+        "<|channel>thought\ninternal reasoning<channel|>Final answer.",
+        "mod.processWithThinking(input)",
+    )
+
+    assert "thinking-section" in html
+    assert "internal reasoning" in html
+    assert "Final answer." in html
+    assert "&lt;|channel&gt;" not in html
+    assert "<|channel>" not in html
+
+
+def test_process_with_thinking_strips_empty_gemma4_thought_channel(node_available):
+    html = _run_markdown_case(
+        "<|channel>thought\n<channel|>Final answer.",
+        "mod.processWithThinking(input)",
+    )
+
+    assert "thinking-section" not in html
+    assert "Final answer." in html
+    assert "&lt;|channel&gt;" not in html
+    assert "<|channel>" not in html
+
+
+def test_process_with_thinking_unwraps_gemma4_response_channel(node_available):
+    html = _run_markdown_case(
+        "<|channel>thought\ninternal reasoning<channel|><|channel>response\nFinal answer.<channel|>",
+        "mod.processWithThinking(input)",
+    )
+
+    assert "thinking-section" in html
+    assert "internal reasoning" in html
+    assert "Final answer." in html
+    assert "&lt;|channel&gt;" not in html
+    assert "<|channel>" not in html
+
+
+def test_extract_thinking_blocks_handles_thought_tag(node_available):
+    result = _run_markdown_case(
+        "<thought>internal reasoning</thought>Final answer.",
+        "mod.extractThinkingBlocks(input)",
+    )
+
+    assert result["thinkingBlocks"] == ["internal reasoning"]
+    assert result["content"] == "Final answer."
+
+
+def test_dotted_python_import_paths_are_not_autolinked(node_available):
+    html = _run_markdown_case(
+        "from imblearn.combine import SMOTETomek\n"
+        "from sklearn.metrics import f1_score\n"
+        "from sklearn.compose import ColumnTransformer\n\n"
+        "See example.com/docs for normal domain autolinking."
+    )
+
+    assert "___ALLOWED_HTML_" not in html
+    assert "imblearn.combine" in html
+    assert "sklearn.metrics" in html
+    assert "sklearn.compose" in html
+    assert 'href="https://imblearn.com' not in html
+    assert 'href="https://sklearn.me' not in html
+    assert 'href="https://example.com/docs"' in html

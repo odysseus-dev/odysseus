@@ -63,10 +63,10 @@ def migrate_memories():
     """Migrate memory vectors from FAISS to ChromaDB."""
     from src.chroma_client import get_chroma_client
     from src.embeddings import get_embedding_client
-    from src.constants import DATA_DIR
+    from src.constants import MEMORY_VECTORS_DIR, MEMORY_FILE
 
-    ids_path = os.path.join(DATA_DIR, "memory_vectors", "ids.json")
-    memory_path = os.path.join(DATA_DIR, "memory.json")
+    ids_path = os.path.join(MEMORY_VECTORS_DIR, "ids.json")
+    memory_path = MEMORY_FILE
 
     if not os.path.exists(ids_path):
         logger.info("No memory FAISS index found, skipping memory migration")
