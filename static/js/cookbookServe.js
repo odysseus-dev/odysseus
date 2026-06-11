@@ -241,6 +241,24 @@ function _shellPathExpr(path) {
   return _shellQuote(s);
 }
 
+
+function _windowsLocalPath(value) {
+  const raw = String(value || '');
+  return /^[A-Za-z]:[\\/]/.test(raw) ? raw.replace(/\//g, "\\") : raw;
+}
+
+function _selectedGgufPath(model, repo, relPath) {
+  const rel = String(relPath || '').replace(/^\/+/, '');
+  if (!rel) return '';
+  if (model.is_local_dir && model.path) {
+    return _windowsLocalPath(`${String(model.path || '').replace(/[\\/]+$/, '')}/${repo}/${rel}`);
+  }
+  if (model.path) {
+    return _windowsLocalPath(`${String(model.path || '').replace(/[\\/]+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots/${rel}`);
+  }
+  return `%USERPROFILE%\\.cache\\huggingface\\hub\\models--${repo.replace(/\//g, '--')}\\snapshots\\${rel.replace(/\//g, "\\")}`;
+}
+
 function _selectedGgufExpr(model, repo, relPath) {
   const rel = String(relPath || '').replace(/^\/+/, '');
   if (!rel) return '';
@@ -530,12 +548,12 @@ function _rerenderCachedModels() {
         : (_lastUsed || (_isLegacyFlat ? _allSs : {}));
       const detectedBackend = _detectBackend(m).backend;
       const _allowedBackends = new Set(_isWindows()
-        ? ['llamacpp']
+        ? ['llamacpp', 'ollama']
         : (_isMetal() ? ['llamacpp', 'ollama'] : ['vllm', 'sglang', 'llamacpp', 'ollama', 'diffusers']));
-      const defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
-        ? ss.backend
-        : detectedBackend;
-      const savedMatchesBackend = !!ss._forceBackend || (ss.backend || 'vllm') === detectedBackend;
+      const forcedBackendUsable = !!(ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend)
+        && !(detectedBackend === 'ollama' && ss.backend !== 'ollama'));
+      const defaultBackend = forcedBackendUsable ? ss.backend : detectedBackend;
+      const savedMatchesBackend = forcedBackendUsable || (ss.backend || 'vllm') === detectedBackend;
       const sv = (k, def) => (ss[k] !== undefined && savedMatchesBackend) ? ss[k] : def;
       const defaultTp = defaultBackend === 'llamacpp' ? '1' : sv('tp', '1');
       const detectedGpuIds = _allGpuIds(_getGpuToggleTotal?.());
@@ -590,7 +608,7 @@ function _rerenderCachedModels() {
       // Row 1: Backend + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
       const _backendChoices = _isWindows()
-        ? [['llamacpp','llama.cpp']]
+        ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
         : _isMetal()
         // Diffusers (diffusion_server.py) is CUDA-only — omit it on Metal.
         ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
@@ -831,7 +849,9 @@ function _rerenderCachedModels() {
           // search the HF snapshots dir, so serving a GGUF from a custom dir works
           // instead of handing llama.cpp a directory (which fails).
           const _ldir = m.path ? _shellQuote(`${m.path}/${repo}`) : '""';
-          f._gguf_path = selectedGguf
+          f._gguf_path = _isWindows()
+            ? (selectedGguf ? _selectedGgufPath(m, repo, selectedGguf.rel_path) : '')
+            : selectedGguf
             ? _selectedGgufExpr(m, repo, selectedGguf.rel_path)
             : m.is_local_dir && m.path
             ? `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`

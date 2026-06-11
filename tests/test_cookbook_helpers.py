@@ -23,6 +23,7 @@ from routes.cookbook_helpers import (
     _venv_safe_local_pip_install_cmd,
     _validate_gpus,
     _validate_local_dir,
+    _normalize_local_windows_serve_cmd,
     _validate_repo_id,
     _validate_serve_cmd,
     _validate_serve_model_id,
@@ -548,6 +549,29 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
     )
     assert _validate_serve_cmd(cmd) == cmd
 
+
+def test_normalize_local_windows_serve_cmd_converts_safe_ps_env_prefix():
+    cmd = (
+        '$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; '
+        '$env:CUDA_VISIBLE_DEVICES="0"; '
+        'python -m llama_cpp.server --model "C:\\models\\model.gguf" --port 8080'
+    )
+    normalized = _normalize_local_windows_serve_cmd(cmd)
+    assert normalized == (
+        'GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 '
+        'python -m llama_cpp.server --model "C:\\models\\model.gguf" --port 8080'
+    )
+    assert _validate_serve_cmd(normalized) == normalized
+
+
+def test_validate_serve_cmd_accepts_local_windows_llama_env_prefix():
+    cmd = (
+        "GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 CUDA_VISIBLE_DEVICES=0 "
+        "python -m llama_cpp.server --model "
+        '"C:\\Users\\me\\.cache\\huggingface\\hub\\models--org--Model-GGUF\\snapshots\\abc\\model.gguf" '
+        "--host 0.0.0.0 --port 8080 --n_gpu_layers 99 --n_ctx 8192"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
 
 def test_ollama_serve_defaults_to_loopback_bind():
     assert _ollama_bind_from_cmd("ollama serve") == ("127.0.0.1", "11434")

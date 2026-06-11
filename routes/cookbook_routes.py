@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 from routes.cookbook_helpers import (
     _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
     _validate_local_dir, _validate_gpus, _shell_path,
-    _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
+    _ps_squote, _bash_squote, _validate_serve_cmd, _normalize_local_windows_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
@@ -1212,6 +1212,10 @@ def setup_cookbook_routes() -> APIRouter:
         # `_validate_serve_cmd` returns None for empty input; coerce to "" so the
         # many downstream `"engine" in req.cmd` membership checks can't hit
         # `TypeError: argument of type 'NoneType'` (a 500 instead of a clean 400).
+        if IS_WINDOWS and not req.remote_host:
+            req.cmd = _normalize_local_windows_serve_cmd(req.cmd)
+            if re.fullmatch(r"docker\s+exec\s+ollama-rocm\s+ollama\s+show\s+[A-Za-z0-9][A-Za-z0-9._:-]{0,200}", (req.cmd or "").strip()):
+                req.cmd = "ollama serve"
         req.cmd = _validate_serve_cmd(req.cmd) or ""
         req.cmd = _venv_safe_local_pip_install_cmd(
             req.cmd,

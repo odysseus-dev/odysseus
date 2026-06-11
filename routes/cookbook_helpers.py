@@ -604,6 +604,44 @@ def _check_serve_binary(seg: str) -> None:
         )
 
 
+
+_PS_SAFE_SERVE_ENV_RE = re.compile(
+    r"^\$env:(GGML_CUDA_ENABLE_UNIFIED_MEMORY|CUDA_VISIBLE_DEVICES)\s*=\s*"
+    r"(?:(?P<dq>\"[^\"\r\n;`$<>]*\")|(?P<sq>'[^'\r\n;`$<>]*')|(?P<bare>[A-Za-z0-9_.,:-]+))\s*;\s*"
+)
+
+
+def _normalize_local_windows_serve_cmd(v: str | None) -> str | None:
+    """Convert legacy local-Windows UI command prefixes into validator-safe form.
+
+    Local Windows serve tasks run through the bash detached runner, not the
+    remote-Windows PowerShell runner. Older UI code emitted PowerShell-style
+    `$env:NAME="value";` prefixes, which are safe in intent but rejected by
+    the serve-command validator because semicolons are shell control syntax.
+    Normalize only known safe serve env vars, then let _validate_serve_cmd do
+    the final allowlist/metacharacter check.
+    """
+    if not v:
+        return v
+    s = v.strip()
+    env_parts: list[str] = []
+    while True:
+        m = _PS_SAFE_SERVE_ENV_RE.match(s)
+        if not m:
+            break
+        name = m.group(1)
+        raw = m.group("dq") or m.group("sq") or m.group("bare") or ""
+        value = raw[1:-1] if (raw.startswith(("'", '"')) and raw.endswith(("'", '"'))) else raw
+        if name == "CUDA_VISIBLE_DEVICES" and not _GPU_LIST_RE.fullmatch(value):
+            raise HTTPException(400, "Invalid gpus")
+        if name == "GGML_CUDA_ENABLE_UNIFIED_MEMORY" and value not in {"0", "1", "true", "false", "TRUE", "FALSE"}:
+            raise HTTPException(400, "Invalid env_prefix")
+        env_parts.append(f"{name}={value}")
+        s = s[m.end():].lstrip()
+    if env_parts:
+        return " ".join(env_parts + [s])
+    return v
+
 def _validate_serve_cmd(v: str | None) -> str | None:
     """Reject serve commands that aren't in the allowlist or contain shell metachars.
 

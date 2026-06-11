@@ -483,12 +483,11 @@ export function _buildServeCmd(f, modelName, backend) {
     const _cpuOnly = String(f.ngl).trim() === '0';
     const lcPrefix = (() => {
       let p = '';
-      if (f.unified_mem && !_cpuOnly && !_isWindows()) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
-      if (gpuId && !_isWindows()) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
+      const localWindows = _isWindows() && !_envState.remoteHost;
+      if (f.unified_mem && !_cpuOnly && (!_isWindows() || localWindows)) p += `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1 `;
+      if (gpuId && (!_isWindows() || localWindows)) p += `CUDA_VISIBLE_DEVICES=${gpuId} `;
       return p;
     })();
-    if (f.unified_mem && !_cpuOnly && _isWindows()) cmd += `$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; `;
-    if (gpuId && _isWindows()) cmd += `$env:CUDA_VISIBLE_DEVICES="${gpuId}"; `;
     if (!_isWindows()) {
       // Resolve GGUF path once, fail loudly if nothing matched (prevents
       // `--model ""` which causes confusing downstream errors).
@@ -585,10 +584,16 @@ export function _buildServeCmd(f, modelName, backend) {
       // Trailing GGUF_FILE is optional; helper picks the first match if empty.
       cmd = `docker exec ollama-test ollama-import ${modelName} ${_name} ${_ctx}${_file ? ' ' + _file : ''}`;
     } else if (!modelName.includes('/') && modelName) {
-      // Already-pulled Ollama tag (e.g. `qwen2.5:7b`). On kierkegaard the
-      // runtime is the ROCm Ollama sidecar; this quick command verifies the
-      // tag exists, then the backend auto-registers http://host.docker.internal:11434/v1.
-      cmd = `docker exec ollama-rocm ollama show ${modelName}`;
+      // Already-pulled Ollama tag (e.g. `gemma3:1b`). Local Windows uses the
+      // native Ollama daemon; Docker sidecar probes only make sense on remote
+      // Linux hosts where that sidecar is configured.
+      if (_isWindows() && !_envState.remoteHost) {
+        const bindHost = '127.0.0.1';
+        const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
+        cmd = `${hostEnv}ollama serve`;
+      } else {
+        cmd = `docker exec ollama-rocm ollama show ${modelName}`;
+      }
     } else {
       const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
       const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
