@@ -84,10 +84,16 @@ def test_session_delivery_uses_in_memory_messages_with_manager(monkeypatch):
     class RecordingManager:
         def __init__(self):
             self.messages = []
+            self._locks = {}
 
         def add_message(self, session_id, message):
             assert isinstance(message, MemChatMessage)
             self.messages.append((session_id, message))
+
+        def session_lock(self, session_id):
+            if session_id not in self._locks:
+                self._locks[session_id] = asyncio.Lock()
+            return self._locks[session_id]
 
     db = _make_db()
     manager = RecordingManager()
