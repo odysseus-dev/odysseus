@@ -62,9 +62,17 @@ def test_filesystem_keywords_force_filesystem_tools():
     ti = _index_without_embeddings()
     fs_tools = {"read_file", "write_file", "edit_file", "ls", "glob", "grep"}
 
-    for query in ["show file list", "read file src/app.py", "write file output.txt", "run grep pattern", "list directory contents"]:
+    for query in [
+        "show file list", "read file src/app.py", "write file output.txt",
+        "run grep pattern", "list directory contents",
+        "whats here /Users/shadowwalker/Documents/GitHub/messageforge",
+        "what is in /var/folders/5w/tvrwkcl56fj0cn0mcc0v4dn00000gn/T/",
+        "check app.py", "read config/settings.json", "look in directory foo",
+        "whats inside the folder", "archive that path", "what is in here"
+    ]:
         tools = ti.get_tools_for_query(query)
         assert fs_tools <= tools, f"Query '{query}' must include all filesystem tools"
+
 
 
 def test_terminal_keywords_force_terminal_tools():

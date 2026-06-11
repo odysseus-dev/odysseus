@@ -336,6 +336,16 @@ class ToolIndex:
         r"https?://|www\.|\b(?:visit|open|fetch|check|read)\s+(?:this\s+)?(?:url|link|site|website|page)\b",
         re.I,
     )
+    _PATH_RE = re.compile(
+        r"(?:"
+        r"(?:^|\s|[\"'])(?:\.?\./|/|~/|\\)[\w.-]+"  # starts with ./, ../, /, ~/, or \
+        r"|\b[\w.-]+[/\\][\w.-]+[/\\][\w.-]+"       # has at least two slashes: foo/bar/baz
+        r"|\b[\w.-]+[/\\][\w.-]+\.\w+\b"            # slash followed by file extension: foo/bar.py
+        r"|\b[\w-]+\.(?:py|json|txt|md|js|ts|sh|yml|yaml|css|html|ini|conf|cfg|db|log|csv)\b" # bare filename with common extension
+        r")",
+        re.I,
+    )
+
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
@@ -480,7 +490,11 @@ class ToolIndex:
                    "write file", "write files", "create file", "edit file",
                    "modify file", "change file", "update file", "patch file",
                    "grep", "ripgrep", "search content", "search in files",
-                   "find in files", "search files", "find file"}):
+                   "find in files", "search files", "find file",
+                   "whats here", "what's here", "what is here", "whats in", "what's in", "what is in",
+                   "whats inside", "what's inside", "what is inside", "whats in here", "what's in here", "what is in here",
+                   "whats there", "what's there", "what is there",
+                   "folder", "folders", "directory", "directories", "path", "paths", "filepath", "filepaths"}):
             {"read_file", "write_file", "edit_file", "ls", "glob", "grep"},
         # Command / Script Execution (running terminal command, bash, python script)
         frozenset({"run command", "execute command", "run bash", "bash command",
@@ -518,6 +532,10 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
+        # File path / path structure requests need filesystem tools
+        clean_q = re.sub(r"https?://\S+|www\.\S+", "", query)
+        if self._PATH_RE.search(clean_q):
+            base.update({"read_file", "write_file", "edit_file", "ls", "glob", "grep"})
         return base
 
 
