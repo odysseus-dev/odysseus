@@ -2,6 +2,7 @@ import sys
 from types import ModuleType
 
 from tests.helpers.cli_loader import load_script
+from tests.helpers.db_stubs import make_core_db_stub
 
 
 def _load_mail_cli(monkeypatch):
@@ -17,15 +18,13 @@ def _load_mail_cli(monkeypatch):
     pollers._scheduled_poll_once = lambda: {}
     pollers._run_auto_summarize_once = lambda **kwargs: ""
 
-    core_mod = ModuleType("core")
-    database_mod = ModuleType("core.database")
-    database_mod.SessionLocal = object
-    database_mod.EmailAccount = object
-
     monkeypatch.setitem(sys.modules, "routes.email_helpers", helpers)
     monkeypatch.setitem(sys.modules, "routes.email_pollers", pollers)
-    monkeypatch.setitem(sys.modules, "core", core_mod)
-    monkeypatch.setitem(sys.modules, "core.database", database_mod)
+    make_core_db_stub(
+        monkeypatch,
+        attributes={"SessionLocal": object, "EmailAccount": object},
+        install_core_package=True,
+    )
 
     return load_script("odysseus-mail")
 
