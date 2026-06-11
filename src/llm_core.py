@@ -284,7 +284,7 @@ def _is_ollama_native_url(url: str) -> bool:
     try:
         parsed = urlparse(url or "")
     except Exception as e:
-        logger.warning("Failed to parse URL for Ollama detection %r: %s", url, e)
+        logger.warning("Failed to parse URL for Ollama detection %r", url, exc_info=e)
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
@@ -1347,7 +1347,7 @@ def list_model_ids(
                 r.raise_for_status()
                 return [m.get("name") or m.get("model") for m in (r.json().get("models") or []) if m.get("name") or m.get("model")]
         except Exception as e:
-            logger.warning("Failed to fetch model list from endpoint %r: %s", base_chat_url, e)
+            logger.warning("Failed to fetch model list from endpoint %r", base_chat_url, exc_info=e)
         return []
 
 def normalize_model_id(

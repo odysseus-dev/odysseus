@@ -332,7 +332,7 @@ if AUTH_ENABLED:
                     request.state.api_token = False
                     return await call_next(request)
             except Exception as _e:
-                logger.warning("Internal tool auth header check failed: %s", _e)
+                logger.warning("Internal tool auth header check failed", exc_info=_e)
             # Allow DIRECT localhost requests (internal service calls from
             # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
@@ -386,7 +386,7 @@ if AUTH_ENABLED:
                             try:
                                 await _asyncio.to_thread(_do)
                             except Exception as _e:
-                                logger.debug("Failed to update token last_used_at: %s", _e)
+                                logger.debug("Failed to update token last_used_at", exc_info=_e)
                         _asyncio.create_task(_touch_last_used(matched_id))
                         # Keep bearer-token callers out of normal cookie/user
                         request.state.current_user = "api"
@@ -464,7 +464,7 @@ async def serve_generated_image(filename: str, request: Request):
     except HTTPException:
         raise
     except Exception as _e:
-        logger.warning("Image ownership verification failed for %r: %s", filename, _e)
+        logger.warning("Image ownership verification failed for %r", filename, exc_info=_e)
     ext = filename.rsplit('.', 1)[-1].lower()
     mime = {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
