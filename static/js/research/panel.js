@@ -228,6 +228,13 @@ export function openPanel(focusJobId) {
   }
   _open = true;
 
+  // Clean up any stale synapses left from a previous panel session
+  // (closePanel now clears them, but this is a safety net for edge cases).
+  for (const [, entry] of _jobSynapses) {
+    try { entry.synapse.destroy(); } catch {}
+  }
+  _jobSynapses.clear();
+
   const container = document.getElementById('chat-container');
   if (!container) return;
 
@@ -312,6 +319,24 @@ export function closePanel() {
   if (_onDocKeydown) {
     document.removeEventListener('keydown', _onDocKeydown);
     _onDocKeydown = null;
+  }
+
+  // Destroy all synapse instances to prevent memory leaks.
+  // Previously these were only cleaned during _renderJobs cycles,
+  // so closing the panel while jobs existed left orphaned SVG nodes
+  // and timer intervals that accumulated across research sessions.
+  for (const [jobId, entry] of _jobSynapses) {
+    try { entry.synapse.complete(); } catch {}
+    try { entry.synapse.destroy(); } catch {}
+  }
+  _jobSynapses.clear();
+
+  // Cancel the orbit rAF loop — it runs every frame and wastes CPU
+  // when the panel is closed (the loop self-stops on next frame check,
+  // but cancelling immediately is cleaner).
+  if (_orbitRAF) {
+    cancelAnimationFrame(_orbitRAF);
+    _orbitRAF = null;
   }
 
   document.body.classList.remove('research-panel-view');

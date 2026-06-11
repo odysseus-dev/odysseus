@@ -135,6 +135,11 @@ export default function createResearchSynapse(container, opts = {}) {
     // — 10 sources across 3 rounds ends up as 10/10/10 across the three
     // sub-nodes, not a random scatter.
     const sub = subs[subs.length - 1];
+    // Cap total leaves to prevent DOM blowup (same spirit as _addSub's cap).
+    // 10 leaves per sub × 10 subs = 100 max leaves → ~200 SVG elements,
+    // which keeps rendering fast even when a research job has many rounds.
+    const totalLeaves = subs.reduce((sum, s) => sum + s.count, 0);
+    if (totalLeaves >= 100) return;
     sub.count++;
     // Lay leaves out in concentric arcs around the sub: 6 per ring fanned
     // across ~140°, then a second ring further out for the next 6, etc.
@@ -204,7 +209,9 @@ export default function createResearchSynapse(container, opts = {}) {
         // Stagger leaves slightly so they don't all pop on the same frame
         setTimeout(_addLeaf, i * 110);
       }
-      sourceCount = total;
+      // Cap the tracked count so future calls don't try to fill a huge delta,
+      // and the timer/label don't show absurd numbers.
+      sourceCount = Math.min(total, 200);
       srcE.textContent = total;
     },
 
