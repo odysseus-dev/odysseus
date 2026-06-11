@@ -1141,6 +1141,23 @@ function _wkEventTopHeight(ev, dayStr) {
   // Date math if the string isn't shaped as expected.
   const _toMin = (iso, fallbackDate) => {
     if (!iso) return null;
+
+    // FIX: Parse UTC/TZ-aware strings (e.g. "2026-05-11T05:30:00Z" or "+05:30")
+    // via Date so the browser converts to local time before extracting hours/minutes.
+    // The old regex path below would blindly read the raw UTC digits, causing the
+    // event card to be drawn at the UTC hour instead of the local hour.
+    if (/[Zz]$|[+\-]\d{2}:?\d{2}$/.test(iso)) {
+      const d = new Date(iso);
+      if (!isNaN(d)) {
+        const pad = n => String(n).padStart(2, '0');
+        const localDate = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+        if (localDate < fallbackDate) return 0;
+        if (localDate > fallbackDate) return 24 * 60;
+        return d.getHours() * 60 + d.getMinutes();
+      }
+    }
+    // Fallback for naive local strings (no timezone designator).
+    // Pull hours/minutes directly from the string to avoid browser TZ math drift.
     const m = iso.match(/T(\d{2}):(\d{2})/);
     if (m) {
       // If the event spans into a previous/next day, clamp to today's bounds.
