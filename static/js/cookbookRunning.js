@@ -3532,12 +3532,22 @@ async function _pollBackgroundStatus() {
         // dead-session check inspects). Recover "done" from the retained output's
         // exit-0 sentinel so a clean install isn't downgraded to crashed.
         const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);
+        // A finished model download whose tmux pane is gone is also reported
+        // "stopped" (the dead-session check can miss the landed snapshot).
+        // Recover "done" from the terminal `DOWNLOAD_OK` sentinel — emitted
+        // only after the runner exits 0 — so a completed download isn't
+        // downgraded to crashed. This background poll runs blind (no live
+        // stream to debounce against), so unlike the reconnect loop it keys
+        // off the conclusive exit sentinel only, never the `/snapshots/` path,
+        // which can be printed mid-stream for multi-file downloads.
+        const downloadDone = task.type === 'download'
+          && String(task.output || '').includes('DOWNLOAD_OK');
         const nextStatus = live.status === 'completed'
           ? 'done'
           : (live.status === 'error'
             ? 'error'
             : (live.status === 'stopped'
-                ? (depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped'))
+                ? ((depDone || downloadDone) ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped'))
                 : null));
         if (nextStatus && task.status !== nextStatus) {
           updates.status = nextStatus;
