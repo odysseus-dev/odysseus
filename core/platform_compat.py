@@ -191,6 +191,8 @@ def _windows_bash_fallbacks() -> List[str]:
         base = os.environ.get(env_name)
         if base:
             roots.append(ntpath.join(base, "Git"))
+            if env_name == "LocalAppData":
+                roots.append(ntpath.join(base, "Programs", "Git"))
     roots.extend(_WINDOWS_BASH_DEFAULT_ROOTS)
 
     paths: List[str] = []
