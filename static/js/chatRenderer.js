@@ -863,6 +863,20 @@ export function stripToolBlocks(text) {
 }
 
 /**
+ * Plain-text payload for the message copy buttons: the reply as the renderer
+ * displays it — tool blocks and <think> reasoning stripped. dataset.raw keeps
+ * the full model output (chat.js even embeds the elapsed time into the
+ * <think> tag for reload persistence), so copying it verbatim leaks the
+ * thinking block (#3722). Falls back to the raw text when stripping leaves
+ * nothing (e.g. turns interrupted mid-thinking).
+ */
+export function copyMessageText(msgElement) {
+  const raw = msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '';
+  const { content } = markdownModule.extractThinkingBlocks(stripToolBlocks(raw));
+  return content || raw;
+}
+
+/**
  * Build a collapsible sources box (used by both research and web search).
  */
 export function buildSourcesBox(sources, type, expanded) {
@@ -1372,7 +1386,7 @@ export function createMsgFooter(msgElement) {
     { id: 'copy', icon: COPY_ICON, title: 'Copy message', cls: 'footer-copy-btn', html: true, handler(e) {
       e.stopPropagation();
       const btn = e.currentTarget;
-      uiModule.copyToClipboard(msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '');
+      uiModule.copyToClipboard(copyMessageText(msgElement));
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
     }},
@@ -2444,6 +2458,7 @@ const chatRenderer = {
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  copyMessageText,
   safeToolScreenshotSrc,
   safeDisplayImageSrc,
   buildSourcesBox,
