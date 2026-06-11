@@ -224,7 +224,7 @@ class ResearchHandler:
     def rename_owner(self, old_owner: str, new_owner: str) -> int:
         """Move in-flight research tasks from one owner key to another."""
         old_key = str(old_owner or "").strip().lower()
-        new_key = str(new_owner or "").strip()
+        new_key = str(new_owner or "").strip().lower()
         if not old_key or not new_key:
             return 0
 
@@ -366,11 +366,9 @@ class ResearchHandler:
                     entry["status"] = "done"
                     self._save_result(session_id, entry)
                     try:
-                        visited = getattr(researcher, "visited_urls", [])
-                        findings = researcher.findings or []
-                        sources = self._extract_sources(findings, visited)
-                        findings_extracted = self._extract_raw_findings(findings)
-                        _guarded_complete(session_id, entry["result"], sources, findings_extracted)
+                        sources = self._extract_sources(researcher.findings) if researcher.findings else []
+                        findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
+                        _guarded_complete(session_id, entry["result"], sources, findings)
                     except Exception as e:
                         logger.warning(f"on_complete callback failed in timeout branch: {e}")
                 else:
@@ -392,11 +390,9 @@ class ResearchHandler:
                     entry["status"] = "done"
                     self._save_result(session_id, entry)
                     try:
-                        visited = getattr(researcher, "visited_urls", [])
-                        findings = researcher.findings or []
-                        sources = self._extract_sources(findings, visited)
-                        findings_extracted = self._extract_raw_findings(findings)
-                        _guarded_complete(session_id, entry["result"], sources, findings_extracted)
+                        sources = self._extract_sources(researcher.findings) if researcher.findings else []
+                        findings = self._extract_raw_findings(researcher.findings) if researcher.findings else []
+                        _guarded_complete(session_id, entry["result"], sources, findings)
                     except Exception as cb_err:
                         logger.warning(f"on_complete callback failed in error branch: {cb_err}")
                     on_progress({"phase": "warning", "message": f"Research finished with errors — partial results saved ({_elapsed:.0f}s elapsed)"})
@@ -492,11 +488,8 @@ class ResearchHandler:
             if entry.get("sources"):
                 return entry["sources"]
             researcher = entry.get("researcher")
-            if researcher:
-                visited = getattr(researcher, "visited_urls", [])
-                findings = researcher.findings or []
-                if findings or visited:
-                    return self._extract_sources(findings, visited)
+            if researcher and researcher.findings:
+                return self._extract_sources(researcher.findings)
         # Check disk
         path = _research_json_path(session_id)
         if path is None:
@@ -529,34 +522,23 @@ class ResearchHandler:
         return None
 
     @staticmethod
-    def _extract_sources(findings: list, visited_urls: list = None) -> list:
-        """Extract deduplicated [{url, title, image}] from findings and visited_urls."""
+    def _extract_sources(findings: list) -> list:
+        """Extract deduplicated [{url, title}] from findings, filtering low-quality ones."""
         seen = set()
         sources = []
-        if findings:
-            for f in findings:
-                if not isinstance(f, dict):
-                    continue
-                url = f.get("url", "")
-                title = f.get("title", "") or url
-                if url and url not in seen:
-                    seen.add(url)
-                    entry = {"url": url, "title": title}
-                    og_img = f.get("og_image", "")
-                    if og_img:
-                        entry["image"] = og_img
-                    sources.append(entry)
-                
-        if visited_urls:
-            for v in visited_urls:
-                if not isinstance(v, dict):
-                    continue
-                url = v.get("url", "")
-                title = v.get("title", "") or url
-                if url and url not in seen:
-                    seen.add(url)
-                    sources.append({"url": url, "title": title})
-                    
+        for f in findings:
+            if not isinstance(f, dict):
+                continue
+            url = f.get("url", "")
+            title = f.get("title", "") or url
+            summary = f.get("summary", "") or f.get("evidence", "")
+            if url and url not in seen and not is_low_quality(summary):
+                seen.add(url)
+                entry = {"url": url, "title": title}
+                og_img = f.get("og_image", "")
+                if og_img:
+                    entry["image"] = og_img
+                sources.append(entry)
         return sources
 
     @staticmethod
@@ -627,13 +609,9 @@ class ResearchHandler:
             sources = []
             raw_findings = []
             researcher = entry.get("researcher")
-            if researcher:
-                visited = getattr(researcher, "visited_urls", [])
-                findings = researcher.findings or []
-                if findings or visited:
-                    sources = self._extract_sources(findings, visited)
-                if findings:
-                    raw_findings = self._extract_raw_findings(findings)
+            if researcher and researcher.findings:
+                sources = self._extract_sources(researcher.findings)
+                raw_findings = self._extract_raw_findings(researcher.findings)
             entry["sources"] = sources
 
             data = {
@@ -740,73 +718,24 @@ class ResearchHandler:
 
     @staticmethod
     async def _probe_endpoint(endpoint: str, model: str, headers: dict = None):
-        """Probe the LLM endpoint before a research run.
-
-        Retries with backoff to tolerate cold model starts (e.g. Ollama loading
-        a large model from disk, which can take 30-120 s).  The per-attempt
-        timeout honours the endpoint's configured request_timeout so a single
-        setting controls all inference waits for that endpoint.
-        """
+        """Quick probe to verify the LLM endpoint/model responds before research."""
         from src.llm_core import llm_call_async
-        from src.settings import get_setting
-        from src.endpoint_resolver import resolve_timeout_by_url
-
-        max_attempts = _bounded_int(
-            get_setting("research_probe_max_attempts", 3),
-            default=3, minimum=1, maximum=10,
-        )
-        # Use the endpoint's configured request_timeout as the per-attempt
-        # ceiling so the same knob controls both inference and probe waits.
-        ep_timeout = resolve_timeout_by_url(endpoint)
-        probe_timeout = _bounded_int(
-            get_setting("research_probe_timeout_seconds", ep_timeout),
-            default=ep_timeout, minimum=10, maximum=ep_timeout,
-        )
-        retry_delay = _bounded_int(
-            get_setting("research_probe_retry_delay_seconds", 15),
-            default=15, minimum=5, maximum=120,
-        )
-
-        last_exc = None
-        for attempt in range(1, max_attempts + 1):
-            try:
-                if attempt == 1:
-                    logger.info(
-                        f"Probing {model} at {endpoint} "
-                        f"(has_auth={bool(headers and 'Authorization' in (headers or {}))}, "
-                        f"max_attempts={max_attempts}, timeout={probe_timeout}s)"
-                    )
-                else:
-                    logger.info(
-                        f"Waiting for model to load, attempt {attempt}/{max_attempts} "
-                        f"({model}) — retrying after previous failure"
-                    )
-                await llm_call_async(
-                    url=endpoint,
-                    model=model,
-                    messages=[{"role": "user", "content": "hi"}],
-                    temperature=0,
-                    max_tokens=5,
-                    headers=headers,
-                    timeout=probe_timeout,
-                    max_retries=1,
-                )
-                logger.info(f"Endpoint probe OK: {model} (attempt {attempt}/{max_attempts})")
-                return
-            except Exception as e:
-                last_exc = e
-                if attempt < max_attempts:
-                    logger.warning(
-                        f"Probe attempt {attempt}/{max_attempts} failed for {model}: {e} — "
-                        f"waiting {retry_delay}s before retry"
-                    )
-                    await asyncio.sleep(retry_delay)
-                else:
-                    logger.error(
-                        f"Probe failed for {model} after {max_attempts} attempts: {e}"
-                    )
-
-        raise RuntimeError(_format_probe_failure(model, last_exc)) from last_exc
+        try:
+            logger.info(f"Probing {model} at {endpoint} (has_auth={bool(headers and 'Authorization' in (headers or {}))})")
+            await llm_call_async(
+                url=endpoint,
+                model=model,
+                messages=[{"role": "user", "content": "hi"}],
+                temperature=0,
+                max_tokens=5,
+                headers=headers,
+                timeout=15,
+                max_retries=1,
+            )
+            logger.info(f"Endpoint probe OK: {model}")
+        except Exception as e:
+            logger.error(f"Probe failed for {model}: {e}")
+            raise RuntimeError(_format_probe_failure(model, e)) from e
 
     async def call_research_service(
         self,

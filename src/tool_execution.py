@@ -9,32 +9,16 @@ Extracted from agent_tools.py.
 
 import asyncio
 import collections
-import contextvars
 import json
 import logging
 import os
 import pathlib
 import re
-import subprocess
 import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
-
-try:
-    import yaml as _yaml_mod
-except ImportError:
-    _yaml_mod = None
-
-def _yaml_safe_load(text: str) -> dict:
-    if _yaml_mod is None:
-        return {}
-    try:
-        result = _yaml_mod.safe_load(text)
-        return result if isinstance(result, dict) else {}
-    except Exception:
-        return {}
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 from src.tool_policy import ToolPolicy
@@ -162,13 +146,7 @@ def _resolve_tool_path(raw_path: str) -> str:
 
     Returns the realpath on success. Raises ValueError on rejection.
     Symlinks are resolved before comparison.
-
-    When a workspace is active for this turn, paths are confined to it instead
-    of the default allowlist (see _resolve_tool_path_in_workspace).
     """
-    ws = get_active_workspace()
-    if ws:
-        return _resolve_tool_path_in_workspace(ws, raw_path)
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
     expanded = os.path.expanduser(str(raw_path).strip())
@@ -229,31 +207,6 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 
 
 
-# ---------------------------------------------------------------------------
-# Active workspace (per-turn, context-local)
-# ---------------------------------------------------------------------------
-# Set ONCE in execute_tool_block from the request's `workspace`. The path
-# resolvers (_resolve_tool_path / _resolve_search_root) and the subprocess cwd
-# helper (agent_cwd) read it from here, so confinement is enforced in a single
-# place: any tool that resolves paths through these helpers is confined
-# automatically and cannot accidentally bypass the workspace. contextvars are
-# task-local, so concurrent turns don't leak into each other.
-_active_workspace: contextvars.ContextVar = contextvars.ContextVar(
-    "agent_active_workspace", default=None
-)
-
-
-def get_active_workspace() -> Optional[str]:
-    """The folder the agent is confined to this turn, or None."""
-    return _active_workspace.get()
-
-
-def agent_cwd() -> str:
-    """Working directory for agent subprocesses (bash/python/background jobs):
-    the active workspace when set, else the persistent data dir."""
-    return get_active_workspace() or _AGENT_WORKDIR
-
-
 def get_mcp_manager():
     from src import agent_tools
     return agent_tools.get_mcp_manager()
@@ -261,18 +214,13 @@ def get_mcp_manager():
 
 
 
-def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
+def _resolve_search_root(raw_path: str) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
     An empty path defaults to the agent's primary root (project data dir) and a
     supplied path is confined by the global allowlist + sensitive-file policy.
-    When a workspace is active, relative paths and the empty path resolve under
-    that workspace instead, matching read_file/write_file/edit_file behavior.
     """
     raw = (raw_path or "").strip()
-    ws = workspace or get_active_workspace()
-    if ws:
-        return _resolve_tool_path_in_workspace(ws, raw or ".")
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
@@ -440,178 +388,6 @@ def _split_bg_marker(content: str):
     return False, content
 
 
-async def _tool_grep(content: str, ctx: Dict) -> Dict:
-    workspace = ctx.get("workspace")
-    args: Dict[str, Any] = {}
-    _s = (content or "").strip()
-    if _s.startswith("{"):
-        try:
-            args = json.loads(_s)
-        except json.JSONDecodeError:
-            args = {}
-    else:
-        args = {"pattern": _s}
-    pattern = str(args.get("pattern", "")).strip()
-    if not pattern:
-        return {"error": "grep: pattern is required", "exit_code": 1}
-    ignore_case = bool(args.get("ignore_case"))
-    glob_pat = str(args.get("glob", "") or "").strip()
-    try:
-        max_hits = int(args.get("max_results") or _CODENAV_MAX_HITS)
-    except (TypeError, ValueError):
-        max_hits = _CODENAV_MAX_HITS
-    max_hits = max(1, min(max_hits, _CODENAV_MAX_HITS))
-    try:
-        root = _resolve_search_root(str(args.get("path", "")), workspace)
-    except ValueError as e:
-        return {"error": f"grep: {e}", "exit_code": 1}
-
-    def _grep():
-        import re as _re
-        import shutil
-        rg = shutil.which("rg")
-        if rg:
-            cmd = [rg, "--line-number", "--no-heading", "--color=never",
-                   "--max-count", str(max_hits)]
-            if ignore_case:
-                cmd.append("--ignore-case")
-            if glob_pat:
-                cmd += ["--glob", glob_pat]
-            for _d in _CODENAV_SKIP_DIRS:
-                cmd += ["--glob", f"!**/{_d}/**"]
-            cmd += ["--regexp", pattern, root]
-            try:
-                import subprocess
-                p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-                lines = [ln for ln in (p.stdout or "").splitlines() if ln][:max_hits]
-                return lines, None
-            except subprocess.TimeoutExpired:
-                return None, "grep: timed out"
-            except Exception as _e:
-                return None, f"grep: {_e}"
-        try:
-            rx = _re.compile(pattern, _re.IGNORECASE if ignore_case else 0)
-        except _re.error as _e:
-            return None, f"grep: bad pattern: {_e}"
-        import fnmatch
-        hits = []
-        if os.path.isfile(root):
-            file_iter = [root]
-        else:
-            file_iter = []
-            for dp, dns, fns in os.walk(root):
-                dns[:] = [d for d in dns if d not in _CODENAV_SKIP_DIRS]
-                for fn in fns:
-                    if glob_pat and not fnmatch.fnmatch(fn, glob_pat):
-                        continue
-                    file_iter.append(os.path.join(dp, fn))
-        for fp in file_iter:
-            if len(hits) >= max_hits:
-                break
-            try:
-                with open(fp, "r", encoding="utf-8", errors="strict") as f:
-                    for i, line in enumerate(f, 1):
-                        if rx.search(line):
-                            hits.append(f"{fp}:{i}:{line.rstrip()[:_CODENAV_MAX_LINE]}")
-                            if len(hits) >= max_hits:
-                                break
-            except (UnicodeDecodeError, OSError):
-                continue
-        return hits, None
-
-    lines, err = await asyncio.to_thread(_grep)
-    if err:
-        return {"error": err, "exit_code": 1}
-    if not lines:
-        return {"output": f"No matches for {pattern!r} under {root}", "exit_code": 0}
-    out = "\n".join(ln[:_CODENAV_MAX_LINE] for ln in lines)
-    if len(lines) >= max_hits:
-        out += f"\n... [capped at {max_hits} matches]"
-    return {"output": _truncate(out), "exit_code": 0}
-
-
-async def _tool_ls(content: str, ctx: Dict) -> Dict:
-    workspace = ctx.get("workspace")
-    raw_path = ""
-    _s = (content or "").strip()
-    if _s.startswith("{"):
-        try:
-            raw_path = str(json.loads(_s).get("path", "")).strip()
-        except json.JSONDecodeError:
-            raw_path = ""
-    else:
-        raw_path = _s.split("\n", 1)[0].strip()
-    try:
-        root = _resolve_search_root(raw_path, workspace)
-    except ValueError as e:
-        return {"error": f"ls: {e}", "exit_code": 1}
-
-    def _ls():
-        if not os.path.isdir(root):
-            return None, f"ls: {root}: not a directory"
-        rows = []
-        try:
-            with os.scandir(root) as it:
-                for entry in it:
-                    if entry.name.startswith("."):
-                        continue
-                    try:
-                        is_dir = entry.is_dir(follow_symlinks=False)
-                        size = entry.stat(follow_symlinks=False).st_size if not is_dir else 0
-                    except OSError:
-                        continue
-                    rows.append((is_dir, entry.name, size))
-        except (PermissionError, OSError) as _e:
-            return None, f"ls: {_e}"
-        rows.sort(key=lambda r: (not r[0], r[1].lower()))
-        lines = [f"{root}:"]
-        for is_dir, name, size in rows[:_CODENAV_MAX_HITS]:
-            lines.append(f"  {name}/" if is_dir else f"  {name}  ({size} B)")
-        if len(rows) > _CODENAV_MAX_HITS:
-            lines.append(f"  ... [{len(rows) - _CODENAV_MAX_HITS} more]")
-        if not rows:
-            lines.append("  (empty)")
-        return "\n".join(lines), None
-
-    out, err = await asyncio.to_thread(_ls)
-    if err:
-        return {"error": err, "exit_code": 1}
-    return {"output": _truncate(out), "exit_code": 0}
-
-
-# ── git tool ──────────────────────────────────────────────────────────────
-_GIT_ALLOWED = frozenset({
-    "status", "diff", "log", "show", "branch", "blame", "ls-files",
-    "rev-parse", "shortlog", "describe", "tag", "remote", "stash",
-    "add", "commit", "restore", "checkout", "switch", "reset", "rm", "mv",
-    "merge", "rebase", "cherry-pick", "revert", "init",
-    "push", "fetch", "pull",
-})
-_GIT_BLOCKED = frozenset({
-    "config", "clone", "daemon", "gc", "submodule", "credential",
-    "remote-add", "filter-branch", "update-ref", "fast-import",
-})
-_GIT_BANNED_ARGS = frozenset({"-C", "--git-dir", "--work-tree", "--exec-path"})
-_GIT_TIMEOUT = 60
-_GIT_MAX_OUTPUT = 12_000
-
-# ── forge tool (gh / glab) ────────────────────────────────────────────────
-_FORGE_ALLOWED = frozenset({
-    "pr", "mr", "issue", "repo", "release", "label", "milestone",
-})
-_FORGE_BLOCKED_SUBVERBS = frozenset({
-    "delete", "merge", "transfer", "archive", "rename", "fork", "sync",
-})
-_FORGE_TIMEOUT = 90
-_FORGE_MAX_OUTPUT = 12_000
-
-# Registry: maps tool name -> handler coroutine function.
-_TOOL_REGISTRY: Dict[str, Any] = {
-    "grep": _tool_grep,
-    "ls":   _tool_ls,
-}
-
-
 async def _direct_fallback(
     tool: str,
     content: str,
@@ -624,14 +400,13 @@ async def _direct_fallback(
         "COLUMNS": "120",
         "LINES": "40",
         "HOME": _AGENT_WORKDIR,
-        "PYTHONUNBUFFERED": "1",
     }
 
     try:
         ctx = {
             "progress_cb": progress_cb,
-            "subproc_env": _subproc_env,
             "workspace": workspace,
+            "subproc_env": _subproc_env,
         }
 
         from src.agent_tools import TOOL_HANDLERS
@@ -640,123 +415,6 @@ async def _direct_fallback(
 
     except Exception as e:
         return {"error": f"{tool}: {e}", "exit_code": 1}
-
-    import shlex, shutil, asyncio
-    from src.agent_tools.subprocess_tools import _run_subprocess_streaming
-
-    if tool == "git":
-        git_bin = shutil.which("git")
-        if not git_bin:
-            return {"error": "git: not installed on the server.", "exit_code": 1}
-        if not workspace:
-            return {"error": "git: set a workspace (the repo folder) first.", "exit_code": 1}
-        raw = (content or "").strip()
-        if raw.lower().startswith("git "):
-            raw = raw[4:].strip()
-        if not raw:
-            return {"error": "git: provide a subcommand, e.g. status / diff / commit -m \"msg\".", "exit_code": 1}
-        try:
-            argv = shlex.split(raw)
-        except ValueError as e:
-            return {"error": f"git: could not parse arguments: {e}", "exit_code": 1}
-        sub = argv[0].lower()
-        if sub in _GIT_BLOCKED or sub not in _GIT_ALLOWED:
-            return {"error": f"git: subcommand '{sub}' is not allowed.", "exit_code": 1}
-        rest = argv[1:]
-        for _a in rest:
-            if _a in _GIT_BANNED_ARGS or _a.split("=", 1)[0] in _GIT_BANNED_ARGS:
-                return {"error": f"git: argument `{_a}` is not allowed.", "exit_code": 1}
-        if sub == "init" and rest:
-            return {"error": "git: init <path> is not allowed (would escape workspace).", "exit_code": 1}
-        if sub == "remote" and rest and rest[0] not in ("-v", "show", "get-url"):
-            return {"error": "git: remote mutation is not allowed (read-only: -v, show, get-url).", "exit_code": 1}
-        base = os.path.realpath(workspace)
-        cmd = [git_bin, "-C", base]
-        if sub == "commit":
-            cmd += ["-c", "user.name=Odysseus Agent", "-c", "user.email=agent@odysseus.local"]
-        cmd += argv
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env, cwd=base,
-            )
-            stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
-                proc, timeout=_GIT_TIMEOUT, progress_cb=progress_cb,
-            )
-        except FileNotFoundError:
-            return {"error": "git: not installed on the server.", "exit_code": 1}
-        if timed_out:
-            return {"error": f"git {sub}: timed out after {_GIT_TIMEOUT}s", "exit_code": 124}
-        output = (stdout.rstrip() + ("\n" + stderr.rstrip() if stderr.strip() else "")).strip()
-        return {"output": _truncate(output, _GIT_MAX_OUTPUT) or "(no output)", "exit_code": rc or 0}
-
-    if tool == "forge":
-        if not workspace:
-            return {"error": "forge: set a workspace (the repo folder) first.", "exit_code": 1}
-        base = os.path.realpath(workspace)
-        raw = (content or "").strip()
-        for _p in ("gh ", "glab ", "forge "):
-            if raw.lower().startswith(_p):
-                raw = raw[len(_p):].strip()
-        if not raw:
-            return {"error": "forge: provide a command, e.g. pr create / pr list / issue view 5.", "exit_code": 1}
-        
-        try:
-            argv = shlex.split(raw)
-        except ValueError as e:
-            return {"error": f"forge: could not parse arguments: {e}", "exit_code": 1}
-        if not argv:
-            return {"error": "forge: provide a command, e.g. pr create / pr list / issue view 5.", "exit_code": 1}
-        
-        top = argv[0].lower()
-        if top not in _FORGE_ALLOWED:
-            return {"error": f"forge: '{top}' is not allowed (use pr/mr, issue, repo, release, label).", "exit_code": 1}
-        if len(argv) > 1 and argv[1].lower() in _FORGE_BLOCKED_SUBVERBS:
-            return {"error": f"forge: '{argv[1]}' subverb is not allowed.", "exit_code": 1}
-
-        gh_path, glab_path = shutil.which("gh"), shutil.which("glab")
-        def _origin_host():
-            gb = shutil.which("git")
-            if not gb:
-                return ""
-            try:
-                r = subprocess.run([gb, "-C", base, "remote", "get-url", "origin"],
-                                   capture_output=True, text=True, timeout=5)
-                return (r.stdout or "").lower()
-            except Exception:
-                return ""
-        host = _origin_host()
-        if "gitlab" in host:
-            cli, cli_path = ("glab", glab_path) if glab_path else (None, None)
-        elif "github" in host:
-            cli, cli_path = ("gh", gh_path) if gh_path else (None, None)
-        elif gh_path:
-            cli, cli_path = "gh", gh_path
-        elif glab_path:
-            cli, cli_path = "glab", glab_path
-        else:
-            cli, cli_path = None, None
-        if not cli:
-            return {"error": "forge: no forge CLI available — install `gh` (GitHub) or `glab` (GitLab) and authenticate it.", "exit_code": 1}
-        if cli == "glab" and argv[0].lower() == "pr":
-            argv[0] = "mr"
-        elif cli == "gh" and argv[0].lower() == "mr":
-            argv[0] = "pr"
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                cli_path, *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                env=_subproc_env, cwd=base,
-            )
-            stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
-                proc, timeout=_FORGE_TIMEOUT, progress_cb=progress_cb,
-            )
-        except FileNotFoundError:
-            return {"error": f"forge: `{cli}` is not installed on the server.", "exit_code": 1}
-        if timed_out:
-            return {"error": f"forge: timed out after {_FORGE_TIMEOUT}s", "exit_code": 124}
-        output = (stdout.rstrip() + ("\n" + stderr.rstrip() if stderr.strip() else "")).strip()
-        prefix = f"[{cli}] "
-        return {"output": prefix + (_truncate(output, _FORGE_MAX_OUTPUT) or "(no output)"), "exit_code": rc or 0}
 
     return None
 
@@ -787,35 +445,6 @@ async def execute_tool_block(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
     tool_policy: Optional[Any] = None,
-    attached_skill_name: Optional[str] = None,
-) -> Tuple[str, Dict]:
-    """Execute a single tool block. Returns (description, result_dict).
-
-    Thin wrapper: bind the per-turn workspace (so the path resolvers + subprocess
-    cwd confine to it) for the duration of this call, then delegate. Reset on the
-    way out so the binding never leaks to the next tool call.
-    """
-    token = _active_workspace.set(workspace or None)
-    try:
-        return await _execute_tool_block_impl(
-            block,
-            session_id=session_id,
-            disabled_tools=disabled_tools,
-            owner=owner,
-            progress_cb=progress_cb,
-            tool_policy=tool_policy,
-        )
-    finally:
-        _active_workspace.reset(token)
-
-
-async def _execute_tool_block_impl(
-    block: Any,
-    session_id: Optional[str] = None,
-    disabled_tools: Optional[set] = None,
-    owner: Optional[str] = None,
-    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    tool_policy: Optional[Any] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
@@ -842,32 +471,6 @@ async def _execute_tool_block_impl(
 
     tool = block.tool_type
     content = block.content
-
-    # Remap bare email tool names to their MCP-qualified form.
-    # Local models using fenced blocks write ```list_emails\n{...}\n```
-    # which parses as ToolBlock(tool_type="list_emails", ...), but the
-    # dispatch chain expects "mcp__email__list_emails" to reach the MCP
-    # handler.  Native function calls get this remap in
-    # tool_schemas.function_call_to_tool_block(); fenced blocks did not.
-    _BUILTIN_EMAIL_TOOLS = {
-        "list_email_accounts", "send_email", "list_emails", "read_email",
-        "reply_to_email", "archive_email", "delete_email", "mark_email_read",
-        "bulk_email", "download_attachment", "draft_email", "draft_email_reply",
-        "ai_draft_email_reply", "search_emails", "list_email_folders", "move_email",
-        "count_emails",
-    }
-    if tool in _BUILTIN_EMAIL_TOOLS:
-        tool = f"mcp__email__{tool}"
-
-    # Unambiguous hallucinations that need a clear redirect message rather
-    # than silent remap (manage_email could mean archive, move, delete, etc.)
-    _REDIRECT_TOOLS = {
-        "manage_email": "No such tool. Email tools: list_emails, read_email, send_email, reply_to_email, archive_email, delete_email, mark_email_read, bulk_email, move_email, count_emails, list_email_folders, search_emails.",
-        "manage_emails": "No such tool. Email tools: list_emails, read_email, send_email, reply_to_email, archive_email, delete_email, mark_email_read, bulk_email, move_email, count_emails, list_email_folders, search_emails.",
-    }
-    if tool in _REDIRECT_TOOLS:
-        desc = f"unknown: {tool}"
-        result = {"error": _REDIRECT_TOOLS[tool], "exit_code": 1}
 
     # Misformatted tool call detection: model put JSON inside ```python``` (or
     # similar) without naming the tool. Common with MiniMax-style outputs.
@@ -1018,7 +621,7 @@ async def _execute_tool_block_impl(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
+            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=_AGENT_WORKDIR)
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
@@ -1041,17 +644,19 @@ async def _execute_tool_block_impl(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
-    elif tool in ("grep", "glob", "ls", "get_workspace", "git", "forge"):
+    elif tool in ("grep", "glob", "ls"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _direct_fallback(
-            tool, content, progress_cb=progress_cb, workspace=get_active_workspace()
-        ) \
+        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
-    elif tool in ("create_document", "update_document", "edit_document", "suggest_document", "manage_documents"):
-        result = await _document_tool_dispatch(tool, content, session_id, owner)
-        desc = f"{tool}: {result.get('title') or result.get('doc_id') or result.get('count', '')}"
+    elif tool in ("create_document", "update_document", "edit_document",
+                  "suggest_document", "manage_documents"):
+        desc = f"{tool}: {content.split(chr(10))[0][:80]}"
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+        if tool in ("edit_document", "suggest_document") and "title" in (result or {}):
+            desc = f"{tool}: {result.get('title', '')}"
     elif tool == "search_chats":
         query = content.split("\n")[0].strip()
         desc = f"search_chats: {query[:80]}"
@@ -1067,7 +672,7 @@ async def _execute_tool_block_impl(
         result = await do_manage_tasks(content, owner=owner)
     elif tool == "manage_skills":
         desc = "manage_skills"
-        result = await do_manage_skills(content, owner=owner, attached_skill_name=attached_skill_name)
+        result = await do_manage_skills(content, owner=owner)
     elif tool == "api_call":
         first_line = content.split("\n")[0].strip()[:60]
         desc = f"api_call: {first_line}"
@@ -1139,7 +744,7 @@ async def _execute_tool_block_impl(
         desc = "edit_image"
         result = await do_edit_image(content, owner=owner)
     elif tool == "edit_file":
-        result = await _direct_fallback(tool, content) or {"error": "edit failed", "exit_code": 1}
+        result = await _direct_fallback(tool, content, workspace=workspace) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"
     elif tool == "trigger_research":
         desc = "trigger_research"
@@ -1162,35 +767,14 @@ async def _execute_tool_block_impl(
     elif tool == "vault_unlock":
         desc = "vault_unlock"
         result = await do_vault_unlock(content, owner=owner)
-    elif tool in {"list_email_accounts", "send_email", "list_emails", "read_email",
-                  "reply_to_email", "bulk_email", "archive_email", "delete_email",
-                  "mark_email_read", "search_emails", "draft_email", "draft_email_reply",
-                  "ai_draft_email_reply", "download_attachment"}:
-        # Bare email tool name from fenced-block models (e.g. Ollama) — route to MCP email server
-        mcp = get_mcp_manager()
-        qualified = f"mcp__email__{tool}"
-        if mcp:
-            try:
-                args = json.loads(content) if content.strip().startswith("{") else {}
-            except (json.JSONDecodeError, TypeError):
-                args = {}
-            desc = f"email: {tool}"
-            result = await mcp.call_tool(qualified, args)
-        else:
-            desc = f"email: {tool}"
-            result = {"error": "MCP manager not available", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch
         mcp = get_mcp_manager()
         if mcp:
             try:
-                raw = content.strip()
-                if raw.startswith("{"):
-                    args = json.loads(raw)
-                else:
-                    args = _yaml_safe_load(raw)
+                args = json.loads(content) if content.strip().startswith("{") else {}
             except (json.JSONDecodeError, TypeError):
-                args = _yaml_safe_load(content)
+                args = {}
             desc = f"mcp: {tool}"
             result = await mcp.call_tool(tool, args)
         else:

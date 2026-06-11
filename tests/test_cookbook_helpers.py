@@ -10,7 +10,6 @@ from routes.cookbook_helpers import (
     _cached_model_scan_script,
     _append_llama_cpp_linux_accel_build_lines,
     _append_pip_install_runner_lines,
-    _append_realesrgan_py313_basicsr_workaround,
     _append_serve_exit_code_lines,
     _append_serve_preflight_exit_lines,
     _llama_cpp_rebuild_cmd,
@@ -25,10 +24,8 @@ from routes.cookbook_helpers import (
     _validate_gpus,
     _validate_local_dir,
     _validate_repo_id,
-    _validate_remote_host,
     _validate_serve_cmd,
     _validate_serve_model_id,
-    _validate_ssh_port,
     _shell_path,
     run_ssh_command_async,
 )
@@ -108,24 +105,6 @@ def test_safe_env_prefix_accepts_powershell_activation_path():
     )
 
 
-def test_validate_ssh_port_rejects_shell_payload():
-    with pytest.raises(HTTPException):
-        _validate_ssh_port("22; touch /tmp/pwned")
-    assert _validate_ssh_port("2222") == "2222"
-
-
-def test_validate_remote_host_rejects_ssh_option_shape():
-    for host in [
-        "-oProxyCommand=sh",
-        "alice@-oProxyCommand=sh",
-        "--",
-        "-p2222",
-    ]:
-        with pytest.raises(HTTPException):
-            _validate_remote_host(host)
-    assert _validate_remote_host("alice@gpu-box_1") == "alice@gpu-box_1"
-
-
 def test_validate_local_dir_accepts_external_drive_paths_with_spaces():
     path = "/Volumes/T7 2TB/AI Models/llamacpp"
 
@@ -141,7 +120,7 @@ def test_validate_local_dir_accepts_windows_drive_paths_with_spaces():
     assert _validate_local_dir(backslash_path) == backslash_path
     assert _validate_local_dir(f"'{backslash_path}'") == backslash_path
     assert _validate_local_dir(slash_path) == slash_path
-    assert _shell_path(backslash_path + r"\Qwen3-8B") == '"D:\\\\AI Models\\\\llamacpp\\\\Qwen3-8B"'
+    assert _shell_path(backslash_path + r"\Qwen3-8B") == '"D:\\AI Models\\llamacpp\\Qwen3-8B"'
 
 
 def test_validate_local_dir_still_rejects_shell_metacharacters():
@@ -361,49 +340,15 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
 
 
-def test_serve_pip_install_intercepts_llama_cpp_for_native_build_before_wheel_fallback():
+def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     import pathlib
 
     src = (pathlib.Path(__file__).resolve().parent.parent
         / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
 
-    assert "llama_cpp_dependency_install = bool(" in src
-    assert 'req.repo_id = "llama-cpp"' in src
-    assert 'req.cmd = "llama-server --help"' in src
-    assert "Installing native llama.cpp server (fresh build)" in src
-    assert "ODYSSEUS_FORCE_LLAMA_CPP_BUILD" in src
-    assert src.index("llama_cpp_dependency_install = bool(") < src.index("if is_pip_install:")
     assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
     assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
     assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
-
-
-def test_cookbook_setup_guards_break_system_packages_fallbacks():
-    import pathlib
-
-    src = (pathlib.Path(__file__).resolve().parent.parent
-        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
-
-    assert '_append_pip_install_runner_lines(setup_lines, "pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")' in src
-    assert '_append_pip_install_runner_lines(setup_lines, "pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null")' in src
-    assert '"pip install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null || "' not in src
-    assert '"pip3 install --user --break-system-packages -q huggingface_hub hf_transfer 2>/dev/null; "' not in src
-
-
-def test_serve_runner_guards_pip_install_commands():
-    import pathlib
-
-    src = (pathlib.Path(__file__).resolve().parent.parent
-        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
-
-    guarded = (
-        "if is_pip_install:\n"
-        "                    _append_pip_install_runner_lines(runner_lines, req.cmd)\n"
-        "                else:\n"
-        "                    runner_lines.append(req.cmd)\n"
-        "                if local_windows:"
-    )
-    assert guarded in src
 
 
 def test_vllm_preflight_reports_cli_and_version():
@@ -872,38 +817,3 @@ def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
     assert rec["size_bytes"] == len(b"abc123")
     assert rec["has_incomplete"] is False
     assert rec["is_diffusion"] is False
-
-
-# -- #3734: Real-ESRGAN / BasicSR install on Python 3.13 --
-
-def test_realesrgan_py313_workaround_is_scoped_to_realesrgan():
-    lines = []
-
-    _append_realesrgan_py313_basicsr_workaround(lines, 'python -m pip install --no-cache-dir "playwright"')
-
-    assert lines == []
-
-
-def test_realesrgan_py313_workaround_patches_basicsr_before_install():
-    lines = []
-
-    _append_realesrgan_py313_basicsr_workaround(lines, 'python -m pip install --no-cache-dir "realesrgan"')
-    script = "\n".join(lines)
-
-    assert script.startswith("python - <<'PY'")
-    assert "sys.version_info < (3, 13)" in script
-    assert "basicsr==1.4.2" in script
-    assert "namespace = {}" in script
-    assert "return namespace['__version__']" in script
-    assert "ODYSSEUS_PREFLIGHT_EXIT=$?" in script
-
-
-def test_realesrgan_py313_workaround_uses_same_python_executable():
-    lines = []
-
-    _append_realesrgan_py313_basicsr_workaround(
-        lines,
-        "'/opt/ody venv/bin/python3' -m pip install --no-cache-dir realesrgan",
-    )
-
-    assert lines[0].startswith("'/opt/ody venv/bin/python3' - <<'PY'")

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
-from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 
 TOOL_HANDLERS = {
@@ -34,7 +34,6 @@ TOOL_HANDLERS = {
     "ls": LsTool().execute,
     "glob": GlobTool().execute,
     "grep": GrepTool().execute,
-    "get_workspace": GetWorkspaceTool().execute,
     "create_document": CreateDocumentTool().execute,
     "update_document": UpdateDocumentTool().execute,
     "edit_document": EditDocumentTool().execute,
@@ -52,7 +51,7 @@ PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-             "grep", "glob", "ls", "get_workspace",
+             "grep", "glob", "ls",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",
@@ -65,10 +64,9 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "manage_endpoints", "manage_mcp", "manage_webhooks",
              "manage_tokens", "manage_documents", "manage_settings",
              "manage_notes", "manage_calendar",
-              "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
-              "read_email", "reply_to_email", "bulk_email", "archive_email",
-              "delete_email", "mark_email_read", "list_email_folders", "move_email", "count_emails", "download_attachment",
-              "draft_email", "draft_email_reply", "ai_draft_email_reply", "search_emails",
+             "resolve_contact", "manage_contact", "list_email_accounts", "send_email", "list_emails",
+             "read_email", "reply_to_email", "bulk_email", "archive_email",
+             "delete_email", "mark_email_read",
              # Cookbook tools (LLM serving + downloads). Without these
              # entries, native function calls to e.g. list_served_models
              # are rejected as "Unknown function call" before reaching

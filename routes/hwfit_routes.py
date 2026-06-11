@@ -3,7 +3,7 @@ from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException
 
-from routes.cookbook_helpers import _validate_remote_host, _validate_ssh_port
+from routes._validators import validate_remote_host, validate_ssh_port
 
 
 # Backends the manual hardware simulator accepts. Must stay a subset of what
@@ -14,8 +14,8 @@ _MANUAL_BACKENDS = {"cuda", "rocm", "metal", "cpu_x86", "cpu_arm"}
 
 
 def _validate_detection_target(host: str = "", ssh_port: str = "") -> tuple[str, str]:
-    host_value = _validate_remote_host(host) or ""
-    port_value = _validate_ssh_port(ssh_port) or ""
+    host_value = validate_remote_host(host) or ""
+    port_value = validate_ssh_port(ssh_port) or ""
     if port_value and not host_value:
         raise HTTPException(400, "ssh_port requires host")
     return host_value, port_value

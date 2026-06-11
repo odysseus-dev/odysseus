@@ -9,92 +9,14 @@ import asyncio
 import json
 import logging
 import os
-import pathlib
 import re
 from typing import Any, Dict, List, Optional
 
-from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE, internal_api_base
+from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
 from src.tool_utils import get_mcp_manager
+from core.constants import internal_api_base
 
 logger = logging.getLogger(__name__)
-
-_MCP_ALLOWED_COMMANDS = frozenset({
-    "python3", "python", "node", "deno", "bun", "uv", "uvx", "npx",
-})
-
-
-def _validate_mcp_command(command: str, cmd_args, env) -> Optional[str]:
-    if not isinstance(command, str) or not command.strip():
-        return "command must be a non-empty string"
-    cmd = command.strip()
-
-    # Environment check
-    if env is not None:
-        if not isinstance(env, dict):
-            return "env must be a dict"
-        forbidden_env = {"ld_preload", "path", "pythonpath"}
-        for k, v in env.items():
-            if not isinstance(k, str) or not isinstance(v, str):
-                return "env keys and values must be strings"
-            if k.lower() in forbidden_env:
-                return f"forbidden environment variable: {k}"
-
-    project_root = pathlib.Path(__file__).resolve().parent.parent
-
-    _altsep = getattr(os, "altsep", None)
-    is_path = (os.sep in cmd) or ("/" in cmd) or (_altsep and _altsep in cmd)
-    if is_path:
-        try:
-            resolved = pathlib.Path(cmd).expanduser().resolve(strict=False)
-        except (OSError, RuntimeError) as e:
-            return f"command path could not be resolved: {e}"
-        try:
-            resolved.relative_to(project_root)
-        except ValueError:
-            return (f"command path '{cmd}' is outside the project root; "
-                    f"only allowlisted executables or paths inside {project_root} are permitted")
-        if not resolved.is_file():
-            return f"command path '{cmd}' is not a regular file"
-    else:
-        basename = os.path.basename(cmd)
-        if basename not in _MCP_ALLOWED_COMMANDS:
-            return f"command '{basename}' is not in the MCP allowlist"
-
-    if cmd_args is not None:
-        if not isinstance(cmd_args, list):
-            return "cmd_args must be a list"
-        for i, arg in enumerate(cmd_args):
-            if arg is None or not isinstance(arg, str):
-                return f"cmd_args[{i}] must be a string"
-            if arg.startswith("http://") or arg.startswith("https://"):
-                return f"remote URLs are not allowed in command arguments: {arg}"
-
-        # Specific interpreter flag validations
-        basename = os.path.basename(cmd)
-        if basename in ("python", "python3"):
-            if "-c" in cmd_args:
-                return "command line execution flag '-c' is not permitted"
-        elif basename == "node":
-            if any(x in cmd_args for x in ("-e", "--eval", "-p", "--print")):
-                return "eval flags are not permitted for node"
-        elif basename in ("npx", "uvx"):
-            # Check if any non-flag arg points to a local file in the project
-            has_local_file = False
-            for arg in cmd_args:
-                if arg.startswith("-"):
-                    continue
-                try:
-                    p = pathlib.Path(arg).expanduser().resolve(strict=False)
-                    if p.is_file():
-                        p.relative_to(project_root)
-                        has_local_file = True
-                        break
-                except Exception:
-                    pass
-            if not has_local_file:
-                return f"{basename} package runner is only permitted to run local scripts inside the project root"
-
-    return None
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -181,11 +103,7 @@ async def do_search_chats(query: str, limit: int = 20, owner: str | None = None)
 # Skills management tool
 # ---------------------------------------------------------------------------
 
-async def do_manage_skills(
-    content: str,
-    owner: Optional[str] = None,
-    attached_skill_name: Optional[str] = None,
-) -> Dict:
+async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_skills tool calls.
 
     SKILL.md-backed CRUD with progressive disclosure (Hermes-style). Actions:
@@ -210,9 +128,6 @@ async def do_manage_skills(
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
 
-    from src.app_helpers import normalize_attached_skill_name
-    attached_skill_name = normalize_attached_skill_name(attached_skill_name)
-
     action = (args.get("action") or "").lower()
     from services.memory.skills import SkillsManager
     from services.memory.skill_format import Skill, slugify
@@ -224,8 +139,6 @@ async def do_manage_skills(
 
     if action in ("list", "index", ""):
         all_skills = sm.load(owner=owner)
-        if attached_skill_name:
-            all_skills = [s for s in all_skills if s.get("name") == attached_skill_name]
         if not all_skills:
             return {"results": "No skills yet. Create one with action='add'."}
         published = [s for s in all_skills if s.get("status") == "published"]
@@ -244,8 +157,6 @@ async def do_manage_skills(
     if action == "view":
         if not name:
             return {"error": "name is required for view", "exit_code": 1}
-        if attached_skill_name and name != attached_skill_name:
-            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         md = sm.read_skill_md(name, owner=owner)
         if md is None:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
@@ -254,8 +165,6 @@ async def do_manage_skills(
     if action == "view_ref":
         if not name:
             return {"error": "name is required for view_ref", "exit_code": 1}
-        if attached_skill_name and name != attached_skill_name:
-            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         ref = (args.get("path") or "").strip()
         if not ref:
             return {"error": "path is required for view_ref", "exit_code": 1}
@@ -270,8 +179,6 @@ async def do_manage_skills(
                 "error": "name is required for add. Provide the exact slug the user should see, then report the returned name.",
                 "exit_code": 1,
             }
-        if attached_skill_name and name != attached_skill_name:
-            return {"error": f"Cannot add skill: only the attached skill {attached_skill_name!r} is active.", "exit_code": 1}
         proc = args.get("procedure")
         if proc is None:
             proc = args.get("steps") or []
@@ -333,8 +240,6 @@ async def do_manage_skills(
     if action == "edit":
         if not name:
             return {"error": "name is required for edit", "exit_code": 1}
-        if attached_skill_name and name != attached_skill_name:
-            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         new_content = args.get("content")
         if not isinstance(new_content, str) or not new_content.strip():
             return {"error": "content (full SKILL.md) is required for edit", "exit_code": 1}
@@ -355,8 +260,6 @@ async def do_manage_skills(
     if action == "patch":
         if not name:
             return {"error": "name is required for patch", "exit_code": 1}
-        if attached_skill_name and name != attached_skill_name:
-            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         old = args.get("old_string")
         new_str = args.get("new_string", "")
         if not isinstance(old, str) or not old:
@@ -381,8 +284,6 @@ async def do_manage_skills(
     if action == "publish":
         if not name:
             return {"error": "name is required for publish", "exit_code": 1}
-        if attached_skill_name and name != attached_skill_name:
-            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         all_skills = sm.load(owner=owner)
         match = next((s for s in all_skills if s.get("name") == name), None)
         if not match:
@@ -396,8 +297,6 @@ async def do_manage_skills(
     if action == "delete":
         if not name:
             return {"error": "name is required for delete", "exit_code": 1}
-        if attached_skill_name and name != attached_skill_name:
-            return {"error": f"Skill {name!r} not found", "exit_code": 1}
         ok = sm.delete_skill(name, owner=owner)
         return {"results": f"Deleted skill `{name}`."} if ok else {"error": f"Skill {name!r} not found", "exit_code": 1}
 
@@ -405,10 +304,7 @@ async def do_manage_skills(
         query = (args.get("query") or "").strip()
         if not query:
             return {"error": "query is required for search", "exit_code": 1}
-        candidates = sm.load(owner=owner)
-        if attached_skill_name:
-            candidates = [s for s in candidates if s.get("name") == attached_skill_name]
-        results = sm.get_relevant_skills(query, candidates, max_items=5)
+        results = sm.get_relevant_skills(query, sm.load(owner=owner), max_items=5)
         if not results:
             return {"results": "No matching skills found."}
         lines = []
@@ -653,7 +549,6 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
 async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict:
     """Manage model endpoints: list, add, delete, enable, disable."""
     from core.database import SessionLocal, ModelEndpoint
-    from src.tool_security import owner_is_admin_or_single_user
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -669,69 +564,22 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             return {"response": f"{len(items)} endpoints", "endpoints": items, "exit_code": 0}
 
         elif action == "add":
-            if not owner_is_admin_or_single_user(owner):
-                return {"error": "Only admin can manage endpoints", "exit_code": 1}
-            import json as _json
             import uuid as _uuid
+            name = args.get("name", "")
             base_url = args.get("base_url", "")
+            api_key = args.get("api_key", "")
             if not base_url:
                 return {"error": "base_url is required", "exit_code": 1}
-            api_key = args.get("api_key", "")
-            skip_probe = args.get("skip_probe", False)
-
-            from routes.model_routes import find_endpoint_for_dedupe, invalidate_model_endpoint_caches
-            existing = find_endpoint_for_dedupe(db, base_url, owner, api_key)
-            if existing is not None:
-                changed = False
-                supports_tools = args.get("supports_tools")
-                if supports_tools is not None:
-                    existing.supports_tools = supports_tools
-                    changed = True
-                raw_diag = args.get("diagnostics_paths")
-                if raw_diag is not None:
-                    if isinstance(raw_diag, dict):
-                        existing.diagnostics_paths = _json.dumps(raw_diag)
-                    elif isinstance(raw_diag, str):
-                        existing.diagnostics_paths = raw_diag
-                    changed = True
-                if api_key.strip() and not existing.api_key:
-                    existing.api_key = api_key.strip()
-                    changed = True
-                if changed:
-                    db.commit()
-                invalidate_model_endpoint_caches()
-                from routes.model_routes import _endpoint_diagnostics_sections
-                return {
-                    "existing": True,
-                    "supports_tools": getattr(existing, "supports_tools", None),
-                    "diagnostics_sections": _endpoint_diagnostics_sections(existing),
-                    "exit_code": 0,
-                }
-
-            name = args.get("name", "")
             eid = str(_uuid.uuid4())[:8]
             from datetime import datetime
             ep = ModelEndpoint(id=eid, name=name or base_url, base_url=base_url,
-                               api_key=api_key or None, is_enabled=True,
+                               api_key=api_key, is_enabled=True,
                                created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-            supports_tools = args.get("supports_tools")
-            if supports_tools is not None:
-                ep.supports_tools = supports_tools
-            raw_diag = args.get("diagnostics_paths")
-            if raw_diag is not None:
-                import json as _json
-                if isinstance(raw_diag, dict):
-                    ep.diagnostics_paths = _json.dumps(raw_diag)
-                elif isinstance(raw_diag, str):
-                    ep.diagnostics_paths = raw_diag
             db.add(ep)
             db.commit()
-            invalidate_model_endpoint_caches()
             return {"response": f"Added endpoint '{name or base_url}' (id: {eid})", "exit_code": 0}
 
         elif action == "delete":
-            if not owner_is_admin_or_single_user(owner):
-                return {"error": "Only admin can manage endpoints", "exit_code": 1}
             eid = args.get("endpoint_id", "")
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == eid).first()
             if not ep:
@@ -739,21 +587,15 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
             name = ep.name
             db.delete(ep)
             db.commit()
-            from routes.model_routes import invalidate_model_endpoint_caches
-            invalidate_model_endpoint_caches()
             return {"response": f"Deleted endpoint '{name}'", "exit_code": 0}
 
         elif action in ("enable", "disable"):
-            if not owner_is_admin_or_single_user(owner):
-                return {"error": "Only admin can manage endpoints", "exit_code": 1}
             eid = args.get("endpoint_id", "")
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == eid).first()
             if not ep:
                 return {"error": f"Endpoint {eid} not found", "exit_code": 1}
             ep.is_enabled = (action == "enable")
             db.commit()
-            from routes.model_routes import invalidate_model_endpoint_caches
-            invalidate_model_endpoint_caches()
             return {"response": f"Endpoint '{ep.name}' {action}d", "exit_code": 0}
 
         else:
@@ -809,26 +651,10 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         if not name or not command:
             return {"error": "name and command are required", "exit_code": 1}
         sid = str(_uuid.uuid4())[:8]
-        parsed_cmd_args = cmd_args if isinstance(cmd_args, list) else json.loads(cmd_args)
         db = SessionLocal()
         try:
-            from routes.mcp_routes import find_duplicate_mcp_server
-
-            existing = find_duplicate_mcp_server(
-                db,
-                transport="stdio",
-                command=command,
-                args=parsed_cmd_args,
-            )
-            if existing:
-                return {
-                    "error": f"MCP server already configured (id={existing.id}, name={existing.name!r})",
-                    "existing_id": existing.id,
-                    "exit_code": 1,
-                }
-
             srv = McpServer(id=sid, name=name, transport="stdio", command=command,
-                            args=json.dumps(parsed_cmd_args),
+                            args=json.dumps(cmd_args) if isinstance(cmd_args, list) else cmd_args,
                             env=json.dumps(env) if isinstance(env, dict) else env,
                             is_enabled=True, created_at=datetime.utcnow(), updated_at=datetime.utcnow())
             db.add(srv)
@@ -842,7 +668,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             try:
                 await mcp.connect_server(
                     sid, name, "stdio", command=command,
-                    args=parsed_cmd_args,
+                    args=cmd_args if isinstance(cmd_args, list) else json.loads(cmd_args),
                     env=env if isinstance(env, dict) else json.loads(env),
                 )
                 st = mcp.get_server_status(sid)
@@ -1371,26 +1197,6 @@ async def do_api_call(content: str) -> Dict:
 # Notes / checklists management tool
 # ---------------------------------------------------------------------------
 
-def _normalize_checklist_items(items_raw):
-    """Coerce checklist items into the {text, done} shape every consumer
-    assumes. Models routinely ignore the object schema and emit a bare list
-    of strings (``["buy milk", "walk dog"]``); stored verbatim, those crash
-    the list / toggle_item paths (and the HTTP toggle route) with
-    ``'str' object has no attribute 'get'``. Returns the input unchanged when
-    it is not a list (None, etc.)."""
-    if not isinstance(items_raw, list):
-        return items_raw
-    out = []
-    for it in items_raw:
-        if isinstance(it, dict):
-            out.append(it)
-        elif isinstance(it, str):
-            out.append({"text": it, "done": False})
-        else:
-            out.append({"text": str(it), "done": False})
-    return out
-
-
 async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_notes tool calls: CRUD on notes and checklists."""
     import uuid as _uuid
@@ -1488,7 +1294,6 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             items_raw = args.get("checklist_items")
             if items_raw is None:
                 items_raw = args.get("items")
-            items_raw = _normalize_checklist_items(items_raw)
             items_json = json.dumps(items_raw) if items_raw is not None else None
             note_type = args.get("note_type", "checklist" if items_raw else "note")
             # Accept natural-language due_date ("tomorrow at 1pm") in
@@ -1582,7 +1387,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             if new_items is None:
                 new_items = args.get("items")
             if new_items is not None:
-                note.items = json.dumps(_normalize_checklist_items(new_items))
+                note.items = json.dumps(new_items)
                 flag_modified(note, "items")
             if "pinned" in args:
                 note.pinned = args["pinned"]
@@ -1613,7 +1418,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": "Note not found", "exit_code": 1}
             if not note.items:
                 return {"error": "Note has no checklist items", "exit_code": 1}
-            items = _normalize_checklist_items(json.loads(note.items))
+            items = json.loads(note.items)
             if index < 0 or index >= len(items):
                 return {"error": f"Item index {index} out of range (0-{len(items)-1})", "exit_code": 1}
             items[index]["done"] = not items[index].get("done", False)
@@ -1623,148 +1428,8 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             mark = "done" if items[index]["done"] else "undone"
             return {"response": f"Item '{items[index].get('text', '')}' marked {mark}", "exit_code": 0}
 
-        elif action == "search":
-            # Search notes by title, content, label, and checklist item text
-            query = (args.get("query") or "").strip().lower()
-            if not query:
-                return {"error": "query is required for search", "exit_code": 1}
-            limit = args.get("limit", 20)
-            q = db.query(Note)
-            if owner is not None:
-                q = q.filter(Note.owner == owner)
-            show_archived = args.get("archived", False)
-            q = q.filter(Note.archived == show_archived)
-            if args.get("label"):
-                q = q.filter(Note.label == args["label"])
-            notes = q.order_by(Note.pinned.desc(), Note.updated_at.desc()).limit(limit).all()
-            results = []
-            for n in notes:
-                # Search in title
-                if query in (n.title or "").lower():
-                    snippet = n.content[:120] if n.content else ""
-                    results.append({
-                        "id": n.id[:8],
-                        "title": n.title or "(untitled)",
-                        "label": n.label or "",
-                        "note_type": n.note_type or "note",
-                        "snippet": snippet.replace("\n", " ")
-                    })
-                    continue
-                # Search in content
-                if n.content and query in n.content.lower():
-                    snippet = n.content[:120]
-                    results.append({
-                        "id": n.id[:8],
-                        "title": n.title or "(untitled)",
-                        "label": n.label or "",
-                        "note_type": n.note_type or "note",
-                        "snippet": snippet.replace("\n", " ")
-                    })
-                    continue
-                # Search in label
-                if n.label and query in n.label.lower():
-                    snippet = n.content[:120] if n.content else ""
-                    results.append({
-                        "id": n.id[:8],
-                        "title": n.title or "(untitled)",
-                        "label": n.label or "",
-                        "note_type": n.note_type or "note",
-                        "snippet": snippet.replace("\n", " ")
-                    })
-                    continue
-                # Search in checklist items
-                if n.items:
-                    try:
-                        items = json.loads(n.items)
-                        for item in items:
-                            item_text = item.get("text", "")
-                            if query in item_text.lower():
-                                results.append({
-                                    "id": n.id[:8],
-                                    "title": n.title or "(untitled)",
-                                    "label": n.label or "",
-                                    "note_type": n.note_type or "note",
-                                    "snippet": item_text
-                                })
-                                break
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            if not results:
-                return {"response": "No matching notes found.", "exit_code": 0}
-            return {"response": f"Found {len(results)} note(s)", "notes": results, "exit_code": 0}
-
-        elif action == "append_item":
-            # Append a new checklist item to an existing checklist note
-            note_id = args.get("id", "")
-            text = args.get("text", "").strip()
-            if not note_id:
-                return {"error": "id is required for append_item", "exit_code": 1}
-            if not text:
-                return {"error": "text is required for append_item", "exit_code": 1}
-            note = db.query(Note).filter(Note.id.startswith(note_id)).first()
-            if not note:
-                return {"error": f"Note '{note_id}' not found", "exit_code": 1}
-            if owner is not None and note.owner and note.owner != owner:
-                return {"error": "Note not found", "exit_code": 1}
-            if note.note_type != "checklist":
-                return {"error": "append_item only works with checklist notes", "exit_code": 1}
-            items = []
-            if note.items:
-                try:
-                    items = json.loads(note.items)
-                except (json.JSONDecodeError, TypeError):
-                    items = []
-            new_item = {"text": text, "done": False}
-            items.append(new_item)
-            note.items = json.dumps(items)
-            flag_modified(note, "items")
-            db.commit()
-            return {
-                "response": f"Added checklist item to \"{note.title or '(untitled)'}\"",
-                "note_id": note.id[:8],
-                "item_index": len(items) - 1,
-                "exit_code": 0
-            }
-
-        elif action == "list_open":
-            # List incomplete checklist items across all notes
-            q = db.query(Note).filter(Note.note_type == "checklist")
-            if owner is not None:
-                q = q.filter(Note.owner == owner)
-            show_archived = args.get("archived", False)
-            q = q.filter(Note.archived == show_archived)
-            if args.get("label"):
-                q = q.filter(Note.label == args["label"])
-            notes = q.order_by(Note.pinned.desc(), Note.updated_at.desc()).all()
-            limit = args.get("limit", 50)
-            open_items = []
-            for n in notes:
-                if not n.items:
-                    continue
-                try:
-                    items = json.loads(n.items)
-                    for idx, item in enumerate(items):
-                        if not item.get("done", False):
-                            open_items.append({
-                                "note_id": n.id[:8],
-                                "title": n.title or "(untitled)",
-                                "label": n.label or "",
-                                "index": idx,
-                                "text": item.get("text", ""),
-                                "due_date": n.due_date.isoformat() if hasattr(n.due_date, 'isoformat') else n.due_date if n.due_date else None
-                            })
-                            if len(open_items) >= limit:
-                                break
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                if len(open_items) >= limit:
-                    break
-            if not open_items:
-                return {"response": "No open checklist items found.", "exit_code": 0}
-            return {"response": f"Found {len(open_items)} open item(s)", "items": open_items, "exit_code": 0}
-
         else:
-            return {"error": f"Unknown action: {action}. Use list/search/list_open/add/update/delete/toggle_item/append_item", "exit_code": 1}
+            return {"error": f"Unknown action: {action}. Use list/add/update/delete/toggle_item", "exit_code": 1}
     except Exception as e:
         logger.error(f"manage_notes error: {e}")
         return {"error": str(e), "exit_code": 1}
@@ -1780,8 +1445,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid, _expand_rrule
-    from sqlalchemy import or_ as _or, and_ as _and
+    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
     import uuid as _uuid
 
     try:
@@ -1807,10 +1471,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             results.append(r)
         created = [r for r in results if r.get("exit_code") == 0 and not r.get("error")]
         failed = [r for r in results if r.get("error")]
-        
+
         if not results:
             return {"error": "No events to create", "exit_code": 1}
-        
+
         # Surface both successes and failures
         parts = []
         if created:
@@ -1819,7 +1483,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         if failed:
             first_error = failed[0].get("error", "Unknown error")
             parts.append(f"Failed to create {len(failed)} event(s). First error: {first_error}")
-        
+
         response = "\n\n".join(parts)
         # Non-zero exit code for partial or total failure
         exit_code = 0 if not failed else 1
@@ -1963,20 +1627,11 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "list_events":
             try:
                 start_raw = _first_nonempty_arg(
-                    "start", "start_time", "start_date", "range_start", "from", "dtstart", "since"
+                    "start", "start_date", "range_start", "from", "dtstart", "since"
                 )
                 end_raw = _first_nonempty_arg(
-                    "end", "end_time", "end_date", "range_end", "to", "dtend", "until"
+                    "end", "end_date", "range_end", "to", "dtend", "until"
                 )
-                query_raw = args.get("query") or args.get("date_range") or args.get("range")
-                if query_raw and not start_raw and not end_raw:
-                    return {
-                        "error": (
-                            "list_events needs explicit start/end ISO datetimes; "
-                            f"resolve the requested range ({query_raw!r}) and call manage_calendar again."
-                        ),
-                        "exit_code": 1,
-                    }
                 if start_raw:
                     start_dt = _parse_dt(start_raw)
                 else:
@@ -1988,30 +1643,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
 
-            # Models routinely pass end == start for a single-day query ("tomorrow").
-            # The window end is EXCLUSIVE (dtstart < end_dt), so end == start yields an
-            # empty range and zero events. Treat any non-positive window as that full day.
-            if end_dt <= start_dt:
-                end_dt = start_dt + timedelta(days=1)
-
-            # Mirror /api/calendar/events: non-recurring events must overlap the
-            # window; recurring events (RRULE) whose base dtstart is before the
-            # window end are fetched so their occurrences can be expanded. Without
-            # this, a weekly event based months ago never shows for "tomorrow".
             q = _event_query().filter(
+                CalendarEvent.dtstart < end_dt,
+                CalendarEvent.dtend > start_dt,
                 CalendarEvent.status != "cancelled",
-                _or(
-                    _and(
-                        _or(CalendarEvent.rrule == "", CalendarEvent.rrule.is_(None)),
-                        CalendarEvent.dtstart < end_dt,
-                        CalendarEvent.dtend > start_dt,
-                    ),
-                    _and(
-                        CalendarEvent.rrule.isnot(None),
-                        CalendarEvent.rrule != "",
-                        CalendarEvent.dtstart < end_dt,
-                    ),
-                ),
             )
             calendar_filter = args.get("calendar")
             if calendar_filter:
@@ -2022,24 +1657,20 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             rows = q.order_by(CalendarEvent.dtstart).all()
             events = []
             for ev in rows:
-                # Expand recurrences into concrete occurrences within the window
-                # (same as the UI endpoint) so weekly/daily events appear on every
-                # repeat date, not just their DTSTART.
-                for occ in _expand_rrule(ev, start_dt, end_dt):
-                    events.append({
-                        "uid": occ.get("uid", ev.uid),
-                        "summary": occ.get("summary", ev.summary or ""),
-                        "dtstart": occ.get("dtstart"),
-                        "dtend": occ.get("dtend"),
-                        "all_day": occ.get("all_day", ev.all_day),
-                        "description": ev.description or "",
-                        "location": ev.location or "",
-                        "calendar": ev.calendar.name if ev.calendar else "",
-                        "calendar_href": ev.calendar_id,
-                        "event_type": ev.event_type or "",
-                        "importance": ev.importance or "normal",
-                    })
-            events.sort(key=lambda x: str(x.get("dtstart") or ""))
+                if ev.all_day:
+                    s, e = ev.dtstart.strftime("%Y-%m-%d"), ev.dtend.strftime("%Y-%m-%d")
+                else:
+                    suffix = "Z" if getattr(ev, "is_utc", False) else ""
+                    s, e = ev.dtstart.isoformat() + suffix, ev.dtend.isoformat() + suffix
+                events.append({
+                    "uid": ev.uid, "summary": ev.summary or "", "dtstart": s, "dtend": e,
+                    "all_day": ev.all_day, "description": ev.description or "",
+                    "location": ev.location or "",
+                    "calendar": ev.calendar.name if ev.calendar else "",
+                    "calendar_href": ev.calendar_id,
+                    "event_type": ev.event_type or "",
+                    "importance": ev.importance or "normal",
+                })
             if not events:
                 response_text = f"No events between {start_dt.date().isoformat()} and {end_dt.date().isoformat()}."
             else:
@@ -2097,25 +1728,14 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 cal = _ensure_default_calendar(db, owner)
 
             all_day = bool(args.get("all_day", False))
-            # All-day events are date-only. Parsing them through the tz-aware
-            # path (parse_due_for_user) tagged the bare date with the user's
-            # offset and converted to UTC, rolling the date back a day for any
-            # positive offset (JST/CET/AEST — most of the world): "2026-06-10"
-            # became 2026-06-09. Parse all-day dates as naive calendar dates.
             try:
-                if all_day:
-                    dtstart, dtstart_is_utc = _parse_dt(dtstart_str), False
-                else:
-                    dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
+                dtstart, dtstart_is_utc = _parse_event_dt(dtstart_str)
             except ValueError as e:
                 return {"error": f"Could not parse dtstart {dtstart_str!r}: {e}", "exit_code": 1}
             dtend_raw = args.get("dtend") or args.get("end") or args.get("end_time")
             if dtend_raw:
                 try:
-                    if all_day:
-                        dtend, dtend_is_utc = _parse_dt(dtend_raw), False
-                    else:
-                        dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
+                    dtend, dtend_is_utc = _parse_event_dt(dtend_raw)
                     dtstart_is_utc = dtstart_is_utc or dtend_is_utc
                 except ValueError as e:
                     return {"error": f"Could not parse dtend {dtend_raw!r}: {e}", "exit_code": 1}
@@ -2311,7 +1931,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
 # (cookbook state, model serve, gallery, email, calendar). We ride the
 # per-process internal token so require_admin lets us through. See
 # core/middleware.py. Resolution (override / APP_PORT / 7000) lives in
-# src.constants.internal_api_base().
+# core.constants.internal_api_base().
 _INTERNAL_BASE = internal_api_base()
 
 
@@ -3595,7 +3215,8 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
                 ep_result = await do_manage_endpoints(json.dumps({
                     "action": "add",
                     "name": display_name,
-                    "base_url": endpoint_url,
+                    "endpoint_url": endpoint_url,
+                    "is_local": False,
                 }), owner=owner)
                 if isinstance(ep_result, dict) and not ep_result.get("error"):
                     endpoint_msg = f" Endpoint {endpoint_url} added as {display_name!r}."
@@ -4119,26 +3740,25 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
 
     contacts = {}  # email -> {name, source}
 
-    # 1. CardDAV (Radicale) — structured contacts. Only admin/single-user
-    # may read the shared address book to prevent cross-owner contact leak.
-    from src.tool_security import owner_is_admin_or_single_user
-    if owner_is_admin_or_single_user(owner):
-        try:
-            import asyncio
-            from routes import contacts_routes as cc
-            all_contacts = await asyncio.to_thread(cc._fetch_contacts)
-            q = name.lower()
-            for c in (all_contacts or []):
-                hay_name = (c.get("name") or "").lower()
-                match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
-                if not match:
-                    continue
-                for email in (c.get("emails") or []):
-                    email = (email or "").strip().lower()
-                    if email and "@" in email:
-                        contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
-        except Exception:
-            pass
+    # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
+    # server-side httpx GET to /api/contacts/search carries no session
+    # cookie and would 401 under require_user.
+    try:
+        import asyncio
+        from routes import contacts_routes as cc
+        all_contacts = await asyncio.to_thread(cc._fetch_contacts)
+        q = name.lower()
+        for c in (all_contacts or []):
+            hay_name = (c.get("name") or "").lower()
+            match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
+            if not match:
+                continue
+            for email in (c.get("emails") or []):
+                email = (email or "").strip().lower()
+                if email and "@" in email:
+                    contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+    except Exception:
+        pass
 
     async with httpx.AsyncClient(timeout=30) as client:
         # 2. Email history (sent/received)
@@ -4171,9 +3791,6 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
-    from src.tool_security import owner_is_admin_or_single_user
-    if not owner_is_admin_or_single_user(owner):
-        return {"error": "Only admin can manage contacts", "exit_code": 1}
     action = (args.get("action") or "").strip().lower()
     try:
         from routes import contacts_routes as cc

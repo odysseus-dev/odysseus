@@ -186,8 +186,6 @@ class ResearchHandler:
         seen = set()
         sources = []
         for f in findings:
-            if not isinstance(f, dict):
-                continue
             url = f.get("url", "")
             title = f.get("title", "") or url
             summary = f.get("summary", "") or f.get("evidence", "")
@@ -302,8 +300,9 @@ class ResearchHandler:
         # Try legacy orchestrator
         if self._legacy_engine:
             try:
+                import asyncio
                 logger.info("Falling back to legacy ResearchOrchestrator...")
-                loop = asyncio.get_running_loop()
+                loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(
                     None, self._legacy_engine.start_research, query, max_time
                 )
@@ -357,8 +356,6 @@ class ResearchHandler:
             analyzed_seen = set()
             analyzed_lines = []
             for f in findings or []:
-                if not isinstance(f, dict):
-                    continue
                 url = f.get("url", "")
                 title = f.get("title", "") or url
                 summary = f.get("summary", "") or f.get("evidence", "")
@@ -366,8 +363,6 @@ class ResearchHandler:
                     seen_urls.add(url)
                     source_lines.append(f"- [{title}]({url})")
             for item in url_items or []:
-                if not isinstance(item, dict):
-                    continue
                 url = item.get("url", "")
                 title = item.get("title", "") or url
                 if url and url not in analyzed_seen:
@@ -383,8 +378,6 @@ class ResearchHandler:
         if findings:
             parts = []
             for i, f in enumerate(findings, 1):
-                if not isinstance(f, dict):
-                    continue
                 url = f.get("url", "")
                 title = f.get("title", "") or "Untitled"
                 summary = f.get("summary", "")

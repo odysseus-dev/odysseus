@@ -11,6 +11,7 @@ import shlex
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import _ssh_exec_argv
 
 logger = logging.getLogger(__name__)
@@ -23,24 +24,19 @@ _REPO_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]
 # folder name (no slash), e.g. `DeepSeek-R1-UD-IQ4_XS`. The serve command uses
 # the real on-disk path separately; this identifier is only for UI/task
 # bookkeeping, so serving should accept the same safe glyph set as repo IDs.
-_LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-\/\\]*$")
+_LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Ollama model names include tags, e.g. `qwen2.5:0.5b` or `llama3.2:latest`.
 # Some registries also use a namespace path. Keep this shell-safe: no spaces,
 # quotes, `$`, `;`, `&`, pipes, or redirects.
 _OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
-# Remote host: either `user@host` or plain `host` (alias is allowed), where host
-# is a safe DNS-like token or a short SSH config alias. The host portion must
-# start with an alphanumeric character so OpenSSH cannot parse it as an option.
-_REMOTE_HOST_RE = re.compile(r"^(?:[A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 # HF tokens and API tokens are url-safe base64-like.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
 # Session IDs we mint look like "cookbook-deadbeef" or "serve-deadbeef".
 # Anything beyond plain alphanumerics + dash + underscore could break out
 # of the shell/PowerShell contexts the value lands in.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_SSH_PORT_RE = re.compile(r"^\d{1,5}$")
 _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # A download target directory. Absolute or ~-relative path; safe path glyphs
 # only (no quotes or shell metacharacters). Spaces are allowed because command
@@ -86,14 +82,6 @@ def _validate_include(v: str | None) -> str | None:
     return v
 
 
-def _validate_remote_host(v: str | None) -> str | None:
-    if v is None or v == "":
-        return None
-    if not _REMOTE_HOST_RE.match(v):
-        raise HTTPException(400, "Invalid remote_host — must be host or user@host, no SSH option syntax")
-    return v
-
-
 def _validate_token(v: str | None) -> str | None:
     if v is None or v == "":
         return None
@@ -121,17 +109,6 @@ def _validate_local_dir(v: str | None) -> str | None:
     return v
 
 
-def _validate_ssh_port(v: str | None) -> str | None:
-    if v is None or v == "":
-        return None
-    if not _SSH_PORT_RE.fullmatch(str(v)):
-        raise HTTPException(400, "Invalid ssh_port")
-    port = int(v)
-    if port < 1 or port > 65535:
-        raise HTTPException(400, "Invalid ssh_port")
-    return str(port)
-
-
 def _validate_gpus(v: str | None) -> str | None:
     if v is None or v == "":
         return None
@@ -148,7 +125,7 @@ def _shell_path(p: str) -> str:
         return '"$HOME"'
     if p.startswith("~/"):
         return '"$HOME/' + p[2:] + '"'
-    return '"' + p.replace("\\", "\\\\") + '"'
+    return '"' + p + '"'
 
 
 def _local_tooling_path_export(executable: str) -> str:
@@ -331,119 +308,6 @@ def _pip_install_help_check_from_cmd(cmd: str) -> str | None:
         return None
     pip_prefix = parts[:install_index]
     return f"{shlex.join(pip_prefix + ['install', '--help'])} 2>/dev/null | grep -q -- --break-system-packages"
-
-
-def _pip_install_python_executable(cmd: str) -> str:
-    """Return the Python executable used by a ``python -m pip install`` cmd."""
-    try:
-        parts = shlex.split(cmd or "")
-    except ValueError:
-        return "python3"
-    env_re = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-    parts = [p for p in parts if not env_re.match(p)]
-    if len(parts) >= 4 and parts[1:4] == ["-m", "pip", "install"]:
-        return parts[0]
-    return "python3"
-
-
-def _is_realesrgan_pip_install(cmd: str) -> bool:
-    """Whether the Cookbook pip command is installing Real-ESRGAN."""
-    try:
-        parts = shlex.split(cmd or "")
-    except ValueError:
-        return False
-    return "pip" in parts and "install" in parts and any(p == "realesrgan" for p in parts)
-
-
-_REALESRGAN_BASICSR_PY313_PATCH = r'''
-import pathlib
-import subprocess
-import sys
-import tarfile
-import tempfile
-
-if sys.version_info < (3, 13):
-    raise SystemExit(0)
-
-try:
-    import basicsr  # noqa: F401
-    raise SystemExit(0)
-except Exception:
-    pass
-
-print("[odysseus] Python 3.13 detected; pre-installing patched basicsr 1.4.2 for Real-ESRGAN...")
-with tempfile.TemporaryDirectory(prefix="odysseus-basicsr-") as tmp:
-    tmp_path = pathlib.Path(tmp)
-    subprocess.check_call([
-        sys.executable,
-        "-m",
-        "pip",
-        "download",
-        "--no-deps",
-        "--no-binary",
-        ":all:",
-        "basicsr==1.4.2",
-        "-d",
-        str(tmp_path),
-    ])
-    archives = sorted(tmp_path.glob("basicsr-1.4.2.tar.gz"))
-    if not archives:
-        raise RuntimeError("basicsr 1.4.2 source archive was not downloaded")
-    with tarfile.open(archives[0]) as tf:
-        tf.extractall(tmp_path)
-    src = tmp_path / "basicsr-1.4.2"
-    setup_py = src / "setup.py"
-    text = setup_py.read_text(encoding="utf-8")
-    old = """def get_version():
-    with open(version_file, 'r') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
-"""
-    new = """def get_version():
-    namespace = {}
-    with open(version_file, 'r') as f:
-        exec(compile(f.read(), version_file, 'exec'), namespace)
-    return namespace['__version__']
-"""
-    if old not in text:
-        raise RuntimeError("basicsr setup.py get_version() shape changed")
-    setup_py.write_text(text.replace(old, new), encoding="utf-8")
-    subprocess.check_call([
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--no-cache-dir",
-        str(src),
-    ])
-'''
-
-
-def _append_realesrgan_py313_basicsr_workaround(lines: list[str], cmd: str, *, powershell: bool = False) -> None:
-    """Pre-install patched basicsr before Real-ESRGAN on Python 3.13+.
-
-    ``realesrgan`` depends on ``basicsr>=1.4.2``. BasicSR 1.4.2's setup.py
-    reads ``__version__`` via ``exec(...); locals()['__version__']``, which
-    breaks under Python 3.13's updated locals semantics and crashes Cookbook
-    dependency installs before Real-ESRGAN can install. Keep the workaround
-    scoped to the allow-listed Real-ESRGAN install path: download the exact
-    BasicSR sdist from PyPI, patch only get_version(), install it into the same
-    interpreter, then let the original Real-ESRGAN pip command continue.
-    """
-    if not _is_realesrgan_pip_install(cmd):
-        return
-    py = _pip_install_python_executable(cmd)
-    if powershell:
-        lines.append("$odyBasicsrPatch = @'")
-        lines.extend(_REALESRGAN_BASICSR_PY313_PATCH.strip("\n").splitlines())
-        lines.append("'@")
-        lines.append(f"& {py!r} -c $odyBasicsrPatch")
-        lines.append('if ($LASTEXITCODE -ne 0) { Write-Host ""; Write-Host "=== Process exited with code $LASTEXITCODE ==="; exit $LASTEXITCODE }')
-    else:
-        lines.append(f"{shlex.quote(py)} - <<'PY'")
-        lines.extend(_REALESRGAN_BASICSR_PY313_PATCH.strip("\n").splitlines())
-        lines.append("PY")
-        lines.append('ODYSSEUS_PREFLIGHT_EXIT=$?')
 
 
 def _append_pip_install_runner_lines(runner_lines: list[str], cmd: str) -> None:

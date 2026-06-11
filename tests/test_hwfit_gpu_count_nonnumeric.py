@@ -26,3 +26,13 @@ def test_numeric_gpu_count_still_accepted():
     handler = _get_models()
     result = handler(gpu_count="0")
     assert isinstance(result, dict)
+
+
+def test_non_numeric_manual_gpu_count_does_not_raise():
+    # manual_gpu_count is the other count param on this endpoint (the hardware
+    # simulator in _apply_manual_hardware). A non-numeric value must also degrade
+    # (default to 1) rather than 500, so the endpoint's count parsing is fully
+    # covered.
+    handler = _get_models()
+    result = handler(manual_mode="gpu", manual_gpu_count="abc")
+    assert isinstance(result, dict)

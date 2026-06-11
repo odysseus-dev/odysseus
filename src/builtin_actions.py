@@ -12,11 +12,8 @@ from typing import Tuple
 
 from src.auth_helpers import owner_filter
 from core.platform_compat import IS_WINDOWS, find_bash
-from src.constants import (
-    DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE,
-    EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE,
-    internal_api_base
-)
+from core.constants import internal_api_base
+from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +76,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         import json
         import re
         from src.constants import DATA_DIR
-        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
+        from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.memory import MemoryManager
 
@@ -120,10 +117,8 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                 return False
 
             url, model, headers = resolve_endpoint("utility", owner=group_owner or None)
-            _tidy_timeout = resolve_endpoint_timeout("utility", owner=group_owner or None)
             if not url or not model:
                 url, model, headers = resolve_endpoint("default", owner=group_owner or None)
-                _tidy_timeout = resolve_endpoint_timeout("default", owner=group_owner or None)
             if not url or not model:
                 return False
 
@@ -159,7 +154,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     temperature=0.0,
                     max_tokens=4096,
                     headers=headers,
-                    timeout=_tidy_timeout,
+                    timeout=120,
                 )
                 from src.text_helpers import strip_think
 
@@ -510,7 +505,7 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of email summary background processing."""
     try:
         from routes.email_pollers import _run_auto_summarize_once
-        result = await _run_auto_summarize_once(do_summary=True, do_reply=False, owner=owner)
+        result = await _run_auto_summarize_once(do_summary=True, do_reply=False)
         if not _result_has_work(result):
             raise TaskNoop(f"summarize: {result or 'no new emails'}")
         return result, True
@@ -527,7 +522,6 @@ async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
             do_summary=False,
             do_reply=True,
             days_back=7,
-            owner=owner,
             progress_cb=kwargs.get("progress_cb"),
         )
         if not _result_has_work(result):
@@ -610,7 +604,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from datetime import timedelta
         from core.database import SessionLocal, CalendarEvent
-        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
+        from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         import re as _re, json as _json
 
@@ -627,10 +621,8 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                 return "No upcoming events to classify", True
 
             llm_url, llm_model, llm_headers = resolve_endpoint("utility", owner=owner)
-            _classify_timeout = resolve_endpoint_timeout("utility", owner=owner)
             if not llm_url:
                 llm_url, llm_model, llm_headers = resolve_endpoint("default", owner=owner)
-                _classify_timeout = resolve_endpoint_timeout("default", owner=owner)
             llm_available = bool(llm_url and llm_model)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -711,7 +703,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                         url=llm_url, model=llm_model,
                         messages=[{"role": "user", "content": prompt}],
                         temperature=0.1, max_tokens=16384,
-                        headers=llm_headers, timeout=_classify_timeout,
+                        headers=llm_headers, timeout=180,
                     )
                     from src.text_helpers import strip_think as _st
                     raw = _st(raw or "", prose=False, prompt_echo=False)
@@ -780,7 +772,6 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
             result = await _aio.wait_for(
                 _run_auto_summarize_once(
                     do_summary=False, do_reply=False, do_calendar=True, days_back=3,
-                    owner=owner,
                 ),
                 timeout=300,
             )
@@ -819,7 +810,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
         from routes.email_helpers import _email_cache_owner_clause, _imap_connect, SCHEDULED_DB
-        from src.endpoint_resolver import resolve_endpoint, resolve_endpoint_timeout
+        from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
         # 1. Pull recent UIDs + From headers cheaply (header-only fetch).
@@ -901,10 +892,8 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             return "All sender sigs already cached (or no eligible senders)", True
 
         url, model, headers = resolve_endpoint("utility", owner=owner)
-        _sig_timeout = resolve_endpoint_timeout("utility", owner=owner)
         if not url or not model:
             url, model, headers = resolve_endpoint("default", owner=owner)
-            _sig_timeout = resolve_endpoint_timeout("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
 
@@ -964,7 +953,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                     url=url, model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0, max_tokens=600,
-                    headers=headers, timeout=_sig_timeout,
+                    headers=headers, timeout=60,
                 )
                 from src.text_helpers import strip_think as _st
                 sig = _st(raw or "", prose=False, prompt_echo=False).strip()
@@ -1356,10 +1345,20 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         REPING_MIN = 25     # don't re-ping same note more often than this
 
         def _parse_due(s: str):
-            """Accept absolute UTC ISO (Z/offset) or legacy naive server-local."""
-            from src.user_time import parse_stored_due_utc
-
-            return parse_stored_due_utc(s)
+            """Accept '2026-05-29T16:31' (local) or '...Z' (UTC). Returns UTC datetime."""
+            if not s:
+                return None
+            try:
+                # Handle the JS-style 'Z' suffix.
+                if s.endswith("Z"):
+                    return _dt.fromisoformat(s[:-1]).replace(tzinfo=_tz.utc)
+                # Naive → assume local server time.
+                d = _dt.fromisoformat(s)
+                if d.tzinfo is None:
+                    d = d.astimezone().astimezone(_tz.utc)
+                return d.astimezone(_tz.utc)
+            except Exception:
+                return None
 
         try:
             cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
@@ -1483,10 +1482,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         from datetime import datetime as _dt, timedelta as _td
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, EmailAccount as _EA
-        from routes.email_helpers import (
-            _imap_connect, _decode_header,
-            email_ai_local_only_error, encrypt_cache_field, decrypt_cache_field,
-        )
+        from routes.email_helpers import _imap_connect, _decode_header
         from src.endpoint_resolver import resolve_endpoint, resolve_utility_fallback_candidates
         from src.llm_core import llm_call_async_with_fallback
 
@@ -1514,9 +1510,6 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
-        _local_err = email_ai_local_only_error(url)
-        if _local_err:
-            return _local_err, False
         candidates = [(url, model, headers)] + resolve_utility_fallback_candidates(owner=owner)
 
         # ── 2. Enumerate enabled accounts. Match this task's owner AND fall
@@ -1687,7 +1680,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     raw = await llm_call_async_with_fallback(
                         candidates,
                         [{"role": "user", "content": prompt}],
-                        temperature=0.1, max_tokens=220, timeout=_urgency_timeout,
+                        temperature=0.1, max_tokens=220, timeout=30,
                     )
                     # Tolerant JSON-parse: strip code fences if present.
                     txt = (raw or "").strip()
@@ -1832,7 +1825,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     ).fetchone()
                     if _row:
                         try:
-                            _existing = _json.loads(decrypt_cache_field(_row[0] or "[]"))
+                            _existing = _json.loads(_row[0] or "[]")
                             if not isinstance(_existing, list):
                                 _existing = []
                         except Exception:
@@ -1850,12 +1843,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                         _conn.execute(
                             "UPDATE email_tags SET tags=?, spam_verdict=?, spam_reason=?, uid=?, folder=?, subject=?, sender=? "
                             "WHERE message_id=? AND owner=?",
-                            (
-                                encrypt_cache_field(_json.dumps(_existing)), _spam,
-                                encrypt_cache_field(str(_v.get("reason", ""))),
-                                _uid_only, "INBOX", _v.get("subject", ""), _v.get("from", ""),
-                                _msg_id, _owner_key,
-                            ),
+                            (_json.dumps(_existing), _spam, _v.get("reason", ""), _uid_only, "INBOX",
+                             _v.get("subject", ""), _v.get("from", ""), _msg_id, _owner_key),
                         )
                     else:
                         if not _new_tags and not _spam:
@@ -1864,12 +1853,9 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                             "INSERT INTO email_tags "
                             "(message_id, owner, uid, folder, subject, sender, tags, spam_verdict, spam_reason, created_at) "
                             "VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?)",
-                            (
-                                _msg_id, _owner_key, _uid_only, _v.get("subject", ""),
-                                _v.get("from", ""), encrypt_cache_field(_json.dumps(_new_tags)),
-                                _spam, encrypt_cache_field(str(_v.get("reason", ""))),
-                                _dt2.utcnow().isoformat(),
-                            ),
+                            (_msg_id, _owner_key, _uid_only, _v.get("subject", ""),
+                             _v.get("from", ""), _json.dumps(_new_tags), _spam, _v.get("reason", ""),
+                             _dt2.utcnow().isoformat()),
                         )
                 _conn.commit()
             finally:
