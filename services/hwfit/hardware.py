@@ -106,7 +106,7 @@ def _detect_nvidia():
             if _remote_host:
                 out = _run(f"{_p} --query-gpu=memory.total,name --format=csv,noheader,nounits")
             else:
-                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
+                out = _run([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])n([_p, "--query-gpu=memory.total,name", "--format=csv,noheader,nounits"])
             if out:
                 break
     if not out:
