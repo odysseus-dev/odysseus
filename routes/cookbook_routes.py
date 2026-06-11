@@ -30,6 +30,7 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.cookbook_output import error_aware_output_tail
 
 logger = logging.getLogger(__name__)
 
@@ -2873,6 +2874,7 @@ def setup_cookbook_routes() -> APIRouter:
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
             # when the PID is gone instead of blindly reporting "stopped".
             download_zero_files = False
+            exit_code = None
             status = "unknown"
             download_has_ok = task_type == "download" and "DOWNLOAD_OK" in full_snapshot
             download_has_failed = task_type == "download" and "DOWNLOAD_FAILED" in full_snapshot
@@ -2946,7 +2948,7 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
-            output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
+            output_tail = error_aware_output_tail(full_snapshot, status)
 
             results.append({
                 "session_id": session_id,
@@ -2957,6 +2959,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "phase": serve_phase,
                 "diagnosis": diagnosis,
                 "output_tail": output_tail,
+                "exit_code": exit_code,
                 "cmd": _payload.get("_cmd") or "",
                 "tps": phase_info.get("tps"),
                 "reqs": phase_info.get("reqs"),
