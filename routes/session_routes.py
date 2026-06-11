@@ -928,6 +928,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
+        # Snapshot the history under the lock, then release it before the
+        # (up to 60s) summary call so a message sent mid-compaction doesn't
+        # stall behind this lock. The snapshot length is re-checked below
+        # under the lock so any messages appended in the meantime are kept.
         async with session_manager.session_lock(session_id):
             history = list(session.history or [])
             if len(history) < 6:
@@ -961,37 +965,45 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 f"{_message_role(m).upper()}: {_message_text(m)[:2000]}"
                 for m in older
             )
-            try:
-                summary = await llm_call_async(
-                    url,
-                    model,
-                    [{"role": "system", "content": prompt}, {"role": "user", "content": convo_text}],
-                    temperature=0.2,
-                    max_tokens=1024,
-                    headers=headers,
-                    timeout=60,
-                )
-            except Exception as e:
-                logger.error("Manual compaction failed: %s", e)
-                raise HTTPException(500, "Compaction failed")
+            snapshot_len = len(history)
 
-            summary_msg = ChatMessage(
-                role="system",
-                content=f"[Conversation summary]\n{summary}",
-                metadata={
-                    "compacted": True,
-                    "summarized_count": len(older),
-                    "timestamp": datetime.utcnow().isoformat(),
-                },
+        try:
+            summary = await llm_call_async(
+                url,
+                model,
+                [{"role": "system", "content": prompt}, {"role": "user", "content": convo_text}],
+                temperature=0.2,
+                max_tokens=1024,
+                headers=headers,
+                timeout=60,
             )
-            new_history = [summary_msg] + recent
+        except Exception as e:
+            logger.error("Manual compaction failed: %s", e)
+            raise HTTPException(500, "Compaction failed")
+
+        summary_msg = ChatMessage(
+            role="system",
+            content=f"[Conversation summary]\n{summary}",
+            metadata={
+                "compacted": True,
+                "summarized_count": len(older),
+                "timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+
+        async with session_manager.session_lock(session_id):
+            current_history = list(session.history or [])
+            # Carry forward any messages appended while the summary call was
+            # in flight — they sit after the snapshot and were not summarized.
+            appended = current_history[snapshot_len:]
+            new_history = [summary_msg] + recent + appended
             if not session_manager.replace_messages(session_id, new_history):
                 raise HTTPException(500, "Failed to save compacted history")
 
             return {
                 "ok": True,
                 "summarized": len(older),
-                "kept": len(recent),
+                "kept": len(recent) + len(appended),
                 "message_count": len(new_history),
             }
 
