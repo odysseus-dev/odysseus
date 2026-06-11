@@ -802,15 +802,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         } else {
           fd.append('use_web', 'true');
         }
+      } else if (isAgentMode) {
+        fd.append('allow_web_search', 'false');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
         // Research always runs in chat mode — override agent if set
         fd.set('mode', 'chat');
       }
-      if (el('bash-toggle').checked) {
-        fd.append('allow_bash', 'true');
-      }
+      fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
