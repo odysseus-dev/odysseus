@@ -1506,12 +1506,10 @@ export function _hwfitInit() {
     clearTimeout(_hwfitDebounce);
     _hwfitDebounce = setTimeout(() => _hwfitFetch(), 400);
   });
-  // HF Token
-  const hfToken = document.getElementById('hwfit-hftoken');
-  if (hfToken) {
-    hfToken.addEventListener('change', () => { _envState.hfToken = hfToken.value.trim(); _persistEnvState(); });
-    hfToken.addEventListener('input', () => { _envState.hfToken = hfToken.value.trim(); });
-  }
+  // HF token save is owned by cookbook.js (_wireTabEvents) — do not wire a
+  // second change/input handler here. The old duplicate ran after cookbook.js
+  // cleared the input on save and overwrote _envState.hfToken with "", so the
+  // debounced state sync never persisted the token to cookbook_state.json.
 
   // Rebuild all server select dropdowns with current servers
   function _rebuildServerSelect() {
