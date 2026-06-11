@@ -299,6 +299,40 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0) ->
         _cache_result(cache_file, cache_key, result, url)
         return result
 
+    # Plain-text / Markdown / JSON handling. Sources like
+    # raw.githubusercontent.com serve Markdown as `text/plain`, JSON APIs and
+    # raw config files serve `application/json`, and a lot of code and tool
+    # docs live in `.md` / `.txt`. These have no HTML structure, so the HTML
+    # branch below would extract nothing and report "no readable text content".
+    # Return the body verbatim instead. The `is_html` guard keeps real HTML
+    # (including `application/xhtml+xml`) on the parsing path; the `json` check
+    # covers `application/json` and `+json` suffixes; the URL-suffix fallback
+    # catches servers that mislabel text files as `application/octet-stream`.
+    is_html = "html" in content_type
+    is_json = "json" in content_type
+    url_path = url.lower().split("?", 1)[0].split("#", 1)[0]
+    looks_like_text_file = url_path.endswith(
+        (".md", ".markdown", ".txt", ".text", ".json", ".jsonl")
+    )
+    if not is_html and (content_type.startswith("text/") or is_json or looks_like_text_file):
+        text_body = (response.text or "").strip()
+        result = {
+            "url": url,
+            "title": os.path.basename(url_path) or url,
+            "content": text_body,
+            "lists": [],
+            "tables": [],
+            "code_blocks": [],
+            "meta_description": "",
+            "meta_keywords": "",
+            "js_rendered": False,
+            "js_message": "",
+            "success": bool(text_body),
+            "error": "" if text_body else "Empty response body",
+        }
+        _cache_result(cache_file, cache_key, result, url)
+        return result
+
     # HTML handling
     try:
         soup = BeautifulSoup(response.text, "html.parser")

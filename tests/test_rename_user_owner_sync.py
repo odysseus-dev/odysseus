@@ -1,4 +1,4 @@
-"""Renaming a user must update all three owner caches, not just the SQL DB.
+"""Renaming a user must update non-SQL owner stores, not just the SQL DB.
 
 The DB owner-rename loop in the rename_user route updates every SQL-backed
 owner column, but three file-backed / in-memory stores are left stale:
@@ -11,8 +11,14 @@ owner column, but three file-backed / in-memory stores are left stale:
    research_routes filters by `d.get("owner") == user`, making every report
    invisible after rename.
 
-3. data/memory.json  — a flat array where every entry has an `owner` field;
+3. research_handler._active_tasks — in-flight research jobs carry the same
+   owner key while status/cancel/active routes filter by it.
+
+4. data/memory.json  — a flat array where every entry has an `owner` field;
    memory_manager.load(owner=user) filters on it, so all memories vanish.
+
+5. data/uploads/uploads.json — each upload row carries an `owner` field and
+   owner-prefixed index key; stale metadata denies renamed users their uploads.
 
 Regression coverage: these bugs are invisible in unit tests that mock the DB
 loop but don't exercise the file/cache patches added to the route.
@@ -64,10 +70,12 @@ def rename_endpoint(monkeypatch, tmp_path):
     return _route(ar.setup_auth_routes(am), "rename_user"), am, tmp_path
 
 
-def _request(tmp_path, session_manager=None, token="t"):
+def _request(tmp_path, session_manager=None, token="t", research_handler=None, upload_handler=None):
     state = SimpleNamespace(
         invalidate_token_cache=lambda: None,
         session_manager=session_manager,
+        research_handler=research_handler,
+        upload_handler=upload_handler,
     )
     return SimpleNamespace(
         cookies={"odysseus_session": token},
@@ -234,6 +242,108 @@ def test_rename_no_deep_research_dir_does_not_crash(rename_endpoint):
     assert res["ok"] is True
 
 
+def test_rename_updates_active_research_task_owner(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+
+    from routes.research_routes import setup_research_routes
+    from src.research_handler import ResearchHandler
+
+    rh = ResearchHandler.__new__(ResearchHandler)
+    rh._active_tasks = {
+        "alice-task": {
+            "owner": "Alice",
+            "status": "running",
+            "query": "q",
+            "progress": {},
+            "started_at": 1,
+        },
+        "carol-task": {
+            "owner": "carol",
+            "status": "running",
+            "query": "q2",
+            "progress": {},
+            "started_at": 2,
+        },
+    }
+
+    asyncio.run(endpoint(
+        "alice",
+        SimpleNamespace(username="alice2"),
+        _request(tmp_path, research_handler=rh),
+    ))
+
+    assert rh._active_tasks["alice-task"]["owner"] == "alice2"
+    assert rh._active_tasks["carol-task"]["owner"] == "carol"
+
+    router = setup_research_routes(rh)
+    active = next(
+        r.endpoint for r in router.routes
+        if getattr(r, "path", "") == "/api/research/active"
+    )
+
+    alice2 = asyncio.run(active(
+        SimpleNamespace(state=SimpleNamespace(current_user="alice2")),
+    ))
+    alice = asyncio.run(active(
+        SimpleNamespace(state=SimpleNamespace(current_user="alice")),
+    ))
+
+    assert [item["session_id"] for item in alice2["active"]] == ["alice-task"]
+    assert alice["active"] == []
+
+
+def test_research_handler_rename_owner_canonicalizes_new_owner():
+    from src.research_handler import ResearchHandler
+
+    rh = ResearchHandler.__new__(ResearchHandler)
+    rh._active_tasks = {
+        "task": {"owner": "Alice", "status": "running"},
+    }
+
+    changed = rh.rename_owner("alice", "Alice2")
+    assert changed == 1
+    assert rh._active_tasks["task"]["owner"] == "alice2"
+
+
+def test_research_handler_rename_owner_uses_auth_lower_contract_not_casefold():
+    from src.research_handler import ResearchHandler
+
+    rh = ResearchHandler.__new__(ResearchHandler)
+    rh._active_tasks = {
+        "task-strasse": {"owner": "strasse", "status": "running"},
+        "task-sharp-s": {"owner": "straße", "status": "running"},
+    }
+
+    changed = rh.rename_owner("straße", "renamed")
+
+    assert changed == 1
+    assert rh._active_tasks["task-strasse"]["owner"] == "strasse"
+    assert rh._active_tasks["task-sharp-s"]["owner"] == "renamed"
+
+
+def test_rename_updates_active_research_before_completed_json_sweep(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+
+    dr_dir = tmp_path / "deep_research"
+    dr_dir.mkdir()
+    report = dr_dir / "race-window.json"
+    report.write_text(json.dumps({"owner": "alice", "status": "done"}), encoding="utf-8")
+    owner_seen_by_active_hook = []
+
+    class FakeResearchHandler:
+        def rename_owner(self, _old, _new):
+            owner_seen_by_active_hook.append(json.loads(report.read_text(encoding="utf-8"))["owner"])
+
+    asyncio.run(endpoint(
+        "alice",
+        SimpleNamespace(username="alice2"),
+        _request(tmp_path, research_handler=FakeResearchHandler()),
+    ))
+
+    assert owner_seen_by_active_hook == ["alice"]
+    assert json.loads(report.read_text(encoding="utf-8"))["owner"] == "alice2"
+
+
 def test_rename_research_respects_custom_data_dir(monkeypatch, tmp_path):
     """DEEP_RESEARCH_DIR (which honours ODYSSEUS_DATA_DIR) is used, not a
     hardcoded relative path. Before the fix, setting ODYSSEUS_DATA_DIR made
@@ -309,7 +419,56 @@ def test_rename_no_memory_json_does_not_crash(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 4. Skills (SKILL.md frontmatter + _usage.json sidecar)
+# 4. uploads.json
+# ---------------------------------------------------------------------------
+
+def test_rename_updates_upload_metadata_owner(rename_endpoint):
+    endpoint, _am, tmp_path = rename_endpoint
+    from src.upload_handler import UploadHandler
+
+    upload_dir = tmp_path / "uploads"
+    dated = upload_dir / "2026" / "06" / "09"
+    dated.mkdir(parents=True)
+    upload_id = "a" * 32 + ".txt"
+    upload_path = dated / upload_id
+    upload_path.write_text("alice private upload", encoding="utf-8")
+    handler = UploadHandler(str(tmp_path), str(upload_dir))
+    handler._atomic_write_json(
+        str(upload_dir / "uploads.json"),
+        {
+            "alice:hash-alice": {
+                "id": upload_id,
+                "path": str(upload_path),
+                "mime": "text/plain",
+                "size": upload_path.stat().st_size,
+                "name": "note.txt",
+                "hash": "hash-alice",
+                "original_name": "note.txt",
+                "uploaded_at": "2026-06-09T10:00:00",
+                "last_accessed": "2026-06-09T10:00:00",
+                "client_ip": "127.0.0.1",
+                "owner": "alice",
+            },
+        },
+    )
+
+    asyncio.run(
+        endpoint(
+            "alice",
+            SimpleNamespace(username="alice2"),
+            _request(tmp_path, upload_handler=handler),
+        )
+    )
+
+    updated = json.loads((upload_dir / "uploads.json").read_text(encoding="utf-8"))
+    assert "alice:hash-alice" not in updated
+    assert updated["alice2:hash-alice"]["owner"] == "alice2"
+    assert handler.resolve_upload(upload_id, owner="alice2")["path"] == str(upload_path)
+    assert handler.resolve_upload(upload_id, owner="alice") is None
+
+
+# ---------------------------------------------------------------------------
+# 5. Skills (SKILL.md frontmatter + _usage.json sidecar)
 # ---------------------------------------------------------------------------
 
 _SKILL_MD = """\
@@ -416,7 +575,7 @@ def test_rename_usage_keys_case_insensitive(rename_endpoint):
 
 
 # ---------------------------------------------------------------------------
-# 5. Rollback: auth rename must be restored if SQL owner migration fails
+# 6. Rollback: auth rename must be restored if SQL owner migration fails
 # ---------------------------------------------------------------------------
 
 def test_owner_migration_failure_rolls_back_auth_rename(monkeypatch, tmp_path):
@@ -477,7 +636,7 @@ def test_self_rename_owner_migration_failure_rolls_back_auth_session(monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# 6. P1 regression: rejected auth rename must not mutate file-backed stores
+# 7. P1 regression: rejected auth rename must not mutate file-backed stores
 # ---------------------------------------------------------------------------
 
 def test_rejected_rename_does_not_mutate_files(monkeypatch, tmp_path):
