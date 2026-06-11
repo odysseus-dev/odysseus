@@ -250,10 +250,19 @@ def resolve_endpoint(
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
 
-    # If the specific endpoint is not configured, but the caller provided a
-    # valid fallback (e.g. the active session model), use that immediately.
-    # This prevents background tasks from jumping to the global default_model
-    # when the user is mid-conversation with a different model.
+    # An explicitly-configured Utility model is a deliberate choice for
+    # background tasks (memory extraction, auto-naming, research...) and must
+    # win over the session-model fallback. Resolve it *before* the fallback
+    # shortcut below; otherwise the fallback shadows it (#3961 — the inverse of
+    # the regression #534 guarded against).
+    if not ep_id and setting_prefix != "utility":
+        ep_id = _stg("utility_endpoint_id")
+        model = _stg("utility_model")
+
+    # If neither the specific endpoint nor a Utility model is configured, but
+    # the caller provided a valid fallback (e.g. the active session model), use
+    # that immediately. This prevents background tasks from jumping to the
+    # global default_model when the user is mid-conversation (#534).
     if not ep_id and fallback_url and fallback_model:
         return fallback_url, fallback_model, fallback_headers
 
@@ -262,14 +271,10 @@ def resolve_endpoint(
         ep_id = _stg("default_endpoint_id")
         model = _stg("default_model")
 
-    # Fall back to utility model for task/research/auto-naming if not specifically configured.
-    # If Utility itself is unset, the block above makes that resolve to Default Chat.
+    # Utility also unconfigured (and no session fallback) → global default.
     if not ep_id and setting_prefix != "utility":
-        ep_id = _stg("utility_endpoint_id")
-        model = _stg("utility_model")
-        if not ep_id:
-            ep_id = _stg("default_endpoint_id")
-            model = _stg("default_model")
+        ep_id = _stg("default_endpoint_id")
+        model = _stg("default_model")
 
     if not ep_id:
         return fallback_url, fallback_model, fallback_headers

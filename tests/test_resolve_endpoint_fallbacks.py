@@ -109,6 +109,37 @@ def test_task_uses_utility_when_task_endpoint_unset(monkeypatch):
     assert headers == {"Authorization": "Bearer key-utility"}
 
 
+def test_task_uses_utility_over_session_fallback_when_task_unset(monkeypatch):
+    # Regression for #3961: an explicitly-configured Utility model must win
+    # over the session-model fallback for background tasks (memory extraction,
+    # auto-naming, ...). Callers always pass the active chat model as fallback,
+    # so the #534 early-return must not shadow the Utility setting.
+    settings = {
+        "task_endpoint_id": "",
+        "task_model": "",
+        "utility_endpoint_id": "utility",
+        "utility_model": "utility-chat",
+        "default_endpoint_id": "default",
+        "default_model": "default-chat",
+    }
+    _install_resolver_fakes(
+        monkeypatch,
+        settings,
+        [_endpoint("utility", "utility-chat"), _endpoint("default", "default-chat")],
+    )
+
+    url, model, headers = resolve_endpoint(
+        "task",
+        fallback_url="https://session.example/chat",
+        fallback_model="session-chat",
+        fallback_headers={"X-Test": "session"},
+    )
+
+    assert url == "https://utility.example/v1/chat/completions"
+    assert model == "utility-chat"
+    assert headers == {"Authorization": "Bearer key-utility"}
+
+
 def test_research_uses_default_when_research_and_utility_unset(monkeypatch):
     settings = {
         "research_endpoint_id": "",
