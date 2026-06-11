@@ -51,5 +51,3 @@ ollama
 pydantic
 fastmcp
 pydantic_ai
-os
-sys
