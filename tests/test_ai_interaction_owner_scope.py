@@ -18,8 +18,9 @@ def test_model_resolver_applies_owner_filter():
 
 
 def test_model_listing_and_image_fallback_are_owner_scoped():
+    from src.agent_tools.image_tools import GenerateImageTool
     list_body = _source(ai_interaction.do_list_models)
-    image_body = _source(ai_interaction.do_generate_image)
+    image_body = _source(GenerateImageTool.execute)
 
     assert "owner: Optional[str] = None" in list_body
     assert "owner_filter(query, ModelEndpoint, owner)" in list_body
