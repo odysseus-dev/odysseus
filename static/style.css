@@ -13775,6 +13775,10 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 .mcp-tools-panel .mcp-tools-header a:hover {
   opacity: 1;
 }
+#uf-mcp-all,
+#uf-mcp-none {
+  color: rgba(216, 203, 3, 1);
+}
 .mcp-tools-list {
   max-height: 200px;
   overflow-y: auto;
@@ -13814,6 +13818,25 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   accent-color: var(--accent, var(--red));
   margin: 0;
   flex-shrink: 0;
+}
+.mcp-tools-groups {
+  max-height: 420px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+.mcp-tools-groups::-webkit-scrollbar {
+  width: 4px;
+}
+.mcp-tools-groups::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  border-radius: 2px;
+}
+.mcp-tool-group .mcp-tool-row:hover {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+  border-radius: 4px;
+}
+.mcp-tool-group .mcp-tool-name {
+  font-weight: 600;
 }
 /* Dot-style toggle (mirrors .note-check-dot) for the Add Models row,
    replacing the native checkbox while keeping it for click handling. */
@@ -29785,6 +29808,67 @@ body.notes-view .chat-container { flex: 1; min-width: 0; }
   body.notes-view .mobile-new-chat-btn,
   body.notes-view .hamburger-btn {
     display: none !important;
+  }
+
+  /* FormFlow — same bottom-sheet shell as Notes */
+  body.formflow-view .chat-container { flex: 1; min-width: 0; }
+  body.formflow-view .notes-pane {
+    position: fixed;
+    inset: 0;
+    max-width: 100%;
+    width: 100% !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    z-index: 170;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 14px 14px 0 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    animation: sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    transform-origin: bottom center;
+  }
+  body.formflow-view .ff-pane-body {
+    flex: 1;
+    min-height: 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  body.formflow-view .notes-mobile-grabber {
+    display: block;
+    flex-shrink: 0;
+    height: 18px;
+    position: relative;
+    background: var(--bg);
+    touch-action: none;
+    cursor: grab;
+  }
+  body.formflow-view .notes-mobile-grabber::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 36px;
+    height: 4px;
+    background: var(--fg);
+    opacity: 0.25;
+    border-radius: 2px;
+  }
+  body.formflow-view .chat-container {
+    display: none;
+  }
+  body.formflow-view .mobile-new-chat-btn,
+  body.formflow-view .hamburger-btn {
+    display: none !important;
+  }
+  body.formflow-view .ff-nav {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  body.formflow-view .ff-nav-btn,
+  body.formflow-view .ff-choice-btn,
+  body.formflow-view .ff-scale-btn {
+    min-height: 44px;
   }
 }
 /* ── Mobile notes UX ────────────────────────────────────

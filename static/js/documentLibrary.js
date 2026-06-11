@@ -1,6 +1,6 @@
 // static/js/documentLibrary.js
 /**
- * Document Library — modal with Chats / Documents / Research / Archive tabs.
+ * Document Library — modal with Chats / Documents / Prompts / Research / Archive tabs.
  * Extracted from document.js to reduce file size.
  */
 
@@ -1607,6 +1607,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         <div class="lib-tabs" id="doclib-lib-tabs" style="padding:0 10px;">
           <button class="lib-tab" data-doclib-tab="chats"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chats</button>
           <button class="lib-tab active" data-doclib-tab="documents"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>Documents</button>
+          <button class="lib-tab" data-doclib-tab="prompts"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Prompts</button>
           <button class="lib-tab" data-doclib-tab="research"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-1px;margin-right:3px;"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>Research</button>
           <button class="lib-tab" data-doclib-tab="archive"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>Archive</button>
         </div>
@@ -1724,6 +1725,31 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             <div class="doclib-grid" id="doclib-grid"></div>
             <button class="doclib-load-more" id="doclib-load-more" style="display:none">Load more</button>
           </div>
+          <div id="doclib-panel-prompts" data-doclib-panel="prompts" class="admin-card" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
+              <h2 style="margin:0;padding:0;line-height:1;">Prompts <span id="doclib-prompts-stats" class="memory-count" style="font-size:0.6em;opacity:0.6;font-weight:normal"></span></h2>
+              <button class="memory-toolbar-btn" id="doclib-prompts-create-btn" title="Create new prompt" style="margin-left:auto;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> Create</button>
+            </div>
+            <p class="memory-desc doclib-desc">Saved prompts. Click to expand, copy, or insert into chat.</p>
+            <div class="memory-toolbar">
+              <div class="memory-category-filters">
+                <select class="memory-sort-select" id="doclib-prompts-sort">
+                  <option value="recent">Recent</option>
+                  <option value="oldest">Oldest</option>
+                  <option value="alpha">A\u2013Z</option>
+                </select>
+                <button class="memory-toolbar-btn" id="doclib-prompts-select-btn">Select</button>
+              </div>
+              <input type="text" id="doclib-prompts-search" placeholder="Search prompts\u2026" class="memory-search-input" />
+            </div>
+            <div id="doclib-prompts-bulk" class="memory-bulk-bar hidden" style="margin-bottom:5px;">
+              <label class="memory-bulk-check-all" style="position:relative;top:0px;left:1px;"><input type="checkbox" id="doclib-prompts-select-all"> All</label>
+              <span id="doclib-prompts-selected-count">0 Selected</span>
+              <button class="memory-toolbar-btn danger" id="doclib-prompts-bulk-delete"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
+              <button class="memory-toolbar-btn" id="doclib-prompts-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+            </div>
+            <div id="doclib-prompts-grid" class="doclib-grid"></div>
+          </div>
         </div>
       </div>
     `;
@@ -1820,6 +1846,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     let _chatsVisibleLimit = _LIB_PAGE_SIZE;
     let _arcVisibleLimit = _LIB_PAGE_SIZE;
     let _researchVisibleLimit = _LIB_PAGE_SIZE;
+    let _promptsVisibleLimit = _LIB_PAGE_SIZE;
 
     function _appendInlineLoadMore(grid, totalCount, currentLimit, onClick) {
       if (!grid || !grid.parentElement) return;
@@ -1844,6 +1871,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       documents: {
         label: 'Documents',
         svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+      },
+      prompts: {
+        label: 'Prompts',
+        svg: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>',
       },
       research: {
         label: 'Research',
@@ -1876,6 +1907,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (tab === 'chats') _renderLibChats();
       else if (tab === 'archive') _renderLibArchive();
       else if (tab === 'research') _renderLibResearch();
+      else if (tab === 'prompts') _renderLibPrompts();
     }
 
     _tabBtns.forEach(btn => {
@@ -3137,6 +3169,301 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
     });
 
+    // ── Prompts tab ──
+    let _promptsItems = [];
+    let _promptsSearch = '';
+    let _promptsSort = 'recent';
+    let _promptsSelectMode = false;
+    const _promptsSelected = new Set();
+    let _promptsExpandAfterRender = null;
+
+    function _promptPreview(body) {
+      const text = (body || '').replace(/\s+/g, ' ').trim();
+      if (!text) return '(empty)';
+      return text.length > 120 ? text.slice(0, 120) + '\u2026' : text;
+    }
+
+    function _insertPromptIntoChat(body) {
+      const sid = sessionModule.getCurrentSessionId?.() || (sessionModule.hasPendingChat?.() ? 'pending' : null);
+      if (!sid) {
+        if (uiModule) uiModule.showError('Open a chat first');
+        return false;
+      }
+      const ta = document.getElementById('message');
+      if (!ta) {
+        if (uiModule) uiModule.showError('Chat input not found');
+        return false;
+      }
+      ta.value = body || '';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      ta.focus();
+      const len = ta.value.length;
+      ta.setSelectionRange(len, len);
+      return true;
+    }
+
+    async function _renderLibPrompts() {
+      const grid = document.getElementById('doclib-prompts-grid');
+      if (!grid) return;
+      grid.innerHTML = '';
+      grid.appendChild(spinnerModule.createLoadingRow('Loading\u2026'));
+      try {
+        const res = await fetch(`${API_BASE}/api/prompts`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(res.statusText);
+        const data = await res.json();
+        _promptsItems = data.prompts || [];
+      } catch (e) {
+        grid.innerHTML = `<div class="doclib-empty">Failed to load: ${_esc(e.message)}</div>`;
+        return;
+      }
+      _renderPromptsGrid();
+    }
+
+    function _filteredPrompts() {
+      let items = [..._promptsItems];
+      const q = _promptsSearch.toLowerCase();
+      if (q) {
+        items = items.filter(p =>
+          (p.title || '').toLowerCase().includes(q) ||
+          (p.body || '').toLowerCase().includes(q)
+        );
+      }
+      if (_promptsSort === 'oldest') {
+        items.sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
+      } else if (_promptsSort === 'alpha') {
+        items.sort((a, b) => (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' }));
+      } else {
+        items.sort((a, b) => new Date(b.updated_at || b.created_at || 0) - new Date(a.updated_at || a.created_at || 0));
+      }
+      return items;
+    }
+
+    function _togglePromptPreview(card, prompt, { editMode = false } = {}) {
+      const preview = card.querySelector('.doclib-card-preview');
+      if (!preview) return;
+      const isOpen = card.classList.contains('doclib-card-expanded');
+      const grid = card.closest('.doclib-grid');
+      if (grid) {
+        grid.querySelectorAll('.doclib-card-expanded').forEach(c => {
+          if (c !== card) {
+            c.classList.remove('doclib-card-expanded');
+            const p = c.querySelector('.doclib-card-preview');
+            if (p) { p.style.display = 'none'; p.innerHTML = ''; }
+          }
+        });
+      }
+      if (isOpen && !editMode) {
+        card.classList.remove('doclib-card-expanded');
+        preview.style.display = 'none';
+        preview.innerHTML = '';
+        return;
+      }
+      card.classList.add('doclib-card-expanded');
+      preview.style.display = 'block';
+      preview.innerHTML =
+        '<input type="text" class="doclib-prompt-title-input" value="' + _esc(prompt.title || 'Untitled prompt') + '" maxlength="200" style="width:100%;margin-bottom:6px;font-size:12px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:inherit;" />' +
+        '<textarea class="doclib-prompt-body-input" spellcheck="false" style="width:100%;min-height:120px;font-size:11px;padding:6px;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:inherit;resize:vertical;font-family:inherit;line-height:1.4;">' + _esc(prompt.body || '') + '</textarea>' +
+        '<div class="doclib-card-expanded-actions" style="margin-top:8px;">' +
+          '<button class="doclib-card-text-btn doclib-card-action-btn doclib-card-text-btn-danger doclib-prompt-delete-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>' +
+          '<div class="doclib-action-group"><div class="doclib-action-btn-row">' +
+            '<button class="doclib-card-text-btn doclib-card-action-btn doclib-prompt-copy-btn">Copy</button>' +
+            '<button class="doclib-card-text-btn doclib-card-action-btn doclib-prompt-insert-btn">Insert</button>' +
+            '<button class="doclib-card-text-btn doclib-card-action-btn doclib-prompt-save-btn">Save</button>' +
+          '</div></div>' +
+        '</div>';
+      preview.querySelector('.doclib-prompt-title-input')?.addEventListener('click', e => e.stopPropagation());
+      preview.querySelector('.doclib-prompt-body-input')?.addEventListener('click', e => e.stopPropagation());
+      preview.querySelector('.doclib-prompt-copy-btn')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const body = preview.querySelector('.doclib-prompt-body-input')?.value || prompt.body || '';
+        try {
+          await navigator.clipboard.writeText(body);
+          if (uiModule) uiModule.showToast('Copied');
+        } catch {
+          if (uiModule) uiModule.showError('Copy failed');
+        }
+      });
+      preview.querySelector('.doclib-prompt-insert-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const body = preview.querySelector('.doclib-prompt-body-input')?.value || prompt.body || '';
+        if (_insertPromptIntoChat(body)) {
+          closeLibrary();
+          if (uiModule) uiModule.showToast('Inserted into chat');
+        }
+      });
+      preview.querySelector('.doclib-prompt-save-btn')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const title = preview.querySelector('.doclib-prompt-title-input')?.value || prompt.title;
+        const body = preview.querySelector('.doclib-prompt-body-input')?.value ?? prompt.body;
+        try {
+          const res = await fetch(`${API_BASE}/api/prompts/${prompt.id}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, body }),
+          });
+          if (!res.ok) throw new Error(res.statusText);
+          const updated = await res.json();
+          const idx = _promptsItems.findIndex(p => p.id === prompt.id);
+          if (idx >= 0) _promptsItems[idx] = updated;
+          prompt.title = updated.title;
+          prompt.body = updated.body;
+          const titleEl = card.querySelector('.doclib-prompt-card-title');
+          const metaEl = card.querySelector('.doclib-prompt-card-preview');
+          if (titleEl) titleEl.textContent = updated.title || 'Untitled prompt';
+          if (metaEl) metaEl.textContent = _promptPreview(updated.body);
+          if (uiModule) uiModule.showToast('Saved');
+        } catch (err) {
+          if (uiModule) uiModule.showError('Save failed: ' + err.message);
+        }
+      });
+      preview.querySelector('.doclib-prompt-delete-btn')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!await window.styledConfirm('Delete this prompt?', { confirmText: 'Delete', danger: true })) return;
+        try {
+          const res = await fetch(`${API_BASE}/api/prompts/${prompt.id}`, { method: 'DELETE', credentials: 'same-origin' });
+          if (!res.ok) throw new Error(res.statusText);
+          _promptsItems = _promptsItems.filter(p => p.id !== prompt.id);
+          card.style.transition = 'opacity 0.25s, transform 0.25s';
+          card.style.opacity = '0';
+          card.style.transform = 'scale(0.95)';
+          await new Promise(r => setTimeout(r, 200));
+          _renderPromptsGrid();
+          if (uiModule) uiModule.showToast('Deleted');
+        } catch (err) {
+          if (uiModule) uiModule.showError('Delete failed: ' + err.message);
+        }
+      });
+      if (editMode) preview.querySelector('.doclib-prompt-body-input')?.focus();
+    }
+
+    function _renderPromptsGrid() {
+      const grid = document.getElementById('doclib-prompts-grid');
+      const stats = document.getElementById('doclib-prompts-stats');
+      if (!grid) return;
+      const filtered = _filteredPrompts();
+      const total = filtered.length;
+      if (stats) stats.textContent = total ? String(total) : '';
+      const visible = filtered.slice(0, _promptsVisibleLimit);
+      if (!total) {
+        grid.innerHTML = '<div class="doclib-empty" style="opacity:0.45;padding:24px 0;text-align:center;font-size:11px;">No prompts yet. Click Create to save one.</div>';
+        return;
+      }
+      grid.innerHTML = '';
+      const _ico = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;opacity:0.5;flex-shrink:0;"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+      for (const p of visible) {
+        const card = document.createElement('div');
+        card.className = 'doclib-card doclib-prompt-card';
+        card.dataset.promptId = p.id;
+        const cbHtml = _promptsSelectMode
+          ? '<input type="checkbox" class="memory-select-cb _prompt-cb" data-pid="' + _esc(p.id) + '"' + (_promptsSelected.has(p.id) ? ' checked' : '') + ' style="margin-right:6px;flex-shrink:0;cursor:pointer;" />'
+          : '';
+        card.innerHTML =
+          '<div class="doclib-card-header" style="display:flex;align-items:center;gap:6px;width:100%;">' +
+            cbHtml +
+            '<div style="flex:1;min-width:0;">' +
+              '<div class="memory-item-title doclib-prompt-card-title">' + _ico + _esc(p.title || 'Untitled prompt') + '</div>' +
+              '<div class="memory-item-meta doclib-prompt-card-preview" style="font-size:10px;opacity:0.45;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + _esc(_promptPreview(p.body)) + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div class="doclib-card-preview" style="display:none;"></div>';
+        const cb = card.querySelector('._prompt-cb');
+        if (cb) {
+          cb.addEventListener('click', e => e.stopPropagation());
+          cb.addEventListener('change', () => {
+            if (cb.checked) _promptsSelected.add(p.id); else _promptsSelected.delete(p.id);
+            _updatePromptsCount();
+          });
+        }
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('._prompt-cb')) return;
+          if (_promptsSelectMode) {
+            const c = card.querySelector('._prompt-cb');
+            if (c) { c.checked = !c.checked; c.dispatchEvent(new Event('change')); }
+            return;
+          }
+          _togglePromptPreview(card, p);
+        });
+        grid.appendChild(card);
+        if (_promptsExpandAfterRender === p.id) {
+          _promptsExpandAfterRender = null;
+          _togglePromptPreview(card, p, { editMode: true });
+        }
+      }
+      _maybeCascadeGrid(grid, 'prompts');
+      _appendInlineLoadMore(grid, total, _promptsVisibleLimit, () => {
+        _promptsVisibleLimit += _LIB_PAGE_SIZE;
+        _renderPromptsGrid();
+      });
+    }
+
+    function _updatePromptsCount() {
+      const el = document.getElementById('doclib-prompts-selected-count');
+      if (el) el.textContent = _promptsSelected.size + ' Selected';
+    }
+
+    document.getElementById('doclib-prompts-sort')?.addEventListener('change', (e) => {
+      _promptsSort = e.target.value;
+      _renderPromptsGrid();
+    });
+    document.getElementById('doclib-prompts-search')?.addEventListener('input', (e) => {
+      _promptsSearch = e.target.value.trim();
+      _promptsVisibleLimit = _LIB_PAGE_SIZE;
+      _renderPromptsGrid();
+    });
+    document.getElementById('doclib-prompts-select-btn')?.addEventListener('click', () => {
+      _promptsSelectMode = !_promptsSelectMode;
+      _promptsSelected.clear();
+      document.getElementById('doclib-prompts-bulk')?.classList.toggle('hidden', !_promptsSelectMode);
+      _renderPromptsGrid();
+    });
+    document.getElementById('doclib-prompts-bulk-cancel')?.addEventListener('click', () => {
+      _promptsSelectMode = false;
+      _promptsSelected.clear();
+      document.getElementById('doclib-prompts-bulk')?.classList.add('hidden');
+      _renderPromptsGrid();
+    });
+    document.getElementById('doclib-prompts-select-all')?.addEventListener('change', () => {
+      const allCb = document.getElementById('doclib-prompts-select-all');
+      const newState = !!allCb?.checked;
+      _filteredPrompts().slice(0, _promptsVisibleLimit).forEach(p => {
+        if (newState) _promptsSelected.add(p.id); else _promptsSelected.delete(p.id);
+      });
+      _updatePromptsCount();
+      _renderPromptsGrid();
+    });
+    document.getElementById('doclib-prompts-bulk-delete')?.addEventListener('click', async () => {
+      const count = _promptsSelected.size;
+      if (!count) return;
+      if (!await window.styledConfirm(`Delete ${count} prompt${count > 1 ? 's' : ''}?`, { confirmText: 'Delete', danger: true })) return;
+      await Promise.all([..._promptsSelected].map(id =>
+        fetch(`${API_BASE}/api/prompts/${id}`, { method: 'DELETE', credentials: 'same-origin' })
+      ));
+      _promptsItems = _promptsItems.filter(p => !_promptsSelected.has(p.id));
+      _promptsSelected.clear();
+      _promptsSelectMode = false;
+      document.getElementById('doclib-prompts-bulk')?.classList.add('hidden');
+      _renderPromptsGrid();
+      if (uiModule) uiModule.showToast('Deleted');
+    });
+    document.getElementById('doclib-prompts-create-btn')?.addEventListener('click', async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/prompts`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 'Untitled prompt', body: '' }),
+        });
+        if (!res.ok) throw new Error(res.statusText);
+        const created = await res.json();
+        _promptsItems.unshift(created);
+        _promptsExpandAfterRender = created.id;
+        _renderPromptsGrid();
+      } catch (e) {
+        if (uiModule) uiModule.showError('Failed to create prompt');
+      }
+    });
+
     // Shared dropdown for chats/archive menus — defined at module scope below
     // (was here originally; hoisted so libraryCreateCard's mobile kebab
     // handler — which lives outside openLibrary's closure — can call it).
@@ -3367,9 +3694,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     _libraryEscHandler = (e) => {
       if (e.key === 'Escape') {
         // Collapse expanded card first, then close modal on second Escape
-        const expanded = document.querySelector('#doclib-grid .doclib-card-expanded');
+        const expanded = document.querySelector('#doclib-grid .doclib-card-expanded, #doclib-prompts-grid .doclib-card-expanded');
         if (expanded) {
           _collapseExpandedCard(expanded);
+          const preview = expanded.querySelector('.doclib-card-preview');
+          if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
         } else {
           closeLibrary();
         }

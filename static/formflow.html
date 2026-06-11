@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FormFlow</title>
+  <!-- Apply saved Odysseus theme before first paint -->
+  <script nonce="{{CSP_NONCE}}">
+  (function(){
+    try {
+      var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+      if (!t) return;
+      var s = document.documentElement.style;
+      if (t.colors) {
+        var c = t.colors;
+        if (c.bg)     s.setProperty('--bg', c.bg);
+        if (c.fg)     s.setProperty('--fg', c.fg);
+        if (c.panel)  s.setProperty('--panel', c.panel);
+        if (c.border) s.setProperty('--border', c.border);
+        if (c.red)    s.setProperty('--red', c.red);
+        var bc = (c.advanced && c.advanced.brandColor) || c.red;
+        if (bc) s.setProperty('--brand-color', bc);
+      }
+    } catch(e) {}
+  })();
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #282c34;
+      --fg: #9cdef2;
+      --panel: #1a1e26;
+      --border: #355a66;
+      --red: #e06c75;
+      --muted: #667;
+      --warn: #f0ad4e;
+      --radius: 8px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      font-size: 16px;
+      line-height: 1.5;
+    }
+
+    /* ── Progress bar ── */
+    #ff-progress {
+      position: fixed;
+      top: 0; left: 0;
+      height: 3px;
+      background: var(--red);
+      width: 0%;
+      transition: width 0.35s ease;
+      z-index: 200;
+    }
+
+    /* ── Back link ── */
+    #ff-back {
+      position: fixed;
+      top: 14px; left: 18px;
+      font-size: 0.8rem;
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      text-decoration: none;
+      z-index: 100;
+      transition: color 0.15s;
+    }
+    #ff-back:hover { color: var(--fg); }
+
+    /* ── App shell ── */
+    #ff-app {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 64px 20px 96px;
+    }
+
+    .ff-screen {
+      display: none;
+      width: 100%;
+      max-width: 680px;
+      animation: ffFade 0.18s ease;
+    }
+    .ff-screen.active { display: block; }
+
+    @keyframes ffFade {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ────────────────────────────────────── */
+    /* Input screen                          */
+    /* ────────────────────────────────────── */
+    #ff-screen-input .ff-title {
+      font-size: 1.65rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 55%, var(--fg)));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    #ff-screen-input .ff-sub {
+      color: color-mix(in srgb, var(--fg) 50%, transparent);
+      margin-bottom: 28px;
+      font-size: 0.92rem;
+    }
+
+    /* Tabs */
+    .ff-tabs {
+      display: flex;
+      gap: 2px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 18px;
+    }
+    .ff-tab {
+      padding: 8px 16px;
+      font-size: 0.85rem;
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      cursor: pointer;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      background: none;
+      font-family: inherit;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .ff-tab.active { color: var(--fg); border-bottom-color: var(--red); }
+    .ff-tab:hover:not(.active) { color: var(--fg); }
+
+    .ff-tab-pane { display: none; }
+    .ff-tab-pane.active { display: block; }
+
+    /* Paste */
+    #ff-paste {
+      width: 100%;
+      min-height: 190px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--fg);
+      font-size: 0.93rem;
+      padding: 14px;
+      resize: vertical;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+      line-height: 1.55;
+    }
+    #ff-paste:focus { border-color: var(--red); }
+    #ff-paste::placeholder { color: color-mix(in srgb, var(--fg) 28%, transparent); }
+
+    /* Drop zone */
+    #ff-drop-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 52px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      color: color-mix(in srgb, var(--fg) 50%, transparent);
+      user-select: none;
+    }
+    #ff-drop-zone:hover, #ff-drop-zone.drag-over {
+      border-color: var(--red);
+      background: color-mix(in srgb, var(--red) 6%, var(--panel));
+    }
+    .ff-drop-icon { font-size: 2.2rem; display: block; margin-bottom: 10px; }
+    .ff-drop-hint {
+      font-size: 0.78rem;
+      margin-top: 8px;
+      color: color-mix(in srgb, var(--fg) 30%, transparent);
+      letter-spacing: 0.02em;
+    }
+
+    #ff-file-chosen {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      font-size: 0.9rem;
+    }
+    #ff-file-chosen.visible { display: flex; }
+    .ff-file-name { flex: 1; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #ff-file-clear {
+      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      cursor: pointer;
+      background: none;
+      border: none;
+      font-size: 1rem;
+      padding: 0 2px;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+    #ff-file-clear:hover { color: var(--red); }
+
+    /* Primary button */
+    .ff-btn-primary {
+      display: block;
+      width: 100%;
+      margin-top: 16px;
+      padding: 13px;
+      background: var(--red);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.18s;
+    }
+    .ff-btn-primary:hover { opacity: 0.86; }
+    .ff-btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .ff-error {
+      margin-top: 12px;
+      color: var(--red);
+      font-size: 0.875rem;
+      min-height: 20px;
+    }
+
+    /* ────────────────────────────────────── */
+    /* Loading screen                        */
+    /* ────────────────────────────────────── */
+    #ff-screen-loading { text-align: center; }
+
+    .ff-loading-title {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .ff-loading-badge {
+      font-size: 0.75rem;
+      color: color-mix(in srgb, var(--fg) 38%, transparent);
+      margin-bottom: 22px;
+      min-height: 18px;
+    }
+    #ff-token-stream {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+      font-size: 0.72rem;
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      text-align: left;
+      max-height: 150px;
+      overflow: hidden;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .ff-pulse {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--red);
+      animation: ffPulse 1s ease-in-out infinite;
+      vertical-align: middle;
+      margin-left: 6px;
+      margin-bottom: 1px;
+    }
+    @keyframes ffPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.3; transform: scale(0.75); }
+    }
+
+    /* ────────────────────────────────────── */
+    /* Form screen                           */
+    /* ────────────────────────────────────── */
+    .ff-q-number {
+      font-size: 0.75rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--fg) 38%, transparent);
+      margin-bottom: 12px;
+    }
+    .ff-q-label {
+      font-size: 1.65rem;
+      font-weight: 700;
+      line-height: 1.25;
+      color: var(--fg);
+      margin-bottom: 4px;
+    }
+    .ff-q-required { color: var(--red); margin-left: 4px; }
+    .ff-q-input-wrap { margin-top: 22px; }
+
+    .ff-input {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--fg);
+      font-size: 1rem;
+      padding: 12px 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .ff-input:focus { border-color: var(--red); }
+    .ff-input::placeholder { color: color-mix(in srgb, var(--fg) 28%, transparent); }
+    textarea.ff-input { min-height: 140px; resize: vertical; line-height: 1.55; }
+
+    /* Limit counter */
+    #ff-limit-counter {
+      text-align: right;
+      font-size: 0.76rem;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      margin-top: 7px;
+      color: color-mix(in srgb, var(--fg) 40%, transparent);
+      transition: color 0.2s;
+      min-height: 18px;
+    }
+    #ff-limit-counter.warn { color: var(--warn); }
+    #ff-limit-counter.over { color: var(--red); font-weight: 700; }
+
+    /* Choice / Multi */
+    .ff-choice-list { display: flex; flex-direction: column; gap: 8px; }
+    .ff-choice-opt {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 14px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      font-size: 0.95rem;
+      user-select: none;
+    }
+    .ff-choice-opt:hover { border-color: var(--red); }
+    .ff-choice-opt.selected {
+      border-color: var(--red);
+      background: color-mix(in srgb, var(--red) 10%, var(--panel));
+    }
+    .ff-choice-dot {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      flex-shrink: 0;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .ff-choice-opt.selected .ff-choice-dot {
+      border-color: var(--red);
+      background: var(--red);
+    }
+    .ff-check-box {
+      width: 14px; height: 14px;
+      border-radius: 3px;
+      border: 2px solid var(--border);
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      transition: border-color 0.15s, background 0.15s;
+      font-size: 0.65rem; color: #fff;
+    }
+    .ff-choice-opt.selected .ff-check-box {
+      border-color: var(--red);
+      background: var(--red);
+    }
+
+    /* Yes / No */
+    .ff-yesno { display: flex; gap: 12px; }
+    .ff-yesno-btn {
+      flex: 1;
+      padding: 15px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--fg);
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .ff-yesno-btn:hover { border-color: var(--red); }
+    .ff-yesno-btn.selected {
+      border-color: var(--red);
+      background: color-mix(in srgb, var(--red) 10%, var(--panel));
+    }
+
+    /* Scale */
+    .ff-scale { display: flex; gap: 8px; flex-wrap: wrap; }
+    .ff-scale-btn {
+      width: 50px; height: 50px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--fg);
+      font-size: 0.95rem;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .ff-scale-btn:hover { border-color: var(--red); }
+    .ff-scale-btn.selected {
+      border-color: var(--red);
+      background: color-mix(in srgb, var(--red) 10%, var(--panel));
+    }
+
+    /* Nav bar */
+    #ff-nav {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border-top: 1px solid var(--border);
+      z-index: 50;
+    }
+    #ff-nav.visible { display: flex; }
+
+    .ff-nav-btn {
+      padding: 10px 26px;
+      border-radius: var(--radius);
+      font-size: 0.93rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--fg);
+      font-family: inherit;
+      transition: border-color 0.15s, opacity 0.15s;
+    }
+    .ff-nav-btn:hover:not(:disabled) { border-color: var(--red); }
+    .ff-nav-btn.primary {
+      background: var(--red);
+      border-color: var(--red);
+      color: #fff;
+    }
+    .ff-nav-btn.primary:hover:not(:disabled) { opacity: 0.86; }
+    .ff-nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .ff-nav-btn.invisible { visibility: hidden; }
+
+    /* ────────────────────────────────────── */
+    /* Review screen                         */
+    /* ────────────────────────────────────── */
+    .ff-review-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 6px; }
+    .ff-review-sub {
+      color: color-mix(in srgb, var(--fg) 45%, transparent);
+      font-size: 0.88rem;
+      margin-bottom: 22px;
+    }
+    .ff-review-actions { display: flex; gap: 10px; margin-bottom: 28px; }
+    .ff-review-btn {
+      padding: 9px 20px;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--fg);
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    .ff-review-btn:hover { border-color: var(--red); }
+    .ff-review-btn.primary { background: var(--red); border-color: var(--red); color: #fff; }
+    .ff-review-btn.primary:hover { opacity: 0.86; }
+    .ff-review-btn:disabled { opacity: 0.5; cursor: default; }
+
+    .ff-review-item {
+      margin-bottom: 22px;
+      padding-bottom: 22px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+    }
+    .ff-review-item:last-child { border-bottom: none; }
+    .ff-review-q-num {
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--fg) 35%, transparent);
+      margin-bottom: 3px;
+    }
+    .ff-review-q-label { font-size: 0.97rem; font-weight: 600; margin-bottom: 8px; }
+    .ff-review-answer {
+      font-size: 0.93rem;
+      white-space: pre-wrap;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 13px;
+      line-height: 1.5;
+    }
+    .ff-review-answer.empty {
+      color: color-mix(in srgb, var(--fg) 35%, transparent);
+      font-style: italic;
+    }
+
+    .ff-restart-row { margin-top: 28px; text-align: center; }
+    .ff-restart-link {
+      background: none;
+      border: none;
+      font-family: inherit;
+      font-size: 0.875rem;
+      color: color-mix(in srgb, var(--fg) 38%, transparent);
+      cursor: pointer;
+      text-decoration: underline;
+      transition: color 0.15s;
+    }
+    .ff-restart-link:hover { color: var(--fg); }
+  </style>
+</head>
+<body>
+  <div id="ff-progress"></div>
+  <a id="ff-back" href="/">← Odysseus</a>
+
+  <div id="ff-app">
+
+    <!-- ── Input ── -->
+    <div id="ff-screen-input" class="ff-screen active">
+      <h1 class="ff-title">FormFlow</h1>
+      <p class="ff-sub">Paste a form or upload a file — answer one question at a time.</p>
+
+      <div class="ff-tabs">
+        <button class="ff-tab active" data-tab="paste">Paste text</button>
+        <button class="ff-tab" data-tab="upload">Upload file</button>
+      </div>
+
+      <div id="ff-pane-paste" class="ff-tab-pane active">
+        <textarea id="ff-paste" class="ff-input" placeholder="Paste your form, questionnaire, or application here…" rows="9"></textarea>
+      </div>
+
+      <div id="ff-pane-upload" class="ff-tab-pane">
+        <div id="ff-drop-zone">
+          <span class="ff-drop-icon">📄</span>
+          <div>Drop a file here or <strong>click to browse</strong></div>
+          <div class="ff-drop-hint">.pdf · .txt · .md · .html · .png · .jpg · .jpeg</div>
+        </div>
+        <div id="ff-file-chosen">
+          <span>📎</span>
+          <span id="ff-file-name" class="ff-file-name"></span>
+          <button id="ff-file-clear" aria-label="Remove file">✕</button>
+        </div>
+        <input id="ff-file-input" type="file" accept=".pdf,.txt,.md,.html,.png,.jpg,.jpeg" style="display:none" />
+      </div>
+
+      <div class="ff-error" id="ff-input-error"></div>
+      <button class="ff-btn-primary" id="ff-parse-btn">Parse Form →</button>
+    </div>
+
+    <!-- ── Loading ── -->
+    <div id="ff-screen-loading" class="ff-screen">
+      <div class="ff-loading-title">Parsing your form<span class="ff-pulse"></span></div>
+      <div class="ff-loading-badge" id="ff-loading-badge"></div>
+      <div id="ff-token-stream"></div>
+    </div>
+
+    <!-- ── Form ── -->
+    <div id="ff-screen-form" class="ff-screen">
+      <div class="ff-q-number" id="ff-q-number"></div>
+      <div class="ff-q-label" id="ff-q-label"></div>
+      <div class="ff-q-input-wrap" id="ff-q-input-wrap"></div>
+      <div id="ff-limit-counter"></div>
+    </div>
+
+    <!-- ── Review ── -->
+    <div id="ff-screen-review" class="ff-screen">
+      <div class="ff-review-title">Review your answers</div>
+      <div class="ff-review-sub" id="ff-review-sub"></div>
+      <div class="ff-review-actions">
+        <button class="ff-review-btn primary" id="ff-copy-btn">Copy all</button>
+        <button class="ff-review-btn" id="ff-download-btn">Download .txt</button>
+      </div>
+      <div id="ff-review-list"></div>
+      <div class="ff-restart-row">
+        <button class="ff-restart-link" id="ff-restart-btn">← Parse another form</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Fixed nav (form screen only) -->
+  <div id="ff-nav">
+    <button class="ff-nav-btn" id="ff-nav-back">Back</button>
+    <button class="ff-nav-btn primary" id="ff-nav-next">Next →</button>
+  </div>
+
+  <script nonce="{{CSP_NONCE}}" src="/static/js/formflow.js"></script>
+</body>
+</html>

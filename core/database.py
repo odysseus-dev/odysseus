@@ -1459,6 +1459,17 @@ def _migrate_add_assistant_columns():
 
 
 
+class SavedPrompt(TimestampMixin, Base):
+    """Reusable text prompt saved from the Library Prompts tab."""
+    __tablename__ = "saved_prompts"
+
+    id    = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    title = Column(String, nullable=False, default="Untitled prompt")
+    body  = Column(Text, nullable=False, default="")
+    tags  = Column(Text, nullable=True)  # JSON array of strings
+
+
 class Note(TimestampMixin, Base):
     """A Google Keep-style note or checklist."""
     __tablename__ = "notes"

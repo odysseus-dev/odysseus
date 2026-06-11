@@ -13,6 +13,195 @@ let modalEl = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+
+const _MCP_READONLY_VERBS = [
+  'list', 'get', 'read', 'search', 'fetch', 'query', 'find', 'describe',
+  'show', 'view', 'lookup', 'count', 'status', 'info', 'inspect', 'summar',
+];
+
+function _mcpToolIsReadonly(name) {
+  const n = String(name || '').toLowerCase();
+  return _MCP_READONLY_VERBS.some(v => n.startsWith(v));
+}
+
+function _mcpToolSourceGroup(tool) {
+  const desc = String(tool.description || '');
+  const name = String(tool.name || '');
+  const lower = name.toLowerCase();
+  const descLower = desc.toLowerCase();
+  const firstLine = desc.split('\n')[0].trim();
+
+  // Composio / OpenAPI-style tools embed the catalog name before " | " on line 1.
+  const pipeIdx = firstLine.indexOf(' | ');
+  if (pipeIdx > 0) return firstLine.slice(0, pipeIdx).trim();
+
+  // Docker MCP gateway tools use plain names/descriptions — map to catalog labels.
+  if (/^browser_|^close_session$/.test(lower)) return 'Playwright';
+  if (lower.startsWith('perplexity_')) return 'Perplexity';
+  if (lower === 'get_current_time' || lower === 'convert_time') return 'Time (Reference)';
+  if (['get_transcript', 'get_timed_transcript', 'get_video_info', 'get_available_languages'].includes(lower)) {
+    return 'YouTube Transcripts';
+  }
+  if (['get_company_profile', 'get_person_profile', 'get_job_details', 'get_recommended_jobs', 'search_jobs'].includes(lower)) {
+    return 'LinkedIn';
+  }
+  if (/^(hf_|hub_|space_search|paper_search|gr1_)/.test(lower)) return 'Hugging Face';
+  if (/^mcp-|^code-mode$/.test(lower)) return 'MCP Gateway';
+  if (/^(read_|write_|list_allowed|list_directory|create_directory|move_file|search_files|get_file_info|edit_file)/.test(lower)
+      || ['read_file', 'read_text_file', 'read_media_file', 'write_file', 'edit_file',
+          'create_directory', 'list_directory', 'move_file', 'search_files',
+          'get_file_info', 'list_allowed_directories'].includes(lower)) {
+    return 'Filesystem (Reference)';
+  }
+  if (/arxiv/.test(lower) || descLower.includes('arxiv')) return 'ArXiv';
+  if (/^aws_/.test(lower) || (descLower.includes('aws') && descLower.includes('api'))) return 'AWS API';
+
+  if (descLower.includes('linkedin')) return 'LinkedIn';
+  if (descLower.includes('hugging face') || descLower.includes('huggingface')) return 'Hugging Face';
+  if (descLower.includes('youtube') || descLower.includes('video information')) return 'YouTube Transcripts';
+  if (/github|pull request|repository|git tag|issue in a/.test(descLower) || /^get_team/.test(lower)) {
+    return 'GitHub Official';
+  }
+
+  const stripped = name.replace(/^API-/i, '');
+  const match = stripped.match(/^([A-Za-z][A-Za-z0-9_-]*?)[-_]/);
+  if (match && match[1].length > 2 && match[1].toLowerCase() !== 'api') {
+    const g = match[1];
+    return g.charAt(0).toUpperCase() + g.slice(1);
+  }
+  return 'Other';
+}
+
+function _mcpToolDetail(tool) {
+  const desc = String(tool.description || '');
+  const firstLine = desc.split('\n')[0].trim();
+  const pipeIdx = firstLine.indexOf(' | ');
+  if (pipeIdx >= 0) return firstLine.slice(pipeIdx + 3).trim();
+  return desc;
+}
+
+function _mcpToolDisplayName(name) {
+  return String(name || '').replace(/^API-/i, '');
+}
+
+function _mcpActionPillStyle(action) {
+  if (action === 'read') return 'background:rgba(150,150,150,0.18);color:var(--fg-muted,#888);';
+  return 'background:color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);color:var(--accent, var(--red));';
+}
+
+function _groupMcpTools(tools) {
+  const groups = new Map();
+  for (const t of tools) {
+    const g = _mcpToolSourceGroup(t);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(t);
+  }
+  for (const arr of groups.values()) arr.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function _renderMcpToolsPanelHtml(tools) {
+  const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
+  const groups = _groupMcpTools(tools);
+  const enabledCount = tools.length - disabled.size;
+  const groupsHtml = groups.map(([groupName, groupTools]) => {
+    const groupEnabled = groupTools.filter(t => !disabled.has(t.name)).length;
+    const allChecked = groupEnabled === groupTools.length;
+    const someChecked = groupEnabled > 0 && !allChecked;
+    const rows = groupTools.map(t => {
+      const action = _mcpToolIsReadonly(t.name) ? 'read' : 'write';
+      const detail = _mcpToolDetail(t).slice(0, 120);
+      const displayName = _mcpToolDisplayName(t.name);
+      return `
+        <div class="settings-row mcp-tool-row" title="${esc(t.description || '')}" style="align-items:center;gap:8px;display:flex;min-height:30px;padding:2px 0;">
+          <span class="settings-label mcp-tool-name" style="width:130px;flex-shrink:0;padding:0;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(displayName)}</span>
+          <span class="mcp-tool-action-pill" style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;padding:1px 7px;border-radius:999px;flex-shrink:0;min-width:44px;text-align:center;box-sizing:border-box;${_mcpActionPillStyle(action)}">${action}</span>
+          <span style="font-size:11px;line-height:1.35;opacity:0.62;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(detail)}</span>
+          <label class="admin-switch" style="margin-left:auto;flex-shrink:0;"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span class="admin-slider"></span></label>
+        </div>`;
+    }).join('');
+    return `
+      <div class="mcp-tool-group" data-mcp-group="${esc(groupName)}" style="border:1px solid var(--border);border-radius:6px;padding:9px 10px;margin-top:8px;">
+        <div class="mcp-tool-group-header" style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+          <div style="flex:1;min-width:0;font-size:12px;font-weight:600;">${esc(groupName)}</div>
+          <span class="mcp-tool-group-count" style="font-size:10px;opacity:0.52;">${groupEnabled}/${groupTools.length}</span>
+          <label class="admin-switch" style="flex-shrink:0;" title="Toggle all ${esc(groupName)} tools">
+            <input type="checkbox" class="mcp-group-toggle" data-mcp-group="${esc(groupName)}" ${allChecked ? 'checked' : ''} ${someChecked ? 'data-indeterminate="1"' : ''}>
+            <span class="admin-slider"></span>
+          </label>
+        </div>
+        ${rows}
+      </div>`;
+  }).join('');
+  return `
+    <div class="mcp-tools-header" style="margin-top:4px;">
+      <span>Tool access</span>
+      <span style="display:flex;gap:8px;align-items:center">
+        <span class="mcp-tools-count">${enabledCount}/${tools.length} enabled</span>
+        <a href="#" id="uf-mcp-all">All</a>
+        <a href="#" id="uf-mcp-none">None</a>
+      </span>
+    </div>
+    <div class="mcp-tools-groups">${groupsHtml || '<span style="opacity:0.5;font-size:11px;">No tools</span>'}</div>`;
+}
+
+function _wireMcpToolsPanel(panel, serverId) {
+  const updateCounts = () => {
+    const checkboxes = panel.querySelectorAll('input[data-mcp-tool-name]');
+    const total = checkboxes.length;
+    let enabled = 0;
+    checkboxes.forEach(cb => { if (cb.checked) enabled++; });
+    const cnt = panel.querySelector('.mcp-tools-count');
+    if (cnt) cnt.textContent = `${enabled}/${total} enabled`;
+    panel.querySelectorAll('.mcp-tool-group').forEach(groupEl => {
+      const gCheckboxes = groupEl.querySelectorAll('input[data-mcp-tool-name]');
+      let gEnabled = 0;
+      gCheckboxes.forEach(cb => { if (cb.checked) gEnabled++; });
+      const gCnt = groupEl.querySelector('.mcp-tool-group-count');
+      if (gCnt) gCnt.textContent = `${gEnabled}/${gCheckboxes.length}`;
+      const gToggle = groupEl.querySelector('.mcp-group-toggle');
+      if (gToggle) {
+        gToggle.checked = gEnabled === gCheckboxes.length;
+        gToggle.indeterminate = gEnabled > 0 && gEnabled < gCheckboxes.length;
+      }
+    });
+  };
+  const saveFn = async () => {
+    const dis = [];
+    panel.querySelectorAll('input[data-mcp-tool-name]').forEach(cb => { if (!cb.checked) dis.push(cb.dataset.mcpToolName); });
+    await fetch(`/api/mcp/servers/${serverId}/tools`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ disabled: dis }),
+    });
+    updateCounts();
+  };
+  panel.querySelectorAll('input[data-mcp-tool-name]').forEach(cb => cb.addEventListener('change', saveFn));
+  panel.querySelectorAll('.mcp-group-toggle').forEach(gt => {
+    if (gt.dataset.indeterminate === '1') gt.indeterminate = true;
+    gt.addEventListener('change', () => {
+      const groupEl = gt.closest('.mcp-tool-group');
+      const checked = gt.checked;
+      groupEl?.querySelectorAll('input[data-mcp-tool-name]').forEach(cb => { cb.checked = checked; });
+      gt.indeterminate = false;
+      saveFn();
+    });
+  });
+  panel.querySelector('#uf-mcp-all')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    panel.querySelectorAll('input[data-mcp-tool-name]').forEach(cb => { cb.checked = true; });
+    panel.querySelectorAll('.mcp-group-toggle').forEach(gt => { gt.checked = true; gt.indeterminate = false; });
+    saveFn();
+  });
+  panel.querySelector('#uf-mcp-none')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    panel.querySelectorAll('input[data-mcp-tool-name]').forEach(cb => { cb.checked = false; });
+    panel.querySelectorAll('.mcp-group-toggle').forEach(gt => { gt.checked = false; gt.indeterminate = false; });
+    saveFn();
+  });
+}
+
 function safeRasterDataUrl(raw) {
   const value = String(raw || '').trim();
   return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
@@ -4706,7 +4895,7 @@ async function initUnifiedIntegrations() {
               <button class="admin-btn-sm" id="uf-mcp-cancel" style="opacity:0.7">Close</button>
               <span id="uf-mcp-msg" style="font-size:11px"></span>
             </div>
-            <div id="uf-mcp-tools-panel"></div>
+            <div id="uf-mcp-tools-panel" class="mcp-tools-panel"></div>
           </div>`;
         // Reconnect
         el('uf-mcp-reconnect').addEventListener('click', async () => {
@@ -4734,18 +4923,8 @@ async function initUnifiedIntegrations() {
             const tr = await fetch(`/api/mcp/servers/${srv.id}/tools`, { credentials: 'same-origin' });
             const tools = await tr.json();
             if (tools.length) {
-              const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
-              panel.innerHTML = `<div class="mcp-tools-header"><span>Tools</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} enabled</span><a href="#" id="uf-mcp-all">All</a> <a href="#" id="uf-mcp-none">None</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description||'').slice(0,80))}</span></span></label>`).join('')}</div>`;
-              const saveFn = async () => {
-                const dis = [];
-                panel.querySelectorAll('input[type=checkbox]').forEach(cb => { if (!cb.checked) dis.push(cb.dataset.mcpToolName); });
-                await fetch(`/api/mcp/servers/${srv.id}/tools`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ disabled: dis }) });
-                const cnt = panel.querySelector('.mcp-tools-count');
-                if (cnt) cnt.textContent = `${tools.length - dis.length}/${tools.length} enabled`;
-              };
-              panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', saveFn));
-              el('uf-mcp-all')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = true); saveFn(); });
-              el('uf-mcp-none')?.addEventListener('click', (e) => { e.preventDefault(); panel.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = false); saveFn(); });
+              panel.innerHTML = _renderMcpToolsPanelHtml(tools);
+              _wireMcpToolsPanel(panel, srv.id);
             }
           } catch (_) { panel.innerHTML = '<span style="opacity:0.5;font-size:11px">Failed to load tools</span>'; }
         }

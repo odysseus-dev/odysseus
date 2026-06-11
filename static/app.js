@@ -24,6 +24,7 @@ import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
+import formflowModule from './js/formflow.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
@@ -915,6 +916,14 @@ function initializeEventListeners() {
       }
     });
   }
+  // FormFlow tool button — opens the FormFlow modal panel
+  const toolFormFlowBtn = el('tool-formflow-btn');
+  if (toolFormFlowBtn) {
+    toolFormFlowBtn.addEventListener('click', () => {
+      if (formflowModule) formflowModule.togglePanel();
+    });
+  }
+
   // Refresh notes due-reminder badge on load and every 5 minutes
   if (notesModule && notesModule.refreshDueBadge) {
     notesModule.refreshDueBadge();
@@ -984,6 +993,10 @@ function initializeEventListeners() {
     }
   }
   const _routeOpen = {
+    '/formflow': () => {
+      _collapseSidebarToRail();
+      formflowModule?.openPanel();
+    },
     '/notes':    () => {
       if (!notesModule) return;
       _collapseSidebarToRail();
@@ -1044,6 +1057,7 @@ function initializeEventListeners() {
     '/gallery':  () => document.getElementById('tool-gallery-btn')?.click(),
     '/tasks':    () => document.getElementById('tool-tasks-btn')?.click(),
     '/library':  () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary(),
+    '/library/prompts': () => sessionModule && sessionModule.openLibrary && sessionModule.openLibrary('prompts'),
   };
   const _opener = _routeOpen[urlPath];
   // Defer the opener — at this point in init, the modules whose handlers
@@ -3427,6 +3441,7 @@ function startOdysseusApp() {
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',
+    'rail-formflow':  'tool-formflow-btn',
   };
   Object.entries(_railToolMap).forEach(([railId, toolId]) => {
     const railBtn = el(railId);

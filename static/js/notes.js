@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import { wireSwipeDismiss, collapseSidebarForMobileSheet } from './panelSheet.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -481,65 +482,6 @@ function _linkify(s) {
   });
 }
 function _uid() { return Math.random().toString(36).slice(2, 10); }
-
-// Mobile swipe-to-dismiss for the notes sheet. Mirrors the document panel
-// gesture (finger-following, velocity-based dismiss, rubber-band, snap-back)
-// so both sheets feel identical; dismisses via the notes closePanel('down').
-function _wireNotesSwipeDismiss(el, pane) {
-  if (!el || !pane) return;
-  const DISMISS_THRESHOLD = 50, VELOCITY_THRESHOLD = 0.3, RUBBER = 0.35;
-  let startY = 0, startX = 0, lastY = 0, lastT = 0, velocity = 0;
-  let dragging = false, cancelled = false;
-
-  el.addEventListener('touchstart', (e) => {
-    if (window.innerWidth > 768 || e.touches.length !== 1) return;
-    if (e.target.closest('button, input, select, label, textarea')) return;
-    const t = e.touches[0];
-    startY = t.clientY; startX = t.clientX; lastY = startY; lastT = e.timeStamp;
-    velocity = 0; dragging = false; cancelled = false;
-  }, { passive: true });
-
-  el.addEventListener('touchmove', (e) => {
-    if (cancelled || window.innerWidth > 768) return;
-    const t = e.touches[0];
-    const dx = Math.abs(t.clientX - startX);
-    const dy = t.clientY - startY;
-    if (!dragging) {
-      if (dx > 40 && dx > Math.abs(dy) * 2) { cancelled = true; return; }
-      if (Math.abs(dy) > 8) {
-        dragging = true;
-        pane.style.animation = 'none';
-        pane.style.transition = 'none';
-        pane.style.willChange = 'transform';
-      } else return;
-    }
-    const dt = e.timeStamp - lastT;
-    if (dt > 0) velocity = velocity * 0.6 + ((t.clientY - lastY) / dt) * 0.4;
-    lastY = t.clientY; lastT = e.timeStamp;
-    e.preventDefault();
-    pane.style.transform = dy > 0 ? `translateY(${dy}px)` : `translateY(${dy * RUBBER}px)`;
-  }, { passive: false });
-
-  const endSwipe = () => {
-    if (!dragging) return;
-    dragging = false;
-    pane.style.willChange = '';
-    const dy = lastY - startY;
-    if (dy > DISMISS_THRESHOLD || (dy > 20 && velocity > VELOCITY_THRESHOLD)) {
-      // Slide fully off-screen, then minimise. Keep it translated down (don't
-      // reset) so it doesn't flash back before closePanel removes it.
-      pane.style.transition = 'transform 0.2s cubic-bezier(0.2, 0, 0.4, 1)';
-      pane.style.transform = 'translateY(100%)';
-      setTimeout(() => closePanel('down'), 200);
-    } else {
-      pane.style.transition = 'transform 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.05)';
-      pane.style.transform = '';
-      setTimeout(() => { pane.style.transition = ''; }, 260);
-    }
-  };
-  el.addEventListener('touchend', endSwipe, { passive: true });
-  el.addEventListener('touchcancel', endSwipe, { passive: true });
-}
 
 function _hasTimeComponent(dateStr) {
   return typeof dateStr === 'string' && /T\d{2}:\d{2}/.test(dateStr);
@@ -1110,11 +1052,7 @@ export function openPanel() {
 
   // On mobile the notes panel takes the whole screen — auto-close the
   // sidebar so the panel isn't cropped underneath it.
-  if (window.innerWidth <= 768) {
-    const sb = document.getElementById('sidebar');
-    if (sb) sb.classList.add('hidden');
-    document.body.classList.add('sidebar-collapsed');
-  }
+  collapseSidebarForMobileSheet();
   // Mobile mode: tiles become read-only previews (no inline checkbox /
   // edit / archive / etc.), tap opens a fullscreen edit overlay,
   // long-press enters drag-to-reorder mode. See _bindCardEvents +
@@ -1196,8 +1134,8 @@ export function openPanel() {
   // Mobile: swipe the grab handle / header down to dismiss (minimise to chip).
   // Mirrors the document sheet gesture — finger-following, velocity-based
   // dismiss, rubber-band on up-drag, spring snap-back.
-  _wireNotesSwipeDismiss(pane.querySelector('.notes-mobile-grabber'), pane);
-  _wireNotesSwipeDismiss(pane.querySelector('.notes-pane-header'), pane);
+  wireSwipeDismiss(pane.querySelector('.notes-mobile-grabber'), pane, () => closePanel('down'));
+  wireSwipeDismiss(pane.querySelector('.notes-pane-header'), pane, () => closePanel('down'));
 
   const minBtn = document.getElementById('notes-minimize-btn');
   if (minBtn) minBtn.addEventListener('click', (e) => {

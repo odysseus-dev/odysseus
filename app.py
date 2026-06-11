@@ -717,6 +717,14 @@ logger.info("Webhook & API token routes initialized")
 from routes.note_routes import setup_note_routes
 app.include_router(setup_note_routes(task_scheduler))
 
+# Saved prompts (Library → Prompts tab)
+from routes.prompt_routes import setup_prompt_routes
+app.include_router(setup_prompt_routes())
+
+# FormFlow — universal form renderer
+from routes.formflow_routes import setup_formflow_routes
+app.include_router(setup_formflow_routes())
+
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()
@@ -806,6 +814,10 @@ async def serve_library(request: Request):
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+
+@app.get("/formflow")
+async def serve_formflow(request: Request):
+    return await serve_index(request)
 
 @app.get("/login")
 async def serve_login(request: Request):
