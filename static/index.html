@@ -1447,6 +1447,34 @@
             </div>
           </div>
           <div class="admin-card">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12c.6.5 1 1.2 1 2h6c0-.8.4-1.5 1-2a7 7 0 0 0-4-12z"/></svg>Model Response Defaults</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Default controls for newly created chat sessions. Existing chats keep their saved settings.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Reasoning</label>
+                <select id="set-defaultReasoningSelect" class="settings-select">
+                  <option value="">Auto</option>
+                  <option value="off">Off</option>
+                  <option value="on">On</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Verbosity</label>
+                <select id="set-defaultVerbositySelect" class="settings-select">
+                  <option value="">Auto</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div id="set-defaultControlsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Utility Model <span style="font-size:0.72em;opacity:0.55;font-weight:normal;">(Recommended: Local Endpoint)</span></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Runs background tasks (compaction, cleanup, auto-naming, retrieving memories from files) on a small/local model instead of your chat model. Leave blank to use the chat model.</div>
             <div class="settings-col">

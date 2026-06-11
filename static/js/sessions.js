@@ -1436,7 +1436,10 @@ export async function loadSessions() {
             if (emptyDefault) {
               targetId = emptyDefault.id;
             } else {
-              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+                reasoning_effort: dc.default_reasoning_effort || '',
+                verbosity: dc.default_verbosity || '',
+              });
               // On mobile, hide sidebar so user lands directly in chat
               if (window.innerWidth < 768) {
                 const sb = document.getElementById('sidebar');
@@ -1476,7 +1479,10 @@ export async function loadSessions() {
           const dcRes = await fetch(`${API_BASE}/api/default-chat`);
           const dc = await dcRes.json();
           if (dc.endpoint_url && dc.model) {
-            await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+            await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+              reasoning_effort: dc.default_reasoning_effort || '',
+              verbosity: dc.default_verbosity || '',
+            });
           }
         } catch (_) { /* no default model — that's fine, user can /setup */ }
         _autoCreateInProgress = false;
@@ -1762,9 +1768,40 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
 }
 
 // Pending session — stored locally until the first message is sent
-let _pendingChat = null; // { url, modelId, endpointId }
+let _pendingChat = null; // { url, modelId, endpointId, reasoning_effort, verbosity }
 
-export function createDirectChat(url, modelId, endpointId) {
+function _normalizePendingReasoning(value) {
+  let v = String(value || '').trim().toLowerCase().replace(/-/g, '_');
+  if (v === 'x_high') v = 'xhigh';
+  if (v === 'none') v = 'off';
+  return ['off', 'on', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) ? v : '';
+}
+
+function _normalizePendingVerbosity(value) {
+  const v = String(value || '').trim().toLowerCase();
+  return ['low', 'medium', 'high'].includes(v) ? v : '';
+}
+
+function _resolveInitialModelControls(modelControls) {
+  const defaults = (window.odysseusModelControls && window.odysseusModelControls.getDefaults)
+    ? window.odysseusModelControls.getDefaults()
+    : (window.__odysseusModelControlDefaults || {});
+  const source = modelControls || defaults || {};
+  return {
+    reasoning_effort: _normalizePendingReasoning(source.reasoning_effort || source.default_reasoning_effort || ''),
+    verbosity: _normalizePendingVerbosity(source.verbosity || source.default_verbosity || ''),
+  };
+}
+
+function _currentComposerModelControls() {
+  const state = Storage.loadToggleState();
+  return {
+    reasoning_effort: _normalizePendingReasoning(state.reasoning_effort || ''),
+    verbosity: _normalizePendingVerbosity(state.verbosity || ''),
+  };
+}
+
+export function createDirectChat(url, modelId, endpointId, modelControls = null) {
   _sessionNavToken++;
   // Detach any active stream so it doesn't interfere with the new chat
   if (window.chatModule && window.chatModule.detachCurrentStream) {
@@ -1778,13 +1815,14 @@ export function createDirectChat(url, modelId, endpointId) {
   }
 
   // Don't hit the API — just store the model info and prepare the UI
-  _pendingChat = { url, modelId, endpointId };
+  const initialControls = _resolveInitialModelControls(modelControls);
+  _pendingChat = { url, modelId, endpointId, ...initialControls };
   if (window.odysseusModelControls && window.odysseusModelControls.applySession) {
     window.odysseusModelControls.applySession({
       model: modelId || '',
       endpoint_url: url || '',
-      reasoning_effort: null,
-      verbosity: null,
+      reasoning_effort: initialControls.reasoning_effort || null,
+      verbosity: initialControls.verbosity || null,
     });
   }
   _skipAutoSelect = true;
@@ -2263,7 +2301,18 @@ function _initAllDropdowns() {
     getCurrentSessionId: () => currentSessionId,
     getSessions: () => sessions,
     getPendingChat: () => _pendingChat,
-    setPendingChat: (v) => { _pendingChat = v; },
+    setPendingChat: (v) => {
+      const controls = _resolveInitialModelControls({ ..._currentComposerModelControls(), ...(v || {}) });
+      _pendingChat = v ? { ...v, ...controls } : v;
+      if (_pendingChat && window.odysseusModelControls && window.odysseusModelControls.applySession) {
+        window.odysseusModelControls.applySession({
+          model: _pendingChat.modelId || '',
+          endpoint_url: _pendingChat.url || '',
+          reasoning_effort: _pendingChat.reasoning_effort || null,
+          verbosity: _pendingChat.verbosity || null,
+        });
+      }
+    },
     createDirectChat,
   });
   _initDropdownDismiss();

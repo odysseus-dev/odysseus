@@ -375,6 +375,9 @@ async function initDefaultChat() {
   var msg = el('set-defaultChatMsg');
   var fbContainer = el('set-defaultFallbacks');
   var addFbBtn = el('set-defaultAddFallback');
+  var reasoningSel = el('set-defaultReasoningSelect');
+  var verbositySel = el('set-defaultVerbositySelect');
+  var controlsMsg = el('set-defaultControlsMsg');
   var _endpoints = [];
   var _fallbacks = []; // [{endpoint_id, model}] — tried in order if primary fails
 
@@ -398,6 +401,33 @@ async function initDefaultChat() {
     _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
     refreshModels(selectedModel !== undefined ? selectedModel : modelSel.value);
     renderFallbacks();
+  }
+
+  function normalizeReasoningDefault(value) {
+    var v = String(value || '').trim().toLowerCase().replace(/-/g, '_');
+    if (v === 'x_high') v = 'xhigh';
+    if (v === 'none') v = 'off';
+    return ['off', 'on', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) ? v : '';
+  }
+
+  function normalizeVerbosityDefault(value) {
+    var v = String(value || '').trim().toLowerCase();
+    return ['low', 'medium', 'high'].includes(v) ? v : '';
+  }
+
+  function currentControlDefaults() {
+    return {
+      reasoning_effort: normalizeReasoningDefault(reasoningSel ? reasoningSel.value : ''),
+      verbosity: normalizeVerbosityDefault(verbositySel ? verbositySel.value : ''),
+    };
+  }
+
+  function publishControlDefaults() {
+    var defaults = currentControlDefaults();
+    try { window.__odysseusModelControlDefaults = defaults; } catch (_) {}
+    if (window.odysseusModelControls && window.odysseusModelControls.setDefaults) {
+      window.odysseusModelControls.setDefaults(defaults);
+    }
   }
 
   // Render the fallback chain. Each row is endpoint + model + remove.
@@ -468,6 +498,9 @@ async function initDefaultChat() {
         })
       : [];
     renderFallbacks();
+    if (reasoningSel) reasoningSel.value = normalizeReasoningDefault(settings.default_reasoning_effort);
+    if (verbositySel) verbositySel.value = normalizeVerbosityDefault(settings.default_verbosity);
+    publishControlDefaults();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
   async function saveDefault() {
@@ -486,8 +519,35 @@ async function initDefaultChat() {
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
 
+  async function saveDefaultControls() {
+    if (!reasoningSel || !verbositySel) return;
+    try {
+      var defaults = currentControlDefaults();
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          default_reasoning_effort: defaults.reasoning_effort,
+          default_verbosity: defaults.verbosity
+        })
+      });
+      publishControlDefaults();
+      if (controlsMsg) {
+        controlsMsg.textContent = 'Saved';
+        controlsMsg.style.color = 'var(--fg)';
+        setTimeout(function() { controlsMsg.textContent = ''; }, 2000);
+      }
+    } catch (e) {
+      if (controlsMsg) {
+        controlsMsg.textContent = 'Failed to save';
+        controlsMsg.style.color = 'var(--red)';
+      }
+    }
+  }
+
   epSel.addEventListener('change', function() { refreshModels(''); saveDefault(); });
   modelSel.addEventListener('change', saveDefault);
+  if (reasoningSel) reasoningSel.addEventListener('change', saveDefaultControls);
+  if (verbositySel) verbositySel.addEventListener('change', saveDefaultControls);
   if (addFbBtn) addFbBtn.addEventListener('click', function() {
     var first = enabledEndpoints()[0];
     _fallbacks.push({ endpoint_id: first ? first.id : '', model: '' });

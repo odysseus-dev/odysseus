@@ -120,6 +120,8 @@ DEFAULT_SETTINGS = {
     "task_model": "",
     "default_endpoint_id": "",
     "default_model": "",
+    "default_reasoning_effort": "",
+    "default_verbosity": "",
     # Ordered fallback chain for the default chat model. Each entry is
     # {"endpoint_id": "...", "model": "..."}. If the primary model fails
     # before producing output (endpoint offline / errors), the chat
@@ -245,6 +247,7 @@ _PER_USER_KEYS = {
     # account inherited whatever the most-recent admin picked, which then
     # got injected into the chat composer on first open.
     "default_endpoint_id", "default_model", "default_model_fallbacks",
+    "default_reasoning_effort", "default_verbosity",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
 }

@@ -492,7 +492,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           dc = (typeof window !== 'undefined' && window.__odysseusDefaultChat) || null;
         }
         if (dc.endpoint_url && dc.model) {
-          await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id);
+          await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+            reasoning_effort: dc.default_reasoning_effort || '',
+            verbosity: dc.default_verbosity || '',
+          });
           const ok = await sessionModule.materializePendingSession();
           if (!ok || !sessionModule.getCurrentSessionId()) { _releaseSendFlag(); return; }
         } else {

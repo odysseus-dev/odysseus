@@ -592,6 +592,10 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_rounds": (1, 200),
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
         }
+        _CHOICE_VALUES = {
+            "default_reasoning_effort": {"", "auto", "off", "on", "none", "minimal", "low", "medium", "high", "xhigh"},
+            "default_verbosity": {"", "auto", "low", "medium", "high"},
+        }
         for key in DEFAULT_SETTINGS:
             if key not in body:
                 continue
@@ -603,6 +607,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+            if key in _CHOICE_VALUES:
+                val = str(val or "").strip().lower().replace("-", "_")
+                if val == "x_high":
+                    val = "xhigh"
+                if val in ("auto", "default"):
+                    val = ""
+                if val not in _CHOICE_VALUES[key]:
+                    raise HTTPException(400, f"Unsupported value for {key}")
             current[key] = val
         _save_settings(current)
         return current
