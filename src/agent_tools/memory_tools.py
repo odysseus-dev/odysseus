@@ -6,6 +6,18 @@ logger = logging.getLogger(__name__)
 
 class ManageMemoryTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Manage memories: list, add, edit, delete, search.
+
+        Content format:
+        Line 1: action (list|add|edit|delete|search)
+        Line 2+: action-specific params
+
+        Actions:
+        list                    — list all memories (optional line 2: category filter)
+        add                     — line 2: text, optional line 3: category (fact|event|contact|preference)
+        edit                    — line 2: memory_id, line 3: new text
+        delete                  — line 2: memory_id
+        search                  — line 2: query"""
         owner = ctx.get("owner")
         from src.ai_interaction import _memory_manager, _memory_vector
 
@@ -50,6 +62,7 @@ class ManageMemoryTool:
             memories.append(entry)
             _memory_manager.save(memories)
 
+             # Update vector index if available
             if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
                 try:
                     _memory_vector.add(entry["id"], text)
@@ -76,6 +89,7 @@ class ManageMemoryTool:
             found = False
             for m in memories:
                 if m.get("id", "").startswith(memory_id):
+                    # Verify ownership
                     if owner and m.get("owner") != owner:
                         return {"error": f"Memory '{memory_id}' not found"}
                     m["text"] = new_text
@@ -87,6 +101,7 @@ class ManageMemoryTool:
                 return {"error": f"Memory '{memory_id}' not found"}
             _memory_manager.save(memories)
 
+            # Update vector index
             if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
                 try:
                     _memory_vector.add(full_id, new_text)
@@ -117,6 +132,7 @@ class ManageMemoryTool:
                 return {"error": f"Memory '{memory_id}' not found"}
             _memory_manager.save(memories)
 
+            # Remove from vector index
             if _memory_vector and full_id and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
                 try:
                     _memory_vector.remove(full_id)
@@ -135,6 +151,7 @@ class ManageMemoryTool:
             if hasattr(_memory_manager, 'get_relevant_memories'):
                 results = _memory_manager.get_relevant_memories(query, memories, threshold=0.05, max_items=20)
             else:
+                # Fallback: simple text search
                 query_lower = query.lower()
                 results = [m for m in memories if query_lower in m.get("text", "").lower()][:20]
 

@@ -8,10 +8,24 @@ MAX_PIPELINE_STEPS = 10
 
 class PipelineTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Execute a multi-step pipeline where each model's output feeds the next.
+
+        Content format (JSON):
+        {"steps": [
+            {"model": "model_a", "instruction": "Draft an essay about X"},
+            {"model": "model_b", "instruction": "Critique the following draft"},
+            {"model": "model_a", "instruction": "Revise based on this critique"}
+        ]}
+
+        Or line format:
+        Line 1: step1_model | step1_instruction
+        Line 2: step2_model | step2_instruction
+        ..."""
         owner = ctx.get("owner")
         from src.ai_interaction import _resolve_model, AI_CHAT_TIMEOUT
         from src.llm_core import llm_call_async
 
+        # Try JSON parse first
         steps = None
         try:
             data = json.loads(content.strip())
@@ -22,6 +36,7 @@ class PipelineTool:
         except (json.JSONDecodeError, TypeError):
             pass
 
+        # Fall back to line format: model | instruction
         if not steps:
             steps = []
             for line in content.strip().split("\n"):
@@ -39,6 +54,7 @@ class PipelineTool:
         if len(steps) > MAX_PIPELINE_STEPS:
             return {"error": f"Maximum {MAX_PIPELINE_STEPS} steps allowed"}
 
+        # Resolve all models first (fail fast)
         resolved = []
         for i, step in enumerate(steps):
             model_spec = step.get("model", "").strip()
@@ -51,6 +67,7 @@ class PipelineTool:
             except ValueError as e:
                 return {"error": f"Step {i + 1}: {e}"}
 
+        # Execute pipeline
         step_outputs = []
         previous_output = None
 

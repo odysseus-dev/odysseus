@@ -5,6 +5,21 @@ logger = logging.getLogger(__name__)
 
 class UIControlTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Control frontend UI: toggle settings, switch model, change theme.
+
+        Content format:
+        Line 1: action
+        Line 2+: action-specific params
+
+        Actions:
+        toggle <name> <on|off>  — Toggle a setting (web, bash, rag, research, incognito, document_editor)
+        set_mode <agent|chat>   — Switch between agent and chat mode
+        switch_model <model>    — Change the model for the current session
+        set_theme <preset>      — Apply a built-in theme preset (dark, light, midnight, paper, cyberpunk, retrowave, forest, ocean, ume, copper, terminal, organs, lavender, gpt, claude, cute)
+        create_theme <name> <bg> <fg> <panel> <border> <accent> [key=val ...] — Create custom theme. Optional key=val: advanced color overrides AND background effects: bgPattern=<none|dots|synapse|rain|constellations|perlin-flow|petals|sparkles|embers>, bgEffectColor=#RRGGBB, bgEffectIntensity=<num>, bgEffectSize=<num>, frosted=true|false
+        open_panel <name>       — Open a panel (documents, gallery, email, sessions, notes, memories, skills, settings, cookbook)
+        open_email_reply <uid> [folder] [reply|reply-all|ai-reply] — Open a reply draft document for an email; does not send
+        get_toggles             — Return current toggle states (server-side knowledge)"""
         owner = ctx.get("owner")
         session_id = ctx.get("session_id")
         from src.ai_interaction import _resolve_model, _session_manager
@@ -21,11 +36,18 @@ class UIControlTool:
                 return {"error": "toggle needs: toggle <name> <on|off>"}
             toggle_name = parts[1].lower()
             state = parts[2].lower() in ("on", "true", "1", "yes", "enable", "enabled")
+            # Friendly aliases — users say "shell" / "search" naturally.
             _toggle_aliases = {
-                "shell": "bash", "terminal": "bash",
-                "search": "web", "websearch": "web", "web_search": "web",
-                "deepresearch": "research", "deep_research": "research",
-                "documents": "document_editor", "doc": "document_editor", "docs": "document_editor",
+                "shell": "bash",
+                "terminal": "bash",
+                "search": "web", 
+                "websearch": "web", 
+                "web_search": "web",
+                "deepresearch": "research", 
+                "deep_research": "research",
+                "documents": "document_editor", 
+                "doc": "document_editor", 
+                "docs": "document_editor",
                 "private": "incognito",
             }
             toggle_name = _toggle_aliases.get(toggle_name, toggle_name)
@@ -58,11 +80,13 @@ class UIControlTool:
             if not model_spec:
                 return {"error": "switch_model needs a model name"}
 
+            # Resolve the model to validate it exists
             try:
                 url, model_id, headers = _resolve_model(model_spec, owner=owner)
             except ValueError as e:
                 return {"error": str(e)}
 
+            # Update current session's model if we have a session
             if session_id and _session_manager:
                 from src.database import SessionLocal as SL2, Session as DbSess2
                 db2 = SL2()
@@ -91,6 +115,10 @@ class UIControlTool:
 
         elif action == "set_theme":
             theme_name = parts[1].lower() if len(parts) > 1 else ""
+            # Theme colors are defined in static/js/theme.js on the frontend.
+            # We pass the name; the frontend looks it up from presets + custom themes.
+            # Also check user's custom themes stored in prefs.
+            # Must match the THEMES keys in static/js/theme.js.
             known_presets = [
                 "dark", "light", "midnight", "paper", "cyberpunk", "retrowave",
                 "forest", "ocean", "ume", "copper", "terminal", "organs",
@@ -113,7 +141,9 @@ class UIControlTool:
             }
 
         elif action == "create_theme":
+            # Re-split without limit to get all parts
             parts_all = lines[0].strip().split()
+            # create_theme <name> <bg> <fg> <panel> <border> <accent> [key=value ...]
             if len(parts_all) < 7:
                 return {"error": "create_theme needs: create_theme <name> <bg> <fg> <panel> <border> <accent> (all hex colors). Optional advanced color key=value pairs and background effects."}
             name = parts_all[1].lower().replace(" ", "-")
@@ -122,6 +152,7 @@ class UIControlTool:
             for k, v in colors.items():
                 if not _re.match(r'^#[0-9a-fA-F]{6}$', v):
                     return {"error": f"Invalid hex color for {k}: '{v}'. Use format #RRGGBB"}
+            # Parse optional advanced key=value pairs
             adv_keys = {
                 "userBubbleBg", "aiBubbleBg", "bubbleBorder", "sidebarBg",
                 "sectionAccent", "brandColor", "inputBg", "inputBorder",
@@ -129,6 +160,8 @@ class UIControlTool:
                 "toggleBg", "toggleActive", "accentPrimary", "accentError",
             }
             advanced = {}
+            # Background-effect fields (animated pattern + frosted glass). Different
+            # value types than the hex-only advanced keys, so parse separately.
             _BG_PATTERNS = {"none", "dots", "synapse", "rain", "constellations",
                             "perlin-flow", "petals", "sparkles", "embers"}
             bg = {}
@@ -186,6 +219,8 @@ class UIControlTool:
             }
 
         elif action == "open_panel":
+            # Open a top-level panel/modal: documents/library, gallery,
+            # email, sessions, notes, memories, skills, settings, cookbook.
             panel = parts[1].lower() if len(parts) > 1 else ""
             _panel_aliases = {
                 "documents": "documents", "document": "documents", "doc": "documents", "docs": "documents",

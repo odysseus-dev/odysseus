@@ -29,6 +29,25 @@ def _skill_dump(sk) -> Dict:
 
 class ManageSkillsTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Handle manage_skills tool calls.
+
+        SKILL.md-backed CRUD with progressive disclosure (Hermes-style). Actions:
+
+        list / index               — Level 0: name + description summary.
+        view {name}                — Level 1: full SKILL.md.
+        view_ref {name, path}      — Level 2: a sub-file under the skill dir.
+        add  {name, description, when_to_use, procedure[], pitfalls[],
+                verification[], tags[], category, status}
+                                    — Create a new skill (draft by default).
+        patch {name, old_string, new_string}
+                                    — Token-efficient surgical edit on the
+                                    raw SKILL.md text. Fails on ambiguous
+                                    `old_string` (multiple matches).
+        edit  {name, content}      — Replace the entire SKILL.md.
+        publish {name}             — Flip status: draft -> published.
+        delete {name}              — Remove the skill directory.
+        search {query}             — Relevance match on published skills.
+        """
         owner = ctx.get("owner")
         from src.tool_implementations import _parse_tool_args
 
@@ -43,6 +62,7 @@ class ManageSkillsTool:
         from src.constants import DATA_DIR
         sm = SkillsManager(DATA_DIR)
 
+        # Accept legacy `skill_id` as an alias for `name`.
         name = (args.get("name") or args.get("skill_id") or "").strip()
 
         if action in ("list", "index", ""):
@@ -89,6 +109,9 @@ class ManageSkillsTool:
                 proc = args.get("steps") or []
             if not proc and not args.get("body_extra") and not args.get("solution"):
                 return {"error": "procedure (or solution body) is required", "exit_code": 1}
+            # Same auto-publish gate as the extractor path — when the user
+            # has auto_approve_skills on and the caller didn't pin an explicit
+            # status, publish immediately. Audit later demotes/removes on fail.
             _status_arg = args.get("status")
             if not _status_arg:
                 try:

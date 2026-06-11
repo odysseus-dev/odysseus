@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 class ManageTasksTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Handle manage_tasks tool calls: CRUD on scheduled tasks."""
         owner = ctx.get("owner")
         from src.tool_implementations import _parse_tool_args
         from core.database import SessionLocal, ScheduledTask
@@ -49,6 +50,7 @@ class ManageTasksTool:
                 if task_type == "action" and not args.get("action_name"):
                     return {"error": "action_name is required for action tasks", "exit_code": 1}
 
+                # Compute next_run for schedule triggers
                 next_run = None
                 if trigger_type == "schedule":
                     schedule = args.get("schedule", "daily")
@@ -58,6 +60,8 @@ class ManageTasksTool:
                     )
 
                 task_id = str(_uuid.uuid4())
+                # Guard each fallback with `or`: args.get("prompt", default) returns
+                # None when the key is present but null, and None[:50] raises.
                 name = args.get("name") or (args.get("prompt") or args.get("action_name") or "Task")[:50]
 
                 task = ScheduledTask(

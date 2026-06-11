@@ -5,6 +5,11 @@ logger = logging.getLogger(__name__)
 
 class ManageRagTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Manage RAG indexed documents: list, add_directory, remove_directory.
+
+        Content format:
+        Line 1: action (list|add_directory|remove_directory)
+        Line 2: directory path (for add/remove)"""
         from src.ai_interaction import _rag_manager, _personal_docs_manager
 
         lines = content.strip().split("\n")
@@ -72,6 +77,10 @@ class ManageRagTool:
                 return {"error": "Personal docs manager not available"}
 
             try:
+                # Performs a targeted per-directory delete (#1660). The previous
+                # unconditional _rag_manager.rebuild_index() here wiped the whole
+                # collection on every remove (even for untracked dirs) and has
+                # been removed.
                 if hasattr(_personal_docs_manager, 'remove_directory'):
                     _personal_docs_manager.remove_directory(directory)
                 return {"action": "remove_directory", "directory": directory,

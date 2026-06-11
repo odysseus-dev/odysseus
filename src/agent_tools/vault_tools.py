@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_vault_config() -> Dict:
+    """Load Vaultwarden config from data/vault.json."""
     p = Path(VAULT_FILE)
     if p.exists():
         try:
@@ -20,6 +21,7 @@ def _load_vault_config() -> Dict:
 
 
 async def _run_bw(args: list, session: Optional[str] = None, input_text: Optional[str] = None) -> tuple:
+    """Run a bw CLI command with optional session + stdin. Returns (stdout, stderr, returncode)."""
     import os as _os
     env = {}
     env.update(_os.environ)
@@ -39,6 +41,7 @@ async def _run_bw(args: list, session: Optional[str] = None, input_text: Optiona
 
 class VaultSearchTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Search the vault by keyword. Returns matching item names + URLs, NO passwords."""
         from src.tool_implementations import _parse_tool_args
         try:
             args = _parse_tool_args(content)
@@ -85,6 +88,7 @@ class VaultSearchTool:
 
 class VaultGetTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Retrieve a full vault entry (including password) by item ID. Logs access to assistant chat."""
         owner = ctx.get("owner")
         from src.tool_implementations import _parse_tool_args
         try:
@@ -115,6 +119,7 @@ class VaultGetTool:
         login = item.get("login") or {}
         name = item.get("name", "?")
 
+        # Audit log to assistant chat
         try:
             from src.assistant_log import log_to_assistant
             if owner:
@@ -144,6 +149,7 @@ class VaultGetTool:
 
 class VaultUnlockTool:
     async def execute(self, content: str, ctx: dict) -> dict:
+        """Unlock the vault using a master password. Stores the resulting session key."""
         from src.tool_implementations import _parse_tool_args
         try:
             args = _parse_tool_args(content)
@@ -153,6 +159,8 @@ class VaultUnlockTool:
         if not master_password:
             return {"error": "master_password is required", "exit_code": 1}
 
+        # Do not pass the master password as an argv element. Local process lists
+        # can expose argv to other users; stdin keeps the secret out of `ps`.
         stdout, stderr, rc = await _run_bw(["unlock", "--raw"], input_text=master_password + "\n")
         if rc != 0:
             return {"error": f"Unlock failed: {stderr[:300]}", "exit_code": 1}
@@ -161,6 +169,7 @@ class VaultUnlockTool:
         if not session:
             return {"error": "bw returned empty session", "exit_code": 1}
 
+        # Save session to vault.json
         p = Path(VAULT_FILE)
         cfg = {}
         if p.exists():
