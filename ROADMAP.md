@@ -75,6 +75,18 @@ the codebase, you are probably right to stay away.
 - Backup/restore guide and helper flow for `data/`.
 - Security hardening around admin-only tools and clear docs for their risk.
 
+## Improvement 5 — Dedicated OS Control
+
+Give Odysseus an optional, opt-in capability to control the host operating system so it can act on the operator's commands directly:
+
+- Power actions: shutdown, restart, and suspend the machine.
+- Process management: list and kill processes.
+- Service management: start, stop, enable, and disable system services.
+- Package management: install and uninstall packages.
+- Overall goal: a full system-control surface that lets the workspace carry out the operator's instructions on the host.
+
+This is a high-risk, admin-only feature and must ship safely: disabled by default, gated behind explicit confirmation and strong authentication, with clear warnings, an audit log of every action, and a documented threat model. Cross-platform support (Linux, macOS, Windows) should be considered.
+
 ## Not The Focus Right Now
 
 I prob shouldnt add more themes.
