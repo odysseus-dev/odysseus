@@ -385,12 +385,31 @@ async def escalate_and_learn(
     if not teacher_spec:
         return None
 
+    # Pre-check: load existing skills so the teacher can avoid duplicates
+    _existing_skills_hint = ""
+    try:
+        from src.constants import DATA_DIR
+        from services.memory.skills import SkillsManager
+        _sm = SkillsManager(DATA_DIR)
+        _all_skills = _sm.load_all()
+        if _all_skills:
+            _names = sorted(
+                f"{s['name']} ({s.get('category','?')})"
+                for s in _all_skills if s.get("status") in ("published", "draft")
+            )
+            _existing_skills_hint = (
+                "\n\nEXISTING SKILLS (check for overlap before writing a new one):\n"
+                + "\n".join(f"- {n}" for n in _names)
+            )
+    except Exception:
+        pass
+
     prompt = _TEACHER_ESCALATION_PROMPT.format(
         user_request=user_request or "(no user request captured)",
         failure_reason=failure_reason or "(failure reason not captured)",
         untrusted_trace_guard=_UNTRUSTED_TRACE_GUARD,
         trace=_format_trace(tool_results, agent_reply),
-    )
+    ) + _existing_skills_hint
     response = await _call_teacher(teacher_spec, prompt, owner=owner)
     if not response:
         return None
@@ -400,6 +419,26 @@ async def escalate_and_learn(
         # Teacher chose not to write a skill — see prompt contract.
         logger.info("teacher declined to write a skill for this failure")
         return None
+
+    # Post-hoc dedup check: if the teacher's proposed skill is very similar
+    # to an existing one, skip the write and return the existing skill name.
+    try:
+        from src.constants import DATA_DIR
+        from services.memory.skills import SkillsManager
+        _sm = SkillsManager(DATA_DIR)
+        _similar = _sm.find_similar(skill, threshold=0.65)
+        if _similar:
+            _best_name = _similar[0][1].get("name", "?")
+            _best_score = _similar[0][0]
+            logger.info(
+                "teacher dedup: proposed skill '{}' matches existing '{}' "
+                "(score {:.2f}) — skipping write".format(
+                    skill.get("name", "?"), _best_name, _best_score,
+                )
+            )
+            return _best_name
+    except Exception:
+        pass
 
     # LLM judge on the teacher's response — if the teacher itself
     # sounded uncertain, drop the skill rather than persist a sketchy one.
@@ -426,6 +465,12 @@ async def escalate_and_learn(
     try:
         result = await do_manage_skills(json.dumps(skill), owner=owner)
         if isinstance(result, dict) and not result.get("error"):
+            if result.get("_deduped"):
+                logger.info(
+                    "teacher skill dedup: '%s' merged into existing '%s'",
+                    skill.get("name"), result.get("_duplicate_of", "?"),
+                )
+                return result.get("_duplicate_of") or skill.get("name")
             logger.info(f"teacher wrote skill: {skill.get('name')}")
             return skill.get("name")
         logger.warning(f"skill save failed: {result}")

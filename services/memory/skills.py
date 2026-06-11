@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
+from collections import Counter
 from typing import Dict, Iterable, List, Optional
 
 from .skill_format import Skill, slugify
@@ -38,10 +40,72 @@ def _tokenize(text: str) -> set:
     return {w.strip('.,!?";:()[]') for w in (text or "").lower().split() if len(w) > 1}
 
 
+def _tokenize_bigrams(text: str) -> set:
+    """Tokenize into unigrams + word bigrams for better short-text matching.
+    Bigrams catch phrasal overlap ("add tool" vs "add new tool") that
+    unigram Jaccard misses.  Returns a set of tokens + bigrams.
+    """
+    words = [w.strip('.,!?";:()[]') for w in (text or "").lower().split() if len(w) > 1]
+    tokens = set(words)
+    for i in range(len(words) - 1):
+        tokens.add(words[i] + " " + words[i + 1])
+    return tokens
+
+
 def _jaccard(a: set, b: set) -> float:
     if not a or not b:
         return 0.0
     return len(a & b) / len(a | b)
+
+
+def _tokenize_words(text: str) -> list[str]:
+    """Split text into lowercased, stripped words >= 2 chars."""
+    return [w.strip('.,!?";:()[]') for w in (text or "").lower().split() if len(w) > 1]
+
+
+def _cosine_similarity(a: Counter, b: Counter) -> float:
+    """Cosine similarity between two term-frequency vectors."""
+    dot = sum((a & b).values())
+    na = math.sqrt(sum(v * v for v in a.values()))
+    nb = math.sqrt(sum(v * v for v in b.values()))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _tfidf_cosine(text_a: str, text_b: str, idf: dict[str, float]) -> float:
+    """TF-IDF weighted cosine similarity between two texts.
+
+    *idf* is a precomputed ``{term: log(N/df)}`` dict over the corpus.
+    Terms not in *idf* (OOV) get IDF = 1.0.
+    """
+    words_a = _tokenize_words(text_a)
+    words_b = _tokenize_words(text_b)
+    tf_a = Counter(words_a)
+    tf_b = Counter(words_b)
+
+    # Apply IDF weights
+    tfidf_a = Counter()
+    tfidf_b = Counter()
+    for term, count in tf_a.items():
+        tfidf_a[term] = count * idf.get(term, 1.0)
+    for term, count in tf_b.items():
+        tfidf_b[term] = count * idf.get(term, 1.0)
+
+    return _cosine_similarity(tfidf_a, tfidf_b)
+
+
+def _build_idf(corpus: list[str]) -> dict[str, float]:
+    """Build inverse-document-frequency dict from a list of texts."""
+    n = len(corpus)
+    df: Counter = Counter()
+    for text in corpus:
+        terms = set(_tokenize_words(text))
+        df.update(terms)
+    idf: dict[str, float] = {}
+    for term, doc_count in df.items():
+        idf[term] = math.log((n + 1) / (doc_count + 1)) + 1.0  # smooth
+    return idf
 
 
 def _to_float(x, default: float = 0.0) -> float:
@@ -348,6 +412,43 @@ class SkillsManager:
                         except Exception:
                             pass
                         return {**s, "_deduped": True, "_duplicate_of": s.get("name")}
+
+            # Second dedup pass: bigram-based similarity (catches rephrased
+            # duplicates the unigram check misses).  Three bands:
+            #   >= 0.65 → auto-skip (rephrased near-identical)
+            #   0.50-0.64 → log warning, include in returned result
+            #   < 0.50  → ignore
+            _candidate_dict = {
+                "name": nm,
+                "description": description or title or "",
+                "when_to_use": when_to_use if when_to_use is not None else (problem or ""),
+                "procedure": procedure if procedure is not None else (steps or []),
+                "tags": list(tags or []),
+                "category": category or "general",
+            }
+            similar = self.find_similar(
+                _candidate_dict,
+                pool=_dedup_pool,
+                threshold=0.50,
+            )
+            _high_sim = [(sc, s) for sc, s in similar if sc >= 0.65]
+            if _high_sim:
+                _best = _high_sim[0]
+                logger.info(
+                    "add_skill: '%s' skipped — similar to '%s' (bigram Jaccard %.2f)",
+                    nm, _best[1].get("name"), _best[0],
+                )
+                try:
+                    self.record_use(_best[1]["name"], owner=_best[1].get("owner"))
+                except Exception:
+                    pass
+                return {**_best[1], "_deduped": True, "_duplicate_of": _best[1].get("name")}
+            _warn_sim = [(sc, s) for sc, s in similar if 0.50 <= sc < 0.65]
+            if _warn_sim:
+                _msg = "; ".join(
+                    f"'{s['name']}' (score {sc:.2f})" for sc, s in _warn_sim
+                )
+                logger.warning("add_skill: '%s' may duplicate existing skills: %s", nm, _msg)
 
         # Avoid clobbering an existing skill with the same name
         existing = {s["name"] for s in _all}
@@ -712,3 +813,90 @@ class SkillsManager:
                 scored.append((score, sk))
         scored.sort(key=lambda x: x[0], reverse=True)
         return [sk for _, sk in scored[:max_items]]
+
+    def find_similar(
+        self,
+        candidate: Dict,
+        *,
+        pool: Optional[List[Dict]] = None,
+        threshold: float = 0.50,
+        owner: Optional[str] = None,
+    ) -> List[tuple[float, Dict]]:
+        """Find existing skills semantically similar to *candidate*.
+
+        Uses three signals, taking the *maximum* of any that apply:
+
+        1. Tag overlap  — ``|tags(cand) ∩ tags(ex)| / max(|cand|,|ex|)``
+           (boosted when both skills share the same *category*)
+        2. Bigram Jaccard — catches rephrased near-identicals
+        3. TF-IDF cosine — catches concept-level overlap ("filesystem tools
+           for an agent" vs "workspace-confined file tools")
+
+        Results sorted descending.  Scores >= *threshold* are included
+        (default 0.50).
+        """
+        if pool is None:
+            pool = self.load_all()
+        if not pool or not candidate:
+            return []
+
+        cand_text = " ".join([
+            candidate.get("name", ""),
+            candidate.get("description", ""),
+            candidate.get("when_to_use", ""),
+            " ".join(candidate.get("procedure", []) or []),
+        ])
+        cand_tokens = _tokenize_bigrams(cand_text)
+        if not cand_tokens:
+            return []
+
+        cand_tags = set(t.lower() for t in (candidate.get("tags") or []))
+        cand_category = (candidate.get("category") or "").lower()
+
+        if owner is not None:
+            pool = [s for s in pool if s.get("owner") == owner]
+
+        # Build corpus IDF from pool for TF-IDF scoring
+        corpus_texts = []
+        for existing in pool:
+            ex_text = " ".join([
+                existing.get("name", ""),
+                existing.get("description", ""),
+                existing.get("when_to_use", ""),
+                " ".join(existing.get("procedure", []) or []),
+            ])
+            corpus_texts.append(ex_text)
+        idf = _build_idf(corpus_texts)
+
+        scored: list[tuple[float, Dict]] = []
+        for idx, existing in enumerate(pool):
+            if existing.get("name") == candidate.get("name"):
+                continue
+            ex_text = corpus_texts[idx]
+
+            # 1. Tag overlap score
+            tag_score = 0.0
+            ex_tags = set(t.lower() for t in (existing.get("tags") or []))
+            if cand_tags and ex_tags:
+                match_count = len(cand_tags & ex_tags)
+                max_count = max(len(cand_tags), len(ex_tags))
+                tag_score = match_count / max_count if max_count > 0 else 0.0
+                # Boost when same category
+                ex_cat = (existing.get("category") or "").lower()
+                if tag_score > 0 and cand_category and cand_category == ex_cat:
+                    tag_score = max(tag_score, 0.35)
+
+            # 2. Bigram Jaccard
+            ex_tokens = _tokenize_bigrams(ex_text)
+            j_score = _jaccard(cand_tokens, ex_tokens)
+
+            # 3. TF-IDF cosine
+            t_score = _tfidf_cosine(cand_text, ex_text, idf)
+
+            score = max(tag_score, j_score, t_score)
+
+            if score >= threshold:
+                scored.append((score, existing))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored
