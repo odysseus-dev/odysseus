@@ -393,6 +393,38 @@ def test_update_token_applies_explicit_scopes(monkeypatch, token_routes_mod):
     assert resp["scopes"] == ["chat"]
 
 
+def test_update_rejects_non_object_array_body(monkeypatch, token_routes_mod):
+    """PATCH with body [] must return 400, not 500."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    fake_session = MagicMock()
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    req = _patch_request(MagicMock(), [])
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_token(request=req, token_id="tok123"))
+    assert exc.value.status_code == 400
+    assert "object" in exc.value.detail.lower()
+
+
+def test_update_rejects_non_object_null_body(monkeypatch, token_routes_mod):
+    """PATCH with body null must return 400, not 500."""
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    mod = token_routes_mod
+
+    fake_session = MagicMock()
+    monkeypatch.setattr(mod, "get_db_session", lambda: _db_ctx(fake_session))
+
+    req = _patch_request(MagicMock(), None)
+    update_token = _get_handler(mod, "PATCH", "/tokens/{token_id}")
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_token(request=req, token_id="tok123"))
+    assert exc.value.status_code == 400
+    assert "object" in exc.value.detail.lower()
+
+
 def test_update_missing_token_returns_404(monkeypatch, token_routes_mod):
     monkeypatch.setenv("AUTH_ENABLED", "true")
     mod = token_routes_mod
