@@ -229,7 +229,7 @@ class LsTool:
         else:
             raw_path = _s.split("\n", 1)[0].strip()
         try:
-            root = _resolve_search_root(raw_path)
+            root = _resolve_search_root(raw_path, workspace)
         except ValueError as e:
             return {"error": f"ls: {e}", "exit_code": 1}
 
@@ -287,7 +287,7 @@ class GlobTool:
         if not pattern:
             return {"error": "glob: pattern is required", "exit_code": 1}
         try:
-            root = _resolve_search_root(str(args.get("path", "")))
+            root = _resolve_search_root(str(args.get("path", "")), workspace)
         except ValueError as e:
             return {"error": f"glob: {e}", "exit_code": 1}
 
@@ -352,7 +352,7 @@ class GrepTool:
             max_hits = _CODENAV_MAX_HITS
         max_hits = max(1, min(max_hits, _CODENAV_MAX_HITS))
         try:
-            root = _resolve_search_root(str(args.get("path", "")))
+            root = _resolve_search_root(str(args.get("path", "")), workspace)
         except ValueError as e:
             return {"error": f"grep: {e}", "exit_code": 1}
 

@@ -214,13 +214,19 @@ def get_mcp_manager():
 
 
 
-def _resolve_search_root(raw_path: str) -> str:
+def _resolve_search_root(raw_path: str, workspace: Optional[str] = None) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
-    An empty path defaults to the agent's primary root (project data dir) and a
-    supplied path is confined by the global allowlist + sensitive-file policy.
+    With a workspace set, the workspace folder is the root and supplied paths are
+    confined inside it (same policy as read_file). Without one, an empty path
+    defaults to the agent's primary root (project data dir) and a supplied path
+    is confined by the global allowlist + sensitive-file policy.
     """
     raw = (raw_path or "").strip()
+    if workspace:
+        if not raw:
+            return os.path.realpath(workspace)
+        return _resolve_tool_path_in_workspace(workspace, raw)
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
@@ -321,11 +327,12 @@ async def _call_mcp_tool(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    workspace: Optional[str] = None,
 ) -> Dict:
     """Route a legacy tool call through the MCP manager, with direct fallbacks."""
     mcp = get_mcp_manager()
     if not mcp:
-        return await _direct_fallback(tool, content, progress_cb=progress_cb) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
+        return await _direct_fallback(tool, content, progress_cb=progress_cb, workspace=workspace) or {"error": f"MCP manager not available for tool '{tool}'", "exit_code": 1}
 
     server_id, tool_name = _MCP_TOOL_MAP[tool]
     qualified = f"mcp__{server_id}__{tool_name}"
@@ -334,7 +341,7 @@ async def _call_mcp_tool(
 
     # If MCP server not connected, try direct fallback
     if isinstance(result, dict) and result.get("exit_code") == 1 and "not connected" in result.get("error", ""):
-        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb)
+        fallback = await _direct_fallback(tool, content, progress_cb=progress_cb, workspace=workspace)
         if fallback:
             return fallback
 
@@ -621,7 +628,7 @@ async def execute_tool_block(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=_AGENT_WORKDIR)
+            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=workspace or _AGENT_WORKDIR)
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
@@ -643,12 +650,12 @@ async def execute_tool_block(
     if tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
+        result = await _call_mcp_tool(tool, content, progress_cb=progress_cb, workspace=workspace)
     elif tool in ("grep", "glob", "ls"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
-        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
+        result = await _direct_fallback(tool, content, progress_cb=progress_cb, workspace=workspace) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
