@@ -143,20 +143,21 @@ module.exports = async ({ github, context, core }) => {
     }
   }
 
+  // Returns true if a marker comment or label was actually removed.
   async function clearConflict(pr) {
     const state = hydratedState(pr);
 
     // Nothing to clear, and the comment page we have is complete enough to
     // trust that absence — skip the REST round-trips entirely.
     if (!state.hasLabel && !state.markerCommentId && !state.commentsMayBeIncomplete) {
-      return;
+      return false;
     }
 
     const existingId = state.markerCommentId
       ?? (state.commentsMayBeIncomplete ? (await findBotComment(pr.number))?.id ?? null : null);
     const labeled = state.hasLabel;
 
-    if (!existingId && !labeled) return;
+    if (!existingId && !labeled) return false;
 
     if (existingId) {
       await github.rest.issues.deleteComment({ owner, repo, comment_id: existingId });
@@ -170,6 +171,8 @@ module.exports = async ({ github, context, core }) => {
         if (e.status !== 404 && e.status !== 410) throw e;
       }
     }
+
+    return true;
   }
 
   // ── Main ──────────────────────────────────────────────────────────────────
@@ -198,8 +201,7 @@ module.exports = async ({ github, context, core }) => {
       await flagConflict(pr);
       flagged++;
     } else {
-      await clearConflict(pr);
-      if (pr.mergeable === 'MERGEABLE') cleared++;
+      if (await clearConflict(pr)) cleared++;
     }
   }
 
