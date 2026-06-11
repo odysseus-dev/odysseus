@@ -14,11 +14,9 @@ module.exports = async ({ github, context, core }) => {
   // Thresholds are intentionally generous: the goal is to help maintainers
   // triage quickly, not to penalise large but necessary PRs.
   const SIZES = [
-    { name: 'Size: XS', max:  10, color: '3cbf00', description: 'Tiny change — under 10 lines.' },
-    { name: 'Size: S',  max:  50, color: '5d9801', description: 'Small change — 10–50 lines.' },
-    { name: 'Size: M',  max: 200, color: 'e6b400', description: 'Medium change — 50–200 lines.' },
-    { name: 'Size: L',  max: 500, color: 'eb6420', description: 'Large change — 200–500 lines.' },
-    { name: 'Size: XL', max: Infinity, color: 'e11d48', description: 'Very large change — over 500 lines. Consider splitting.' },
+    { name: 'Size: S', max: 100, color: '5d9801', description: 'Small change — under 100 lines.' },
+    { name: 'Size: M', max: 400, color: 'e6b400', description: 'Medium change — 100–400 lines.' },
+    { name: 'Size: L', max: Infinity, color: 'eb6420', description: 'Large change — over 400 lines.' },
   ];
 
   const target = SIZES.find(s => delta <= s.max) ?? SIZES[SIZES.length - 1];
