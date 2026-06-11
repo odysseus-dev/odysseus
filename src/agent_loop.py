@@ -1871,6 +1871,16 @@ async def stream_agent_loop(
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
+    # When a workspace is active the model MUST have filesystem + shell tools
+    # so it can explore / edit / run commands in the project directory. Without
+    # this, small models with RAG-selected tools miss the basics and refuse
+    # to list files, count folders, etc.
+    if _relevant_tools is not None and workspace:
+        _relevant_tools.update({
+            "bash", "python", "read_file", "write_file", "edit_file",
+            "ls", "glob", "grep",
+        })
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
