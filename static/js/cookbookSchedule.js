@@ -129,7 +129,7 @@ try { (function () {
           </label>
         </div>
 
-        <div class="hwfit-schedule-row">
+        <div class="hwfit-schedule-row hwfit-schedule-when-row">
           <label class="hwfit-schedule-field">
             <span>From</span>
             <input type="time" class="hwfit-sched-start cookbook-field-input" value="09:00" />
@@ -138,24 +138,24 @@ try { (function () {
             <span>Until</span>
             <input type="time" class="hwfit-sched-end cookbook-field-input" value="17:00" />
           </label>
-        </div>
-
-        <div class="hwfit-schedule-row hwfit-schedule-days-row">
-          <span class="hwfit-schedule-label">Days</span>
-          <div class="hwfit-sched-days">
-            ${DAYS.map(d => `
-              <button type="button" class="hwfit-sched-day-chip${WEEKDAYS.has(d.k) ? " is-on" : ""}" data-day="${d.k}">${d.l}</button>
-            `).join("")}
+          <label class="hwfit-schedule-field hwfit-schedule-days-field">
+            <span>Days</span>
+            <div class="hwfit-sched-days">
+              ${DAYS.map(d => `
+                <button type="button" class="hwfit-sched-day-chip${WEEKDAYS.has(d.k) ? " is-on" : ""}" data-day="${d.k}">${d.l}</button>
+              `).join("")}
+            </div>
+          </label>
+          <div class="hwfit-schedule-actions-inline">
+            <button type="button" class="cookbook-btn hwfit-sched-cancel" title="Cancel">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;flex-shrink:0;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <span>Cancel</span>
+            </button>
+            <button type="button" class="cookbook-btn hwfit-sched-save" title="Save schedule" aria-label="Save schedule">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span>Save</span>
+            </button>
           </div>
-          <span class="hwfit-schedule-actions-spacer"></span>
-          <button type="button" class="cookbook-btn hwfit-sched-cancel" title="Cancel">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;flex-shrink:0;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            <span>Cancel</span>
-          </button>
-          <button type="button" class="cookbook-btn hwfit-sched-save" title="Save schedule" aria-label="Save schedule">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;flex-shrink:0;"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            <span>Save</span>
-          </button>
         </div>
 
         <div class="hwfit-sched-err"></div>

@@ -1079,16 +1079,10 @@
             </svg>
           </button>
           <!-- Workspace indicator (hidden until a folder is set) -->
-          <button type="button" class="input-icon-btn tool-indicator" title="Workspace — click to clear" id="workspace-indicator-btn" aria-label="Clear workspace" style="display:none;">
+          <button type="button" class="input-icon-btn tool-indicator" title="Workspace - click to clear" id="workspace-indicator-btn" aria-label="Clear workspace" style="display:none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
             <span style="font-size:11px;margin-left:2px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="workspace-indicator-name"></span>
             <svg class="tool-indicator-x" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
-          </button>
-          <!-- Plan mode (investigate read-only, propose a plan to approve) -->
-          <button type="button" class="input-icon-btn" title="Plan mode — investigate read-only, then propose a plan to approve" id="plan-toggle-btn" data-mode-tool="true">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-            </svg>
           </button>
           <!-- RAG toolbar indicator (hidden until active) -->
           <button type="button" class="input-icon-btn tool-indicator" title="RAG active — click to deactivate" id="rag-indicator-btn" style="display:none;">
@@ -1138,7 +1132,6 @@
       <!-- Hidden checkboxes for state -->
       <input type="checkbox" id="web-toggle" style="display:none;">
       <input type="checkbox" id="bash-toggle" style="display:none;">
-      <input type="checkbox" id="plan-toggle" style="display:none;">
     </div>
     <form id="chat-form" autocomplete="off" action="javascript:void(0);" style="display:none;"></form>
 
@@ -1499,21 +1492,7 @@
               <div id="set-researchMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>
-          <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Agent</h2>
-            <div class="admin-toggle-sub" style="margin-bottom:8px">Controls for the agent tool loop.</div>
-            <div class="settings-col">
-              <div class="settings-row">
-                <label class="settings-label">Tool call limit</label>
-                <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;">
-              </div>
-              <div class="settings-row">
-                <label class="settings-label">Max steps per message</label>
-                <input id="set-agentMaxRounds" type="text" inputmode="numeric" placeholder="20" class="settings-select" style="width:120px;">
-              </div>
-              <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
-            </div>
-          </div>
+          <!-- Agent card moved to the Agent Tools tab. -->
           <!-- Image Generation removed — only inpaint remains in this build,
                and inpaint is configured via the gallery editor not this card.
                Keeping the DOM (hidden) so JS wiring against the inputs
@@ -2055,30 +2034,37 @@
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
                   <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1">
-                  <select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;">
-                    <option value="llm">LLM</option>
-                    <option value="image">Image</option>
-                  </select>
                 </div>
-                <div class="admin-model-form-row">
+                <!-- API key row stays in the DOM but is collapsed until the
+                     user clicks the Key button on the action row. Local
+                     endpoints rarely need a key; hiding it by default keeps
+                     the form a single visual line. -->
+                <div class="admin-model-form-row" id="adm-epLocalApiKey-row" style="display:none;">
                   <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1">
                 </div>
+                <!-- Action row: LLM/Image type, Quickstart buttons (Scan,
+                     Ollama), Key reveal toggle, Test, Add — all inline so
+                     the Quickstart fold is gone and Type sits with the
+                     primary actions. -->
                 <div class="admin-model-form-row">
+                  <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;opacity:0.6;flex-shrink:0;">Type:<select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;">
+                    <option value="llm" selected>LLM</option>
+                    <option value="image">Image</option>
+                  </select></label>
+                  <button class="admin-btn-sm" id="adm-epDiscoverBtn" title="Scan your network for running model servers" style="display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan
+                  </button>
+                  <button class="admin-btn-sm" id="adm-epOllamaBtn" title="Fill the default Ollama endpoint" style="display:inline-flex;align-items:center;gap:5px;"><span class="adm-ollama-logo" style="display:inline-flex;width:13px;height:13px;"></span>Ollama</button>
                   <span style="flex:1"></span>
-                  <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="width:55px;text-align:center;">Test</button>
-                  <button class="admin-btn-add" id="adm-epLocalAddBtn" style="width:55px;text-align:center;">Add</button>
-                </div>
-                <div class="adm-quickstart-section collapsed" id="adm-add-local-quickstart">
-                  <div class="adm-quickstart-toggle" role="button" tabindex="0" aria-expanded="false">
-                    <span>Quickstart</span>
-                    <svg class="adm-section-caret" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                  </div>
-                  <div class="adm-quickstart-body">
-                    <button class="admin-btn-sm" id="adm-epDiscoverBtn" title="Scan your network for running model servers">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-1px;margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan for Servers
-                    </button>
-                    <button class="admin-btn-sm" id="adm-epOllamaBtn" title="Fill the default Ollama endpoint">Ollama</button>
-                  </div>
+                  <button class="admin-btn-sm" id="adm-epLocalKeyBtn" title="Show / hide the API key field" aria-expanded="false" aria-controls="adm-epLocalApiKey-row" style="opacity:0.75;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>API
+                  </button>
+                  <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+                  </button>
+                  <button class="admin-btn-add" id="adm-epLocalAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
+                  </button>
                 </div>
                 <div id="adm-epLocalMsg" class="adm-ep-inline-msg"></div>
               </div>
@@ -2122,20 +2108,35 @@
                   <option value="https://opencode.ai/zen/v1" data-logo="opencode">OpenCode Zen</option>
                   <option value="https://opencode.ai/zen/go/v1" data-logo="opencode">OpenCode Go</option>
                   <option value="https://api.z.ai/api/coding/paas/v4" data-logo="zhipu">Z.AI Coding Plan</option>
+                  <option value="https://integrate.api.nvidia.com/v1" data-logo="nvidia">NVIDIA</option>
                 </select>
-                <div class="admin-model-form-row">
-                  <input id="adm-epApiKey" type="password" placeholder="API key">
+                <!-- API key row stays in DOM, hidden until Key button is
+                     clicked. Mirrors the Local section pattern: most users
+                     paste a key via the provider preset flow rather than
+                     typing it free-form, so the row only appears on demand. -->
+                <div class="admin-model-form-row" id="adm-epApiKey-row" style="display:none;">
+                  <input id="adm-epApiKey" type="password" placeholder="API key" autocomplete="off" style="flex:1">
+                </div>
+                <div class="admin-model-form-row" style="margin-top:-4px;">
                   <select id="adm-epKind" style="padding:5px;width:82px;">
                     <option value="proxy">Proxy</option>
                     <option value="api">API</option>
                   </select>
-                  <select id="adm-epType" style="padding:5px;width:80px;">
-                    <option value="llm">LLM</option>
+                  <label style="display:inline-flex;align-items:center;gap:4px;font-size:11px;opacity:0.6;flex-shrink:0;">Type:<select id="adm-epType" style="padding:5px;width:80px;flex-shrink:0;">
+                    <option value="llm" selected>LLM</option>
                     <option value="image">Image</option>
-                  </select>
-                  <button class="admin-btn-sm" id="adm-epApiTestBtn" style="width:55px;text-align:center;">Test</button>
+                  </select></label>
+                  <span style="flex:1"></span>
+                  <button class="admin-btn-sm" id="adm-epApiKeyBtn" title="Show / hide the API key field" aria-expanded="false" aria-controls="adm-epApiKey-row" style="opacity:0.75;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>API
+                  </button>
+                  <button class="admin-btn-sm" id="adm-epApiTestBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+                  </button>
                   <button class="admin-btn-sm hidden" id="adm-epApiCancelTestBtn" style="width:62px;text-align:center;">Cancel</button>
-                  <button class="admin-btn-add" id="adm-epAddBtn" style="width:55px;text-align:center;">Add</button>
+                  <button class="admin-btn-add" id="adm-epAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
+                  </button>
                 </div>
                 <div id="adm-epApiMsg" class="adm-ep-inline-msg"></div>
                 <div id="adm-deviceAuthStatus" class="adm-ep-inline-msg"></div>
@@ -2143,7 +2144,15 @@
             </div>
           </div>
           <div class="admin-card">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span></h2>
+            <h2 style="display:flex;align-items:center;gap:8px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Added Models <span style="opacity:0.45;font-weight:normal;font-size:0.82em">(Endpoints)</span>
+              <span style="flex:1"></span>
+              <button class="admin-btn-sm" id="adm-epProbeAllBtn" title="Re-test every endpoint and refresh online status" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Probe
+              </button>
+              <button class="admin-btn-sm" id="adm-epClearOfflineBtn" title="Remove all endpoints currently marked offline" style="font-size:11px;font-weight:normal;display:inline-flex;align-items:center;gap:4px;opacity:0.85;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Clear offline <span id="adm-epOfflineCount" style="opacity:0.6;margin-left:2px;"></span>
+              </button>
+            </h2>
             <div class="admin-toggle-sub" style="margin-bottom:10px">Manage the endpoints you've added.</div>
             <div class="adm-ep-section">
               <div class="adm-ep-section-head">
@@ -2174,10 +2183,45 @@
               <button type="button" class="admin-btn-sm" id="unified-intg-add-btn" style="display:inline-flex;align-items:center;gap:6px;">+ Add Integration<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
             </div>
           </div>
+          <div class="admin-card admin-only" style="margin-top:12px;">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>API Tokens</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Bearer tokens for external integrations (scripts, Codex, headless agent runs). Token value shown ONCE on create — copy it then.</div>
+            <div id="adm-tokenList" style="margin-bottom:8px;"></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;">
+              <input type="text" id="adm-tokenName" placeholder="Token name (e.g. agent-test)" class="settings-select" style="flex:1;min-width:160px;">
+              <input type="text" id="adm-tokenScopes" placeholder="scopes (comma-separated, blank = chat)" class="settings-select" style="flex:2;min-width:220px;" title="Allowed: chat, cookbook:read, cookbook:launch, documents:read|write, todos:read|write, email:read|draft|send, calendar:read|write, memory:read|write">
+              <button class="admin-btn-add" id="adm-tokenAddBtn">Create token</button>
+            </div>
+            <div id="adm-tokenMsg" style="font-size:11px;margin-top:6px;"></div>
+            <div id="adm-tokenReveal" style="display:none;margin-top:8px;padding:8px 10px;background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-radius:6px;">
+              <div style="font-size:11px;font-weight:600;margin-bottom:4px;">Copy now — this is the only time you'll see it:</div>
+              <code id="adm-tokenValue" style="font-family:'Berkeley Mono','SF Mono','Fira Code',monospace;font-size:11px;word-break:break-all;display:block;background:var(--bg);padding:6px 8px;border-radius:4px;margin-bottom:6px;user-select:all;"></code>
+              <button class="admin-btn-sm" id="adm-tokenCopyBtn">Copy</button>
+            </div>
+          </div>
         </div>
 
         <!-- ═══ TOOLS TAB ═══ -->
         <div data-settings-panel="tools" class="hidden">
+          <div class="admin-card" style="margin-bottom:12px;">
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Agent</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Controls for the agent tool loop.</div>
+            <div class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Tool call limit</label>
+                <input id="set-agentMaxTools" type="text" inputmode="numeric" placeholder="0 = unlimited" class="settings-select" style="width:120px;">
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Max steps per message</label>
+                <input id="set-agentMaxRounds" type="text" inputmode="numeric" placeholder="20" class="settings-select" style="width:120px;">
+              </div>
+              <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <div class="admin-card" style="margin-bottom:12px;">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Agent loop<span style="flex:1"></span><label class="admin-switch" title="On a failing effectful turn, climb verify → different-method → teacher → stop-and-summarize instead of silently quitting." style="flex-shrink:0"><input type="checkbox" id="set-agentSupervisorLadder"><span class="admin-slider"></span></label></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Supervisor ladder. When on, every effectful agent turn that claims done is verified; on FAIL the ladder escalates verify → different method → teacher → stop-with-blocker, each rung visible in chat. Teacher rung requires <code>teacher_model</code> to be set.</div>
+          </div>
           <div class="admin-card" style="margin-bottom:12px;">
             <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Built-in Tools</h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Enable or disable tools available to the AI agent.</div>
@@ -2311,7 +2355,7 @@
 <script type="module" src="/static/js/chatRenderer.js"></script>
 <script type="module" src="/static/js/codeRunner.js"></script>
 <script type="module" src="/static/js/chatStream.js"></script>
-<script type="module" src="/static/js/chat.js?v=20260604s"></script>
+<script type="module" src="/static/js/chat.js?v=20260609ws"></script>
 <script type="module" src="/static/js/cookbook.js"></script>
 <script src="/static/js/cookbookSchedule.js"></script>
 <script type="module" src="/static/js/search-chat.js"></script>

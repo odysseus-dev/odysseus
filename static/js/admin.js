@@ -93,6 +93,7 @@ async function loadUsers() {
           : [];
         const allowedSet = new Set(allowedModels);
         const modelsRestricted = !!(u.privileges && u.privileges.allowed_models_restricted);
+        const blockAllModels = !!(u.privileges && u.privileges.block_all_models);
         html += `<div style="padding:4px 0;">
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-size:12px;">Allowed models</span>
@@ -101,7 +102,7 @@ async function loadUsers() {
               <a href="#" class="priv-models-none" data-user="${esc(u.username)}" style="font-size:10px;opacity:0.5;">None</a>
             </div>
           </div>
-          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed')}</div>
+          <div style="font-size:10px;opacity:0.4;margin-bottom:4px;">${blockAllModels ? 'No models allowed' : (!modelsRestricted ? 'All models allowed (no restrictions)' : (allowedSet.size === 0 ? 'No models allowed' : allowedSet.size + ' model(s) allowed'))}</div>
           <div class="priv-models-list" data-user="${esc(u.username)}">
             <span style="opacity:0.4;font-size:11px;">Loading models...</span>
           </div>
@@ -123,7 +124,7 @@ async function loadUsers() {
           // Load models list on first expand
           if (!_modelsLoaded && !privPanel.classList.contains('hidden')) {
             _modelsLoaded = true;
-            _loadModelsForUser(u.username, allowedSet, modelsRestricted, privPanel);
+            _loadModelsForUser(u.username, allowedSet, modelsRestricted, blockAllModels, privPanel);
           }
         });
 
@@ -203,17 +204,22 @@ async function loadUsers() {
   } catch (e) { list.innerHTML = '<div class="admin-error">Failed to load users</div>'; }
 }
 
-async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPanel) {
+async function _loadModelsForUser(username, allowedSet, modelsRestricted, blockAllModels, privPanel) {
   const listEl = privPanel.querySelector(`.priv-models-list[data-user="${username}"]`);
   if (!listEl) return;
   try {
-    const res = await fetch('/api/models', { credentials: 'same-origin' });
+    // Use /api/model-endpoints rather than /api/models — the latter is
+    // backed by `cached_models`, so endpoints that haven't been probed yet
+    // (e.g. a freshly-added cloud API like DeepSeek) simply don't show up
+    // until some other endpoint happens to trigger a cache refresh. The
+    // endpoints listing always reflects every configured endpoint.
+    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
     const data = await res.json();
     const allModels = [];
-    (data.items || []).forEach(item => {
-      if (item.offline) return;
-      (item.models || []).forEach(mid => {
-        allModels.push({ mid, epName: item.endpoint_name || '', display: mid.split('/').pop() });
+    (Array.isArray(data) ? data : []).forEach(ep => {
+      if (!ep.online) return;
+      (ep.models || []).forEach(mid => {
+        allModels.push({ mid, epName: ep.name || '', display: mid.split('/').pop() });
       });
     });
     if (!allModels.length) {
@@ -221,8 +227,9 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPa
       return;
     }
     let restricted = modelsRestricted;
+    let blockAll = blockAllModels;
     listEl.innerHTML = sortModelObjects(allModels).map(m => {
-      const checked = !restricted || allowedSet.has(m.mid) ? 'checked' : '';
+      const checked = !blockAll && (!restricted || allowedSet.has(m.mid)) ? 'checked' : '';
       return `<label>
         <input type="checkbox" class="priv-model-cb" data-mid="${esc(m.mid)}" ${checked}>
         <span>${esc(m.display)}</span>
@@ -236,15 +243,33 @@ async function _loadModelsForUser(username, allowedSet, modelsRestricted, privPa
       listEl.querySelectorAll('.priv-model-cb').forEach(cb => {
         if (cb.checked) checked.push(cb.dataset.mid);
       });
-      // All checked means unrestricted; zero checked means explicitly no models.
-      restricted = checked.length !== allModels.length;
-      const value = restricted ? checked : [];
+      // Three distinct states the backend must be able to tell apart:
+      //  - all checked   -> no restriction (allowed_models: [], block_all_models: false)
+      //  - none checked  -> block everything (allowed_models: [], block_all_models: true)
+      //  - some checked  -> allowlist (allowed_models: checked, block_all_models: false)
+      let value, hintText;
+      if (checked.length === allModels.length) {
+        restricted = false;
+        blockAll = false;
+        value = [];
+        hintText = 'All models allowed (no restrictions)';
+      } else if (checked.length === 0) {
+        restricted = true;
+        blockAll = true;
+        value = [];
+        hintText = 'No models allowed';
+      } else {
+        restricted = true;
+        blockAll = false;
+        value = checked;
+        hintText = value.length + ' model(s) allowed';
+      }
       const hint = privPanel.querySelector('.priv-models-list[data-user]')?.previousElementSibling?.querySelector('div[style*="opacity"]');
-      if (hint) hint.textContent = !restricted ? 'All models allowed (no restrictions)' : (value.length === 0 ? 'No models allowed' : value.length + ' model(s) allowed');
+      if (hint) hint.textContent = hintText;
       fetch(`/api/auth/users/${encodeURIComponent(username)}/privileges`, {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted }),
+        body: JSON.stringify({ allowed_models: value, allowed_models_restricted: restricted, block_all_models: blockAll }),
       }).catch(() => {});
     }
     listEl.querySelectorAll('.priv-model-cb').forEach(cb => cb.addEventListener('change', _saveModels));
@@ -1123,6 +1148,144 @@ function initEndpointForm() {
       showAuthError(formatDeviceFlowError(e));
     }
   }
+
+  // API Key reveal toggle. The key inputs are hidden by default so the Add
+  // form reads as a single action row; the Key button toggles the input row
+  // and flips aria-expanded for screen readers / CSS pseudo-classes.
+  const _wireKeyToggle = (btnId, rowId) => {
+    const btn = el(btnId);
+    const row = el(rowId);
+    if (!btn || !row) return;
+    btn.addEventListener('click', () => {
+      const showing = row.style.display !== 'none';
+      row.style.display = showing ? 'none' : '';
+      btn.setAttribute('aria-expanded', showing ? 'false' : 'true');
+      btn.style.opacity = showing ? '0.75' : '1';
+      if (!showing) {
+        const inp = row.querySelector('input');
+        if (inp) inp.focus();
+      }
+    });
+  };
+  _wireKeyToggle('adm-epLocalKeyBtn', 'adm-epLocalApiKey-row');
+  _wireKeyToggle('adm-epApiKeyBtn', 'adm-epApiKey-row');
+
+  // ── Added Models toolbar: Probe + Clear offline ────────────────────
+  // Both buttons act over the currently-rendered endpoint list. The
+  // online/offline marker is stamped on each row's [data-adm-ep-online]
+  // attribute by loadEndpoints(), so both buttons just iterate the DOM
+  // without re-fetching anything they don't already have.
+  const _refreshOfflineCount = () => {
+    const lbl = el('adm-epOfflineCount');
+    if (!lbl) return;
+    const n = document.querySelectorAll('[data-adm-ep-id] [data-adm-ep-online="0"]').length;
+    lbl.textContent = n > 0 ? `(${n})` : '';
+    // Keep the button enabled even when there are no offline rows — a
+    // click on the empty case fires a toast instead of feeling dead.
+    const btn = el('adm-epClearOfflineBtn');
+    if (btn) btn.style.opacity = n === 0 ? '0.55' : '0.85';
+  };
+  // Wire after every loadEndpoints() run by patching the render hook —
+  // simplest path: MutationObserver on the two list containers.
+  const _obsRoots = ['adm-epList-local', 'adm-epList-api']
+    .map(id => el(id)).filter(Boolean);
+  if (_obsRoots.length) {
+    const mo = new MutationObserver(_refreshOfflineCount);
+    _obsRoots.forEach(r => mo.observe(r, { childList: true, subtree: true }));
+    _refreshOfflineCount();
+  }
+
+  const probeAllBtn = el('adm-epProbeAllBtn');
+  if (probeAllBtn) {
+    probeAllBtn.addEventListener('click', async () => {
+      probeAllBtn.disabled = true;
+      const origHTML = probeAllBtn.innerHTML;
+      probeAllBtn.innerHTML = '<span style="opacity:0.7;">Probing…</span>';
+      try {
+        // Hit the bulk local probe (same one the model picker uses).
+        await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).catch(() => {});
+        // Then per-endpoint /probe for the rest so API/cloud endpoints
+        // refresh too. Parallel — capped to 6 at a time so we don't
+        // hammer the backend on a big list.
+        const ids = Array.from(document.querySelectorAll('[data-adm-ep-id]')).map(r => r.getAttribute('data-adm-ep-id')).filter(Boolean);
+        const lane = async (id) => {
+          try { await fetch(`/api/model-endpoints/${id}/probe`, { credentials: 'same-origin' }); } catch (_) {}
+        };
+        const queue = [...ids];
+        const workers = Array.from({length: Math.min(6, queue.length)}, () => (async () => {
+          while (queue.length) {
+            const id = queue.shift();
+            if (id) await lane(id);
+          }
+        })());
+        await Promise.all(workers);
+        await loadEndpoints();
+        if (uiModule && uiModule.showToast) uiModule.showToast('Endpoint status refreshed', 1800);
+      } finally {
+        probeAllBtn.innerHTML = origHTML;
+        probeAllBtn.disabled = false;
+      }
+    });
+  }
+
+  const clearOfflineBtn = el('adm-epClearOfflineBtn');
+  if (clearOfflineBtn) {
+    clearOfflineBtn.addEventListener('click', async () => {
+      const offlineBtns = Array.from(document.querySelectorAll('[data-adm-del-ep][data-adm-ep-online="0"]'));
+      const ids = offlineBtns.map(b => b.getAttribute('data-adm-del-ep')).filter(Boolean);
+      if (!ids.length) {
+        if (uiModule && uiModule.showToast) {
+          uiModule.showToast('No offline endpoints — nothing to clear', 1800);
+        }
+        return;
+      }
+      const confirmMsg = ids.length === 1
+        ? 'Remove 1 offline endpoint?'
+        : `Remove ${ids.length} offline endpoints?`;
+      if (uiModule && uiModule.styledConfirm) {
+        const ok = await uiModule.styledConfirm(confirmMsg, { confirmText: 'Remove', danger: true });
+        if (!ok) return;
+      } else if (!confirm(confirmMsg)) {
+        return;
+      }
+      clearOfflineBtn.disabled = true;
+      // Optimistic UI: pull rows immediately, then fire the DELETEs.
+      offlineBtns.forEach(b => {
+        const row = b.closest('[data-adm-ep-id]');
+        if (row) row.remove();
+      });
+      await Promise.all(ids.map(id =>
+        fetch('/api/model-endpoints/' + id, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {})
+      ));
+      try { await loadEndpoints(); } catch (_) {}
+      _refreshOfflineCount();
+      if (uiModule && uiModule.showToast) uiModule.showToast(`Removed ${ids.length} offline endpoint${ids.length === 1 ? '' : 's'}`, 1800);
+    });
+  }
+
+  // Clear-on-focus for the API key inputs. The fields are type=password so the
+  // value is masked; users can't see what's there to edit it in place, so the
+  // expected gesture is "click in, type new key". Wiping on focus removes the
+  // select-all-and-delete dance.
+  const _wireClearOnFocus = (id) => {
+    const inp = el(id);
+    if (!inp) return;
+    inp.addEventListener('focus', () => {
+      if (inp.value) inp.value = '';
+    });
+  };
+  _wireClearOnFocus('adm-epLocalApiKey');
+  _wireClearOnFocus('adm-epApiKey');
+
+  // Drop the Ollama provider logo into the Ollama Quickstart button. Reuses
+  // the same SVG the provider picker uses, so brand parity stays free.
+  try {
+    const _ollamaLogoSlot = document.querySelector('#adm-epOllamaBtn .adm-ollama-logo');
+    if (_ollamaLogoSlot) {
+      const svg = providerLogo('ollama') || '';
+      if (svg) _ollamaLogoSlot.innerHTML = svg;
+    }
+  } catch (_) {}
 
   // Local "Add" button — sibling form for self-hosted base URLs.
   const localAddBtn = el('adm-epLocalAddBtn');
@@ -2048,17 +2211,28 @@ async function loadTokens() {
 }
 
 function initTokenForm() {
-  el('adm-tokenAddBtn').addEventListener('click', async () => {
+  const addBtn = el('adm-tokenAddBtn');
+  if (!addBtn || addBtn.dataset.bound) return;
+  addBtn.dataset.bound = '1';
+  addBtn.addEventListener('click', async () => {
     const msg = el('adm-tokenMsg');
     const reveal = el('adm-tokenReveal');
     msg.textContent = ''; msg.className = ''; reveal.style.display = 'none';
     const name = el('adm-tokenName').value.trim();
     if (!name) { msg.textContent = 'Token name is required'; msg.className = 'admin-error'; return; }
     const fd = new FormData(); fd.append('name', name);
+    const scopes = (el('adm-tokenScopes')?.value || '').trim();
+    if (scopes) fd.append('scopes', scopes);
     try {
       const res = await fetch('/api/tokens', { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
-      if (res.ok) { el('adm-tokenValue').textContent = data.token; reveal.style.display = ''; el('adm-tokenName').value = ''; loadTokens(); }
+      if (res.ok) {
+        el('adm-tokenValue').textContent = data.token;
+        reveal.style.display = '';
+        el('adm-tokenName').value = '';
+        if (el('adm-tokenScopes')) el('adm-tokenScopes').value = '';
+        loadTokens();
+      }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
   });
@@ -2319,7 +2493,7 @@ function initDangerZone() {
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTokenForm, () => settingsModule.initIntegrations()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2332,6 +2506,7 @@ function refreshAll() {
   loadEndpoints();
   loadBuiltinTools();
   loadMcpServers();
+  loadTokens();
 }
 
 /* ═══════════════════════════════════════════

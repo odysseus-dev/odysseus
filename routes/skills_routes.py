@@ -1020,7 +1020,7 @@ def _resolve_audit_models(owner=None):
             spec = (get_setting("teacher_model", "") or "").strip()
             if spec:
                 from src.ai_interaction import _resolve_model
-                t_url, t_model, t_headers = _resolve_model(spec)
+                t_url, t_model, t_headers = _resolve_model(spec, owner=owner)
                 if t_url and t_model:
                     teacher = (t_url, t_model, t_headers)
     except Exception as e:

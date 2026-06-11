@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from fastapi import HTTPException
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
@@ -53,6 +54,7 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         _endpoint_settings_using_endpoint,
         _clear_endpoint_settings_for_endpoint,
         _clear_user_pref_endpoint_refs,
+        _default_endpoint_needs_assignment,
         _PROVIDER_CURATED,
     )
     from src.llm_core import ANTHROPIC_MODELS
@@ -153,6 +155,26 @@ def test_endpoint_cleanup_updates_scoped_and_legacy_user_prefs():
     assert legacy["default_model_fallbacks"] == []
 
 
+# ── _default_endpoint_needs_assignment (add-endpoint auto-default) ──
+
+def test_default_assignment_when_none_configured():
+    # Nothing configured yet → first added endpoint should become the default.
+    assert _default_endpoint_needs_assignment("", {"a", "b"}) is True
+
+
+def test_default_assignment_when_current_default_disabled():
+    # #3586: the configured default points at an endpoint that is no longer
+    # enabled (the user disabled it). Adding a new endpoint must reassign the
+    # default — otherwise Memory → Tidy keeps failing with "No default model
+    # configured" even though an enabled endpoint exists.
+    assert _default_endpoint_needs_assignment("disabled-ep", {"new-ep"}) is True
+
+
+def test_default_preserved_when_current_default_enabled():
+    # Normal case: the configured default is still enabled → leave it alone.
+    assert _default_endpoint_needs_assignment("live-ep", {"live-ep", "new-ep"}) is False
+
+
 # ── _match_provider_curated ──
 
 class TestMatchProviderCurated:
@@ -191,6 +213,87 @@ class TestMatchProviderCurated:
 
     def test_none_url_safe(self):
         assert _match_provider_curated(None, "openai") == "openai"
+
+    # ── Z.AI coding plan path override (#2230) ──
+
+    def test_zai_coding_path_returns_coding_curated(self):
+        """z.ai/api/coding must return 'zai-coding', not the base 'zai' list."""
+        assert _match_provider_curated("https://z.ai/api/coding", "openai") == "zai-coding"
+
+    def test_zai_coding_path_differs_from_base_zai(self):
+        """The coding plan and the base plan must resolve to different curated keys."""
+        base = _match_provider_curated("https://z.ai/v1", "openai")
+        coding = _match_provider_curated("https://z.ai/api/coding", "openai")
+        assert base == "zai"
+        assert coding == "zai-coding"
+        assert base != coding
+
+    def test_zai_coding_with_trailing_slash(self):
+        assert _match_provider_curated("https://z.ai/api/coding/", "openai") == "zai-coding"
+
+    def test_zai_base_does_not_match_coding(self):
+        """z.ai without the /api/coding path must NOT return 'zai-coding'."""
+        assert _match_provider_curated("https://z.ai/v1", "openai") != "zai-coding"
+
+    def test_zai_coding_none_provider(self):
+        """Path-based override fires even when provider is None."""
+        assert _match_provider_curated("https://z.ai/api/coding", None) == "zai-coding"
+
+
+# ── _probe_endpoint: Z.AI coding plan (#2230) ──
+
+class TestProbeZaiCoding:
+    """Regression coverage for the Z.AI coding endpoint probing path."""
+
+    def _patch(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+
+    def test_probe_preserves_models_from_server(self, monkeypatch):
+        """Models returned by /models are kept in the result."""
+        self._patch(monkeypatch)
+        server_models = [{"id": "glm-5.1"}, {"id": "custom-finetune"}]
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            return httpx.Response(200, json={"data": server_models},
+                                 request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        result = _probe_endpoint("https://z.ai/api/coding", "key")
+        assert "glm-5.1" in result
+        assert "custom-finetune" in result
+
+    def test_probe_appends_curated_on_partial_response(self, monkeypatch):
+        """When /models returns a partial list, curated-only models are appended."""
+        self._patch(monkeypatch)
+        # Server only returns one model; the curated list has more
+        server_models = [{"id": "glm-5.1"}]
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            return httpx.Response(200, json={"data": server_models},
+                                 request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        result = _probe_endpoint("https://z.ai/api/coding", "key")
+        assert "glm-5.1" in result
+        # At least one curated model should be appended
+        coding_curated = _PROVIDER_CURATED.get("zai-coding", [])
+        appended = [m for m in coding_curated if m in result and m != "glm-5.1"]
+        assert len(appended) > 0, "curated-only models should be appended"
+
+    def test_probe_does_not_use_base_zai_curated(self, monkeypatch):
+        """The coding endpoint must use zai-coding, NOT the base zai list."""
+        self._patch(monkeypatch)
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            return httpx.Response(200, json={"data": [{"id": "glm-5.1"}]},
+                                 request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+        result = _probe_endpoint("https://z.ai/api/coding", "key")
+        base_only = set(_PROVIDER_CURATED.get("zai", [])) - set(_PROVIDER_CURATED.get("zai-coding", []))
+        for model in base_only:
+            assert model not in result, f"base-zai-only model {model} should not appear for coding endpoint"
 
 
 # ── _curate_models ──
@@ -265,6 +368,8 @@ class TestIsChatModel:
         "gpt-4o", "gpt-4o-mini", "claude-sonnet-4", "llama-3.3-70b",
         "deepseek-chat", "gemini-2.0-flash", "o3",
         "llama-4-scout-17b-16e-instruct",
+        "gemma-2b-it", "google/gemma-2b-it",
+        "bigcode/starcoder2-15b-instruct",
     ])
     def test_chat_models(self, model_id):
         assert _is_chat_model(model_id) is True
@@ -882,16 +987,21 @@ def _create_form_kwargs(**overrides):
     return kwargs
 
 
-def _patch_create_deps(monkeypatch, db):
+def _patch_create_deps(monkeypatch, db, settings=None):
     import src.auth_helpers as auth_helpers
+    # Shared, in-memory settings so the auto-default write path stays hermetic
+    # (no real settings.json). Returned so tests can assert what was persisted.
+    settings = {"default_endpoint_id": "exists"} if settings is None else settings
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(model_routes, "ModelEndpoint", _RecordingEndpoint)
     monkeypatch.setattr(model_routes, "_normalize_base", lambda b: b)
     monkeypatch.setattr(model_routes, "_rewrite_loopback_for_docker", lambda b, **k: b)
-    monkeypatch.setattr(model_routes, "_load_settings", lambda: {"default_endpoint_id": "exists"})
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: settings)
+    monkeypatch.setattr(model_routes, "_save_settings", lambda s: settings.update(s))
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda u: u)
     monkeypatch.setattr(auth_helpers, "get_current_user", lambda req: None)
+    return settings
 
 
 def test_list_model_endpoints_returns_key_fingerprint(monkeypatch):
@@ -1005,6 +1115,48 @@ def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypa
     assert len(db.added) == 1
     assert db.added[0].base_url == "https://api.example.test/v1"
     assert db.added[0].api_key == "key-two"
+
+
+def test_post_reassigns_default_when_current_default_disabled(monkeypatch):
+    # #3586: the configured default points at a now-disabled endpoint. Adding a
+    # new endpoint must promote it to the default, otherwise raw-setting readers
+    # (Memory → Tidy) keep failing with "No default model configured".
+    disabled = _make_endpoint(id="dead", base_url="http://old-host/v1", is_enabled=False)
+    db = _PinnedFakeDb([disabled])
+    settings = _patch_create_deps(
+        monkeypatch, db, settings={"default_endpoint_id": "dead", "default_model": "stale"}
+    )
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://new-host:1234/v1",
+        **_create_form_kwargs(),
+    )
+
+    new_id = db.added[0].id
+    assert settings["default_endpoint_id"] == new_id
+    assert settings["default_endpoint_id"] != "dead"
+
+
+def test_post_keeps_default_when_current_default_enabled(monkeypatch):
+    # Counter-case: an enabled default must be left untouched when another
+    # endpoint is added.
+    live = _make_endpoint(id="live", base_url="http://live-host/v1", is_enabled=True)
+    db = _PinnedFakeDb([live])
+    settings = _patch_create_deps(
+        monkeypatch, db, settings={"default_endpoint_id": "live", "default_model": "live-model"}
+    )
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://another-host:1234/v1",
+        **_create_form_kwargs(),
+    )
+
+    assert settings["default_endpoint_id"] == "live"
+    assert settings["default_model"] == "live-model"
 
 
 def test_post_same_base_url_same_api_key_still_dedupes(monkeypatch):
@@ -1271,6 +1423,24 @@ def test_background_refresh_failure_keeps_existing_cached_models(monkeypatch):
     assert _wait_for(lambda: db.commits > 0)
     assert result["items"][0]["models"] == ["cached-model"]
     assert json.loads(ep.cached_models) == ["cached-model"]
+
+
+def test_api_models_auth_gate_fails_closed_on_unexpected_error(monkeypatch):
+    """A non-HTTPException raised while checking auth must yield 500, not a
+    silent pass-through that leaks the model list to an unauthenticated caller."""
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "_auth_disabled", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(current_user=None),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=SimpleNamespace(is_configured=True))),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _route_endpoint(router, "/api/models")(request)
+
+    assert exc.value.status_code == 500
 
 
 def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):

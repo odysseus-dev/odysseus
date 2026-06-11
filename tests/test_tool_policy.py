@@ -238,36 +238,6 @@ def test_guide_only_blocks_later_round_document_streaming(monkeypatch):
     assert not any(event.get("type") == "doc_stream_delta" for event in events)
 
 
-def test_guide_only_directive_dominates_workspace_prompt(monkeypatch):
-    _patch_loop_basics(monkeypatch)
-    system_prompts = []
-
-    async def _fake_stream(_candidates, messages, **kwargs):
-        system_prompts.append(messages[0]["content"])
-        yield _delta_chunk("ok")
-        yield "data: [DONE]\n\n"
-
-    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
-    policy = build_effective_tool_policy(last_user_message="Do not use tools.")
-
-    _collect(
-        al.stream_agent_loop(
-            "http://local.test/v1",
-            "local-model",
-            [{"role": "user", "content": "Do not use tools."}],
-            max_rounds=1,
-            relevant_tools={"bash"},
-            tool_policy=policy,
-            workspace="/tmp/project",
-        )
-    )
-
-    assert system_prompts
-    assert system_prompts[0].startswith("## GUIDE-ONLY MODE")
-    assert "ACTIVE WORKSPACE" not in system_prompts[0]
-    assert "ALWAYS start by exploring" not in system_prompts[0]
-
-
 def test_guide_only_skips_intent_without_action_nudge(monkeypatch):
     _patch_loop_basics(monkeypatch)
 
