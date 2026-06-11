@@ -26,25 +26,62 @@ function _basename(p) {
   return parts[parts.length - 1] || p;
 }
 
+// Workspace only applies to agent mode (it scopes the file/shell tools), so the
+// pill + overflow entry are hidden in chat mode, like the bash toggle.
+function _isChatMode() {
+  const b = document.getElementById('mode-chat-btn');
+  return !!(b && b.classList.contains('active'));
+}
+
 export function syncWorkspaceIndicator(path) {
+  const chat = _isChatMode();
   const pill = document.getElementById('workspace-indicator-btn');
   const name = document.getElementById('workspace-indicator-name');
   const overflow = document.getElementById('overflow-workspace-btn');
   if (pill) {
-    pill.style.display = path ? '' : 'none';
+    pill.style.display = (path && !chat) ? '' : 'none';
     pill.classList.toggle('active', !!path);
-    if (path) pill.title = `Workspace: ${path} — click to clear`;
+    if (path) pill.title = `Workspace: ${path}\nFile tools are confined here; shell commands start here but are not sandboxed and can reach outside it.\nClick to clear.`;
   }
   if (name) name.textContent = path ? _basename(path) : '';
-  if (overflow) overflow.classList.toggle('active', !!path);
+  if (overflow) {
+    overflow.style.display = chat ? 'none' : '';
+    overflow.classList.toggle('active', !!path);
+  }
   // Recompute the "+" overflow dot (app.js owns updatePlusDot via this event).
   try { document.dispatchEvent(new CustomEvent('overflow-state-change')); } catch (_) {}
+}
+
+// Called by the agent/chat mode toggle so the pill + overflow entry follow mode.
+export function applyMode(_mode) {
+  syncWorkspaceIndicator(getWorkspace());
 }
 
 export function setWorkspace(path) {
   if (path) Storage.set(KEYS.WORKSPACE, path);
   else Storage.remove(KEYS.WORKSPACE);
   syncWorkspaceIndicator(path || '');
+}
+
+/**
+ * Validate a manually entered path server-side, then persist the canonical
+ * form. Returns {ok, path|null}. Without this, a typo / file path / deleted
+ * folder / filesystem root would be stored and shown as active while the
+ * backend silently refuses to bind it on every send.
+ */
+export async function vetAndSetWorkspace(path) {
+  try {
+    const res = await fetch(`${API_BASE}/api/workspace/vet?path=${encodeURIComponent(path)}`, { credentials: 'same-origin' });
+    if (!res.ok) return { ok: false, path: null };
+    const data = await res.json();
+    if (data.ok && data.path) {
+      setWorkspace(data.path);
+      return { ok: true, path: data.path };
+    }
+    return { ok: false, path: null };
+  } catch (e) {
+    return { ok: false, path: null };
+  }
 }
 
 export function clearWorkspace() {
@@ -76,11 +113,21 @@ function _render(data) {
     // Backend supplies the full child path (os.path.join → cross-platform).
     rows += `<div class="workspace-row" data-path="${encodeURIComponent(d.path)}">${_FOLDER_SVG}<span>${uiModule.esc(d.name)}</span></div>`;
   }
+  if (data.truncated) {
+    rows += '<div class="workspace-empty">Too many folders to list. Type or paste a path above to jump in.</div>';
+  }
   if (!data.dirs.length && !data.parent) rows = '<div class="workspace-empty">No subfolders</div>';
   body.innerHTML = rows || '<div class="workspace-empty">No subfolders</div>';
   body.querySelectorAll('.workspace-row').forEach((row) => {
     row.addEventListener('click', () => _navigate(decodeURIComponent(row.dataset.path)));
   });
+  // Filesystem roots (and sensitive dirs) can be browsed through but never
+  // bound as the workspace; the backend rejects them too.
+  const useBtn = _modal.querySelector('#workspace-use');
+  if (useBtn) {
+    useBtn.disabled = data.selectable === false;
+    useBtn.title = data.selectable === false ? 'This folder cannot be used as a workspace' : '';
+  }
 }
 
 async function _navigate(path) {
@@ -106,6 +153,7 @@ function _getModal() {
       <input type="text" class="styled-prompt-input workspace-cur" id="workspace-cur-path"
              spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off"
              placeholder="Type or paste a folder path, then press Enter" />
+      <p class="muted workspace-note">File tools are <strong>confined</strong> to this folder. Shell commands start here but are <strong>not sandboxed</strong> and can reach outside it. A workspace scopes the tools; it is not a security boundary.</p>
       <div class="modal-body workspace-body" id="workspace-body"></div>
       <div class="modal-footer workspace-footer">
         <button type="button" class="confirm-btn confirm-btn-secondary" id="workspace-cancel">Cancel</button>
@@ -157,4 +205,4 @@ export function initWorkspace() {
   if (pill) pill.addEventListener('click', clearWorkspace);
 }
 
-export default { initWorkspace, openWorkspaceBrowser, getWorkspace, setWorkspace, clearWorkspace, syncWorkspaceIndicator };
+export default { initWorkspace, openWorkspaceBrowser, getWorkspace, setWorkspace, vetAndSetWorkspace, clearWorkspace, syncWorkspaceIndicator, applyMode };

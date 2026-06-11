@@ -57,3 +57,22 @@ def test_truncate_keep_count_exceeds_total_does_not_inflate_count():
         )
     finally:
         db.close()
+
+
+def test_truncate_keeps_history_alias_for_context_messages():
+    from core.models import ChatMessage
+
+    sm, database, sm_mod = _make_manager()
+    sid = "alias-after-truncate"
+    sm.create_session(session_id=sid, name="t", endpoint_url="x",
+                      model="m", rag=False, owner="u")
+    for i in range(3):
+        sm.add_message(sid, ChatMessage("user", f"msg{i}"))
+
+    assert sm.truncate_messages(sid, 2) is True
+
+    session = sm.sessions[sid]
+    assert session.history is session._history
+
+    session.history.append(ChatMessage("user", "after direct mutation"))
+    assert session.get_context_messages()[-1]["content"] == "after direct mutation"

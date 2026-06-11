@@ -34,6 +34,24 @@ def effective_user(request: Request) -> Optional[str]:
     return get_current_user(request)
 
 
+def _is_api_token_request(request: Request) -> bool:
+    """Return True when middleware authenticated a bearer API token."""
+    return bool(getattr(request.state, "api_token", False))
+
+
+def require_authenticated_request(request: Request) -> str:
+    """Allow either a browser session or a valid bearer API token.
+
+    This is intentionally narrower than :func:`require_user`: use it only for
+    routes that need authentication but do not read or mutate owner-scoped
+    user data. Owner-scoped routes should use ``require_user`` for browser
+    sessions or their own API-token scope/owner gate.
+    """
+    if _is_api_token_request(request):
+        return effective_user(request) or ""
+    return require_user(request)
+
+
 def _auth_disabled() -> bool:
     """True when the operator has explicitly turned off auth via .env.
     Mirrors the AUTH_ENABLED parse in app.py / core/middleware.py so the
@@ -60,6 +78,9 @@ def require_user(request: Request) -> str:
     Use this on routes that touch user data so middleware misconfig can't
     open them up.
     """
+    if _is_api_token_request(request):
+        raise HTTPException(403, "API tokens must use a scope-aware API route")
+
     u = get_current_user(request)
     if u:
         return u

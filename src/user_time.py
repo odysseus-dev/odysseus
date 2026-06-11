@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Dict, Optional
 
 
 _USER_TZ_OFFSET_MIN: ContextVar[Optional[int]] = ContextVar("user_tz_offset_min", default=None)
@@ -136,3 +136,26 @@ def current_datetime_prompt(now_utc: Optional[datetime] = None) -> str:
         "When scheduling a task with manage_tasks, scheduled_time is in UTC: "
         "convert the user's stated local time using the UTC offset above.\n\n"
     )
+
+
+def current_datetime_context_message(now_utc: Optional[datetime] = None) -> Dict[str, str]:
+    """Build the current-date/time context as a standalone chat message.
+
+    This intentionally returns a ``user``-role message rather than a
+    ``system``-role one. The text changes every turn (it embeds the current
+    clock time down to the minute), and local OpenAI-compatible backends
+    (llama.cpp / LM Studio) key their KV-cache prefix off the system message
+    byte-for-byte — folding ever-changing timestamp text into the system
+    message would invalidate the cached prefix on every single request (see
+    issue #2927). Keeping it as a separate message placed near the end of the
+    array (right before the latest user turn) lets the static system prompt
+    stay byte-identical across turns while the model still gets fresh
+    date/time grounding for relative-date reasoning.
+    """
+    return {
+        "role": "user",
+        "content": (
+            "[Context — current date/time, refreshed each turn; not part of "
+            "your instructions]\n" + current_datetime_prompt(now_utc)
+        ),
+    }
