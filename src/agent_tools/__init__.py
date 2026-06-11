@@ -31,6 +31,7 @@ from .pipeline_tools import PipelineTool
 from .ui_tools import UIControlTool
 from .vault_tools import VaultSearchTool, VaultGetTool, VaultUnlockTool
 from .research_tools import TriggerResearchTool, ManageResearchTool
+from .api_integration_tools import ApiCallTool, AppApiTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -60,6 +61,8 @@ TOOL_HANDLERS = {
     "vault_unlock": VaultUnlockTool().execute,
     "trigger_research": TriggerResearchTool().execute,
     "manage_research": ManageResearchTool().execute,
+    "api_call": ApiCallTool().execute,
+    "app_api": AppApiTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -100,7 +103,7 @@ _TOOL_TAGS = {
     "list_serve_presets", "serve_preset", "adopt_served_model",
     "list_cookbook_servers",
     "edit_image",  # "trigger_research", "manage_research",
-    "app_api",
+    # "api_call", "app_api",
 }
 
 TOOL_TAGS = set(TOOL_HANDLERS.keys()) | _TOOL_TAGS
@@ -147,5 +150,4 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_webhooks,
     do_manage_tokens,
     do_manage_settings,
-    do_api_call,
 )

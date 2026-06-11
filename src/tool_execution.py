@@ -431,7 +431,7 @@ async def execute_tool_block(
     events while the command is in flight. Ignored by other tools.
     """
     from src.tool_implementations import (
-        do_api_call, do_manage_endpoints,
+        do_manage_endpoints,
         do_manage_mcp, do_manage_webhooks, do_manage_tokens,
         do_manage_settings, do_manage_notes,
         do_manage_calendar,
@@ -442,7 +442,6 @@ async def execute_tool_block(
         do_list_cookbook_servers,
         do_edit_image, do_resolve_contact,
         do_manage_contact,
-        do_app_api,
     )
 
     tool = block.tool_type
@@ -646,14 +645,11 @@ async def execute_tool_block(
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     elif tool in ("manage_tasks", "manage_skills", "manage_memory",
                   "manage_rag", "pipeline", "ui_control",
-                  "trigger_research", "manage_research"):
+                  "trigger_research", "manage_research",
+                  "api_call", "app_api"):
         desc = tool
         from src.agent_tools import TOOL_HANDLERS
         result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
-    elif tool == "api_call":
-        first_line = content.split("\n")[0].strip()[:60]
-        desc = f"api_call: {first_line}"
-        result = await do_api_call(content)
     elif tool == "manage_endpoints":
         desc = "manage_endpoints"
         result = await do_manage_endpoints(content, owner=owner)
@@ -702,9 +698,6 @@ async def execute_tool_block(
     elif tool == "list_cached_models":
         desc = "list_cached_models"
         result = await do_list_cached_models(content, owner=owner)
-    elif tool == "app_api":
-        desc = "app_api"
-        result = await do_app_api(content, owner=owner)
     elif tool == "list_serve_presets":
         desc = "list_serve_presets"
         result = await do_list_serve_presets(content, owner=owner)
