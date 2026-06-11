@@ -13,6 +13,9 @@ import json
 import logging
 import os
 import pathlib
+import hashlib
+import secrets
+import time
 import re
 import sys
 import time
@@ -31,6 +34,106 @@ from src.tool_utils import _truncate, get_mcp_manager
 # Using this as cwd and HOME prevents the agent from silently creating files
 # in ephemeral container layers that are lost on the next rebuild.
 _AGENT_WORKDIR = DATA_DIR
+
+# ---------------------------------------------------------------------------
+# Destructive command safety gate
+# ---------------------------------------------------------------------------
+# Commands that can irreversibly delete, overwrite, or destroy data require
+# explicit user approval before execution. The agent must call ask_user to
+# confirm, then retry with the approval line. This prevents accidents like
+# `rm -rf` across dozens of directories without human review.
+# ---------------------------------------------------------------------------
+
+_DESTRUCTIVE_PATTERNS = [
+    # File deletion
+    r"\brm\s+.*-(r[^\w]*f|f[^\w]*r)",  # rm -rf, rm -fr, rm -r -f
+    r"\brm\s+.*--recursive",           # rm --recursive (any variant)
+    r"\bfind\b.*-delete",            # find ... -delete
+    r"\bfind\b.*-exec\s+rm\b",        # find ... -exec rm
+    # Forceful overwrites
+    r"\bdd\s+if=",                   # dd if=... (raw device writes)
+    r"\bmkfs\b",                     # mkfs.* (format filesystem)
+    r"\bfdisk\b",                    # fdisk / parted (partition editing)
+    r"\bmkswap\b",                   # create swap
+    # Git destructive
+    r"\bgit\s+clean\s.*-f",         # git clean -f (remove untracked files)
+    r"\bgit\s+reset\s+--hard\b",    # git reset --hard
+    r"\bgit\s+push\s+--force\b",    # git push --force (incl. --force-with-lease)
+    r"\bgit\s+push\s+.*-f\b",       # git push -f
+    r"\bgit\s+stash\s+drop\b",      # git stash drop (permanent)
+    # Shred / secure delete
+    r"\bshred\b",                    # shred (secure file deletion)
+    r"\bwipe\b",                     # wipe
+    # Chmod/chown wide-scope
+    r"\bchmod\s+.*-R\b",           # chmod -R (recursive permission change)
+    r"\bchown\s+.*-R\b",           # chown -R (recursive ownership change)
+    # Docker destructive
+    r"\bdocker\s+system\s+prune\b", # docker system prune
+    r"\bdocker\s+volume\s+rm\b",   # docker volume rm
+    r"\bdocker\s+rmi\b",           # docker rmi
+    # Mass delete
+    r"\bxargs\s+rm\b",             # xargs rm
+    r"\bgit\s+branch\s+-D\b",      # git branch -D (force delete branch)
+    r"\b:>\s*\S+",                  # :> file (truncate)
+    r"\btruncate\s+.*-s\s+0\b",    # truncate -s 0
+    # Database destructive
+    r"\bdrop\s+table\b",            # SQL DROP TABLE
+    r"\bdrop\s+database\b",         # SQL DROP DATABASE
+    r"\bDROP\s+TABLE\b",
+    r"\bDROP\s+DATABASE\b",
+]
+
+# Token prefix the agent includes when user has approved a destructive command.
+_APPROVAL_PREFIX = "#!approved:"
+
+# Approval tokens live for 5 minutes.
+_APPROVAL_TTL = 300
+
+# In-memory store: token -> (original_command, expiry_time)
+_approval_store: dict = {}
+
+def _is_destructive_command(command: str) -> bool:
+    """Return True if the bash command matches a destructive pattern."""
+    import re
+    cmd = command.strip()
+    for pattern in _DESTRUCTIVE_PATTERNS:
+        if re.search(pattern, cmd, re.IGNORECASE):
+            return True
+    return False
+
+def _parse_approval(command: str) -> tuple:
+    """Parse a command for the approval token. Returns (token, cleaned_command)
+    or (None, original) if no approval token found."""
+    lines = command.strip().split("\n")
+    token = None
+    if lines and lines[0].startswith(_APPROVAL_PREFIX):
+        token = lines[0][len(_APPROVAL_PREFIX):].strip()
+        command = "\n".join(lines[1:]).strip()
+    # Also check for expired tokens and clean them
+    _clean_expired_approvals()
+    return token, command
+
+def _generate_approval_token(command: str) -> str:
+    """Generate a short approval token for a destructive command."""
+    token = secrets.token_hex(8)
+    _approval_store[token] = (command, time.time() + _APPROVAL_TTL)
+    return token
+
+def _check_approval(token: str) -> bool:
+    """Return True if token is valid and not expired."""
+    if token in _approval_store:
+        _, expiry = _approval_store[token]
+        if time.time() < expiry:
+            return True
+        del _approval_store[token]
+    return False
+
+def _clean_expired_approvals():
+    """Remove expired approval tokens."""
+    now = time.time()
+    expired = [t for t, (_, exp) in _approval_store.items() if now >= exp]
+    for t in expired:
+        del _approval_store[t]
 
 
 
@@ -639,6 +742,30 @@ async def execute_tool_block(
     if tool == "bash" and session_id:
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
+            # Destructive commands need approval even in background mode.
+            if _is_destructive_command(_bg_cmd):
+                approval_token, cleaned_cmd = _parse_approval(_bg_cmd)
+                if approval_token and _check_approval(approval_token):
+                    _bg_cmd = cleaned_cmd
+                else:
+                    token = _generate_approval_token(_bg_cmd)
+                    desc = f"bash (background): destructive blocked"
+                    result = {
+                        "needs_approval": {
+                            "command": _bg_cmd[:500],
+                            "token": token,
+                        },
+                        "error": (
+                            f"This background command is destructive and requires approval.\n\n"
+                            f"Command: `{_bg_cmd[:200]}{'...' if len(_bg_cmd) > 200 else ''}`\n\n"
+                            f"To approve, include `{_APPROVAL_PREFIX}{token}` as the FIRST line "
+                            f"of `#!bg` + command. Valid for {_APPROVAL_TTL // 60} min.\n\n"
+                            f"Call `ask_user` to confirm with the user before retrying."
+                        ),
+                        "exit_code": 1,
+                    }
+                    logger.info(f"Tool blocked (destructive bg): {desc}")
+                    return desc, result
             from src import bg_jobs
             rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=_AGENT_WORKDIR)
             short = _bg_cmd.strip().split(chr(10))[0][:80]
@@ -654,6 +781,34 @@ async def execute_tool_block(
                 "bg_job_id": rec["id"],
             }
             logger.info(f"Tool executed: {desc} -> bg job {rec['id']}")
+            return desc, result
+
+    # Destructive command safety gate — requires explicit user approval
+    # before running commands that can delete, overwrite, or destroy data.
+    if tool == "bash" and _is_destructive_command(content):
+        approval_token, cleaned_cmd = _parse_approval(content)
+        if approval_token and _check_approval(approval_token):
+            # User approved — run the cleaned command.
+            content = cleaned_cmd
+        else:
+            token = _generate_approval_token(content)
+            desc = f"bash: destructive command blocked"
+            result = {
+                "needs_approval": {
+                    "command": content[:500],
+                    "token": token,
+                },
+                "error": (
+                    f"This command is destructive and requires your approval before execution.\n\n"
+                    f"Command: `{content[:200]}{'...' if len(content) > 200 else ''}`\n\n"
+                    f"To approve, include `{_APPROVAL_PREFIX}{token}` as the FIRST line "
+                    f"of your next bash call with the same command. This approval is valid "
+                    f"for {_APPROVAL_TTL // 60} minutes.\n\n"
+                    f"You should call `ask_user` to confirm with the user before retrying."
+                ),
+                "exit_code": 1,
+            }
+            logger.info(f"Tool blocked (destructive): {desc}")
             return desc, result
 
     # Route MCP-extracted tools through the MCP manager. Forward

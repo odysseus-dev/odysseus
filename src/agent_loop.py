@@ -2767,6 +2767,27 @@ async def stream_agent_loop(
                 )
                 _awaiting_user = True
 
+            # needs_approval: the agent tried to run a destructive command.
+            # Emit it so the frontend can show a confirmation prompt, then
+            # end the turn and wait for the user's decision. The error message
+            # includes instructions for the agent to use ask_user.
+            if "needs_approval" in result:
+                _na = result["needs_approval"]
+                _na_cmd = (_na.get("command") or "")[:200]
+                _na_token = str(_na.get("token") or "")
+                _na_msg = (
+                    f"\n\nI need your approval to run a destructive command:\n\n"
+                    f"> `{_na_cmd}`\n\n"
+                    f"To approve, respond with `!approve {_na_token}`. "
+                    f"To deny, respond with `!deny`."
+                )
+                full_response += _na_msg
+                yield 'data: ' + json.dumps({"delta": _na_msg}) + '\n\n'
+                yield (
+                    f'data: {json.dumps({"type": "tool_approval_required", "data": result["needs_approval"]})}\n\n'
+                )
+                _awaiting_user = True
+
             # update_plan: agent wrote back to the plan (ticked a step / revised).
             # Push it to the frontend so the stored plan + docked window update
             # live. Does NOT end the turn — the agent keeps working.
