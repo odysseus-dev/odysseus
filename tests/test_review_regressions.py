@@ -701,6 +701,30 @@ def test_single_user_mode_keeps_full_tool_access_when_auth_disabled(monkeypatch)
     assert blocked_tools_for_owner(None) == set()
 
 
+def test_single_user_mode_keeps_full_tool_access_when_auth_disabled_but_configured(monkeypatch):
+    """If AUTH_ENABLED=false, we are in single-user mode and should have full tool
+    access, even if AuthManager has an admin configured (is_configured=True)."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    auth_mod = _install_core_auth_stub(monkeypatch)
+
+    class FakeAuth:
+        is_configured = True
+
+        def is_admin(self, username):
+            return False
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+
+    from src.tool_security import (
+        blocked_tools_for_owner,
+        owner_is_admin_or_single_user,
+    )
+
+    assert owner_is_admin_or_single_user(None) is True
+    assert blocked_tools_for_owner(None) == set()
+
+
+
 @pytest.mark.asyncio
 async def test_webhook_tool_reuses_private_url_validation():
     class FakeDb:

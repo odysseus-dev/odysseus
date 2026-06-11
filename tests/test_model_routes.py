@@ -1094,7 +1094,7 @@ def test_post_dedupe_existing_does_not_clobber_pinned_when_omitted(monkeypatch):
     assert db.committed == 0  # nothing to persist
 
 
-def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypatch):
+def test_post_same_base_url_different_api_key_updates_existing_endpoint(monkeypatch):
     existing = _make_endpoint(
         base_url="https://api.example.test/v1",
         api_key="key-one",
@@ -1109,12 +1109,11 @@ def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypa
         **_create_form_kwargs(api_key="key-two"),
     )
 
-    assert result.get("existing") is not True
+    assert result.get("existing") is True
     assert result["has_key"] is True
     assert result["api_key_fingerprint"] == _api_key_fingerprint("key-two")
-    assert len(db.added) == 1
-    assert db.added[0].base_url == "https://api.example.test/v1"
-    assert db.added[0].api_key == "key-two"
+    assert len(db.added) == 0
+    assert existing.api_key == "key-two"
 
 
 def test_post_reassigns_default_when_current_default_disabled(monkeypatch):

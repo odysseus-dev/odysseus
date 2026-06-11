@@ -472,6 +472,22 @@ class ToolIndex:
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
             {"create_document", "edit_document", "update_document"},
+        # Filesystem operations (files, folders, directory, reading/writing/listing files on disk)
+        frozenset({"file list", "list files", "list directory", "list folder",
+                   "directory list", "directory entries", "ls", "glob",
+                   "read file", "read files", "view file", "view files",
+                   "file content", "file contents", "contents of the file",
+                   "write file", "write files", "create file", "edit file",
+                   "modify file", "change file", "update file", "patch file",
+                   "grep", "ripgrep", "search content", "search in files",
+                   "find in files", "search files", "find file"}):
+            {"read_file", "write_file", "edit_file", "ls", "glob", "grep"},
+        # Command / Script Execution (running terminal command, bash, python script)
+        frozenset({"run command", "execute command", "run bash", "bash command",
+                   "shell command", "terminal command", "run script", "python script",
+                   "execute script", "pip install", "npm install", "install package",
+                   "bash", "python", "shell", "terminal"}):
+            {"bash", "python"},
     }
 
     def get_tools_for_query(

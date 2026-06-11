@@ -55,3 +55,24 @@ def test_plain_tell_request_stays_minimal():
     assert not (_EMAIL_TOOLS & tools)
     # Always-available baseline is still there.
     assert set(ALWAYS_AVAILABLE) <= tools
+
+
+def test_filesystem_keywords_force_filesystem_tools():
+    """Queries for listing, reading, or writing files must force-include the filesystem toolset."""
+    ti = _index_without_embeddings()
+    fs_tools = {"read_file", "write_file", "edit_file", "ls", "glob", "grep"}
+
+    for query in ["show file list", "read file src/app.py", "write file output.txt", "run grep pattern", "list directory contents"]:
+        tools = ti.get_tools_for_query(query)
+        assert fs_tools <= tools, f"Query '{query}' must include all filesystem tools"
+
+
+def test_terminal_keywords_force_terminal_tools():
+    """Queries for running commands or scripts must force-include bash and python tools."""
+    ti = _index_without_embeddings()
+    terminal_tools = {"bash", "python"}
+
+    for query in ["run command pytest", "execute bash script.sh", "run python script.py"]:
+        tools = ti.get_tools_for_query(query)
+        assert terminal_tools <= tools, f"Query '{query}' must include terminal tools"
+

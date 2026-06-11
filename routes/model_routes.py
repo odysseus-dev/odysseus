@@ -1639,6 +1639,8 @@ def setup_model_routes(model_discovery):
                     _empty_key_existing = _candidate
             if existing is None and _incoming_api_key and _empty_key_existing is not None:
                 existing = _empty_key_existing
+            if existing is None and len(_same_url_rows) > 0:
+                existing = _same_url_rows[0]
             if existing:
                 changed = False
                 # Persist any incoming pinned IDs onto the existing row. An
@@ -1664,7 +1666,7 @@ def setup_model_routes(model_discovery):
                 if refresh_timeout is not None:
                     existing.model_refresh_timeout = refresh_timeout
                     changed = True
-                if api_key.strip() and not existing.api_key:
+                if api_key.strip() and existing.api_key != api_key.strip():
                     existing.api_key = api_key.strip()
                     changed = True
                 if should_probe:
