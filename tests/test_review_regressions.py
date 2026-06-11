@@ -688,6 +688,65 @@ async def test_tool_policy_qualified_email_block_covers_bare_alias(monkeypatch):
     assert result["exit_code"] == 1
 
 
+@pytest.mark.asyncio
+async def test_disable_tool_email_covers_full_builtin_set(monkeypatch):
+    """The friendly `disable_tool email` toggle must cover every built-in
+    email tool, in BOTH spellings — bare names (function-schema hiding,
+    bare-fence dispatch) and mcp__email__* (MCP schema hiding, runtime
+    qualified blocks). Hand-picking a subset left tools like delete_email
+    and download_attachment enabled (PR #3681 review follow-up)."""
+    # Import first so the module loads against the real core package; only
+    # the call-time SessionLocal import below sees the stub.
+    from src.tool_implementations import do_manage_settings
+    import src.settings as settings_mod
+
+    db_mod = types.ModuleType("core.database")
+
+    class _Db:
+        def close(self):
+            pass
+
+    db_mod.SessionLocal = lambda: _Db()
+    monkeypatch.setitem(sys.modules, "core.database", db_mod)
+
+    store = {}
+
+    def fake_load_settings():
+        return dict(store)
+
+    def fake_save_settings(s):
+        store.clear()
+        store.update(s)
+
+    monkeypatch.setattr(settings_mod, "load_settings", fake_load_settings)
+    monkeypatch.setattr(settings_mod, "save_settings", fake_save_settings)
+
+    result = await do_manage_settings(
+        '{"action": "disable_tool", "tool": "email"}', owner="admin"
+    )
+
+    assert result["exit_code"] == 0
+    disabled = set(store["disabled_tools"])
+    # Spelled out (not imported from BUILTIN_EMAIL_TOOLS) so dropping a name
+    # from the constant fails here instead of silently shrinking the toggle.
+    bare_email_tools = (
+        "list_email_accounts", "list_emails", "read_email", "search_emails",
+        "send_email", "reply_to_email", "draft_email", "draft_email_reply",
+        "ai_draft_email_reply", "archive_email", "delete_email",
+        "mark_email_read", "bulk_email", "download_attachment",
+    )
+    for tool_name in bare_email_tools:
+        assert tool_name in disabled, tool_name
+        assert f"mcp__email__{tool_name}" in disabled, tool_name
+
+    # enable_tool email must remove the full set again.
+    result = await do_manage_settings(
+        '{"action": "enable_tool", "tool": "email"}', owner="admin"
+    )
+    assert result["exit_code"] == 0
+    assert store["disabled_tools"] == []
+
+
 def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     auth_mod = _install_core_auth_stub(monkeypatch)
     from src.tool_security import blocked_tools_for_owner

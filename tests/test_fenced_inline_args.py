@@ -79,6 +79,45 @@ def test_inline_json_array_args_still_parse():
     ]
 
 
+def test_brace_metadata_on_bash_is_not_executable():
+    # ```bash {title="setup"} is a Markdown fence attribute on a real
+    # language. Code tags (bash/python) never take same-line args — even a
+    # brace-shaped info string must stay display text.
+    blocks = parse_tool_blocks('```bash {title="setup"}\necho hi\n```')
+    assert blocks == [], blocks
+
+
+def test_valid_json_metadata_on_python_is_not_executable():
+    # Same rule when the attribute happens to BE valid JSON: the tag decides.
+    blocks = parse_tool_blocks('```python {"title": "example.py"}\nprint("hi")\n```')
+    assert blocks == [], blocks
+
+
+def test_invalid_inline_json_on_email_tool_is_not_executable():
+    # JSON-args tools only execute same-line content that parses as JSON —
+    # {title="x"} is metadata/garbage, not arguments.
+    blocks = parse_tool_blocks('```list_emails {title="x"}\n```')
+    assert blocks == [], blocks
+
+
+def test_inline_json_continuing_on_next_lines_still_parses():
+    # A JSON object opened on the tag line may close on a later line.
+    blocks = parse_tool_blocks('```list_emails {"folder": "INBOX",\n"max_results": 5}\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [
+        ("list_emails", '{"folder": "INBOX",\n"max_results": 5}')
+    ]
+
+
+def test_brace_metadata_fences_left_intact_in_display():
+    # strip must mirror parse for every rejected fence shape.
+    for text in (
+        'Example:\n```bash {title="setup"}\necho hi\n```',
+        'Example:\n```python {"title": "example.py"}\nprint("hi")\n```',
+        'Example:\n```list_emails {title="x"}\n```',
+    ):
+        assert strip_tool_blocks(text) == text
+
+
 def test_inline_args_fence_is_stripped_from_display():
     # strip must mirror parse: an executed inline-args fence must not leak
     # into the displayed text.

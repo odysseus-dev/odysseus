@@ -21,17 +21,60 @@ logger = logging.getLogger(__name__)
 
 # Pattern 1: ```bash ... ``` fenced code blocks. The tag may be followed by a
 # newline (classic form) or by inline JSON args on the same line
-# (```list_email_accounts {}). Same-line content is accepted ONLY when it
-# starts with { or [ — anything else after the tag is a Markdown info string
-# (```python title="example.py"), which must stay display text rather than
-# become executable tool input.
+# (```list_email_accounts {}). The same-line part is captured separately
+# (group 2) and judged by _fenced_tool_call below — the regex alone only
+# requires it to start with { or [; anything else after the tag is a Markdown
+# info string (```python title="example.py") and the fence never matches.
 # (?![\w-]) keeps the alternation from prefix-matching longer fence tags:
 # without it, ```python3 would match as tool "python" with content "3\n..."
 # and execute as code.
 _TOOL_BLOCK_RE = re.compile(
-    r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])[ \t]*(?=\r?\n|[{\[])\r?\n?([\s\S]*?)```",
+    r"```(" + "|".join(TOOL_TAGS) + r")(?![\w-])"
+    r"[ \t]*([{\[][^\n]*?)?[ \t]*(?=\r?\n|```)\r?\n?([\s\S]*?)```",
     re.IGNORECASE,
 )
+
+# Tags whose fenced content is raw code, not JSON args. Same-line text after
+# these tags is Markdown fence metadata on a real language (```bash {title=
+# "setup"}), never inline tool args — only the classic tag-then-newline form
+# executes for them.
+_CODE_FENCE_TAGS = frozenset({"bash", "python"})
+
+
+def _fenced_tool_call(m) -> Optional[tuple]:
+    """Classify a Pattern-1 fence match: (tag, content) when it is an
+    executable tool call, None when the fence must stay display text.
+
+    Shared by parse_tool_blocks and strip_tool_blocks so the execute and
+    display decisions can never disagree: a fence that doesn't execute is
+    never stripped, and vice versa.
+
+    Same-line text after the tag only counts as inline tool args when the
+    tag's tool takes JSON args (not a code tag) AND the text is valid
+    standalone JSON. ```bash {title="setup"} and ```python {"x": 1} are
+    fence attributes on real languages, and {title="x"} on any tag is
+    metadata, not arguments — all of those stay visible and inert.
+    """
+    tag = m.group(1).lower()
+    inline = (m.group(2) or "").strip()
+    body = (m.group(3) or "").strip()
+    if not inline:
+        return tag, body
+    if tag in _CODE_FENCE_TAGS:
+        return None
+    # Inline args may continue onto following lines (a JSON object opened on
+    # the tag line); the combined text must parse as JSON or nothing runs.
+    content = f"{inline}\n{body}" if body else inline
+    try:
+        json.loads(content)
+    except (ValueError, TypeError):
+        return None
+    return tag, content
+
+
+def _strip_executed_fence(m) -> str:
+    """re.sub callback: remove only fences that parse as tool calls."""
+    return "" if _fenced_tool_call(m) is not None else m.group(0)
 
 # Pattern 2: [TOOL_CALL] ... [/TOOL_CALL] blocks (some models use this format)
 # Matches: {tool => "shell", args => {--command "ls -la"}} etc.
@@ -465,8 +508,10 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     # Pattern 1: fenced code blocks (skipped when `skip_fenced` — see docstring).
     if not skip_fenced:
         for m in _TOOL_BLOCK_RE.finditer(text):
-            tag = m.group(1).lower()
-            content = m.group(2).strip()
+            call = _fenced_tool_call(m)
+            if call is None:
+                continue
+            tag, content = call
             if not content:
                 continue
             # If a code block's content is an <invoke> XML call (some models wrap
@@ -536,7 +581,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # Normalize DSML first so its markup gets stripped by the <invoke>
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
-    cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub('', text)
+    cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub(_strip_executed_fence, text)
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
