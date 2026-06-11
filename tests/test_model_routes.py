@@ -42,6 +42,7 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         _normalize_model_ids,
         _api_key_fingerprint,
         _is_chat_model,
+        _is_image_model,
         _classify_endpoint,
         _effective_endpoint_kind,
         _probe_endpoint,
@@ -372,6 +373,62 @@ class TestIsChatModel:
 
     def test_legacy_openai_instruct_is_not_chat(self):
         assert _is_chat_model("gpt-3.5-turbo-instruct") is False
+
+
+class TestIsImageModel:
+    @pytest.mark.parametrize("model_id", [
+        "gpt-image-1", "gpt-image-1.5", "dall-e-3",
+        "chatgpt-image-latest", "stable-diffusion-xl-base-1.0",
+        "FLUX.1-schnell",
+    ])
+    def test_image_models(self, model_id):
+        assert _is_image_model(model_id) is True
+
+    @pytest.mark.parametrize("model_id", [
+        "gpt-4o", "claude-sonnet-4", "text-embedding-3-small",
+        "tts-1", "whisper-1",
+    ])
+    def test_non_image_models(self, model_id):
+        assert _is_image_model(model_id) is False
+
+
+class TestProbeEndpointModelType:
+    def _patch(self, monkeypatch):
+        monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url, raising=False)
+        monkeypatch.setattr(model_routes, "_normalize_base", lambda url: url.rstrip("/"))
+
+    def _patch_openai_models(self, monkeypatch):
+        server_models = [
+            {"id": "gpt-4o"},
+            {"id": "gpt-image-1"},
+            {"id": "dall-e-3"},
+            {"id": "text-embedding-3-small"},
+        ]
+
+        def fake_get(url, headers=None, timeout=None, verify=None, **kwargs):
+            return httpx.Response(
+                200,
+                json={"data": server_models},
+                request=httpx.Request("GET", url),
+            )
+
+        monkeypatch.setattr(model_routes.httpx, "get", fake_get)
+
+    def test_llm_probe_keeps_chat_models_by_default(self, monkeypatch):
+        self._patch(monkeypatch)
+        self._patch_openai_models(monkeypatch)
+
+        result = _probe_endpoint("https://api.openai.com/v1", "key")
+
+        assert result == ["gpt-4o"]
+
+    def test_image_probe_keeps_image_models(self, monkeypatch):
+        self._patch(monkeypatch)
+        self._patch_openai_models(monkeypatch)
+
+        result = _probe_endpoint("https://api.openai.com/v1", "key", model_type="image")
+
+        assert result == ["gpt-image-1", "dall-e-3"]
 
 
 # ── _classify_endpoint ──
@@ -1113,6 +1170,67 @@ def test_post_same_base_url_same_api_key_still_dedupes(monkeypatch):
     assert db.added == []
 
 
+def test_post_same_base_url_same_api_key_different_model_type_creates_distinct_endpoint(monkeypatch):
+    existing = _make_endpoint(
+        base_url="https://api.example.test/v1",
+        api_key="key-one",
+        model_type="llm",
+    )
+    db = _PinnedFakeDb([existing])
+    _patch_create_deps(monkeypatch, db)
+    create = _get_route("/api/model-endpoints", "POST")
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.example.test/v1",
+        **_create_form_kwargs(api_key="key-one", model_type="image"),
+    )
+
+    assert result.get("existing") is not True
+    assert len(db.added) == 1
+    assert db.added[0].model_type == "image"
+    assert db.added[0].base_url == existing.base_url
+    assert db.added[0].api_key == existing.api_key
+
+
+def test_post_image_endpoint_passes_model_type_to_probe_and_caches(monkeypatch):
+    db = _PinnedFakeDb([])
+    _patch_create_deps(monkeypatch, db)
+    monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ping should not run when model listing succeeds")))
+    create = _get_route("/api/model-endpoints", "POST")
+
+    calls = []
+
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout, "model_type": model_type})
+        return ["gpt-image-1"]
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    result = create(
+        _PinnedFakeRequest(),
+        base_url="https://api.openai.com/v1",
+        **_create_form_kwargs(
+            api_key="fake-key",
+            skip_probe="false",
+            model_type="image",
+            endpoint_kind="api",
+        ),
+    )
+
+    assert result["online"] is True
+    assert result["models"] == ["gpt-image-1"]
+    assert len(db.added) == 1
+    assert db.added[0].model_type == "image"
+    assert json.loads(db.added[0].cached_models) == ["gpt-image-1"]
+    assert calls == [{
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "fake-key",
+        "timeout": 30.0,
+        "model_type": "image",
+    }]
+
+
 class _RouteQuery:
     def __init__(self, rows):
         self.rows = list(rows)
@@ -1202,6 +1320,7 @@ def _route_ep(
     api_key=None,
     name=None,
     pinned_models=None,
+    model_type="llm",
     refresh_mode="auto",
     refresh_timeout=None,
 ):
@@ -1214,7 +1333,7 @@ def _route_ep(
         cached_models=json.dumps(cached_models) if cached_models is not None else None,
         hidden_models=None,
         pinned_models=json.dumps(pinned_models) if pinned_models is not None else None,
-        model_type="llm",
+        model_type=model_type,
         endpoint_kind=endpoint_kind,
         model_refresh_mode=refresh_mode,
         model_refresh_interval=None,
@@ -1311,7 +1430,7 @@ def test_background_refresh_deduplicates_same_base_url(monkeypatch):
     calls = []
     probe_done = threading.Event()
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         calls.append(base_url)
         probe_done.set()
         return ["live-model"]
@@ -1401,8 +1520,8 @@ def test_explicit_proxy_test_fetches_models_with_long_timeout(monkeypatch):
     calls = []
     returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]
 
-    def fake_probe(base_url, api_key=None, timeout=2):
-        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout, "model_type": model_type})
         return returned
 
     monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
@@ -1421,6 +1540,39 @@ def test_explicit_proxy_test_fetches_models_with_long_timeout(monkeypatch):
         "base_url": "http://100.117.136.97:34521/v1",
         "api_key": "fake-key",
         "timeout": 30.0,
+        "model_type": "llm",
+    }]
+
+
+def test_explicit_api_test_passes_image_model_type_to_probe(monkeypatch):
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
+    monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ping should not run when model listing succeeds")))
+
+    calls = []
+
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout, "model_type": model_type})
+        return ["gpt-image-1"]
+
+    monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
+
+    result = _route_endpoint(router, "/api/model-endpoints/test", "POST")(
+        _route_request(),
+        base_url="https://api.openai.com/v1",
+        api_key="fake-key",
+        endpoint_kind="api",
+        model_type="image",
+    )
+
+    assert result["online"] is True
+    assert result["models"] == ["gpt-image-1"]
+    assert calls == [{
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "fake-key",
+        "timeout": 30.0,
+        "model_type": "image",
     }]
 
 
@@ -1439,8 +1591,8 @@ def test_explicit_proxy_add_fetches_and_caches_models_with_long_timeout(monkeypa
     calls = []
     returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]
 
-    def fake_probe(base_url, api_key=None, timeout=2):
-        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout, "model_type": model_type})
         return returned
 
     monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
@@ -1469,6 +1621,7 @@ def test_explicit_proxy_add_fetches_and_caches_models_with_long_timeout(monkeypa
         "base_url": "http://100.117.136.97:34521/v1",
         "api_key": "fake-key",
         "timeout": 30.0,
+        "model_type": "llm",
     }]
     assert len(db.rows) == 1
     assert json.loads(db.rows[0].cached_models) == returned
@@ -1495,8 +1648,8 @@ def test_manual_refresh_uses_long_timeout_and_saves_full_model_list(monkeypatch)
     calls = []
     refreshed = ["cached-model", "mistral/mistral-small-2603", "provider/nested/model/id"]
 
-    def fake_probe(base_url, api_key=None, timeout=2):
-        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
+        calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout, "model_type": model_type})
         return refreshed
 
     monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)
@@ -1515,6 +1668,7 @@ def test_manual_refresh_uses_long_timeout_and_saves_full_model_list(monkeypatch)
         "base_url": "http://100.117.136.97:34521/v1",
         "api_key": "fake-key",
         "timeout": 60.0,
+        "model_type": "llm",
     }]
     assert json.loads(ep.cached_models) == refreshed
     assert db.commits == 1
@@ -1539,7 +1693,7 @@ def test_manual_refresh_defaults_to_proxy_long_timeout(monkeypatch):
 
     timeouts = []
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         timeouts.append(timeout)
         return ["cached-model", "new-model"]
 
@@ -1573,7 +1727,7 @@ def test_manual_refresh_timeout_keeps_cached_models_and_warns(monkeypatch):
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         raise httpx.TimeoutException("timed out")
 
     monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)

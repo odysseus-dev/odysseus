@@ -950,6 +950,8 @@ function initEndpointForm() {
         fd.append('base_url', url);
         fd.append('endpoint_kind', _apiEndpointKind());
         fd.append('model_refresh_timeout', '30');
+        const epType = el('adm-epType');
+        if (epType) fd.append('model_type', epType.value);
         if (apiKey) fd.append('api_key', apiKey);
         const res = await fetch('/api/model-endpoints/test', {
           method: 'POST',
@@ -1305,6 +1307,8 @@ function initEndpointForm() {
         const fd = new FormData();
         fd.append('base_url', url);
         if (apiKey) fd.append('api_key', apiKey);
+        const lt = el('adm-epLocalType');
+        if (lt) fd.append('model_type', lt.value);
         const res = await fetch('/api/model-endpoints/test', { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();
         _renderEndpointTestResult(msg, res, d);
