@@ -1801,7 +1801,11 @@ export async function loadSessions() {
         try {
           const dc = await _getPreferredDefaultChat();
           if (dc && dc.endpoint_url && dc.model) {
-              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+              await createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+                source: 'default',
+                reasoning_effort: dc.default_reasoning_effort || '',
+                verbosity: dc.default_verbosity || '',
+              });
           }
         } catch (_) { /* no default model — that's fine, user can /setup */ }
         _autoCreateInProgress = false;
@@ -2148,7 +2152,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
 }
 
 // Pending session — stored locally until the first message is sent
-let _pendingChat = null; // { url, modelId, endpointId }
+let _pendingChat = null; // { url, modelId, endpointId, reasoning_effort, verbosity }
 let _pendingMaterializePromise = null;
 
 async function _getPreferredDefaultChat() {
@@ -2161,13 +2165,25 @@ async function _getPreferredDefaultChat() {
       dc = JSON.parse(localStorage.getItem('odysseus-default-chat-cache') || 'null');
     } catch (_) {}
   }
-  if (dc && dc.endpoint_url && dc.model) return dc;
+  if (dc && dc.endpoint_url && dc.model) {
+    try {
+      window.__odysseusModelControlDefaults = {
+        reasoning_effort: dc.default_reasoning_effort || 'auto',
+        verbosity: dc.default_verbosity || 'auto',
+      };
+    } catch (_) {}
+    return dc;
+  }
   try {
     const dcRes = await fetch(`${API_BASE}/api/default-chat`);
     dc = await dcRes.json();
     if (dc && dc.endpoint_url && dc.model) {
       try {
         window.__odysseusDefaultChat = dc;
+        window.__odysseusModelControlDefaults = {
+          reasoning_effort: dc.default_reasoning_effort || 'auto',
+          verbosity: dc.default_verbosity || 'auto',
+        };
         localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc));
       } catch (_) {}
       return dc;
@@ -2178,6 +2194,10 @@ async function _getPreferredDefaultChat() {
 
 export function createDirectChat(url, modelId, endpointId, opts = {}) {
   const incomingSource = opts.source || 'manual';
+  const initialControls = {
+    reasoning_effort: opts.reasoning_effort || opts.default_reasoning_effort || '',
+    verbosity: opts.verbosity || opts.default_verbosity || '',
+  };
   if (
     _pendingChat &&
     _pendingChat.modelId &&
@@ -2200,14 +2220,21 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   }
 
   // Don't hit the API — just store the model info and prepare the UI
-  _pendingChat = { url, modelId, endpointId, source: incomingSource };
+  _pendingChat = {
+    url,
+    modelId,
+    endpointId,
+    source: incomingSource,
+    reasoning_effort: initialControls.reasoning_effort || null,
+    verbosity: initialControls.verbosity || null,
+  };
   _pendingMaterializePromise = null;
   if (window.odysseusModelControls && window.odysseusModelControls.applySession) {
     window.odysseusModelControls.applySession({
       model: modelId || '',
       endpoint_url: url || '',
-      reasoning_effort: null,
-      verbosity: null,
+      reasoning_effort: initialControls.reasoning_effort || null,
+      verbosity: initialControls.verbosity || null,
     });
   }
   _skipAutoSelect = true;
@@ -2281,7 +2308,11 @@ export async function materializePendingSession() {
     if (pending.endpointId) {
       fd.append('endpoint_id', pending.endpointId);
     }
-    const modelControls = Storage.loadToggleState();
+    const modelControls = {
+      ...Storage.loadToggleState(),
+      reasoning_effort: pending.reasoning_effort || Storage.loadToggleState().reasoning_effort || 'auto',
+      verbosity: pending.verbosity || Storage.loadToggleState().verbosity || 'auto',
+    };
     const reasoningEffort = String(modelControls.reasoning_effort || 'auto').toLowerCase();
     const verbosity = String(modelControls.verbosity || 'auto').toLowerCase();
     if (reasoningEffort && reasoningEffort !== 'auto') {

@@ -1273,6 +1273,10 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
             if (dc && dc.endpoint_url && dc.model) {
               try {
                 window.__odysseusDefaultChat = dc;
+                window.__odysseusModelControlDefaults = {
+                  reasoning_effort: dc.default_reasoning_effort || 'auto',
+                  verbosity: dc.default_verbosity || 'auto',
+                };
                 localStorage.setItem('odysseus-default-chat-cache', JSON.stringify(dc));
               } catch (_) {}
             }
@@ -1282,7 +1286,11 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         }
         if (dc.endpoint_url && dc.model) {
           _sendPerf.mark('direct_chat_create_begin');
-          await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, { source: 'default' });
+          await sessionModule.createDirectChat(dc.endpoint_url, dc.model, dc.endpoint_id, {
+            source: 'default',
+            reasoning_effort: dc.default_reasoning_effort || '',
+            verbosity: dc.default_verbosity || '',
+          });
           _sendPerf.mark('direct_chat_create_done');
           const ok = await sessionModule.materializePendingSession();
           _sendPerf.mark('direct_chat_materialize_done');

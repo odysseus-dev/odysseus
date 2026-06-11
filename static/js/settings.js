@@ -447,6 +447,9 @@ async function initDefaultChat() {
   var msg = el('set-defaultChatMsg');
   var fbContainer = el('set-defaultFallbacks');
   var addFbBtn = el('set-defaultAddFallback');
+  var reasoningSel = el('set-defaultReasoningSelect');
+  var verbositySel = el('set-defaultVerbositySelect');
+  var controlsMsg = el('set-defaultControlsMsg');
   var _endpoints = [];
   var _fallbacks = []; // [{endpoint_id, model}] — tried in order if primary fails
 
@@ -470,6 +473,28 @@ async function initDefaultChat() {
     _fillEndpointSelect(epSel, _endpoints, selectedEndpoint !== undefined ? selectedEndpoint : epSel.value, false);
     refreshModels(selectedModel !== undefined ? selectedModel : modelSel.value);
     renderFallbacks();
+  }
+  function normalizeReasoningDefault(value) {
+    var v = String(value || 'auto').toLowerCase().replace(/-/g, '_');
+    if (v === 'none') v = 'off';
+    return ['auto', 'off', 'on', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) ? v : 'auto';
+  }
+  function normalizeVerbosityDefault(value) {
+    var v = String(value || 'auto').toLowerCase();
+    return ['auto', 'low', 'medium', 'high'].includes(v) ? v : 'auto';
+  }
+  function currentControlDefaults() {
+    return {
+      reasoning_effort: normalizeReasoningDefault(reasoningSel ? reasoningSel.value : ''),
+      verbosity: normalizeVerbosityDefault(verbositySel ? verbositySel.value : ''),
+    };
+  }
+  function publishControlDefaults() {
+    var defaults = currentControlDefaults();
+    try { window.__odysseusModelControlDefaults = defaults; } catch (_) {}
+    if (window.odysseusModelControls && window.odysseusModelControls.setDefaults) {
+      window.odysseusModelControls.setDefaults(defaults);
+    }
   }
 
   // Render the fallback chain. Each row is endpoint + model + remove.
@@ -539,6 +564,9 @@ async function initDefaultChat() {
           return { endpoint_id: (f && f.endpoint_id) || '', model: (f && f.model) || '' };
         })
       : [];
+    if (reasoningSel) reasoningSel.value = normalizeReasoningDefault(settings.default_reasoning_effort);
+    if (verbositySel) verbositySel.value = normalizeVerbosityDefault(settings.default_verbosity);
+    publishControlDefaults();
     renderFallbacks();
   } catch (e) { console.warn('Failed to load default chat settings', e); }
 
@@ -553,13 +581,24 @@ async function initDefaultChat() {
         body: JSON.stringify({
           default_endpoint_id: epSel.value,
           default_model: modelSel.value,
-          default_model_fallbacks: clean
+          default_model_fallbacks: clean,
+          default_reasoning_effort: currentControlDefaults().reasoning_effort,
+          default_verbosity: currentControlDefaults().verbosity
         })
       });
+      publishControlDefaults();
+      if (controlsMsg) {
+        controlsMsg.textContent = 'Saved';
+        controlsMsg.style.color = 'var(--fg)';
+        setTimeout(function() { controlsMsg.textContent = ''; }, 2000);
+      }
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
+
+  if (reasoningSel) reasoningSel.addEventListener('change', saveDefault);
+  if (verbositySel) verbositySel.addEventListener('change', saveDefault);
 
   if (addFbBtn) addFbBtn.addEventListener('click', function() {
     var first = enabledEndpoints()[0];

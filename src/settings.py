@@ -134,6 +134,8 @@ DEFAULT_SETTINGS = {
     "task_model": "",
     "default_endpoint_id": "",
     "default_model": "",
+    "default_reasoning_effort": "",
+    "default_verbosity": "",
     # Optional prose style used only for normal document writing/editing.
     # Email replies use email_writing_style instead because greetings,
     # signatures, and mailbox identity rules are medium-specific.
@@ -271,6 +273,7 @@ _PER_USER_KEYS = {
     # account inherited whatever the most-recent admin picked, which then
     # got injected into the chat composer on first open.
     "default_endpoint_id", "default_model", "default_model_fallbacks",
+    "default_reasoning_effort", "default_verbosity",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
 }

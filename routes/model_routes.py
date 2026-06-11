@@ -2438,6 +2438,8 @@ def setup_model_routes(model_discovery):
             ep_id = (_user_prefs.get("default_endpoint_id") or "").strip()
             model = (_user_prefs.get("default_model") or "").strip()
             _fallbacks = _user_prefs.get("default_model_fallbacks") or []
+            default_reasoning_effort = (_user_prefs.get("default_reasoning_effort") or "").strip()
+            default_verbosity = (_user_prefs.get("default_verbosity") or "").strip()
             # If user has no personal default, fall back to global default
             # But only based on the "share_defaults_with_users" flag
             # (only if share_defaults_with_users is enabled)
@@ -2448,10 +2450,35 @@ def setup_model_routes(model_discovery):
                     model = settings.get("default_model", "")
                 if not _fallbacks:
                     _fallbacks = settings.get("default_model_fallbacks") or []
+                if not default_reasoning_effort:
+                    default_reasoning_effort = (settings.get("default_reasoning_effort") or "").strip()
+                if not default_verbosity:
+                    default_verbosity = (settings.get("default_verbosity") or "").strip()
         else:
             ep_id = settings.get("default_endpoint_id", "")
             model = settings.get("default_model", "")
             _fallbacks = settings.get("default_model_fallbacks") or []
+            default_reasoning_effort = (settings.get("default_reasoning_effort") or "").strip()
+            default_verbosity = (settings.get("default_verbosity") or "").strip()
+
+        def _clean_default_reasoning(value: str) -> str:
+            cleaned = (value or "").strip().lower().replace("-", "_")
+            if cleaned in {"", "auto", "default"}:
+                return ""
+            if cleaned == "none":
+                return "off"
+            return cleaned if cleaned in {"off", "on", "minimal", "low", "medium", "high", "xhigh"} else ""
+
+        def _clean_default_verbosity(value: str) -> str:
+            cleaned = (value or "").strip().lower()
+            if cleaned in {"", "auto", "default"}:
+                return ""
+            return cleaned if cleaned in {"low", "medium", "high"} else ""
+
+        default_controls = {
+            "default_reasoning_effort": _clean_default_reasoning(default_reasoning_effort),
+            "default_verbosity": _clean_default_verbosity(default_verbosity),
+        }
         db = SessionLocal()
         try:
             ep = None
@@ -2504,7 +2531,7 @@ def setup_model_routes(model_discovery):
                     _last_q = owner_filter(_last_q, ModelEndpoint, _user, include_shared=False)
                 ep = _last_q.first()
             if not ep:
-                return {"endpoint_id": "", "endpoint_url": "", "model": ""}
+                return {"endpoint_id": "", "endpoint_url": "", "model": "", **default_controls}
             base = _normalize_base(ep.base_url)
             chat_url = build_chat_url(base)
             if not model and (getattr(ep, "cached_models", None) or getattr(ep, "pinned_models", None)):
@@ -2514,7 +2541,7 @@ def setup_model_routes(model_discovery):
                         model = visible[0]
                 except Exception:
                     pass
-            return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
+            return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model, **default_controls}
         finally:
             db.close()
 
