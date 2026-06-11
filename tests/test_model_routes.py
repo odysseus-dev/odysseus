@@ -1311,7 +1311,7 @@ def test_background_refresh_deduplicates_same_base_url(monkeypatch):
     calls = []
     probe_done = threading.Event()
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         calls.append(base_url)
         probe_done.set()
         return ["live-model"]
@@ -1401,7 +1401,7 @@ def test_explicit_proxy_test_fetches_models_with_long_timeout(monkeypatch):
     calls = []
     returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
         return returned
 
@@ -1439,7 +1439,7 @@ def test_explicit_proxy_add_fetches_and_caches_models_with_long_timeout(monkeypa
     calls = []
     returned = ["NVIDIA NIM/openai/gpt-oss-120b", "mistral/mistral-small-2603"]
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
         return returned
 
@@ -1495,7 +1495,7 @@ def test_manual_refresh_uses_long_timeout_and_saves_full_model_list(monkeypatch)
     calls = []
     refreshed = ["cached-model", "mistral/mistral-small-2603", "provider/nested/model/id"]
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         calls.append({"base_url": base_url, "api_key": api_key, "timeout": timeout})
         return refreshed
 
@@ -1539,7 +1539,7 @@ def test_manual_refresh_defaults_to_proxy_long_timeout(monkeypatch):
 
     timeouts = []
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         timeouts.append(timeout)
         return ["cached-model", "new-model"]
 
@@ -1573,7 +1573,7 @@ def test_manual_refresh_timeout_keeps_cached_models_and_warns(monkeypatch):
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
 
-    def fake_probe(base_url, api_key=None, timeout=2):
+    def fake_probe(base_url, api_key=None, timeout=2, model_type="llm"):
         raise httpx.TimeoutException("timed out")
 
     monkeypatch.setattr(model_routes, "_probe_endpoint", fake_probe)

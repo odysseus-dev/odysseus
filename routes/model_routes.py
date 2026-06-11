@@ -511,6 +511,34 @@ def _is_chat_model(model_id: str) -> bool:
     return True
 
 
+# Substrings for models that look image-generation-capable. Used when probing
+# a model_type="image" endpoint, where the chat filter above would strip
+# exactly the models the user is after (gpt-image-*, dall-e-* are NON_CHAT).
+_IMAGE_MODEL_CONTAINS = (
+    "image", "dall-e", "diffusion", "flux", "sdxl", "sd3", "imagen", "kolors",
+)
+
+
+def _is_image_model(model_id: str) -> bool:
+    """Return True if the model ID looks like an image-generation model."""
+    mid = model_id.lower()
+    return any(substr in mid for substr in _IMAGE_MODEL_CONTAINS)
+
+
+def _filter_models_for_type(models: List[str], model_type: str) -> List[str]:
+    """Keep the models that match the endpoint's modality.
+
+    Chat endpoints keep the historical _is_chat_model filter. Image endpoints
+    keep image-looking models; if none match (local diffusion servers often
+    expose arbitrary names), return the list unfiltered rather than empty so
+    the user can still pick their model.
+    """
+    if (model_type or "").strip().lower() == "image":
+        image_models = [m for m in models if _is_image_model(m)]
+        return image_models or list(models)
+    return [m for m in models if _is_chat_model(m)]
+
+
 def _delete_orphaned_provider_auth(db, auth_id: Optional[str], exclude_ep_id: Optional[str] = None) -> bool:
     """Delete a ProviderAuthSession once no endpoint still references it."""
     if not auth_id:
@@ -684,9 +712,12 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 
 
 
-def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
+def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5, model_type: str = "llm") -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
-    For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
+    For Anthropic, queries their /v1/models API, falling back to hardcoded list.
+    `model_type` selects the modality filter: "llm" keeps chat models (the
+    historical behavior), "image" keeps image-generation models."""
+    model_type = (model_type or "llm").strip().lower()
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     provider = _safe_detect_provider(base)
@@ -739,7 +770,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 for _e in _PROVIDER_CURATED.get(_ck, []):
                     if _e not in set(models) and not any(m.startswith(_e) for m in models):
                         models.append(_e)
-            return [m for m in models if _is_chat_model(m)]
+            return _filter_models_for_type(models, model_type)
     except httpx.HTTPStatusError as e:
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
@@ -763,7 +794,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
             if models:
-                return [m for m in models if _is_chat_model(m)]
+                return _filter_models_for_type(models, model_type)
     except Exception as e:
         logger.debug(f"Ollama /api/tags probe failed for {base}: {e}")
     # Fall back to curated list if the provider has a URL-based match (e.g. z.ai has no /models endpoint)
@@ -771,6 +802,8 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     fallback = _PROVIDER_CURATED.get(curated_key) if curated_key else None
     if fallback:
         logger.info(f"Using curated fallback for {curated_key}: {fallback}")
+        if model_type == "image":
+            return _filter_models_for_type(list(fallback), model_type)
         return list(fallback)
     return []
 
@@ -1008,6 +1041,7 @@ def setup_model_routes(model_discovery):
             "mode": mode,
             "key": key,
             "timeout": _endpoint_refresh_timeout(ep, category),
+            "model_type": getattr(ep, "model_type", None) or "llm",
         }
         if not base:
             return False, info
@@ -1055,6 +1089,7 @@ def setup_model_routes(model_discovery):
                             "base": info["base"],
                             "api_key": info["api_key"],
                             "timeout": info["timeout"],
+                            "model_type": info["model_type"],
                             "endpoint_ids": [],
                         })["endpoint_ids"].append(info["id"])
 
@@ -1065,7 +1100,12 @@ def setup_model_routes(model_discovery):
 
                     def _probe_one(key: str, data: Dict[str, Any]):
                         try:
-                            ids = _probe_endpoint(data["base"], data.get("api_key"), timeout=data.get("timeout") or 2)
+                            ids = _probe_endpoint(
+                                data["base"],
+                                data.get("api_key"),
+                                timeout=data.get("timeout") or 2,
+                                model_type=data.get("model_type") or "llm",
+                            )
                             return key, data["endpoint_ids"], ids, None
                         except Exception as e:
                             return key, data["endpoint_ids"], None, e
@@ -1405,6 +1445,7 @@ def setup_model_routes(model_discovery):
                     "name": ep.name,
                     "base_url": ep.base_url,
                     "api_key": ep.api_key,
+                    "model_type": getattr(ep, "model_type", None) or "llm",
                 })
         finally:
             db.close()
@@ -1419,7 +1460,7 @@ def setup_model_routes(model_discovery):
             ok_count = 0
             for ep in ep_data:
                 base = _normalize_base(ep["base_url"])
-                all_models = _probe_endpoint(base, ep.get("api_key"))
+                all_models = _probe_endpoint(base, ep.get("api_key"), model_type=ep.get("model_type") or "llm")
                 # Update cached_models in DB
                 if all_models:
                     db2 = SessionLocal()
@@ -1514,7 +1555,7 @@ def setup_model_routes(model_discovery):
                         # "empty" status, and the existing background refresh
                         # path will eventually fill it in too.
                         try:
-                            probed = _probe_endpoint(r.base_url, r.api_key, timeout=5)
+                            probed = _probe_endpoint(r.base_url, r.api_key, timeout=5, model_type=getattr(r, "model_type", None) or "llm")
                             if probed:
                                 r.cached_models = json.dumps(probed)
                                 db.commit()
@@ -1657,6 +1698,7 @@ def setup_model_routes(model_discovery):
                         base_url,
                         (api_key.strip() or existing.api_key or None),
                         timeout=_explicit_model_list_timeout(base_url, existing_kind_for_probe, refresh_timeout),
+                        model_type=getattr(existing, "model_type", None) or "llm",
                     )
                     if probed_models:
                         existing.cached_models = json.dumps(probed_models)
@@ -1689,7 +1731,7 @@ def setup_model_routes(model_discovery):
         finally:
             _db_dedup.close()
 
-        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout) if should_probe else []
+        model_ids = _probe_endpoint(base_url, api_key.strip() or None, timeout=explicit_timeout, model_type=model_type) if should_probe else []
         ping = {"reachable": False, "error": None}
         if (should_probe or requested_kind in ("api", "proxy")) and not model_ids:
             ping = _ping_endpoint(base_url, api_key.strip() or None, timeout=min(explicit_timeout, 2.0))
@@ -1765,6 +1807,7 @@ def setup_model_routes(model_discovery):
         api_key: str = Form(""),
         endpoint_kind: str = Form("auto"),
         model_refresh_timeout: str = Form(""),
+        model_type: str = Form("llm"),
     ):
         require_admin(request)
         base_url = _normalize_base(base_url)
@@ -1776,7 +1819,7 @@ def setup_model_routes(model_discovery):
         requested_kind = _normalize_endpoint_kind(endpoint_kind)
         configured_timeout = _parse_positive_int(model_refresh_timeout, minimum=1, maximum=60)
         probe_timeout = _explicit_model_list_timeout(base_url, requested_kind, configured_timeout)
-        models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout)
+        models = _probe_endpoint(base_url, api_key.strip() or None, timeout=probe_timeout, model_type=model_type)
         ping = {"reachable": True, "error": None} if models else _ping_endpoint(base_url, api_key.strip() or None, timeout=min(probe_timeout, 2.0))
         return {
             "base_url": base_url,
@@ -1798,12 +1841,18 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            ep_data = {
+                "id": ep.id,
+                "name": ep.name,
+                "base_url": ep.base_url,
+                "api_key": ep.api_key,
+                "model_type": getattr(ep, "model_type", None) or "llm",
+            }
         finally:
             db.close()
 
         base = _normalize_base(ep_data["base_url"])
-        all_models = _probe_endpoint(base, ep_data["api_key"])
+        all_models = _probe_endpoint(base, ep_data["api_key"], model_type=ep_data["model_type"])
         chat_models = [m for m in all_models if _is_chat_model(m)]
         skipped = len(all_models) - len(chat_models)
 
@@ -1862,7 +1911,7 @@ def setup_model_routes(model_discovery):
                 category = _classify_endpoint(base, kind)
                 timeout = _manual_refresh_timeout(ep, category, refresh_timeout)
                 try:
-                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout)
+                    probed = _probe_endpoint(base, ep.api_key, timeout=timeout, model_type=getattr(ep, "model_type", None) or "llm")
                 except Exception as exc:
                     logger.warning("Manual model refresh failed for endpoint %s at %s: %s", ep_id, base, exc)
                     probed = []
