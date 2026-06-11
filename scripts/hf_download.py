@@ -5,8 +5,13 @@ Usage:
     python3 scripts/hf_download.py <repo_id> [--include "pattern"]
 
 Prints lines like:
-    FILE model.safetensors [########------------] 42% 1.23/2.91GB 156.3MB/s
+    FILE model.safetensors: 42%|########------------| 1.23GB/2.91GB 156.3MB/s
     DONE /path/to/cached/model
+
+The line shape deliberately mirrors what the Cookbook UI already parses from
+hf/tqdm output: "NN%|" for the percent badge, "X.XXGB/Y.YYGB" for the byte
+stall detector, and "Fetching N files: NN%" (the outer snapshot_download bar
+routed through this printer) for the aggregate.
 """
 import argparse
 import sys
@@ -69,13 +74,14 @@ class PipeTqdm:
         speed = self.n / elapsed if elapsed > 0 else 0
         desc = (self.desc or "").strip()
 
-        # Format sizes
+        # Format sizes. Units go on BOTH sides of the slash — the Cookbook
+        # UI's byte-progress stall detector requires "1.23GB/2.91GB".
         if total >= 1024 ** 3:
-            done_s = f"{self.n / (1024**3):.2f}"
+            done_s = f"{self.n / (1024**3):.2f}GB"
             total_s = f"{total / (1024**3):.2f}GB"
             speed_s = f"{speed / (1024**2):.1f}MB/s"
         elif total >= 1024 ** 2:
-            done_s = f"{self.n / (1024**2):.1f}"
+            done_s = f"{self.n / (1024**2):.1f}MB"
             total_s = f"{total / (1024**2):.1f}MB"
             speed_s = f"{speed / (1024**2):.1f}MB/s"
         else:
@@ -88,7 +94,9 @@ class PipeTqdm:
         filled = int(bar_len * self.n / total)
         bar = "#" * filled + "-" * (bar_len - filled)
 
-        print(f"FILE {desc} [{bar}] {pct}% {done_s}/{total_s} {speed_s}", flush=True)
+        # "NN%|" matches the UI percent regex; "desc:" matches its
+        # "Fetching N files: NN%" aggregate regex on the outer bar.
+        print(f"FILE {desc}: {pct}%|{bar}| {done_s}/{total_s} {speed_s}", flush=True)
 
     def set_description(self, desc=None, refresh=True):
         self.desc = desc or ""
@@ -121,6 +129,30 @@ class PipeTqdm:
     def format_dict(self):
         return {"n": self.n, "total": self.total, "elapsed": time.time() - self.start_t}
 
+    # Class-level API surface newer huggingface_hub versions touch when the
+    # patched class stands in for tqdm (hub 1.x calls set_lock at import).
+    _lock = None
+
+    @classmethod
+    def set_lock(cls, lock):
+        cls._lock = lock
+
+    @classmethod
+    def get_lock(cls):
+        if cls._lock is None:
+            import threading
+            cls._lock = threading.RLock()
+        return cls._lock
+
+    @staticmethod
+    def write(s, file=None, end="\n", nolock=False):
+        print(s, file=file or sys.stdout, end=end, flush=True)
+
+    @classmethod
+    def external_write_mode(cls, *args, **kwargs):
+        import contextlib
+        return contextlib.nullcontext()
+
 
 def _patch_tqdm():
     """Replace tqdm everywhere with our pipe-friendly version."""
@@ -128,7 +160,12 @@ def _patch_tqdm():
 
     # Replace the main class
     tqdm_mod.tqdm = PipeTqdm
-    tqdm_mod.auto.tqdm = PipeTqdm
+    try:
+        # `import tqdm` does not pull in the .auto submodule by itself.
+        import tqdm.auto
+        tqdm_mod.auto.tqdm = PipeTqdm
+    except (ImportError, AttributeError):
+        pass
 
     # huggingface_hub uses tqdm.auto or its own utils.tqdm
     try:

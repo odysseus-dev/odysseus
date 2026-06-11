@@ -35,7 +35,7 @@ from routes.cookbook_output import error_aware_output_tail
 logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
-    _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
+    _SESSION_ID_RE, _git_bash_path, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
     _validate_local_dir, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
@@ -391,6 +391,100 @@ def setup_cookbook_routes() -> APIRouter:
         pid_path.write_text(str(proc.pid), encoding="utf-8")
         return {"pid": proc.pid, "log_path": str(log_path)}
 
+    def _scan_windows_download_processes(repo_id: str) -> int | None:
+        """PID of any live process downloading repo_id (Windows, best-effort).
+
+        Catches downloaders that cookbook session files no longer track —
+        e.g. a stop issued from a stale browser tab running pre-tree-kill JS
+        deleted the .pid file but left the hf/python children running. Those
+        orphans hold the HF cache file locks and deadlock any new download of
+        the same repo.
+        """
+        ps = (
+            "Get-CimInstance Win32_Process -Filter "
+            "\"Name='python.exe' OR Name='hf.exe'\" | "
+            "ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
+        )
+        try:
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).stdout or ""
+        except Exception:
+            return None
+        needles = (f"download {repo_id}", f"hf_download.py {repo_id}")
+        for line in out.splitlines():
+            pid_s, _, cmdline = line.partition("\t")
+            if any(n in cmdline for n in needles):
+                try:
+                    return int(pid_s.strip())
+                except ValueError:
+                    continue
+        return None
+
+    def _find_live_local_download(repo_id: str) -> dict | None:
+        """Live LOCAL download of this repo, if any.
+
+        Returns {"session_id": sid} for a tracked cookbook session (caller
+        reattaches) or {"orphan_pid": pid} for an untracked downloader
+        process (caller refuses to launch a duplicate). Two concurrent
+        downloads of one repo fight over the same per-file locks in the HF
+        cache and stall each other ("Still waiting to acquire lock...").
+        The browser's task state can't be trusted for this — it loses track
+        across restarts, other browsers, and stop/retry races.
+        """
+        needle = f"hf download {repo_id}"
+        try:
+            sids = sorted({
+                p.stem.removesuffix("_run")
+                for p in TMUX_LOG_DIR.glob("cookbook-*.sh")
+            })
+        except OSError:
+            return None
+        for sid in sids:
+            if not _SESSION_ID_RE.match(sid):
+                continue
+            # The full bash wrapper (the one containing the hf command) is
+            # <sid>_run.sh on local Windows (_launch_local_detached) and
+            # <sid>.sh on local POSIX (tmux runs it directly). Remote sessions
+            # leave a local <sid>_run.sh staging copy on POSIX too, but they
+            # fail the local liveness probes below.
+            script = TMUX_LOG_DIR / (f"{sid}_run.sh" if IS_WINDOWS else f"{sid}.sh")
+            try:
+                script_text = script.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if needle not in script_text and f"hf_download.py {repo_id}" not in script_text:
+                continue
+            if IS_WINDOWS:
+                # Only local sessions write a local .pid file; a dead pid means
+                # the wrapper (and with tree-kill, all its children) is gone.
+                try:
+                    pid = int((TMUX_LOG_DIR / f"{sid}.pid").read_text(encoding="utf-8").strip())
+                except (OSError, ValueError):
+                    continue
+                if pid_alive(pid):
+                    return {"session_id": sid}
+            else:
+                try:
+                    probe = subprocess.run(
+                        ["tmux", "has-session", "-t", sid],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                except Exception:
+                    continue
+                if probe.returncode == 0:
+                    return {"session_id": sid}
+        if IS_WINDOWS:
+            orphan_pid = _scan_windows_download_processes(repo_id)
+            if orphan_pid:
+                return {"orphan_pid": orphan_pid}
+        return None
+
     @router.post("/api/model/download")
     async def model_download(request: Request, req: ModelDownloadRequest):
         """Download a HuggingFace model in a tmux session.
@@ -413,6 +507,31 @@ def setup_cookbook_routes() -> APIRouter:
         req.local_dir = _validate_local_dir(req.local_dir)
         req.hf_token = "" if is_ollama_download else (req.hf_token or _load_stored_hf_token())
         _validate_token(req.hf_token)
+        # Concurrent downloads of the same repo deadlock on the HF cache's
+        # per-file locks ("Still waiting to acquire lock..."). If a live local
+        # session is already downloading this repo, reattach the UI to it
+        # instead of launching a duplicate. Remote hosts are covered by the
+        # frontend's tmux has-session zombie probe; Ollama serializes pulls
+        # in its own daemon.
+        if not req.remote_host and not is_ollama_download:
+            live = await asyncio.to_thread(_find_live_local_download, req.repo_id)
+            if live and live.get("session_id"):
+                live_sid = live["session_id"]
+                logger.info(f"Download of {req.repo_id} already running locally in {live_sid}; reattaching")
+                return {"ok": True, "session_id": live_sid, "remote": "local", "reused": True}
+            if live and live.get("orphan_pid"):
+                pid = live["orphan_pid"]
+                logger.warning(f"Download of {req.repo_id} blocked: untracked downloader process pid={pid} is live")
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Another process (pid {pid}) is already downloading {req.repo_id} "
+                        "outside cookbook tracking — likely left over from an earlier stop. "
+                        "Wait for it to finish, or end its process tree (e.g. "
+                        f"taskkill /F /T /PID {pid}) and retry; the download resumes from cache."
+                    ),
+                    "session_id": "",
+                }
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
         session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
         wrapper_script = TMUX_LOG_DIR / f"{session_id}.sh"
@@ -675,7 +794,25 @@ def setup_cookbook_routes() -> APIRouter:
             if not is_ollama_download:
                 lines.append(_HF_TOKEN_STATUS_SNIPPET)
             # Retry loop — same rationale as the remote-bash path. Issue #2722.
-            _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null' if is_ollama_download else (hf_cmd if IS_WINDOWS else f"{hf_cmd} < /dev/null")
+            if is_ollama_download:
+                _hf_invoke = 'eval "$ODYSSEUS_OLLAMA_PULL_CMD" < /dev/null'
+            elif IS_WINDOWS:
+                # Local Windows runs detached with output redirected to a log
+                # file (no TTY). The hf CLI's tqdm bars degrade to a single
+                # carriage-return stream there ("Fetching 7 files: 0%" forever)
+                # and the CLI wrapper chain spawns an extra interpreter. Use
+                # the bundled pipe-friendly downloader instead: one python
+                # process, newline progress lines the poller/UI can parse,
+                # plain resumable downloader semantics. Fall back to the CLI
+                # if the script is missing.
+                _dl_script = Path(__file__).resolve().parent.parent / "scripts" / "hf_download.py"
+                _dl_script_sh = shlex.quote(_git_bash_path(str(_dl_script)))
+                _py_dl_cmd = f"python -u {_dl_script_sh} {req.repo_id}"
+                if req.include:
+                    _py_dl_cmd += f" --include '{req.include}'"
+                _hf_invoke = f"if [ -f {_dl_script_sh} ]; then {_py_dl_cmd}; else {hf_cmd}; fi"
+            else:
+                _hf_invoke = f"{hf_cmd} < /dev/null"
             lines.append('_max_retries=10; _attempt=0; _ec=0')
             lines.append('while [ $_attempt -lt $_max_retries ]; do')
             lines.append('  _attempt=$((_attempt+1))')
@@ -2819,9 +2956,15 @@ def setup_cookbook_routes() -> APIRouter:
                 is_alive = pid_alive(task_pid)
                 try:
                     if log_path.exists():
-                        full_snapshot = log_path.read_text(
-                            encoding="utf-8", errors="replace"
-                        ).strip()[-12000:]
+                        # tqdm-style writers update progress with bare \r;
+                        # normalize so each update is its own line instead of
+                        # one ever-growing "line" that hides the latest state.
+                        full_snapshot = (
+                            log_path.read_text(encoding="utf-8", errors="replace")
+                            .replace("\r\n", "\n")
+                            .replace("\r", "\n")
+                            .strip()[-12000:]
+                        )
                         lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
                         downloading_lines = [l for l in lines if l.startswith("Downloading")]
                         if downloading_lines:

@@ -793,15 +793,21 @@ function _winSessionCmd(task, tmuxArgs) {
     return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('kill-session')) {
+    // taskkill /T kills the whole process tree. Stop-Process -Id only killed
+    // the outer bash wrapper; the inner retry loop + hf/python children kept
+    // running invisibly and deadlocked later downloads of the same repo on
+    // the HF cache file locks ("Still waiting to acquire lock...").
     const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
     return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (tmuxArgs.includes('send-keys') && tmuxArgs.includes('C-c')) {
+    // No cross-process Ctrl-C on Windows — tree-kill is the only reliable
+    // interrupt. Downloads resume from the HF cache's .incomplete blobs.
     const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -ErrorAction SilentlyContinue }`;
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }`;
     return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   return host ? `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
@@ -813,9 +819,11 @@ function _tmuxGracefulKill(task) {
     const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
     const sid = task.sessionId;
     const pf = _sshPrefix(_getPort(task));
+    // taskkill /T: see _winSessionCmd — must kill the whole tree, not just
+    // the outer bash wrapper, or orphaned hf/python downloaders linger.
     const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
     return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
   }
   if (task.remoteHost) {
@@ -2949,6 +2957,14 @@ async function _reconnectTask(el, task) {
             } else if (_fetchPct != null && _fetchPct < 100) {
               // Resume start: only the aggregate is meaningful yet.
               let text = `${_fetchPct}%`;
+              if (lastSpeed) text += ` · ${lastSpeed}`;
+              badge.textContent = text;
+              badge.className = 'cookbook-task-status cookbook-task-running';
+            } else if (lastPct != null && parseInt(lastPct, 10) < 100) {
+              // Pipe-friendly downloader (hf_download.py) emits per-file
+              // "NN%|" lines with no aggregate; the current file's percent
+              // is the best live signal (GGUF repos are one big file).
+              let text = `${lastPct}%`;
               if (lastSpeed) text += ` · ${lastSpeed}`;
               badge.textContent = text;
               badge.className = 'cookbook-task-status cookbook-task-running';
