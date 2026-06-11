@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
-from src.prompt_security import untrusted_context_message
+from src.prompt_security import untrusted_context_message, build_tool_result_message, build_native_tool_result_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import get_mcp_manager
@@ -820,7 +820,7 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
             content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
         content = (content or "").strip()
         # Skip injected tool-result envelopes — role=user but not human intent.
-        if not content or content.startswith("[Tool execution results]"):
+        if not content or content.startswith("## SECURITY"):
             continue
         collected.append(content)
         if len(collected) >= max_user:
@@ -1457,20 +1457,20 @@ def _append_tool_results(
         messages.append(assistant_msg)
         for j, tc in enumerate(native_tool_calls):
             result_text = tool_result_texts[j] if j < len(tool_result_texts) else ""
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", f"call_{round_num}_{j}"),
-                "content": result_text,
-            })
+            messages.append(build_native_tool_result_message(
+                tool_call_id=tc.get("id", f"call_{round_num}_{j}"),
+                result_text=result_text,
+            ))
     else:
-        tool_output_text = "\n\n".join(tool_results)
         msg = {"role": "assistant", "content": round_response}
         if round_reasoning:
             msg["reasoning_content"] = round_reasoning
         messages.append(msg)
-        messages.append(
-            {"role": "user", "content": f"[Tool execution results]\n\n{tool_output_text}"}
-        )
+        # Use structured trust-boundary messages so tool output is never
+        # mistaken for user instructions.
+        for j, _result in enumerate(tool_result_texts):
+            _name = native_tool_calls[j].get("name", "tool") if (native_tool_calls and j < len(native_tool_calls)) else "tool"
+            messages.append(build_tool_result_message(_name, _result))
 
 
 def _compute_final_metrics(
