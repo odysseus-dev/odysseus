@@ -67,7 +67,7 @@ MAX_AGENT_ROUNDS = 50
 SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
 
-## FUTURE — DEPRECATED: entries already in TOOL_HANDLERS are commented out.
+## DEPRECATED: entries already in TOOL_HANDLERS are commented out.
 ## Remove each commented entry once its tool is fully migrated.
 _TOOL_TAGS = {
     # "bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
