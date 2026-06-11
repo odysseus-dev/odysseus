@@ -35419,3 +35419,298 @@ body.theme-frosted .modal {
      is already ≥16px and never zoomed — leave it so we don't shrink it. */
   .doc-email-richbody.doc-font-m { font-size: 16px !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Voice Assistant Modal
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Modal shell ── */
+#voice-assistant-modal .va-modal-content {
+  max-width: 520px;
+  width: 96%;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Header extras ── */
+.va-autoloop-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  opacity: 0.7;
+  cursor: pointer;
+  margin-left: auto;
+  margin-right: 8px;
+  user-select: none;
+}
+.va-autoloop-label input { cursor: pointer; }
+
+/* ── Body ── */
+.va-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 380px;
+  max-height: 80vh;
+  padding: 0 !important;
+}
+
+/* ── Transcript history ── */
+.va-history {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+  max-height: 340px;
+}
+
+.va-history:empty::before {
+  content: 'Your conversation will appear here.';
+  opacity: 0.35;
+  font-size: 13px;
+  font-style: italic;
+  align-self: center;
+  margin: auto;
+}
+
+/* ── Message bubbles ── */
+.va-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 88%;
+  animation: va-fade-in 0.18s ease;
+}
+
+@keyframes va-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.va-msg-user { align-self: flex-end; align-items: flex-end; }
+.va-msg-ai   { align-self: flex-start; align-items: flex-start; }
+
+.va-msg-label {
+  font-size: 10px;
+  opacity: 0.45;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  padding: 0 4px;
+}
+
+.va-msg-text {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.va-msg-user .va-msg-text {
+  background: var(--user-bubble-bg, color-mix(in srgb, var(--red, #e06c75) 18%, var(--panel)));
+  border: 1px solid var(--bubble-border, transparent);
+  border-bottom-right-radius: 4px;
+}
+
+.va-msg-ai .va-msg-text {
+  background: var(--ai-bubble-bg, var(--panel));
+  border: 1px solid var(--bubble-border, var(--border));
+  border-bottom-left-radius: 4px;
+}
+
+/* Typing animation bubble */
+.va-typing .va-msg-text::after,
+.va-typing::after {
+  content: '▍';
+  display: inline-block;
+  animation: va-blink 0.8s step-end infinite;
+  opacity: 0.6;
+  font-size: 12px;
+  margin-left: 2px;
+}
+
+@keyframes va-blink {
+  0%, 100% { opacity: 0.6; }
+  50%       { opacity: 0; }
+}
+
+/* ── Interim transcript while speaking ── */
+.va-interim {
+  min-height: 22px;
+  padding: 4px 16px;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--fg);
+  opacity: 0.5;
+  text-align: center;
+}
+
+/* ── Mic area ── */
+.va-mic-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 16px 18px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 60%, var(--bg));
+  flex-shrink: 0;
+}
+
+/* ── Pulse ring ── */
+.va-mic-ring {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: box-shadow 0.3s ease;
+}
+
+.va-mic-ring::before,
+.va-mic-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* Idle */
+.va-mic-ring-idle { box-shadow: none; }
+
+/* Listening — green pulse */
+.va-mic-ring-listening {
+  box-shadow: 0 0 0 0 color-mix(in srgb, #4ade80 40%, transparent);
+  animation: va-pulse-listen 1.4s ease-out infinite;
+}
+@keyframes va-pulse-listen {
+  0%   { box-shadow: 0 0 0 0   color-mix(in srgb, #4ade80 55%, transparent); }
+  70%  { box-shadow: 0 0 0 20px color-mix(in srgb, #4ade80 0%,  transparent); }
+  100% { box-shadow: 0 0 0 0   color-mix(in srgb, #4ade80 0%,  transparent); }
+}
+
+/* Thinking — blue pulse */
+.va-mic-ring-thinking {
+  animation: va-pulse-think 1.2s ease-in-out infinite;
+}
+@keyframes va-pulse-think {
+  0%, 100% { box-shadow: 0 0 0 0   color-mix(in srgb, #60a5fa 40%, transparent); }
+  50%       { box-shadow: 0 0 0 16px color-mix(in srgb, #60a5fa 0%,  transparent); }
+}
+
+/* Speaking — accent pulse */
+.va-mic-ring-speaking {
+  animation: va-pulse-speak 0.9s ease-in-out infinite;
+}
+@keyframes va-pulse-speak {
+  0%, 100% { box-shadow: 0 0 0 0   color-mix(in srgb, var(--red, #e06c75) 45%, transparent); }
+  50%       { box-shadow: 0 0 0 18px color-mix(in srgb, var(--red, #e06c75) 0%,  transparent); }
+}
+
+/* ── Mic button ── */
+.va-mic-btn {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease, transform 0.15s ease, color 0.2s ease;
+  position: relative;
+  z-index: 1;
+}
+
+/* Show/hide icon based on state */
+.va-mic-btn .va-icon-stop { display: none; }
+
+.va-mic-btn[data-state="idle"] {
+  background: var(--panel);
+  color: var(--fg);
+  border: 2px solid var(--border);
+}
+.va-mic-btn[data-state="idle"]:hover {
+  background: color-mix(in srgb, var(--red, #e06c75) 12%, var(--panel));
+  color: var(--red, #e06c75);
+  border-color: var(--red, #e06c75);
+  transform: scale(1.05);
+}
+
+.va-mic-btn[data-state="listening"] {
+  background: color-mix(in srgb, #4ade80 20%, var(--panel));
+  color: #4ade80;
+  border: 2px solid #4ade80;
+}
+.va-mic-btn[data-state="listening"] .va-icon-mic  { display: none; }
+.va-mic-btn[data-state="listening"] .va-icon-stop { display: block; }
+
+.va-mic-btn[data-state="thinking"] {
+  background: color-mix(in srgb, #60a5fa 16%, var(--panel));
+  color: #60a5fa;
+  border: 2px solid #60a5fa;
+  cursor: pointer;
+}
+.va-mic-btn[data-state="thinking"] .va-icon-mic  { display: none; }
+.va-mic-btn[data-state="thinking"] .va-icon-stop { display: block; }
+.va-mic-btn[data-state="thinking"] .va-icon-stop {
+  animation: va-spin 1.1s linear infinite;
+  opacity: 0.7;
+}
+
+.va-mic-btn[data-state="speaking"] {
+  background: color-mix(in srgb, var(--red, #e06c75) 20%, var(--panel));
+  color: var(--red, #e06c75);
+  border: 2px solid var(--red, #e06c75);
+  cursor: pointer;
+}
+.va-mic-btn[data-state="speaking"] .va-icon-mic  { display: none; }
+.va-mic-btn[data-state="speaking"] .va-icon-stop { display: block; }
+
+@keyframes va-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Status text ── */
+.va-status {
+  font-size: 12px;
+  opacity: 0.6;
+  text-align: center;
+  min-height: 18px;
+  transition: opacity 0.2s;
+}
+.va-status.listening { opacity: 0.9; color: #4ade80; }
+.va-status.thinking  { opacity: 0.9; color: #60a5fa; }
+.va-status.speaking  { opacity: 0.9; color: var(--red, #e06c75); }
+.va-status.error     { opacity: 0.9; color: #f87171; }
+
+/* ── Clear button ── */
+.va-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 10px;
+  opacity: 0.45;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.va-clear-btn:hover { opacity: 0.85; border-color: var(--fg); }

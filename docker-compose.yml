@@ -16,6 +16,8 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ./data/local:/app/.local:z
+      # Live-mount static frontend so JS/CSS/HTML changes are instant (no rebuild needed).
+      - ./static:/app/static:ro,z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.

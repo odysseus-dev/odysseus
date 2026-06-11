@@ -18,6 +18,7 @@ import chatRenderer from './js/chatRenderer.js';
 import sessionModule from './js/sessions.js';
 import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
+import voiceAssistantModule from './js/voiceAssistant.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
@@ -869,6 +870,14 @@ function initializeEventListeners() {
         if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
         else galleryModule.openGallery();
       }
+    });
+  }
+
+  // Voice Assistant tool button
+  const toolVoiceAssistantBtn = el('tool-voice-assistant-btn');
+  if (toolVoiceAssistantBtn) {
+    toolVoiceAssistantBtn.addEventListener('click', () => {
+      voiceAssistantModule.openVoiceAssistant();
     });
   }
 
@@ -3783,6 +3792,76 @@ function startOdysseusApp() {
 
   // Expose globally so voiceRecorder can trigger update after async fetch
   window._updateSendBtnIcon = _updateSendBtnIcon;
+
+  // ── Voice Mode: full hands-free loop (STT → auto-submit → TTS → listen) ──
+  window._voiceModeActive = false;
+
+  function _startVoiceListening() {
+    if (!window._voiceModeActive) return;
+    if (voiceRecorderModule.getIsRecording()) return;
+    if (!_isSttEnabled()) return;
+    const msgInput = el('message');
+    if (msgInput && msgInput.value.trim()) return;
+    const sb = document.querySelector('.send-btn');
+    if (!sb) return;
+    sb.innerHTML = _stopIcon;
+    sb.title = 'Stop recording';
+    sb.dataset.mode = 'recording';
+    sb.classList.add('recording');
+    voiceRecorderModule.startRecording(
+      (audioFile) => fileHandlerModule.addFiles([audioFile]),
+      uiModule.showToast,
+      uiModule.showError
+    );
+  }
+
+  window._voiceModeTriggerSubmit = () => {
+    if (!window._voiceModeActive) return;
+    setTimeout(() => {
+      try { handleSubmit(null); } catch (e) { console.error('voice submit', e); }
+    }, 150);
+  };
+
+  window._voiceModeRestartListening = () => {
+    if (!window._voiceModeActive) return;
+    setTimeout(_startVoiceListening, 700);
+  };
+
+  (function initVoiceModeToggle() {
+    const voiceModeBtn = el('overflow-voice-mode-btn');
+    const voiceIndicatorBtn = el('voice-mode-indicator-btn');
+    if (!voiceModeBtn) return;
+
+    function setVoiceMode(active) {
+      window._voiceModeActive = active;
+      voiceModeBtn.classList.toggle('active', active);
+      if (window.aiTTSManager) window.aiTTSManager.autoPlay = active;
+      if (voiceIndicatorBtn) voiceIndicatorBtn.style.display = active ? '' : 'none';
+      const s = loadToggleState(); s.voiceMode = active; saveToggleState(s);
+      updatePlusDot();
+      if (active) {
+        uiModule.showToast('Voice mode on — speak after the mic appears');
+        setTimeout(_startVoiceListening, 400);
+      } else {
+        voiceRecorderModule.stopRecording();
+        if (window.aiTTSManager) window.aiTTSManager.stop();
+      }
+    }
+
+    // Restore persisted state
+    try {
+      const st = loadToggleState();
+      if (st.voiceMode) {
+        window._voiceModeActive = true;
+        voiceModeBtn.classList.add('active');
+        if (window.aiTTSManager) window.aiTTSManager.autoPlay = true;
+        if (voiceIndicatorBtn) voiceIndicatorBtn.style.display = '';
+      }
+    } catch (e) {}
+
+    voiceModeBtn.addEventListener('click', () => setVoiceMode(!voiceModeBtn.classList.contains('active')));
+    if (voiceIndicatorBtn) voiceIndicatorBtn.addEventListener('click', () => setVoiceMode(false));
+  })();
 
   // Initial icon state
   _updateSendBtnIcon();
