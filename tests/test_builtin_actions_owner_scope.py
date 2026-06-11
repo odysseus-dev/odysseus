@@ -106,6 +106,9 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
     from src.builtin_actions import action_learn_sender_signatures
 
     class FakeImap:
+        def __init__(self, owner=""):
+            self.owner = owner
+
         def select(self, *_args, **_kwargs):
             return "OK", []
 
@@ -119,13 +122,20 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
             return None
 
     calls, _fallback_calls = _resolver_spy(monkeypatch, utility_result=("", "", {}), default_result=("", "", {}))
-    monkeypatch.setattr(email_helpers, "_imap_connect", lambda _account_id=None: FakeImap())
+    imap_owners = []
+
+    def fake_imap_connect(_account_id=None, owner=""):
+        imap_owners.append(owner)
+        return FakeImap(owner)
+
+    monkeypatch.setattr(email_helpers, "_imap_connect", fake_imap_connect)
 
     message, ok = await action_learn_sender_signatures("alice")
 
     assert ok is False
     assert message == "No LLM endpoint available"
     assert calls == [("utility", "alice"), ("default", "alice")]
+    assert imap_owners == ["alice"]
 
 
 @pytest.mark.asyncio
