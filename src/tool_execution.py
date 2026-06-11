@@ -440,7 +440,7 @@ async def execute_tool_block(
         do_list_downloads, do_cancel_download, do_search_hf_models, do_list_cached_models,
         do_list_serve_presets, do_serve_preset, do_adopt_served_model,
         do_list_cookbook_servers,
-        do_edit_image, do_resolve_contact,
+        do_resolve_contact,
         do_manage_contact,
     )
 
@@ -646,7 +646,8 @@ async def execute_tool_block(
     elif tool in ("manage_tasks", "manage_skills", "manage_memory",
                   "manage_rag", "pipeline", "ui_control",
                   "trigger_research", "manage_research",
-                  "api_call", "app_api"):
+                  "api_call", "app_api",
+                  "edit_image"):
         desc = tool
         from src.agent_tools import TOOL_HANDLERS
         result = await TOOL_HANDLERS[tool](content, {"session_id": session_id, "owner": owner})
@@ -710,9 +711,6 @@ async def execute_tool_block(
     elif tool == "list_cookbook_servers":
         desc = "list_cookbook_servers"
         result = await do_list_cookbook_servers(content, owner=owner)
-    elif tool == "edit_image":
-        desc = "edit_image"
-        result = await do_edit_image(content, owner=owner)
     elif tool == "edit_file":
         result = await _direct_fallback(tool, content, workspace=workspace) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"

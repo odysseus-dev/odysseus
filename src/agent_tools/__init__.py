@@ -32,6 +32,7 @@ from .ui_tools import UIControlTool
 from .vault_tools import VaultSearchTool, VaultGetTool, VaultUnlockTool
 from .research_tools import TriggerResearchTool, ManageResearchTool
 from .api_integration_tools import ApiCallTool, AppApiTool
+from .image_tools import EditImageTool, GenerateImageTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -63,6 +64,8 @@ TOOL_HANDLERS = {
     "manage_research": ManageResearchTool().execute,
     "api_call": ApiCallTool().execute,
     "app_api": AppApiTool().execute,
+    "edit_image": EditImageTool().execute,
+    "generate_image": GenerateImageTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -85,7 +88,8 @@ _TOOL_TAGS = {
     # "pipeline",
     "manage_session",  # "manage_memory", "list_models",
     # "ui_control",
-    "generate_image", "ask_user", "update_plan",
+    # "generate_image",
+    "ask_user", "update_plan",
     # "manage_tasks",
     "api_call", "ask_teacher",  # "manage_skills",
     # "suggest_document",
@@ -102,7 +106,8 @@ _TOOL_TAGS = {
     "search_hf_models", "list_cached_models",
     "list_serve_presets", "serve_preset", "adopt_served_model",
     "list_cookbook_servers",
-    "edit_image",  # "trigger_research", "manage_research",
+    # "edit_image",
+    # "trigger_research", "manage_research",
     # "api_call", "app_api",
 }
 
