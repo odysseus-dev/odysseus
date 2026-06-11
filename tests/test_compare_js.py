@@ -11,6 +11,7 @@ covered via Playwright/Bombadil specs against a running app.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import textwrap
@@ -61,6 +62,7 @@ def test_state_reset_preserves_config(node_available):
         state._parallel = false;
         state._openingSelector = true;
         state._streaming = true;
+        state._stopRequested = true;
         state._finishOrder = 7;
         state._paneSessionIds = ['a','b'];
         state._paneMetrics = [{x:1}];
@@ -74,6 +76,7 @@ def test_state_reset_preserves_config(node_available):
           parallel_sticky: state._parallel,
           opening_cleared: state._openingSelector,
           streaming_cleared: state._streaming,
+          stop_requested_cleared: state._stopRequested,
           finish_order_cleared: state._finishOrder,
           session_ids_cleared: state._paneSessionIds.length,
           metrics_cleared: state._paneMetrics.length,
@@ -89,6 +92,7 @@ def test_state_reset_preserves_config(node_available):
         "parallel_sticky": False,
         "opening_cleared": False,
         "streaming_cleared": False,
+        "stop_requested_cleared": False,
         "finish_order_cleared": 0,
         "session_ids_cleared": 0,
         "metrics_cleared": 0,
@@ -113,6 +117,25 @@ def test_state_reset_resets_probed_set(node_available):
     """)
     out = _run_node(script)
     assert out == {"size": 0, "is_set": True}
+
+
+def test_sequential_compare_stop_does_not_advance_to_later_panes():
+    """Sequential compare Stop must cancel the whole run, not just the
+    active pane. This pins the browser-heavy orchestration source so a
+    stopped first pane cannot immediately start pane two again."""
+    index = (_REPO / "static/js/compare/index.js").read_text(encoding="utf-8")
+    panes = (_REPO / "static/js/compare/panes.js").read_text(encoding="utf-8")
+
+    assert "state._stopRequested = true;" in panes
+    assert "state._stopRequested = false;" in index
+    assert "_markPendingSequentialPanesStopped(i + 1, allPanes);" in index
+    assert re.search(
+        r"await streamToPane\(i, state\._paneSessionIds\[i\], message, aiElements\[i\],"
+        r".*?\);\s*if \(state\._stopRequested\) \{\s*"
+        r"_markPendingSequentialPanesStopped\(i \+ 1, allPanes\);\s*break;",
+        index,
+        re.S,
+    ), "sequential chat compare must stop before advancing to the next pane"
 
 
 # ── icons.js ───────────────────────────────────────────────────────

@@ -36,6 +36,7 @@ function _slotChar(i) { return state._parallel ? String.fromCharCode(65 + i) : S
 // ── Stop / reroll ──
 
 function stopAll() {
+  state._stopRequested = true;
   state._abortControllers.forEach(ac => { if (ac) ac.abort(); });
   state._abortControllers = [];
   state._streaming = false;

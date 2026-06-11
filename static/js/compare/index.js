@@ -591,6 +591,7 @@ function handleCompareSubmit(e) {
 async function _executeCompare(message) {
   if (state._streaming) return;
   if (state._selectedModels.length < 1) return;
+  state._stopRequested = false;
 
   // New round — allow voting again and clear the previous round's win/lose/tie
   // styling (pane highlight + the Winner!/= title decorations), otherwise the
@@ -649,6 +650,7 @@ async function _executeCompare(message) {
           const spinner = spinnerModule.create('Searching...', 'right');
           aiBody.appendChild(spinner.createElement());
           spinner.start();
+          aiMsg._spinner = spinner;
         }
         hist.appendChild(aiMsg);
         hist.scrollTop = hist.scrollHeight;
@@ -682,6 +684,10 @@ async function _executeCompare(message) {
         const panes = document.querySelectorAll('.compare-pane');
         panes.forEach((p, i) => { if (i > 0) p.style.opacity = '0.4'; });
         for (let i = 0; i < state._selectedModels.length; i++) {
+          if (state._stopRequested) {
+            _markPendingSequentialPanesStopped(i, panes);
+            break;
+          }
           const pane = panes[i];
           if (pane) pane.style.opacity = '1';
           results.push(await _searchOne(state._selectedModels[i], i));
@@ -713,6 +719,10 @@ async function _executeCompare(message) {
           }
           // Sequential: run synthesis for this pane immediately before moving to next
           _seqSynthDone.add(idx);
+          if (state._stopRequested) {
+            _markPendingSequentialPanesStopped(i + 1, panes);
+            break;
+          }
           if (!data.error && data.results && data.results.length > 0) {
             const modelToUse = state._searchSynthModels?.[idx] || null;
             if (modelToUse) {
@@ -729,6 +739,10 @@ async function _executeCompare(message) {
                 const resultsText = data.results.map((r, ri) => `[${ri + 1}] ${r.title}\n${r.snippet || ''}\nURL: ${r.url}`).join('\n\n');
                 const synthPrompt = `Analyze these search results for the query "${message}". Summarize the key findings, note any consensus or conflicting information, and provide a brief synthesis.\n\nSearch Results:\n${resultsText}`;
                 await _runSynthForPane(modelToUse, synthPrompt, synthBody, spinner, seqHist);
+                if (state._stopRequested) {
+                  _markPendingSequentialPanesStopped(i + 1, panes);
+                  break;
+                }
               }
             }
           }
@@ -932,12 +946,21 @@ async function _executeCompare(message) {
       allPanes.forEach((p, idx) => { p.style.opacity = idx === 0 ? '1' : '0.35'; });
 
       for (let i = 0; i < state._paneSessionIds.length; i++) {
+        if (state._stopRequested) {
+          _markPendingSequentialPanesStopped(i, allPanes);
+          break;
+        }
         // Update spinner
         if (aiElements[i] && aiElements[i]._spinner) {
           aiElements[i]._spinner.updateLabel('Processing...');
         }
 
         await streamToPane(i, state._paneSessionIds[i], message, aiElements[i], { searchContext: sharedSearchContext, timeout: runTimeout });
+
+        if (state._stopRequested) {
+          _markPendingSequentialPanesStopped(i + 1, allPanes);
+          break;
+        }
 
         // Swap opacity: dim current, brighten next
         if (allPanes[i]) allPanes[i].style.opacity = '0.35';
@@ -1455,6 +1478,27 @@ async function showShufflePoolEditor() {
 // ────────────────────────────────────────────────────────────────────────────
 // ── Register cross-module callbacks ──
 // ────────────────────────────────────────────────────────────────────────────
+
+function _markPendingSequentialPanesStopped(startIdx, panes) {
+  for (let idx = startIdx; idx < state._selectedModels.length; idx++) {
+    const hist = document.getElementById('cmp-history-' + idx);
+    const aiMsg = hist && hist.querySelector('.msg-ai:last-child');
+    if (aiMsg && aiMsg._spinner) {
+      aiMsg._spinner.destroy();
+      aiMsg._spinner = null;
+    }
+    const body = aiMsg && aiMsg.querySelector('.body');
+    if (body) {
+      body.innerHTML = '<span style="opacity:0.4;font-style:italic;">Stopped before starting</span>';
+    }
+    const pane = (panes && panes[idx]) || document.querySelector(`.compare-pane[data-pane="${idx}"]`);
+    if (pane) {
+      pane.style.opacity = '0.35';
+      const stopBtn = pane.querySelector('.pane-stop-btn');
+      if (stopBtn) stopBtn.style.display = 'none';
+    }
+  }
+}
 
 registerCompareActions({ stopAll, resetCompare });
 registerStreamActions({ rerollPane, autoPreviewHtml: _autoPreviewHtml });
