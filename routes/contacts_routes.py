@@ -147,6 +147,12 @@ def _parse_vcards(text: str) -> List[Dict]:
         if not block.strip():
             continue
         contact = {"name": "", "emails": [], "phones": [], "uid": ""}
+        # RFC 6350 ss3.2 line unfolding: a CRLF (or LF) followed by a single
+        # space or tab continues the previous line. Without unfolding, a folded
+        # value (a long EMAIL, TEL, or FN, which Apple/iCloud/Google routinely
+        # fold at ~75 chars) is split across physical lines and the continuation
+        # is silently dropped, truncating the value.
+        block = re.sub(r"\r?\n[ \t]", "", block)
         for line in block.split("\n"):
             line = line.strip()
             # Strip an optional RFC 6350 group prefix (e.g. "item1.EMAIL;...")
