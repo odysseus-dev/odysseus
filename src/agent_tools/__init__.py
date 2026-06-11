@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool
+<<<<<<< HEAD
 from .document_tools import create_document, update_document
+=======
+from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+>>>>>>> upstream/dev
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -34,8 +38,16 @@ TOOL_HANDLERS = {
     "ls": LsTool().execute,
     "glob": GlobTool().execute,
     "grep": GrepTool().execute,
+<<<<<<< HEAD
     "create_document": create_document,
     "update_document": update_document,
+=======
+    "create_document": CreateDocumentTool().execute,
+    "update_document": UpdateDocumentTool().execute,
+    "edit_document": EditDocumentTool().execute,
+    "suggest_document": SuggestDocumentTool().execute,
+    "manage_documents": ManageDocumentTool().execute,
+>>>>>>> upstream/dev
 }
 
 # ---------------------------------------------------------------------------
@@ -112,13 +124,22 @@ from src.tool_execution import (  # noqa: E402, F401
     format_tool_result,
 )
 
+# Document functions
+from .document_tools import (
+    set_active_document, 
+    set_active_model
+)
+
 # Implementations
 from src.tool_implementations import (  # noqa: E402, F401
+<<<<<<< HEAD
     set_active_document,
     set_active_model,
     get_active_document,
     do_edit_document,
     do_suggest_document,
+=======
+>>>>>>> upstream/dev
     do_search_chats,
     do_manage_skills,
     do_manage_tasks,
@@ -126,7 +147,6 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_mcp,
     do_manage_webhooks,
     do_manage_tokens,
-    do_manage_documents,
     do_manage_settings,
     do_api_call,
 )

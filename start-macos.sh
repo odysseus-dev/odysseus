@@ -182,6 +182,35 @@ else
     echo "▶ Non-ARM macOS detected; skipping Apfel server bootstrap."
 fi
 
+# ChromaDB backs the tool index and vector RAG. chromadb ships in the venv, so
+# start a local server before launching. Skip when one is already reachable, or
+# when CHROMADB_HOST points at a remote host.
+CHROMA_PID=""
+CHROMA_HOST="${CHROMADB_HOST:-localhost}"   # what the app connects to
+CHROMA_PORT="${CHROMADB_PORT:-8100}"
+# Bind + probe on IPv4 loopback: the app's "localhost" resolves to 127.0.0.1,
+# but binding chroma to the literal "localhost" can land on IPv6 ::1, which the
+# app can't then reach. Pin both to 127.0.0.1.
+CHROMA_BIN="$(dirname "$VENV_PY")/chroma"
+case "$CHROMA_HOST" in
+    localhost|127.0.0.1) CHROMA_BIND="127.0.0.1" ;;
+    0.0.0.0)             CHROMA_BIND="0.0.0.0" ;;
+    *)                   CHROMA_BIND="" ;;   # remote host - don't start locally
+esac
+if (exec 3<>"/dev/tcp/127.0.0.1/$CHROMA_PORT") 2>/dev/null; then
+    echo "▶ ChromaDB already running on 127.0.0.1:$CHROMA_PORT - using it."
+elif [ -z "$CHROMA_BIND" ]; then
+    echo "▶ CHROMADB_HOST=$CHROMA_HOST is remote - not starting a local ChromaDB."
+elif [ -x "$CHROMA_BIN" ]; then
+    CHROMA_LOG="${TMPDIR:-/tmp}/odysseus-chromadb.log"
+    echo "▶ Starting ChromaDB in the background on $CHROMA_BIND:$CHROMA_PORT…"
+    echo "  logging to $CHROMA_LOG"
+    nohup "$CHROMA_BIN" run --host "$CHROMA_BIND" --port "$CHROMA_PORT" --path "$PWD/data/chroma" >"$CHROMA_LOG" 2>&1 &
+    CHROMA_PID=$!
+else
+    echo "▶ ChromaDB CLI not found in venv; skipping (tool index will be degraded)."
+fi
+
 # 5. Launch. Bind to loopback by default; opt into LAN/Tailscale with
 #    ODYSSEUS_HOST=0.0.0.0.
 URL_HOST="$HOST"
@@ -224,7 +253,7 @@ fi
 # Setup is done — drop the setup-failure handler, and clean up the background
 # opener when the server exits or the user presses Ctrl+C.
 trap - ERR
-trap '[ -n "$POLLER_PID" ] && kill "$POLLER_PID" 2>/dev/null; [ -n "$APFEL_PID" ] && kill "$APFEL_PID" 2>/dev/null' EXIT INT TERM
+trap '[ -n "$POLLER_PID" ] && kill "$POLLER_PID" 2>/dev/null; [ -n "$APFEL_PID" ] && kill "$APFEL_PID" 2>/dev/null; [ -n "$CHROMA_PID" ] && kill "$CHROMA_PID" 2>/dev/null' EXIT INT TERM
 
 echo
 echo "▶ Starting Odysseus — it will open in your browser at $URL"
