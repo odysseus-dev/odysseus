@@ -674,6 +674,10 @@ app.include_router(calendar_router)
 from routes.shell_routes import setup_shell_routes
 app.include_router(setup_shell_routes())
 
+# Terminal agents (tmux-backed Codex/Claude/shell sessions)
+from routes.terminal_agent_routes import setup_terminal_agent_routes
+app.include_router(setup_terminal_agent_routes())
+
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())

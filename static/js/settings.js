@@ -5052,7 +5052,7 @@ async function initUnifiedIntegrations() {
     });
     formEl.querySelectorAll('.uf-codex-revoke').forEach(btn => {
       btn.addEventListener('click', async () => {
-        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Integrations using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
+        if (!await window.styledConfirm(`Revoke this ${cfg.word} token? Terminal agents using it will lose access.`, { confirmText: 'Revoke', danger: true })) return;
         await fetch(`/api/tokens/${btn.dataset.tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
         formEl.style.display = 'none';
         await renderList();
