@@ -395,6 +395,8 @@ Key settings:
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
 | `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
+| `APP_DATA_DIR` | `./data` | Docker Compose host directory for application data volumes. |
+| `APP_LOGS_DIR` | `./logs` | Docker Compose host directory for application logs. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `SECURE_COOKIES` | `false` | Set true when serving Odysseus through HTTPS at a trusted proxy or private access gateway. |

@@ -16,18 +16,18 @@ services:
     ports:
       - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
     volumes:
-      - ./data:/app/data:z
-      - ./logs:/app/logs:z
+      - ${APP_DATA_DIR:-./data}:/app/data:z
+      - ${APP_LOGS_DIR:-./logs}:/app/logs:z
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
-      - ./data/ssh:/app/.ssh:z
+      - ${APP_DATA_DIR:-./data}/ssh:/app/.ssh:z
       # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
       # container, so persist its HuggingFace cache under ./data/huggingface.
-      - ./data/huggingface:/app/.cache/huggingface:z
+      - ${APP_DATA_DIR:-./data}/huggingface:/app/.cache/huggingface:z
       # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
-      - ./data/local:/app/.local:z
+      - ${APP_DATA_DIR:-./data}/local:/app/.local:z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
