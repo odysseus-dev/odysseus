@@ -57,13 +57,23 @@ class WebSearchTool:
 class WebFetchTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.search.content import fetch_webpage_content
+        from src.constants import WEB_FETCH_HARD_MAX_BYTES
         raw = content.strip()
         url = ""
+        max_bytes = None
         if raw.startswith("{"):
             try:
                 parsed = json.loads(raw)
                 if isinstance(parsed, dict):
                     url = str(parsed.get("url") or "").strip()
+                    # Download-budget override (#3812): "full": true raises the
+                    # budget to the hard cap; an explicit max_bytes is clamped
+                    # to the hard cap downstream. Default stays the soft cap.
+                    if parsed.get("full") is True:
+                        max_bytes = WEB_FETCH_HARD_MAX_BYTES
+                    mb = parsed.get("max_bytes")
+                    if isinstance(mb, int) and mb > 0:
+                        max_bytes = mb
             except json.JSONDecodeError:
                 url = ""
         if not url:
@@ -78,7 +88,7 @@ class WebFetchTool:
         loop = asyncio.get_running_loop()
         try:
             result = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: fetch_webpage_content(url, timeout=10)),
+                loop.run_in_executor(None, lambda: fetch_webpage_content(url, timeout=10, max_bytes=max_bytes)),
                 timeout=30,
             )
         except asyncio.TimeoutError:
@@ -94,7 +104,22 @@ class WebFetchTool:
                 return {"error": f"web_fetch: {url}: {err}", "exit_code": 1}
             return {"error": f"web_fetch: {url}: no readable text content (not HTML, or the page needs JS/login)", "exit_code": 1}
 
-        header = (f"# {title}\n" if title else "") + f"Source: {url}\n\n"
+        # Tell the model when the download budget cut the body short and how
+        # to get the rest, instead of silently presenting a partial page as
+        # the whole thing. The notice leads the output so MAX_OUTPUT_CHARS
+        # trimming below can never drop it.
+        size_note = ""
+        if result.get("truncated"):
+            fetched = result.get("fetched_bytes") or 0
+            total = result.get("total_bytes")
+            total_txt = f" of {total:,} bytes" if total else ""
+            size_note = (
+                f"[partial content: download stopped at {fetched:,} bytes{total_txt}. "
+                f'Re-call with {{"url": "{url}", "full": true}} to fetch up to '
+                f"{WEB_FETCH_HARD_MAX_BYTES:,} bytes.]\n\n"
+            )
+
+        header = (f"# {title}\n" if title else "") + f"Source: {url}\n\n" + size_note
         output = header + text
         if len(output) > MAX_OUTPUT_CHARS:
             output = output[:MAX_OUTPUT_CHARS] + "\n\n[...truncated]"

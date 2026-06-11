@@ -63,6 +63,14 @@ MAX_OUTPUT_CHARS = 10_000       # cap for bash/python/web_search/web_fetch outpu
 MAX_READ_CHARS = 20_000         # cap for read_file / document preview
 MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
 
+# web_fetch response-size policy (#3812). MAX_OUTPUT_CHARS above only trims
+# what the agent SEES; these caps bound what the server downloads, parses,
+# and writes to the content cache. The soft cap is the default download
+# budget; the agent can raise it per call (full/max_bytes) but never past
+# the hard cap, so a model can't decide to pull a multi-GB file.
+WEB_FETCH_SOFT_MAX_BYTES = 2_000_000    # default download budget (2 MB)
+WEB_FETCH_HARD_MAX_BYTES = 20_000_000   # absolute ceiling, even with override (20 MB)
+
 # API Configuration
 MAX_CONTEXT_MESSAGES = 90
 REQUEST_TIMEOUT = 20
