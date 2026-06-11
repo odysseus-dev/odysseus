@@ -7,11 +7,8 @@ class AgentRouter(BaseModel):#This is the way that the AI formats its response s
    Agent:str
 
 
-
     
-
-        
-async def Route():
+async def Route(prompt):
     ODYSSEUS_SERVERS = {            #Defined dictionary for key value pairs so AI response is mapped out to the correct file
     "rag":"rag_server.py",
     "image":"image_gen_server.py",
@@ -19,7 +16,7 @@ async def Route():
     }
     response = await asyncio.to_thread(ollama.generate,                    #ollama.generate is synchronous so I created a new thread to carry out the execution.
     model='llama3.2',
-    prompt= "I want to send an email to my friend named billy.",
+    prompt= prompt,
     format=AgentRouter.model_json_schema(),
     system= """Choose between three agents. 
      **Email agent responsible for sending an email.**
@@ -34,5 +31,8 @@ async def Route():
     print(Output)
     IdentifyingAgent = ODYSSEUS_SERVERS.get(Output)#Maps it out with dictionary to look at what mcp agent should be called
     if not IdentifyingAgent:
-        return 
-    CallingAgent = MCPToolset(StdioTransport("python", args=[f"mcpservers/{IdentifyingAgent}"]))#Calls the agent.
+        return
+    transport = StdioTransport("python", args=[f"mcp_servers/{IdentifyingAgent}"])
+    calling_agent = MCPToolset(transport)
+    return calling_agent
+    
