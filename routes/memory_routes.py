@@ -24,7 +24,6 @@ def _strip_list_prefix(text: str) -> str:
 from services.memory import MemoryManager
 from core.session_manager import SessionManager
 from src.request_models import MemoryAddRequest
-from core.database import SessionLocal
 from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
@@ -276,9 +275,9 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         Uses the default model from settings, or falls back to a session's model.
         Returns before and after memory counts.
         """
-        from routes.model_routes import _load_settings, _normalize_base, build_chat_url
-        from core.database import ModelEndpoint
-        import json as _json
+        user = _owner(request)
+        fallback_url = fallback_model = None
+        fallback_headers = {}
 
         endpoint_url = model = None
         headers = {}
@@ -291,47 +290,28 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if t_url and t_model:
             endpoint_url, model, headers = t_url, t_model, t_headers
         else:
-            # Fall back to default model if no task/utility model configured
-            settings = _load_settings()
-            ep_id = settings.get("default_endpoint_id", "")
-            default_model = settings.get("default_model", "")
-            if ep_id:
-                db = SessionLocal()
-                try:
-                    ep = db.query(ModelEndpoint).filter(
-                        ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
-                    ).first()
-                    if ep:
-                        base = _normalize_base(ep.base_url)
-                        endpoint_url = build_chat_url(base)
-                        model = default_model
-                        if not model and ep.models:
-                            try:
-                                models = _json.loads(ep.models) if isinstance(ep.models, str) else ep.models
-                                if models:
-                                    model = models[0]
-                            except Exception:
-                                pass
-                        if ep.api_key:
-                            headers = {"Authorization": f"Bearer {ep.api_key}"}
-                finally:
-                    db.close()
-
-            # Fall back to session model if no default configured
-            if not endpoint_url and session:
+            # Fall back to default/session model
+            if session:
                 try:
                     sess = session_manager.get_session(session)
-                    _assert_session_owner(sess, _owner(request))
-                    endpoint_url = sess.endpoint_url
-                    model = sess.model
-                    headers = sess.headers
+                    _assert_session_owner(sess, user)
+                    fallback_url = sess.endpoint_url
+                    fallback_model = sess.model
+                    fallback_headers = sess.headers
                 except KeyError:
                     pass
+
+            endpoint_url, model, headers = resolve_endpoint(
+                "default",
+                fallback_url=fallback_url,
+                fallback_model=fallback_model,
+                fallback_headers=fallback_headers,
+                owner=user,
+            )
 
         if not endpoint_url or not model:
             raise HTTPException(400, "No default model configured — set one in Settings")
 
-        user = _owner(request)
         result = await audit_memories(
             memory_manager,
             memory_vector,
