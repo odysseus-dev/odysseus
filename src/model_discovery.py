@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 _hosts_cache: List[str] = []
 _hosts_cache_time: float = 0
 _HOSTS_CACHE_TTL = 60  # seconds
+_WARMUP_URLS_CACHE_TTL = 300  # seconds
 
 
 def _parse_tailscale_status(raw: str) -> Dict[str, Any]:
@@ -94,6 +95,9 @@ class ModelDiscovery:
         self.openai_compat_path = "/v1/chat/completions"
         # Custom ports from env vars, merged into the scan list by discover_models.
         self._extra_ports: set = set()
+        self._warmup_urls_cache: List[str] = []
+        self._warmup_urls_cache_time: float = 0
+        self._warmup_urls_cache_limit: int = 0
 
     def _get_hosts(self) -> List[str]:
         """Get all hosts to scan, using env override, Tailscale, or default."""
@@ -230,16 +234,36 @@ class ModelDiscovery:
         discovered item already carries a ``/v1/chat/completions`` url; swap the
         suffix for the cheap ``/models`` probe. Failures degrade to an empty list
         so warmup never crashes the caller.
+
+        Keepalive calls this every 60 seconds. Cache the URL list briefly so that
+        the keepalive path pings known endpoints without doing a full port scan
+        on every tick.
         """
+        now = time.time()
+        cache_time = getattr(self, "_warmup_urls_cache_time", 0) or 0
+        cache_limit = getattr(self, "_warmup_urls_cache_limit", 0) or 0
+        cache_urls = getattr(self, "_warmup_urls_cache", [])
+        if (
+            cache_time
+            and cache_limit >= limit
+            and (now - cache_time) < _WARMUP_URLS_CACHE_TTL
+        ):
+            return list(cache_urls[:limit])
+
         try:
             items = (self.discover_models() or {}).get("items", [])
         except Exception:
+            if cache_time and cache_limit >= limit:
+                return list(cache_urls[:limit])
             return []
         urls: List[str] = []
         for ep in items[:limit]:
             url = (ep.get("url") or "").replace("/chat/completions", "/models")
             if url:
                 urls.append(url)
+        self._warmup_urls_cache = list(urls)
+        self._warmup_urls_cache_time = now
+        self._warmup_urls_cache_limit = limit
         return urls
 
     def get_providers(self) -> Dict[str, Any]:
