@@ -419,42 +419,6 @@ class GrepTool:
         return {"output": _truncate(out), "exit_code": 0}
 
 
-class MkdirTool:
-    """Tool: mkdir - create directories (like mkdir -p). Path is workspace-confined."""
-
-    async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
-            _resolve_tool_path,
-            _resolve_tool_path_in_workspace,
-            _resolve_search_root,
-            _truncate
-        )
-        workspace = ctx.get('workspace')
-        raw_path = ''
-        _s = (content or '').strip()
-        if _s.startswith('{'):
-            try:
-                raw_path = str(json.loads(_s).get('path', '')).strip()
-            except (json.JSONDecodeError, TypeError):
-                raw_path = ''
-        else:
-            raw_path = _s.split(chr(10), 1)[0].strip()
-        if not raw_path:
-            return {'error': 'mkdir: path required', 'exit_code': 1}
-        try:
-            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
-                    if workspace else _resolve_tool_path(raw_path))
-        except ValueError as e:
-            return {'error': f'mkdir: {e}', 'exit_code': 1}
-        try:
-            def _do():
-                os.makedirs(path, exist_ok=True)
-            import asyncio
-            await asyncio.to_thread(_do)
-            return {'output': f"Created directory '{raw_path}' (or confirmed exists).", 'exit_code': 0}
-        except OSError as e:
-            return {'error': f'mkdir: {e}', 'exit_code': 1}
-
 
 class MkdirTool:
     async def execute(self, content: str, ctx: dict) -> dict:
