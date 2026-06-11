@@ -223,6 +223,25 @@ class ModelDiscovery:
         )
         return {"hosts": hosts, "items": items}
 
+    def warmup_ping_urls(self, limit: int = 5) -> List[str]:
+        """The ``/models`` URLs of up to ``limit`` discovered endpoints.
+
+        Used by the startup warmup / keepalive loop to prime connections. Each
+        discovered item already carries a ``/v1/chat/completions`` url; swap the
+        suffix for the cheap ``/models`` probe. Failures degrade to an empty list
+        so warmup never crashes the caller.
+        """
+        try:
+            items = (self.discover_models() or {}).get("items", [])
+        except Exception:
+            return []
+        urls: List[str] = []
+        for ep in items[:limit]:
+            url = (ep.get("url") or "").replace("/chat/completions", "/models")
+            if url:
+                urls.append(url)
+        return urls
+
     def get_providers(self) -> Dict[str, Any]:
         """Get all available providers"""
         discovery = self.discover_models()
