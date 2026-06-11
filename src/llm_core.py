@@ -617,6 +617,7 @@ def _build_ollama_payload(
     stream: bool = False,
     tools: Optional[List[Dict]] = None,
     num_ctx: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> Dict:
     """Build the JSON payload for Ollama's /api/chat endpoint.
 
@@ -645,6 +646,9 @@ def _build_ollama_payload(
         payload["options"] = options
     if tools:
         payload["tools"] = tools
+    thinking_enabled = _ollama_think_value(model, reasoning_effort)
+    if thinking_enabled is not None:
+        payload["think"] = thinking_enabled
     return payload
 
 
@@ -1110,6 +1114,8 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
 ) -> Dict:
     from src.chatgpt_subscription import build_responses_input
 
@@ -1123,6 +1129,12 @@ def _build_chatgpt_responses_payload(
     }
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
+    normalized_effort = _openai_reasoning_effort_value(model, reasoning_effort)
+    if normalized_effort:
+        payload["reasoning"] = {"effort": normalized_effort}
+    normalized_verbosity = _normalize_verbosity(verbosity)
+    if _supports_openai_text_verbosity(model) and normalized_verbosity:
+        payload["text"] = {"verbosity": normalized_verbosity}
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
@@ -1309,6 +1321,105 @@ def _normalize_mistral_content(content):
             elif isinstance(inner, str):
                 thinking_parts.append(inner)
     return "".join(text_parts), "".join(thinking_parts)
+
+
+_REASONING_AUTO = {"", "auto", "default"}
+_REASONING_OFF = {"off", "false", "disabled", "disable", "no"}
+_REASONING_NONE = {"none"}
+_REASONING_ON = {"on", "true", "enabled", "enable", "yes"}
+_OPENAI_REASONING_EFFORTS = {"low", "medium", "high"}
+_VERBOSITY_VALUES = {"low", "medium", "high"}
+
+
+def _normalize_reasoning_effort(value: Optional[str]) -> Optional[str]:
+    """Return a normalized reasoning control, or None for provider default."""
+    if value is None:
+        return None
+    effort = str(value).strip().lower().replace("-", "_")
+    if effort in _REASONING_AUTO:
+        return None
+    if effort in _REASONING_NONE:
+        return "none"
+    if effort in _REASONING_OFF:
+        return "off"
+    if effort in _REASONING_ON:
+        return "on"
+    if effort == "x_high":
+        return "xhigh"
+    return effort
+
+
+def _normalize_verbosity(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    verbosity = str(value).strip().lower()
+    if verbosity in {"", "auto", "default"}:
+        return None
+    if verbosity in _VERBOSITY_VALUES:
+        return verbosity
+    return None
+
+
+def _supports_openai_reasoning_effort(model: str) -> bool:
+    return _restricts_temperature(model)
+
+
+def _supports_openai_minimal_reasoning(model: str) -> bool:
+    if not model:
+        return False
+    m = model.lower()
+    return m.startswith("gpt-5") or "/gpt-5" in m
+
+
+def _gpt5_minor_version(model: str) -> Optional[int]:
+    if not model:
+        return None
+    match = re.search(r"(?:^|[/\s_-])gpt[\s_-]*5(?:[._-](\d+))?", model.lower())
+    if not match:
+        return None
+    if match.group(1) is None:
+        return 0
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
+def _supports_openai_none_reasoning(model: str) -> bool:
+    minor = _gpt5_minor_version(model)
+    return minor is not None and minor >= 1
+
+
+def _openai_reasoning_effort_value(model: str, reasoning_effort: Optional[str]) -> Optional[str]:
+    if not _supports_openai_reasoning_effort(model):
+        return None
+    effort = _normalize_reasoning_effort(reasoning_effort)
+    if effort in _OPENAI_REASONING_EFFORTS:
+        return effort
+    if effort == "minimal" and _supports_openai_minimal_reasoning(model):
+        return effort
+    if effort in {"off", "none"} and _supports_openai_none_reasoning(model):
+        return "none"
+    return None
+
+
+def _supports_openai_text_verbosity(model: str) -> bool:
+    if not model:
+        return False
+    m = model.lower()
+    return m.startswith("gpt-5") or "/gpt-5" in m
+
+
+def _ollama_think_value(model: str, reasoning_effort: Optional[str]) -> Optional[bool]:
+    """Map the shared reasoning control to Ollama's binary think flag."""
+    if not _supports_thinking(model):
+        return None
+    effort = _normalize_reasoning_effort(reasoning_effort)
+    if effort is None:
+        return None
+    if effort in {"off", "none"}:
+        return False
+    return True
 
 
 def _convert_openai_content_to_anthropic(content):
@@ -1798,7 +1909,8 @@ def normalize_model_id(
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             reasoning_effort: Optional[str] = None, verbosity: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -1843,6 +1955,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
+            reasoning_effort=reasoning_effort,
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -1970,6 +2083,8 @@ async def llm_call_async(
     prompt_type: Optional[str] = None,
     session_id: Optional[str] = None,
     workload: str = "foreground",
+    reasoning_effort: Optional[str] = None,
+    verbosity: Optional[str] = None,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -2008,6 +2123,8 @@ async def llm_call_async(
             headers=headers,
             timeout=timeout,
             workload=workload,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
         ):
             event_is_error = False
             for line in str(chunk).splitlines():
@@ -2050,6 +2167,7 @@ async def llm_call_async(
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
+            reasoning_effort=reasoning_effort,
         )
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2144,7 +2262,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     tool_choice_none: bool = False, workload: str = "foreground"):
+                     tool_choice_none: bool = False, workload: str = "foreground",
+                     reasoning_effort: Optional[str] = None, verbosity: Optional[str] = None):
     target_url = _stream_target_url(url)
     async with _local_model_slot(target_url, model, workload):
         async for chunk in _stream_llm_inner(
@@ -2159,6 +2278,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tools=tools,
             session_id=session_id,
             tool_choice_none=tool_choice_none,
+            reasoning_effort=reasoning_effort,
+            verbosity=verbosity,
         ):
             yield chunk
 
@@ -2167,7 +2288,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                            tool_choice_none: bool = False):
+                            tool_choice_none: bool = False,
+                            reasoning_effort: Optional[str] = None, verbosity: Optional[str] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -2205,11 +2327,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
+            reasoning_effort=reasoning_effort,
         )
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model, messages_copy, temperature, max_tokens, stream=True,
+            reasoning_effort=reasoning_effort, verbosity=verbosity,
+        )
     else:
         target_url = _normalize_openai_chat_url(url)
         payload = {
@@ -2235,11 +2361,11 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         # (high / medium / low / none); default "high".
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
-        # For Ollama's OpenAI-compat /v1 endpoint with thinking models (qwen3,
-        # gemma4, etc.), suppress thinking so tool calls aren't swallowed inside
-        # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
+        # Ollama /v1 accepts the same binary think flag as native /api/chat.
+        # Keep the current safe default for tools, but honor explicit user controls.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
-            payload["think"] = False
+            think_value = _ollama_think_value(model, reasoning_effort)
+            payload["think"] = False if think_value is None else think_value
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
         _scrub_openai_chat_tool_reasoning(payload, target_url, model)

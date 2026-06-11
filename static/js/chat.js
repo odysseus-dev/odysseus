@@ -1679,6 +1679,14 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
 	        isAgentMode = true;
 	      }
 	      fd.append('mode', isAgentMode ? 'agent' : 'chat');
+	      const reasoningEffort = (toggleState.reasoning_effort || 'auto').toLowerCase();
+	      if (reasoningEffort && reasoningEffort !== 'auto') {
+	        fd.append('reasoning_effort', reasoningEffort);
+	      }
+	      const verbosity = (toggleState.verbosity || 'auto').toLowerCase();
+	      if (verbosity && verbosity !== 'auto') {
+	        fd.append('verbosity', verbosity);
+	      }
 	      fd.append('plan_mode', isPlanMode ? 'true' : 'false');
 	      if (!isPlanMode && _pendingApprovedPlan) {
 	        fd.append('approved_plan', _pendingApprovedPlan.slice(0, 8192));
