@@ -60,6 +60,13 @@ External content that reaches the LLM is treated as untrusted via `src/prompt_se
 
 **Untrusted surfaces that must go through this wrapper:** web search results, fetched URLs, emails (read), saved memories, skill text, notes, and any tool output sourced from outside the server. Injecting untrusted content directly into the system role is a security bug.
 
+**Pre-loop vs mid-loop.** Two distinct injection surfaces, both now covered:
+
+- *Pre-loop context* (assembled in `src/chat_processor.py` before the agent loop) — web search, RAG documents, saved memory, auto-fetched URLs, skills index — is wrapped via `untrusted_context_message`.
+- *Mid-loop tool output* (the agent's own tool calls re-entering via `src/agent_loop.py:_append_tool_results`) is fenced via `prompt_security.wrap_untrusted_tool_output` for any content-bearing tool (`is_untrusted_tool_output` — web/file/email/memory/doc/note retrieval, `api_call`, `bash`, `python`, and any `mcp__*`). Action-confirmation tools (writes, sends, model serving) are server-generated and not wrapped. Classification fails closed. See `docs/security/agent-tool-attack-surface.md` (F-1).
+
+Both wrappers defang embedded fence sentinels (`_neutralize_fences`) so untrusted content can't escape its delimiter block (F-4). Pinned memory is partitioned by source so only user-asserted facts wear the "Core facts about the user" label (F-3).
+
 ## Security Headers
 
 `core/middleware.py:SecurityHeadersMiddleware` sets headers on every response:

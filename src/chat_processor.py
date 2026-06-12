@@ -209,11 +209,29 @@ class ChatProcessor:
 
             _used_ids: list = []
             if pinned:
-                pinned_text = "\n- ".join([m["text"] for m in pinned])
-                preface.append(untrusted_context_message(
-                    "saved memory: pinned user facts",
-                    f"Core facts about the user:\n- {pinned_text}",
-                ))
+                # Provenance guard: only USER-sourced pinned memories may wear the
+                # authoritative "Core facts about the user" label. Memories saved by
+                # the agent or auto-extraction (source != "user") could themselves
+                # originate from untrusted content the agent ingested earlier; if
+                # they were pinned, presenting them as core user facts would launder
+                # attacker-influenced text into a trusted-looking frame. Route those
+                # through a neutral label instead. Both groups stay fenced as
+                # untrusted; only the label authority differs. Missing source
+                # defaults to "user" (legacy entries predate explicit sourcing).
+                pinned_user = [m for m in pinned if (m.get("source") or "user") == "user"]
+                pinned_other = [m for m in pinned if (m.get("source") or "user") != "user"]
+                if pinned_user:
+                    pinned_text = "\n- ".join([m["text"] for m in pinned_user])
+                    preface.append(untrusted_context_message(
+                        "saved memory: pinned user facts",
+                        f"Core facts about the user:\n- {pinned_text}",
+                    ))
+                if pinned_other:
+                    other_text = "\n- ".join([m["text"] for m in pinned_other])
+                    preface.append(untrusted_context_message(
+                        "saved memory: pinned (agent/auto-sourced)",
+                        f"Pinned notes saved by the agent (not user-asserted facts):\n- {other_text}",
+                    ))
                 for m in pinned:
                     self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "pinned"})
                     if m.get("id"):

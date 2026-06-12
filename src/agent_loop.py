@@ -18,7 +18,11 @@ from urllib.parse import urlparse
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
-from src.prompt_security import untrusted_context_message
+from src.prompt_security import (
+    untrusted_context_message,
+    is_untrusted_tool_output,
+    wrap_untrusted_tool_output,
+)
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.agent_tools import (
     parse_tool_blocks,
@@ -2502,6 +2506,15 @@ async def stream_agent_loop(
                 _effectful_used = True
 
             formatted = format_tool_result(desc, result)
+            # Mid-loop hardening: a tool whose output can carry external/
+            # attacker-influenced content (fetched page, email body, file/shell
+            # output, stored memory, MCP/third-party tool) re-enters the model
+            # context here. Pre-loop context is fenced via untrusted_context_message;
+            # do the same for these tool results so injected instructions in tool
+            # output can't drive the next round. Action-confirmation tools (writes,
+            # sends, model serving) are not wrapped — their output is server-generated.
+            if is_untrusted_tool_output(block.tool_type):
+                formatted = wrap_untrusted_tool_output(block.tool_type, formatted)
             tool_results.append(formatted)
             tool_result_texts.append(formatted)
 
