@@ -173,6 +173,25 @@ class STTService:
             logger.error(f"Unknown STT provider: {provider}")
             return None
 
+    def transcribe_array(self, audio, language: Optional[str] = None) -> Optional[str]:
+        """Transcribe a mono float32 numpy array at 16 kHz.
+
+        Used by the streaming STT WebSocket: the rolling utterance buffer is
+        re-transcribed in-process, no temp files. Returns joined text or None
+        when the local model is unavailable.
+        """
+        model = self._get_whisper()
+        if not model:
+            return None
+        settings = self._load_settings()
+        lang = language or settings.get("stt_language") or None
+        try:
+            segments, _info = model.transcribe(audio, language=lang, beam_size=1)
+            return " ".join(seg.text.strip() for seg in segments).strip()
+        except Exception as e:
+            logger.error(f"Array transcription failed: {e}")
+            return None
+
     def get_stats(self) -> Dict[str, Any]:
         settings = self._load_settings()
         provider = settings["stt_provider"]
