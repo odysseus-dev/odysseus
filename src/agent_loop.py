@@ -1909,13 +1909,18 @@ async def stream_agent_loop(
             if _owner_skills:
                 _relevant_tools.add("manage_skills")
                 if _retrieval_query:
+                    # Validate against every known executable tool, not just
+                    # TOOL_SECTIONS — code-nav tools (grep/glob/ls) ship as
+                    # schemas without a prompt-prose section.
+                    from src.tool_policy import known_tool_names
+                    _known = known_tool_names()
                     for _sk in _sm.get_relevant_skills(
                         _retrieval_query, skills=_owner_skills,
                         threshold=0.25, max_items=3,
                     ):
                         _relevant_tools.update(
                             t for t in (_sk.get("requires_toolsets") or [])
-                            if t in TOOL_SECTIONS
+                            if t in _known
                         )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
@@ -2742,11 +2747,13 @@ async def stream_agent_loop(
                     try:
                         from services.memory.skills import SkillsManager as _SkM
                         from src.constants import DATA_DIR as _DD
+                        from src.tool_policy import known_tool_names as _ktn
+                        _known = _ktn()
                         for _sk in _SkM(_DD).load(owner=owner):
                             if _sk.get("name") == _ms_name:
                                 _new = {
                                     t for t in (_sk.get("requires_toolsets") or [])
-                                    if t in TOOL_SECTIONS and t not in _relevant_tools
+                                    if t in _known and t not in _relevant_tools
                                 }
                                 if _new:
                                     _relevant_tools.update(_new)
