@@ -1,0 +1,1 @@
+"""Route setup functions — one per feature area."""

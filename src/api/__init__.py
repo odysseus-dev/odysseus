@@ -1,0 +1,1 @@
+"""API layer — HTTP endpoints, middleware, request/response models."""
