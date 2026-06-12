@@ -340,6 +340,19 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     assert "_pip_install_fallback_chain('llama-cpp-python[server]'" in src
 
 
+def test_serve_runner_clones_into_empty_persistent_llama_cpp_dir():
+    """A Docker bind mount creates the persistent llama.cpp directory even when
+    it is empty. The bootstrap must check for a real checkout, not just a dir."""
+    import pathlib
+
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert '[ ! -f "$ODYSSEUS_LLAMA_CPP_DIR/CMakeLists.txt" ]' in src
+    assert 'git clone --depth 1 https://github.com/ggml-org/llama.cpp "$ODYSSEUS_LLAMA_CPP_DIR"' in src
+    assert '[ -d "$ODYSSEUS_LLAMA_CPP_DIR" ] || git clone' not in src
+
+
 def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     import pathlib
 

@@ -517,7 +517,6 @@ export function _buildServeCmd(f, modelName, backend) {
     let _lcpExtra = '';
     if (_ncm !== '' && Number(_ncm) > 0) {
       _lcExtra += ` --n-cpu-moe ${_ncm}`;
-      _lcpExtra += ` --n_cpu_moe ${_ncm}`;   // llama-cpp-python uses underscores
     }
     if (f.flash_attn && !_cpuOnly) {
       _lcExtra += ' --flash-attn on';

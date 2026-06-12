@@ -1390,7 +1390,12 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
                 runner_lines.append('  mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR" "$(dirname "$ODYSSEUS_LLAMA_CPP_DIR")"')
-                runner_lines.append('  [ -d "$ODYSSEUS_LLAMA_CPP_DIR" ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp "$ODYSSEUS_LLAMA_CPP_DIR"')
+                runner_lines.append('  if [ ! -f "$ODYSSEUS_LLAMA_CPP_DIR/CMakeLists.txt" ]; then')
+                runner_lines.append('    if [ -d "$ODYSSEUS_LLAMA_CPP_DIR" ]; then')
+                runner_lines.append('      find "$ODYSSEUS_LLAMA_CPP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +')
+                runner_lines.append('    fi')
+                runner_lines.append('    git clone --depth 1 https://github.com/ggml-org/llama.cpp "$ODYSSEUS_LLAMA_CPP_DIR"')
+                runner_lines.append('  fi')
                 # Build with the right accelerator: Metal on macOS (llama.cpp
                 # enables it automatically, no flag), CUDA on Linux when present,
                 # else a plain CPU build. nproc is Linux-only — fall back to
