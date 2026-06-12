@@ -36,6 +36,20 @@ function linkHtml(text, url) {
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
+// Validate an image URL for `![alt](url)`. Allows http(s) (including root-
+// relative paths like /api/upload/<id>, resolved against the page origin) and
+// inline data:image. Anything else (javascript:, etc.) yields '' → not an image.
+function safeImageUrl(rawUrl) {
+  const url = String(rawUrl || '').trim();
+  if (!url) return '';
+  if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(url)) return url;
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+  } catch (_) { return ''; }
+  return '';
+}
+
 function _isModelEndpointUrl(rawUrl) {
   try {
     const parsed = new URL(String(rawUrl || ''), window.location.origin);
@@ -509,6 +523,27 @@ export function mdToHtml(src, opts) {
     return placeholder;
   });
 
+  // Markdown images: ![alt](url) → <img>. Must run BEFORE the link handler so
+  // the leading `!` isn't left stranding in front of an <a>. The <img> is
+  // parked in allowedHtmlBlocks so it survives the HTML-escape pass below.
+  s = s.replace(/!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"([^"]*)")?\s*\)/g, (match, alt, url, title) => {
+    const safe = safeImageUrl(url);
+    if (!safe) return escapeHtml(alt || '');
+    const placeholder = `___ALLOWED_HTML_${allowedHtmlBlocks.length}___`;
+    // A title of the form "w=NN" carries a display width (percentage) set by the
+    // image resize control; anything else is a real title tooltip.
+    let widthAttr = '', titleAttr = '';
+    const wm = title && /^\s*w=(\d{1,3})\s*$/.exec(title);
+    if (wm) {
+      const w = Math.max(5, Math.min(100, parseInt(wm[1], 10)));
+      widthAttr = ` style="width:${w}%"`;
+    } else if (title) {
+      titleAttr = ` title="${escapeHtml(title)}"`;
+    }
+    allowedHtmlBlocks.push(`<img class="md-img" src="${escapeHtml(safe)}" alt="${escapeHtml(alt || '')}"${widthAttr}${titleAttr} loading="lazy">`);
+    return placeholder;
+  });
+
   // Repair common ways the agent mangles the entity-anchor convention
   // (`[Name](#kind-<id>)`). Models reliably get the single-link case
   // right but slip into other formats when listing many in a table.
@@ -684,14 +719,44 @@ export function mdToHtml(src, opts) {
   s = s.replace(/^(\d+)\. (.*)$/gm, '<oli>$2</oli>');
   s = s.replace(/(?:^|\n)(<oli>[\s\S]*?)(?=\n(?!<oli>)|$)/g, m => `<ol>${m.trim().replace(/<\/?oli>/g, (t) => t === '<oli>' ? '<li>' : '</li>')}</ol>`);
 
-  // GitHub-style task lists (- [ ] / - [x]) → checkbox items. Must run before
-  // the generic unordered-list rule so the "- " prefix isn't consumed first.
-  // Emits <uli> (with a class) so the unordered-list wrapper below treats it
-  // as a list item. Used by plan mode: plan + progress render as a checklist.
-  s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
-    const done = mark.toLowerCase() === 'x';
-    return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
-  });
+  // GitHub-style task lists (- [ ] / - [x]). Two renderers share this syntax;
+  // the caller picks via opts.tasks. Both must run before the generic
+  // unordered-list rule so the "- " prefix / "[ ]" box isn't consumed first.
+  if (opts && opts.tasks === 'interactive') {
+    // Notes preview: interactive checkboxes that notes.js wires up to toggle the
+    // underlying task line. `data-task-index` is the 0-based ordinal among task
+    // lines in the document and must match core/notes_markdown.parse_task_lines
+    // so toggle-by-index means the same thing on the server.
+    let _taskIdx = 0;
+    // NOTE: the space before the text capture is `[ \t]?`, NOT `\s?` — `\s`
+    // matches a newline, so an empty task line ("- [ ]") would otherwise eat the
+    // following line and merge two items into one.
+    s = s.replace(/^([ \t]*)[-*+][ \t]+\[([ xX])\][ \t]?(.*)$/gm, (m, ws, box, text) => {
+      const done = box.toLowerCase() === 'x';
+      let w = 0; for (const ch of ws) w += (ch === '\t') ? 2 : 1;
+      const indent = Math.floor(w / 2);
+      const idx = _taskIdx++;
+      const check = done
+        ? '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+        : '';
+      const pad = indent ? ` style="margin-left:${indent * 18}px"` : '';
+      return `<tli data-task-index="${idx}" data-done="${done ? 1 : 0}"${pad}>` +
+             `<span class="md-task-box" role="checkbox" aria-checked="${done}" contenteditable="false">${check}</span>` +
+             `<span class="md-task-text">${text}</span></tli>`;
+    });
+    s = s.replace(/(^|\n)((?:<tli[\s\S]*?<\/tli>(?:\n|$))+)/g, (_, prefix, block) =>
+      `${prefix}<ul class="md-tasklist">${block.trim()
+        .replace(/<tli([^>]*)>/g, '<li class="md-task"$1>')
+        .replace(/<\/tli>/g, '</li>')}</ul>`);
+  } else {
+    // Default (plan mode, docs, chat): static checkbox items styled by the
+    // plan-mode CSS (li.task-item). Emits <uli> (with a class) so the
+    // unordered-list wrapper below treats it as a list item.
+    s = s.replace(/^(?:- |\* )\[([ xX])\] (.*)$/gm, (_m, mark, text) => {
+      const done = mark.toLowerCase() === 'x';
+      return `<uli class="task-item${done ? ' task-done' : ''}"><span class="task-check" aria-hidden="true"></span><span class="task-text">${text}</span></uli>`;
+    });
+  }
 
   // Unordered lists. <uli> may carry attributes (task-item class), so the
   // wrapper preserves them when converting <uli ...> → <li ...>.
@@ -705,7 +770,7 @@ export function mdToHtml(src, opts) {
     `<blockquote>${m.trim().replace(/<\/?bq>/g, (t) => t === '<bq>' ? '<p>' : '</p>')}</blockquote>`);
 
   // Paragraphs - but NOT for code block placeholders or allowed HTML
-  s = s.replace(/^(?!<h\d|<ul>|<ol>|<li|<oli>|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
+  s = s.replace(/^(?!<h\d|<ul|<ol|<li|<oli|<\/li>|<pre>|<blockquote>|<bq>|<hr>|___CODE_BLOCK_|___ALLOWED_HTML_|___MATH_BLOCK_|___MERMAID_BLOCK_)([^\n]+)$/gm, '<p>$1</p>');
 
   // Line breaks within paragraphs
   s = s.replace(/<p>([\s\S]*?)<\/p>/g, (match, content) => {

@@ -1076,18 +1076,17 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         except Exception as ee:
             logger.debug(f"daily_brief: email fetch failed: {ee}")
 
-        # Pull active todo items from notes
+        # Pull active todo items from notes — checklists are now task lines
+        # (`- [ ]`/`- [x]`) inside the markdown content.
+        from core.notes_markdown import parse_task_lines
         todo_lines: list[str] = []
         for n in notes:
-            if n.note_type == "checklist" and n.items:
-                try:
-                    items = _json.loads(n.items)
-                    pending = [it.get("text", "") for it in items if not it.get("done")]
-                    for t in pending[:3]:
-                        if t:
-                            todo_lines.append(f"{n.title or 'Checklist'}: {t}")
-                except Exception:
-                    continue
+            tasks = parse_task_lines(n.content)
+            if tasks:
+                pending = [t["text"] for t in tasks if not t["done"]]
+                for t in pending[:3]:
+                    if t:
+                        todo_lines.append(f"{n.title or 'Checklist'}: {t}")
             elif n.pinned and n.title:
                 todo_lines.append(n.title)
 

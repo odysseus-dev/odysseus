@@ -1076,6 +1076,61 @@ def _migrate_add_notes_sort_order():
         except Exception:
             pass
 
+def _migrate_unify_notes():
+    """Fold structured checklist `items` into markdown task lines in `content`.
+
+    Historically a checklist lived in a separate `items` JSON array next to the
+    `content` text. The model is now a single markdown document whose `content`
+    carries any checklist as `- [ ]` / `- [x]` task lines; the API keeps
+    returning a derived `items` array for backward compatibility. This
+    migration rewrites every note that still has a populated `items` array
+    into that form.
+
+    `note_type` and `image_url` are intentionally left untouched here — the
+    current UI still branches on them (goal/today views, drawing canvas); they
+    are normalised by the editor-rework slice that stops using them.
+
+    Idempotent: once `items` is NULL there is nothing left to convert, so re-runs
+    are no-ops.
+    """
+    import sqlite3
+    import json
+    from core.notes_markdown import merge_items_into_content
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    log = logging.getLogger(__name__)
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(notes)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if not columns or "items" not in columns:
+            conn.close()
+            return
+        rows = conn.execute(
+            "SELECT id, content, items, note_type FROM notes "
+            "WHERE items IS NOT NULL AND items != '' AND items != '[]'"
+        ).fetchall()
+        converted = 0
+        for note_id, content, items_raw, note_type in rows:
+            try:
+                items = json.loads(items_raw) if items_raw else None
+            except (json.JSONDecodeError, TypeError):
+                items = None
+            new_content = merge_items_into_content(content, items)
+            conn.execute(
+                "UPDATE notes SET content = ?, items = NULL WHERE id = ?",
+                (new_content, note_id),
+            )
+            converted += 1
+        conn.commit()
+        conn.close()
+        if converted:
+            log.info(f"Migrated: unified {converted} note(s) with checklist items into markdown task lists")
+    except Exception as e:
+        log.warning(f"notes unify migration skipped: {e}")
+
+
 def _migrate_add_mode_column():
     """Add mode column to sessions table if it doesn't exist."""
     import sqlite3
@@ -1606,15 +1661,23 @@ def _migrate_add_assistant_columns():
 
 
 class Note(TimestampMixin, Base):
-    """A Google Keep-style note or checklist."""
+    """A unified, Apple-Notes-style note.
+
+    `content` is a single markdown document and the source of truth. Checklists
+    live inside it as task lines (`- [ ] todo` / `- [x] done`) — see
+    core/notes_markdown.py. `items` is legacy and no longer written (the unify
+    migration folds it into `content`; the API returns a derived array for
+    backward compatibility). `note_type` survives only as a UI label (goal /
+    todo views); nothing server-side branches on it anymore.
+    """
     __tablename__ = "notes"
 
     id         = Column(String, primary_key=True, index=True)
     owner      = Column(String, nullable=True, index=True)
     title      = Column(String, default="")
-    content    = Column(Text, nullable=True)
-    items      = Column(Text, nullable=True)       # JSON string of [{text, done}]
-    note_type  = Column(String, default="note")     # "note" or "checklist"
+    content    = Column(Text, nullable=True)        # markdown; checklists are task lines
+    items      = Column(Text, nullable=True)        # legacy/back-compat; folded into content
+    note_type  = Column(String, default="note")     # legacy; always "note"
     color      = Column(String, nullable=True)
     label      = Column(String, nullable=True)
     pinned     = Column(Boolean, default=False)
@@ -1633,6 +1696,7 @@ class Note(TimestampMixin, Base):
     # Chat session spawned by the note's "Agent" button (solve-this-todo).
     # The note shows a clickable tag that opens this session for review.
     agent_session_id  = Column(String, nullable=True)
+
 
 
 class CalendarCal(TimestampMixin, Base):
@@ -1798,6 +1862,7 @@ def init_db():
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
     _migrate_add_notes_sort_order()
+    _migrate_unify_notes()
     _migrate_add_model_type_column()
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()

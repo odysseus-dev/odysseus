@@ -569,18 +569,16 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_notes",
-            "description": "Manage notes and checklists (Google Keep-style): list, add, update, delete, toggle_item. IMPORTANT: For to-do lists / checklists, set note_type='checklist' and pass the items as the `checklist_items` array — do NOT serialize them into `content` as plain text. For freeform notes, use note_type='note' and put the body in `content`. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
+            "description": "Manage notes (Apple-Notes-style): list, get, add, update, delete, toggle_item. A note is a single markdown document in `content` — there is ONE note type. To include a checklist, write GitHub-style task lines directly in `content`: `- [ ] buy milk` for an open item and `- [x] call dentist` for a done one. To embed an image, use markdown image syntax `![caption](https://…)` (any http(s) URL or an Odysseus /api/upload/<id> URL) — it renders inline in the note. Text, checklists, and images can be freely mixed in the same note (e.g. a heading, a paragraph, an image, then task lines). Checklists render as interactive checkboxes the user can tap. `due_date` accepts natural language like 'tomorrow at 9am' (parsed in the user's timezone) and fires a notification — do not also create a calendar event for the same reminder.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {"type": "string",
-                               "enum": ["list", "add", "update", "delete", "toggle_item"],
-                               "description": "The action to perform"},
-                    "id": {"type": "string", "description": "Note id (for update/delete/toggle_item); 8-char prefix is fine"},
+                               "enum": ["list", "get", "add", "update", "delete", "toggle_item"],
+                               "description": "The action to perform. `list` summarises notes (content truncated); `get` returns one note's full content + metadata (pass `id`)."},
+                    "id": {"type": "string", "description": "Note id (for get/update/delete/toggle_item); 8-char prefix is fine"},
                     "title": {"type": "string", "description": "Note title (for add/update)"},
-                    "content": {"type": "string", "description": "Freeform body text. Use this for note_type='note'. Do NOT use this for checklists — pass `checklist_items` instead."},
-                    "note_type": {"type": "string", "enum": ["note", "checklist"],
-                                  "description": "'note' = freeform text in `content`. 'checklist' = structured to-do items in `checklist_items`. Defaults to 'checklist' if checklist_items is supplied, else 'note'."},
+                    "content": {"type": "string", "description": "The note body as markdown. Put checklist items here as task lines: `- [ ] todo` (open) / `- [x] done`. Indent with two spaces per level for sub-items. Embed images with `![](https://…)`. Example: 'Groceries for dinner\\n- [ ] Milk\\n- [x] Bread\\n\\n![receipt](https://example.com/r.jpg)'."},
                     "checklist_items": {"type": "array",
                                         "items": {"type": "object",
                                                   "properties": {
@@ -588,13 +586,13 @@ FUNCTION_TOOL_SCHEMAS = [
                                                       "done": {"type": "boolean", "description": "Whether the item is checked off"}
                                                   },
                                                   "required": ["text"]},
-                                        "description": "Checklist items for note_type='checklist'. Each item is {text, done}. REQUIRED for checklists — leaving this empty produces a blank note."},
+                                        "description": "Optional convenience for supplying a checklist as structured data instead of writing task lines yourself. Each item is {text, done}; it is folded into `content` as `- [ ]`/`- [x]` lines. Prefer writing task lines directly in `content`."},
                     "color": {"type": "string", "description": "Optional color label (e.g. 'yellow', 'blue', 'green')"},
                     "label": {"type": "string", "description": "Optional category label (also used as a list filter)"},
                     "pinned": {"type": "boolean", "description": "Pin the note to the top"},
                     "archived": {"type": "boolean", "description": "For update: archive/unarchive. For list: show archived notes when true."},
                     "due_date": {"type": "string", "description": "Reminder time. Accepts natural language ('tomorrow at 9am', '11pm today') or ISO 8601. Fires a notification at that time."},
-                    "index": {"type": "integer", "description": "Checklist item index (for toggle_item, 0-based)"}
+                    "index": {"type": "integer", "description": "Task-line index within the note's content (for toggle_item, 0-based, counting only `- [ ]`/`- [x]` lines top to bottom). `list` shows these indices."}
                 },
                 "required": ["action"]
             }
