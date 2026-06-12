@@ -86,6 +86,16 @@ async def _check_service_health(service: dict) -> dict:
 
     return status
 
+from src.event_store import EventStore
+
+EVENTS_WRITE_SCOPES = {"events:write"}
+
+def _has_scope(request: Request, allowed: set[str]) -> bool:
+    if not getattr(request.state, "api_token", False):
+        return True
+    scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+    return bool(scopes.intersection(allowed))
+
 def setup_homelab_routes() -> APIRouter:
     router = APIRouter(prefix="/api/homelab", tags=["homelab"])
 
@@ -105,14 +115,42 @@ def setup_homelab_routes() -> APIRouter:
         raise HTTPException(404, "Service not found")
 
     @router.get("/health")
-    async def homelab_health(request: Request):
-        _scope_owner(request, HOMELAB_READ_SCOPES)
+    async def homelab_health(request: Request, record_events: bool = False):
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
+        
+        if record_events and not _has_scope(request, EVENTS_WRITE_SCOPES):
+            raise HTTPException(403, "API token missing required scope: events:write")
+            
         services = _load_services()
         
         health_results = []
+        event_store = EventStore() if record_events else None
+
         for srv in services:
             res = await _check_service_health(srv)
             health_results.append(res)
+            
+            if record_events and res.get("status") in ("error", "degraded"):
+                dedupe_key = f"homelab:{srv['name']}:unreachable"
+                severity = "error"
+                if res.get("container_status") not in ("running", None, "ok"):
+                    dedupe_key = f"homelab:{srv['name']}:container:{res['container_status']}"
+                elif res.get("http_status"):
+                    dedupe_key = f"homelab:{srv['name']}:http:{res['http_status']}"
+                    
+                title = f"{srv.get('display_name', srv['name'])} is {res['status']}"
+                summary = f"Container: {res.get('container_status', 'N/A')}, HTTP: {res.get('http_status', 'N/A')}"
+                
+                event_store.record_event(
+                    source="homelab_health",
+                    service=srv["name"],
+                    severity=severity,
+                    title=title,
+                    summary=summary,
+                    dedupe_key=dedupe_key,
+                    owner=owner,
+                    metadata=res
+                )
             
         overall_status = "ok"
         if any(r.get("status") == "error" for r in health_results):

@@ -676,7 +676,9 @@ app.include_router(setup_openclaw_bridge_routes(
 
 # Homelab operations
 from routes.homelab_routes import setup_homelab_routes
+from routes.event_routes import setup_event_routes
 app.include_router(setup_homelab_routes())
+app.include_router(setup_event_routes())
 
 
 # Calendar (CalDAV)
