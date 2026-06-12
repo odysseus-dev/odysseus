@@ -15,7 +15,7 @@ from routes.homelab_routes import (
     HOMELAB_READ_SCOPES,
     EVENTS_WRITE_SCOPES,
     _load_services,
-    _check_service_health,
+    execute_health_checks,
     _has_scope,
     _scope_owner,
 )
@@ -27,15 +27,34 @@ EVENTS_READ_SCOPES = {'events:read'}
 EVENTS_ACK_SCOPES = {'events:ack'}
 EVENTS_RESOLVE_SCOPES = {'events:resolve'}
 
-# Actions that must never appear in OpenClaw responses.
-_FORBIDDEN_ACTIONS = {'restart', 'shell', 'exec', 'delete'}
+# Actions that may appear in OpenClaw responses.
+_ALLOWED_ACTIONS = {'ack', 'investigate', 'resolve', 'ignore', 'view_service'}
 
 BASE_URL = '/api/openclaw/homelab'
 
 
 def _safe_actions(actions: list[str]) -> list[str]:
-    """Strip any destructive action hints before returning to OpenClaw."""
-    return [a for a in actions if a not in _FORBIDDEN_ACTIONS]
+    """Filter to only allowed actions before returning to OpenClaw."""
+    return [a for a in actions if a in _ALLOWED_ACTIONS]
+
+def _sanitize_dict(data: dict) -> dict:
+    """Recursively redact sensitive keys from a dictionary."""
+    redact_keys = {'token', 'secret', 'password', 'api_key', 'authorization', 'headers', 'auth'}
+    clean = {}
+    for k, v in data.items():
+        if isinstance(v, dict):
+            clean[k] = _sanitize_dict(v)
+        elif isinstance(v, list):
+            clean[k] = [_sanitize_dict(i) if isinstance(i, dict) else i for i in v]
+        elif any(rk in k.lower() for rk in redact_keys):
+            clean[k] = '***REDACTED***'
+        else:
+            clean[k] = v
+    return clean
+
+def _sanitize_service(service: dict) -> dict:
+    """Return a new dict with sensitive fields redacted."""
+    return _sanitize_dict(service)
 
 
 def _event_links(event_id: str) -> dict[str, str]:
@@ -97,18 +116,11 @@ def setup_openclaw_homelab_routes() -> APIRouter:
 
         Requires: homelab:read
         """
-        _scope_owner(request, HOMELAB_READ_SCOPES)
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
         services = _load_services()
-        results = []
-        for srv in services:
-            res = await _check_service_health(srv)
-            results.append(res)
-
-        overall = 'ok'
-        if any(r.get('status') == 'error' for r in results):
-            overall = 'error'
-        elif any(r.get('status') == 'degraded' for r in results):
-            overall = 'degraded'
+        results, _, overall = await execute_health_checks(
+            services, record_events=False, owner=owner, source_name='openclaw_health'
+        )
 
         unhealthy = [r['name'] for r in results if r.get('status') != 'ok']
         if unhealthy:
@@ -137,42 +149,10 @@ def setup_openclaw_homelab_routes() -> APIRouter:
             raise HTTPException(403, 'API token missing required scope: events:write')
 
         services = _load_services()
-        store = EventStore()
-        results = []
-        recorded = []
-
-        for srv in services:
-            res = await _check_service_health(srv)
-            results.append(res)
-
-            if res.get('status') in ('error', 'degraded'):
-                dedupe_key = f"homelab:{srv['name']}:health"
-                severity = 'critical' if res.get('status') == 'error' else 'warning'
-                title = f"{srv.get('display_name', srv['name'])} is {res['status']}"
-                summary = (
-                    f"Container: {res.get('container_status', 'N/A')}, "
-                    f"HTTP: {res.get('http_status', 'N/A')}"
-                )
-                try:
-                    event = store.record_event(
-                        source='openclaw_health',
-                        service=srv['name'],
-                        severity=severity,
-                        title=title,
-                        summary=summary,
-                        dedupe_key=dedupe_key,
-                        owner=owner,
-                        metadata=res,
-                    )
-                    recorded.append(_compact_event(event))
-                except IOError as e:
-                    raise HTTPException(500, f'Persistence error: {e}')
-
-        overall = 'ok'
-        if any(r.get('status') == 'error' for r in results):
-            overall = 'error'
-        elif any(r.get('status') == 'degraded' for r in results):
-            overall = 'degraded'
+        results, raw_events, overall = await execute_health_checks(
+            services, record_events=True, owner=owner, source_name='openclaw_health'
+        )
+        recorded = [_compact_event(e) for e in raw_events]
 
         msg = (
             f"{len(recorded)} event(s) recorded from {len(results)} service(s)."
@@ -197,7 +177,7 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         Requires: homelab:read
         """
         _scope_owner(request, HOMELAB_READ_SCOPES)
-        services = _load_services()
+        services = [_sanitize_service(srv) for srv in _load_services()]
         msg = f"{len(services)} service(s) returned." if services else 'No services found.'
         return _ok(message=msg, events=None) | {
             'services': services,
@@ -215,7 +195,7 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         for srv in services:
             if srv.get('name') == name:
                 return _ok(message=f"Service {name}.", event=None) | {
-                    'service': srv,
+                    'service': _sanitize_service(srv),
                     'links': {'services': f'{BASE_URL}/services', 'health': f'{BASE_URL}/health'},
                 }
         raise HTTPException(404, 'Service not found')

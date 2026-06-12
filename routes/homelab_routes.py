@@ -136,6 +136,67 @@ def _has_scope(request: Request, allowed: set[str]) -> bool:
     return bool(scopes.intersection(allowed))
 
 
+async def execute_health_checks(
+    services: list[dict],
+    record_events: bool = False,
+    owner: str | None = None,
+    source_name: str = 'homelab_health',
+) -> tuple[list[dict], list[dict], str]:
+    """Execute health checks for all services concurrently.
+    
+    If record_events is True, serializes writes to the EventStore.
+    Returns (health_results, recorded_events, overall_status).
+    """
+    concurrency = _get_concurrency()
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _bounded_check(srv: dict, shared_client: httpx.AsyncClient) -> dict:
+        async with sem:
+            return await _check_service_health(srv, client=shared_client)
+
+    async with httpx.AsyncClient(timeout=5) as shared_client:
+        health_results = await asyncio.gather(
+            *[_bounded_check(srv, shared_client) for srv in services]
+        )
+
+    recorded_events = []
+    if record_events:
+        event_store = EventStore()
+        for srv, res in zip(services, health_results):
+            if res.get('status') in ('error', 'degraded'):
+                dedupe_key = f"homelab:{srv['name']}:health"
+                severity = 'critical' if res.get('status') == 'error' else 'warning'
+                title = f"{srv.get('display_name', srv['name'])} is {res['status']}"
+                summary = (
+                    f"Container: {res.get('container_status', 'N/A')}, "
+                    f"HTTP: {res.get('http_status', 'N/A')}"
+                )
+                try:
+                    event = event_store.record_event(
+                        source=source_name,
+                        service=srv['name'],
+                        severity=severity,
+                        title=title,
+                        summary=summary,
+                        dedupe_key=dedupe_key,
+                        owner=owner,
+                        metadata=res,
+                    )
+                    recorded_events.append(event)
+                except IOError as e:
+                    raise HTTPException(500, f'Failed to record event: {e}')
+                except Exception as e:
+                    raise HTTPException(500, f'Failed to record event: {e}')
+
+    overall_status = 'ok'
+    if any(r.get('status') == 'error' for r in health_results):
+        overall_status = 'error'
+    elif any(r.get('status') == 'degraded' for r in health_results):
+        overall_status = 'degraded'
+
+    return list(health_results), recorded_events, overall_status
+
+
 def setup_homelab_routes() -> APIRouter:
     router = APIRouter(prefix='/api/homelab', tags=['homelab'])
 
@@ -162,57 +223,13 @@ def setup_homelab_routes() -> APIRouter:
             raise HTTPException(403, 'API token missing required scope: events:write')
 
         services = _load_services()
-        concurrency = _get_concurrency()
-        sem = asyncio.Semaphore(concurrency)
-
-        async def _bounded_check(
-            srv: dict, shared_client: httpx.AsyncClient
-        ) -> dict:
-            async with sem:
-                return await _check_service_health(srv, client=shared_client)
-
-        # Run all health checks concurrently with a shared HTTP client.
-        async with httpx.AsyncClient(timeout=5) as shared_client:
-            health_results = await asyncio.gather(
-                *[_bounded_check(srv, shared_client) for srv in services]
-            )
-
-        # Event recording is intentionally serial — the JSON store must not be
-        # written concurrently.
-        if record_events:
-            event_store = EventStore()
-            for srv, res in zip(services, health_results):
-                if res.get('status') in ('error', 'degraded'):
-                    dedupe_key = f"homelab:{srv['name']}:health"
-                    severity = 'critical' if res.get('status') == 'error' else 'warning'
-                    title = f"{srv.get('display_name', srv['name'])} is {res['status']}"
-                    summary = (
-                        f"Container: {res.get('container_status', 'N/A')}, "
-                        f"HTTP: {res.get('http_status', 'N/A')}"
-                    )
-                    try:
-                        event_store.record_event(
-                            source='homelab_health',
-                            service=srv['name'],
-                            severity=severity,
-                            title=title,
-                            summary=summary,
-                            dedupe_key=dedupe_key,
-                            owner=owner,
-                            metadata=res,
-                        )
-                    except Exception as e:
-                        raise HTTPException(500, f'Failed to record event: {e}')
-
-        overall_status = 'ok'
-        if any(r.get('status') == 'error' for r in health_results):
-            overall_status = 'error'
-        elif any(r.get('status') == 'degraded' for r in health_results):
-            overall_status = 'degraded'
+        health_results, _, overall_status = await execute_health_checks(
+            services, record_events=record_events, owner=owner, source_name='homelab_health'
+        )
 
         return {
             'status': overall_status,
-            'services': list(health_results),
+            'services': health_results,
         }
 
     return router

@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from routes.openclaw_homelab_routes import (
     _compact_event,
     _safe_actions,
+    _sanitize_service,
     setup_openclaw_homelab_routes,
 )
 from routes.api_token_routes import ALLOWED_SCOPES, TOKEN_PROFILES
@@ -61,10 +62,10 @@ def test_openclaw_bridge_profile_updated_with_homelab_scopes():
 
 
 # ---------------------------------------------------------------------------
-# _safe_actions – no destructive verbs
+# _safe_actions – no destructive verbs (allowlist)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize('forbidden', ['restart', 'shell', 'exec', 'delete'])
+@pytest.mark.parametrize('forbidden', ['restart', 'restart_service', 'shell', 'exec', 'delete', 'workflow', 'unknown'])
 def test_safe_actions_strips_forbidden(forbidden):
     actions = ['ack', 'investigate', forbidden, 'view_service']
     result = _safe_actions(actions)
@@ -75,7 +76,31 @@ def test_safe_actions_strips_forbidden(forbidden):
 
 def test_safe_actions_keeps_safe_verbs():
     actions = ['ack', 'investigate', 'resolve', 'ignore', 'view_service']
-    assert _safe_actions(actions) == actions
+    assert set(_safe_actions(actions)) == set(actions)
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_service – redact sensitive fields
+# ---------------------------------------------------------------------------
+
+def test_sanitize_service_redacts_sensitive_fields():
+    raw = {
+        'name': 'pihole',
+        'url': 'http://pihole.local',
+        'api_key': 'secret123',
+        'headers': {'Authorization': 'Bearer 1234'},
+        'nested': [{'token': 'abc', 'public': 'yes'}],
+        'auth': 'basic admin:password',
+    }
+    clean = _sanitize_service(raw)
+    assert clean['name'] == 'pihole'
+    assert clean['url'] == 'http://pihole.local'
+    assert clean['api_key'] == '***REDACTED***'
+    assert clean['headers']['Authorization'] == '***REDACTED***'
+    assert clean['nested'][0]['token'] == '***REDACTED***'
+    assert clean['nested'][0]['public'] == 'yes'
+    assert clean['auth'] == '***REDACTED***'
+
 
 
 # ---------------------------------------------------------------------------
