@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from src.request_models import DirectoryRequest
 from src.pkg.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
 from src.domain.rag.rag_singleton import get_rag_manager
-from src.auth_helpers import require_privilege, require_user
+from src.infra.auth.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
 from src.infra.storage.upload_handler import secure_filename
 from src.infra.storage.upload_limits import PERSONAL_UPLOAD_MAX_BYTES

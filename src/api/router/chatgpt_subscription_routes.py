@@ -14,7 +14,7 @@ from src.api.handler.device_flow import (
     PendingDeviceFlowStore,
     create_device_flow_router,
 )
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.infra.integration import chatgpt_subscription
 
 logger = logging.getLogger(__name__)

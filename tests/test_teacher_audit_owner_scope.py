@@ -8,7 +8,7 @@ owner's ModelEndpoint in a multi-user deployment. See #2283.
 
 import asyncio
 
-import src.teacher_escalation as teacher_escalation
+import src.domain.agent.teacher_escalation as teacher_escalation
 import src.api.router.skills_routes as skills_routes
 
 

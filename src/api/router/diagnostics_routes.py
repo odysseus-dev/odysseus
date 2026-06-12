@@ -25,7 +25,7 @@ def setup_diagnostics_routes(
         """Consolidated degraded-state report for ChromaDB, SearXNG, email,
         ntfy, and provider endpoints. Non-intrusive probes — safe to poll."""
         require_admin(request)
-        from src.service_health import collect_service_health
+        from src.infra.scheduler.service_health import collect_service_health
         return await collect_service_health(rag_manager, memory_vector)
 
     @router.get("/api/db/stats")

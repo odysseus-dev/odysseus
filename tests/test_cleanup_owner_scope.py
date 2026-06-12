@@ -79,7 +79,7 @@ def cleanup_imports(monkeypatch):
     monkeypatch.delitem(sys.modules, "src.cleanup_service", raising=False)
     monkeypatch.delitem(sys.modules, "routes.cleanup_routes", raising=False)
 
-    import src.cleanup_service as svc
+    import src.infra.scheduler.cleanup_service as svc
     import src.api.router.cleanup_routes as rts
     return svc._apply_owner_filter, rts.setup_cleanup_routes
 
@@ -152,8 +152,8 @@ def test_preview_route_passes_caller_identity_as_owner(monkeypatch, cleanup_impo
         "preserved_sessions": [],
         "estimated_space_freed_mb": 0.0,
     })
-    monkeypatch.setattr("routes.cleanup_routes.get_cleanup_preview", mock_preview)
-    monkeypatch.setattr("routes.cleanup_routes.get_current_user", lambda _req: "alice")
+    monkeypatch.setattr("src.api.router.cleanup_routes.get_cleanup_preview", mock_preview)
+    monkeypatch.setattr("src.api.router.cleanup_routes.get_current_user", lambda _req: "alice")
 
     app = FastAPI()
     app.include_router(setup_cleanup_routes(MagicMock()))
@@ -173,8 +173,8 @@ def test_cleanup_route_passes_caller_identity_as_owner(monkeypatch, cleanup_impo
     _, setup_cleanup_routes = cleanup_imports
 
     mock_cleanup = AsyncMock(return_value=(3, 2, 1.5))
-    monkeypatch.setattr("routes.cleanup_routes.cleanup_sessions", mock_cleanup)
-    monkeypatch.setattr("routes.cleanup_routes.get_current_user", lambda _req: "alice")
+    monkeypatch.setattr("src.api.router.cleanup_routes.cleanup_sessions", mock_cleanup)
+    monkeypatch.setattr("src.api.router.cleanup_routes.get_current_user", lambda _req: "alice")
 
     sm = MagicMock()
     app = FastAPI()

@@ -2926,7 +2926,7 @@ async def stream_agent_loop(
     # when we ARE the teacher to avoid recursion.
     if not _is_teacher_run and not guide_only:
         try:
-            from src.teacher_escalation import run_teacher_inline
+            from src.domain.agent.teacher_escalation import run_teacher_inline
             async for evt in run_teacher_inline(
                 student_endpoint_url=endpoint_url,
                 student_messages=messages,

@@ -1,4 +1,4 @@
-from src.teacher_escalation import evaluate_turn_regex
+from src.domain.agent.teacher_escalation import evaluate_turn_regex
 
 
 def test_evaluate_turn_regex_tolerates_non_string_reply():

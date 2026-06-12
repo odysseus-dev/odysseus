@@ -517,7 +517,7 @@ def setup_history_routes(session_manager) -> APIRouter:
 
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> Dict[str, Any]:
-        from src.auth_helpers import require_user
+        from src.infra.auth.auth_helpers import require_user
         user = require_user(request)
         try:
             return analyze_topics(session_manager, owner=user or None)
@@ -528,7 +528,7 @@ def setup_history_routes(session_manager) -> APIRouter:
     async def compact_session(request: Request, session_id: str):
         """Manually trigger context compaction for a session."""
         _verify_session_owner(request, session_id)
-        from src.auth_helpers import effective_user
+        from src.infra.auth.auth_helpers import effective_user
         owner = effective_user(request)
         try:
             session = session_manager.get_session(session_id)

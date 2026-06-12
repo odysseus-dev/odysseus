@@ -3,7 +3,7 @@ import types
 import pytest
 
 from src import auth_helpers
-from src.auth_helpers import require_privilege
+from src.infra.auth.auth_helpers import require_privilege
 
 
 class _Mgr:

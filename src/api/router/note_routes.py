@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.infra.database.database import SessionLocal, Note
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.pkg.constants import DATA_DIR
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -802,7 +802,7 @@ def setup_note_routes(task_scheduler=None):
         Returns {synthesis, email_sent}.
         """
         # Gate against anonymous callers — LLM synthesis can burn tokens.
-        from src.auth_helpers import require_user as _ru
+        from src.infra.auth.auth_helpers import require_user as _ru
         user = _ru(request)
         body = await request.json()
         note_id = str(body.get("note_id") or "").strip()

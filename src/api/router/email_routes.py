@@ -1502,7 +1502,7 @@ def setup_email_routes():
             # check (404), so the frontend's loadDocument() throws and nothing
             # opens (the "open in document didn't open" bug). Attach it to the
             # user's most-recent session so it's fetchable + ownable.
-            from src.auth_helpers import get_current_user as _gcu
+            from src.infra.auth.auth_helpers import get_current_user as _gcu
             _doc_user = _gcu(request)
             def _resolve_doc_session():
                 try:

@@ -421,7 +421,7 @@ async def serve_generated_image(filename: str, request: Request):
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
     try:
-        from src.auth_helpers import get_current_user
+        from src.infra.auth.auth_helpers import get_current_user
         from src.infra.database.database import SessionLocal as _SL, GalleryImage as _GI
         _user = get_current_user(request)
         if _user:
@@ -532,7 +532,7 @@ async def web_search_error_handler(request: Request, exc: WebSearchError):
     return JSONResponse(status_code=502, content={"error": "WEB_SEARCH_ERROR", "message": str(exc)})
 
 # ========= WEBHOOK MANAGER =========
-from src.webhook_manager import WebhookManager
+from src.infra.scheduler.webhook_manager import WebhookManager
 
 webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 
@@ -838,7 +838,7 @@ async def readiness_check() -> JSONResponse:
     Unlike /api/health (liveness), this returns 503 unless every critical
     subsystem is whole, so an orchestrator can gate traffic on real readiness.
     """
-    from src.readiness import check_readiness
+    from src.infra.scheduler.readiness import check_readiness
     result = check_readiness()
     return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
@@ -1110,7 +1110,7 @@ async def _startup_event():
     # something with end_after_min set. Removing this line + the
     # cookbook_serve entry in BUILTIN_ACTIONS + src/cookbook_serve_lifecycle.py
     # removes the feature.
-    from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
+    from src.infra.scheduler.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
 
     logger.info("Application startup complete")

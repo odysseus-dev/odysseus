@@ -32,7 +32,7 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
-from src.auth_helpers import _auth_disabled, get_current_user
+from src.infra.auth.auth_helpers import _auth_disabled, get_current_user
 from src.infra.storage.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)

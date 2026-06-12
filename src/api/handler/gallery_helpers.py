@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 from src.infra.database.database import GalleryImage
-from src.auth_helpers import _auth_disabled
+from src.infra.auth.auth_helpers import _auth_disabled
 
 logger = logging.getLogger(__name__)
 

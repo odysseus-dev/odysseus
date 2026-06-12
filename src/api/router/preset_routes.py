@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from src.request_models import PresetUpdateRequest
 from core.middleware import require_admin
-from src.auth_helpers import effective_user
+from src.infra.auth.auth_helpers import effective_user
 
 logger = logging.getLogger(__name__)
 

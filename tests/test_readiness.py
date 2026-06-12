@@ -1,6 +1,6 @@
 """Tests for the readiness / integrity self-check (src/readiness.py)."""
 
-from src.readiness import check_readiness
+from src.infra.scheduler.readiness import check_readiness
 
 
 def test_readiness_reports_core_subsystems():

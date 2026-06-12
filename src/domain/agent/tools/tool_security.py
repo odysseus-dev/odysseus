@@ -179,7 +179,7 @@ def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
 
         auth = AuthManager()
         if not auth.is_configured:
-            from src.auth_helpers import _auth_disabled
+            from src.infra.auth.auth_helpers import _auth_disabled
 
             return _auth_disabled()
         return bool(owner and auth.is_admin(owner))

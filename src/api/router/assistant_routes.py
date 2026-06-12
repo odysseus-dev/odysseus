@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.infra.database.database import SessionLocal, CrewMember, ScheduledTask
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.infra.scheduler.task_scheduler import compute_next_run
 
 

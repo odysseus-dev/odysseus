@@ -11,7 +11,7 @@ import logging
 
 from src.infra.database.database import Comparison, SessionLocal
 from src.infra.database.session_manager import SessionManager
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.api.router.session_routes import _reject_raw_endpoint_url_for_non_admin
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def _owned_endpoint_by_url(db, base_url, owner):
     legacy mode).
     """
     from src.infra.database.database import ModelEndpoint
-    from src.auth_helpers import owner_filter
+    from src.infra.auth.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url)
     return owner_filter(q, ModelEndpoint, owner).first()
 
@@ -52,7 +52,7 @@ def _owned_endpoint_by_id(db, endpoint_id, owner):
     scoping is identical to _owned_endpoint_by_url (a null/empty owner is a no-op).
     """
     from src.infra.database.database import ModelEndpoint
-    from src.auth_helpers import owner_filter
+    from src.infra.auth.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id)
     return owner_filter(q, ModelEndpoint, owner).first()
 

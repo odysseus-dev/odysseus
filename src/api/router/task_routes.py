@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from src.infra.database.database import SessionLocal, ScheduledTask, TaskRun
 from src.pkg.constants import internal_api_base
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.pkg.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.infra.scheduler.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from src.api.router.prefs_routes import _load_for_user, _save_for_user

@@ -11,7 +11,7 @@ from src.infra.database.session_manager import SessionManager
 from src.infra.database.models import ChatMessage
 from src.request_models import SessionResponse
 from src.infra.database.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
-from src.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
+from src.infra.auth.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
 from src.domain.agent.session_actions import is_session_recently_active
 
 
@@ -334,7 +334,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
         if endpoint_id and endpoint_id.strip():
             from src.infra.database.database import ModelEndpoint
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             from src.infra.llm.endpoint_resolver import build_chat_url, normalize_base
             _db = SessionLocal()
             try:
@@ -483,7 +483,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             endpoint_base_url = ""
             if endpoint_id:
                 from src.infra.database.database import ModelEndpoint
-                from src.auth_helpers import owner_filter
+                from src.infra.auth.auth_helpers import owner_filter
                 from src.infra.llm.endpoint_resolver import build_chat_url, normalize_base
                 _db = SessionLocal()
                 try:

@@ -3,7 +3,7 @@ import json
 import os
 from typing import Optional
 from fastapi import APIRouter, Request
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.pkg.constants import USER_PREFS_FILE
 
 PREFS_FILE = USER_PREFS_FILE

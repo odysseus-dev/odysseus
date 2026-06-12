@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)

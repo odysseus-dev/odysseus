@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.infra.database.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from src.infra.database.database import Session as DbSession
-from src.auth_helpers import get_current_user, owner_filter, require_privilege
+from src.infra.auth.auth_helpers import get_current_user, owner_filter, require_privilege
 from src.infra.storage.upload_limits import (
     read_upload_limited,
     GALLERY_UPLOAD_MAX_BYTES,
@@ -77,7 +77,7 @@ def _normalize_image_endpoint_base(url: str) -> str:
 
 
 def _visible_image_endpoint_query(db, owner: str | None):
-    from src.auth_helpers import owner_filter
+    from src.infra.auth.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(
         ModelEndpoint.model_type == "image",
         ModelEndpoint.is_enabled == True,  # noqa: E712

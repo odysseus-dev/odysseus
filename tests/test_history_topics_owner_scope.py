@@ -252,7 +252,7 @@ def test_route_data_flow_on_paper():
     strict bool check), this test will start failing in a way that
     makes the regression visible.
     """
-    from src.auth_helpers import get_current_user
+    from src.infra.auth.auth_helpers import get_current_user
     from src.pkg.text.topic_analyzer import analyze_topics
 
     # (a) get_current_user with no state returns None.

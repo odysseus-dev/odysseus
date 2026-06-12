@@ -781,7 +781,7 @@ async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
         elif action == "add":
             import uuid as _uuid
             from datetime import datetime
-            from src.webhook_manager import validate_events, validate_webhook_url
+            from src.infra.scheduler.webhook_manager import validate_events, validate_webhook_url
             name = args.get("name", "")
             url = args.get("url", "")
             events = args.get("events", "chat.completed")

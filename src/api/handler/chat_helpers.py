@@ -14,7 +14,7 @@ from src.infra.database.database import Session as DBSession, ModelEndpoint
 from src.infra.llm.llm_core import normalize_model_id
 from src.infra.llm.endpoint_resolver import normalize_base
 from src.domain.context.context_compactor import maybe_compact, trim_for_context
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.pkg.security.prompt_security import untrusted_context_message
 from src.api.router.prefs_routes import _load_for_user as load_prefs_for_user
 
@@ -221,7 +221,7 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
             ModelEndpoint.is_enabled == True
         )
         if owner:
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         endpoints = q.all()
     finally:
@@ -393,7 +393,7 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
                 # Missing headers usually means "recover from the saved endpoint".
                 # Scope that lookup to the session owner, otherwise two users
                 # with similar endpoint URLs can borrow each other's API key.
-                from src.auth_helpers import owner_filter
+                from src.infra.auth.auth_helpers import owner_filter
                 q = owner_filter(q, ModelEndpoint, owner)
             for ep in q.all():
                 if not _session_url_matches_endpoint(target_url, ep.base_url or ""):
@@ -468,7 +468,7 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
         q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
         owner = getattr(sess, "owner", None)
         if owner:
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         endpoints = q.all()
         for ep in endpoints:

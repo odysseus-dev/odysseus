@@ -281,7 +281,7 @@ def resolve_endpoint(
             ModelEndpoint.is_enabled == True,
         )
         if owner:
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             ep = owner_filter(ep, ModelEndpoint, owner).first()
         else:
             ep = ep.first()
@@ -333,7 +333,7 @@ def resolve_endpoint_by_id(
             ModelEndpoint.is_enabled == True,
         )
         if owner:
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         ep = q.first()
         if not ep:

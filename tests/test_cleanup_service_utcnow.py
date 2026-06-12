@@ -6,7 +6,7 @@ lazy (inside the functions), so no DB/sqlalchemy stack is pulled in here.
 """
 from datetime import datetime, timedelta, timezone
 
-from src.cleanup_service import _utcnow
+from src.infra.scheduler.cleanup_service import _utcnow
 
 
 def test_utcnow_returns_naive_utc():

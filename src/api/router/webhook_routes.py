@@ -10,9 +10,9 @@ from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
 from src.infra.database.database import SessionLocal, Webhook, ModelEndpoint
-from src.auth_helpers import owner_filter
+from src.infra.auth.auth_helpers import owner_filter
 from src.pkg.security.url_security import validate_public_http_url
-from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
+from src.infra.scheduler.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +262,7 @@ def setup_webhook_routes(
             # ID. The token's user is on request.state.user (set by API-token
             # middleware); fall back to require_user if not present.
             try:
-                from src.auth_helpers import get_current_user as _gcu
+                from src.infra.auth.auth_helpers import get_current_user as _gcu
                 _tok_user = token_owner or getattr(request.state, "user", None) or _gcu(request)
             except Exception:
                 _tok_user = None

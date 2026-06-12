@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.auth_helpers import require_authenticated_request, require_user
+from src.infra.auth.auth_helpers import require_authenticated_request, require_user
 from src.domain.agent.tools.tool_implementations import do_manage_notes
 from src.pkg.constants import COOKBOOK_STATE_FILE
 

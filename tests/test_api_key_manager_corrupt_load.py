@@ -5,7 +5,7 @@ load() is called during startup (app_initializer). It had no try/except around
 api_keys.json raised JSONDecodeError and a legacy list-shaped file raised
 AttributeError — both crashing app startup. It now returns {} instead.
 """
-from src.api_key_manager import APIKeyManager
+from src.infra.auth.api_key_manager import APIKeyManager
 
 
 def _mgr(tmp_path):

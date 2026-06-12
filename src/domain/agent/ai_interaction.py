@@ -78,7 +78,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     import httpx
     from src.database import SessionLocal, ModelEndpoint
     from src.infra.llm.llm_core import _detect_provider, ANTHROPIC_MODELS
-    from src.auth_helpers import owner_filter
+    from src.infra.auth.auth_helpers import owner_filter
 
     spec = spec.strip()
     target_endpoint_name = None
@@ -1117,7 +1117,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
     import httpx
     from src.database import SessionLocal, ModelEndpoint
     from src.infra.llm.llm_core import _detect_provider, ANTHROPIC_MODELS
-    from src.auth_helpers import owner_filter
+    from src.infra.auth.auth_helpers import owner_filter
 
     keyword = content.strip().lower() if content.strip() else None
 
@@ -1618,7 +1618,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         if not model_spec:
             try:
                 from src.database import SessionLocal, ModelEndpoint
-                from src.auth_helpers import owner_filter
+                from src.infra.auth.auth_helpers import owner_filter
                 import httpx as _req
                 _idb = SessionLocal()
                 try:

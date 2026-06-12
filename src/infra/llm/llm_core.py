@@ -1058,7 +1058,7 @@ def _configured_cached_model_ids(
         if endpoint_id:
             q = q.filter(ModelEndpoint.id == endpoint_id)
         if owner:
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         rows = q.all()
         for ep in rows:

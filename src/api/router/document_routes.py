@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from sqlalchemy import case, func, or_
 from src.infra.database.database import SessionLocal, Document, DocumentVersion
 from src.infra.database.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.pkg.constants import MAIL_ATTACHMENTS_DIR
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- POST /api/document ----
     @router.post("/api/document")
     async def create_document(request: Request, req: DocumentCreate) -> Dict[str, Any]:
-        from src.auth_helpers import require_privilege
+        from src.infra.auth.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_documents")
         db = SessionLocal()
         try:
@@ -180,7 +180,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.domain.document.document_processor import _process_pdf, strip_pdf_content_marker
         import os
 
-        from src.auth_helpers import require_privilege
+        from src.infra.auth.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_documents")
 
         # session_id is optional — a library import isn't tied to a chat. When

@@ -17,14 +17,14 @@ from fastapi import FastAPI, HTTPException, Request
 from starlette.testclient import TestClient
 
 # Importing the route module pulls a few app deps; skip cleanly if unavailable.
-diag = pytest.importorskip("routes.diagnostics_routes")
+diag = pytest.importorskip("src.api.router.diagnostics_routes")
 
 
 def _client_with_admin_gate(monkeypatch, gate):
     """Mount the diagnostics router with `require_admin` and the collector
     patched (via monkeypatch so the module globals are restored afterwards),
     and return a TestClient. `gate` plays the role of require_admin."""
-    import src.service_health as sh
+    import src.infra.scheduler.service_health as sh
 
     async def _fake_collect(_rag, _mem):
         return {"overall": "ok", "services": [], "timestamp": "t"}

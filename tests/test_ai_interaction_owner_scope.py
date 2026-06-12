@@ -13,7 +13,7 @@ def test_model_resolver_applies_owner_filter():
     body = _source(ai_interaction._resolve_model)
 
     assert "owner: Optional[str] = None" in body
-    assert "from src.auth_helpers import owner_filter" in body
+    assert "from src.infra.auth.auth_helpers import owner_filter" in body
     assert "owner_filter(query, ModelEndpoint, owner)" in body
 
 

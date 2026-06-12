@@ -23,7 +23,7 @@ from src.infra.llm.endpoint_resolver import normalize_base as _normalize_base, b
 from src.domain.agent.session_search import search_session_messages
 from src.pkg.security.prompt_security import untrusted_context_message
 from src.pkg.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
+from src.infra.auth.auth_helpers import get_current_user
 from src.api.router.session_routes import _verify_session_owner
 from src.api.handler.document_helpers import _owner_session_filter
 from src.infra.database.database import SessionLocal, get_session_mode, set_session_mode
@@ -83,7 +83,7 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
     try:
         q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
         if owner:
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         endpoints = q.all()
         for ep in endpoints:
@@ -146,7 +146,7 @@ def _is_image_generation_session(sess, owner: str | None = None) -> bool:
     try:
         q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
         if owner:
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             q = owner_filter(q, ModelEndpoint, owner)
         endpoints = q.all()
         for endpoint in endpoints:
@@ -192,7 +192,7 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
         if getattr(sess, "endpoint_url", ""):
             q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
             if owner:
-                from src.auth_helpers import owner_filter
+                from src.infra.auth.auth_helpers import owner_filter
                 q = owner_filter(q, ModelEndpoint, owner)
             endpoints = q.all()
             for cand in endpoints:

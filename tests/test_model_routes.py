@@ -967,7 +967,7 @@ def _create_form_kwargs(**overrides):
 
 
 def _patch_create_deps(monkeypatch, db):
-    import src.auth_helpers as auth_helpers
+    import src.infra.auth.auth_helpers as auth_helpers
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(model_routes, "ModelEndpoint", _RecordingEndpoint)

@@ -1,6 +1,6 @@
 import os
 import json
-from src.api_key_manager import APIKeyManager
+from src.infra.auth.api_key_manager import APIKeyManager
 from cryptography.fernet import Fernet
 
 def test_api_key_manager_load_resilience(tmp_path):

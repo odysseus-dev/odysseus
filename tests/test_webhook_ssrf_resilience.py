@@ -38,7 +38,7 @@ with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///:memory:"}), \
         )
     ):
         del sys.modules["src.infra.database.database"]
-    from src.webhook_manager import validate_webhook_url
+    from src.infra.scheduler.webhook_manager import validate_webhook_url
 
 
 def test_webhook_url_ssrf_mitigation():
@@ -63,7 +63,7 @@ def test_webhook_url_ssrf_mitigation():
 
 @pytest.mark.asyncio
 async def test_webhook_delivery_uses_naive_utc_timestamps(monkeypatch):
-    import src.webhook_manager as wm
+    import src.infra.scheduler.webhook_manager as wm
 
     class _Query:
         def __init__(self, updates):

@@ -26,7 +26,7 @@ from src.infra.llm.endpoint_resolver import (
     build_models_url,
     build_headers,
 )
-from src.auth_helpers import _auth_disabled, owner_filter
+from src.infra.auth.auth_helpers import _auth_disabled, owner_filter
 
 logger = logging.getLogger(__name__)
 
@@ -1192,7 +1192,7 @@ def setup_model_routes(model_discovery):
         # Require auth; "" is the unconfigured single-user mode, treated as
         # "see everything" by _fetch_models.
         try:
-            from src.auth_helpers import get_current_user as _gcu
+            from src.infra.auth.auth_helpers import get_current_user as _gcu
             owner = _gcu(request) or ""
         except Exception:
             owner = ""
@@ -1601,7 +1601,7 @@ def setup_model_routes(model_discovery):
         # is reachable by the caller (shared or owned by them), return it
         # instead of creating a duplicate row. Fixes "Scan for Servers"
         # re-adding manually-added endpoints under their host:port name.
-        from src.auth_helpers import get_current_user as _gcu_dedup
+        from src.infra.auth.auth_helpers import get_current_user as _gcu_dedup
         _caller = _gcu_dedup(request) or None
         _incoming_api_key = api_key.strip()
         _db_dedup = SessionLocal()
@@ -1706,7 +1706,7 @@ def setup_model_routes(model_discovery):
             # who added it. Pass `shared=true` to mark it null-owner (visible
             # to all users), preserving the pre-fix "everyone sees everything"
             # behaviour for endpoints the admin explicitly intends to share.
-            from src.auth_helpers import get_current_user as _gcu
+            from src.infra.auth.auth_helpers import get_current_user as _gcu
             _shared_flag = (shared or "").strip().lower() in ("true", "1", "yes")
             _owner_val = None if _shared_flag else (_gcu(request) or None)
             ep = ModelEndpoint(
@@ -1935,7 +1935,7 @@ def setup_model_routes(model_discovery):
         # no per-user default yet, we resolve via the owner-scoped endpoint
         # lookup below (last-resort: first enabled endpoint THIS user owns).
         # Unauthenticated single-user mode keeps the old behavior.
-        from src.auth_helpers import get_current_user as _gcu
+        from src.infra.auth.auth_helpers import get_current_user as _gcu
         try:
             _user = _gcu(request) or ""
         except Exception:

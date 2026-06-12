@@ -27,7 +27,7 @@ from src.request_models import MemoryAddRequest
 from src.infra.database.database import SessionLocal
 from src.infra.llm.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
-from src.auth_helpers import get_current_user, require_user
+from src.infra.auth.auth_helpers import get_current_user, require_user
 from src.infra.llm.endpoint_resolver import resolve_endpoint
 from src.infra.storage.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
 
@@ -86,7 +86,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         memory_data: Optional[MemoryAddRequest] = None
     ):
         """Add a new memory entry with optional category, source, and session reference."""
-        from src.auth_helpers import require_privilege
+        from src.infra.auth.auth_helpers import require_privilege
         require_privilege(request, "can_manage_memory")
         if memory_data is None:
             form = await request.form()
@@ -333,7 +333,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         file: UploadFile = File(...)
     ):
         """Extract memory suggestions from an uploaded file (PDF, TXT, MD, etc.)."""
-        from src.auth_helpers import require_privilege
+        from src.infra.auth.auth_helpers import require_privilege
         require_privilege(request, "can_manage_memory")
 
         endpoint_url = None

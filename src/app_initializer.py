@@ -14,7 +14,7 @@ from services.memory.skills import SkillsManager
 from src.infra.database.session_manager import SessionManager
 from src.infra.database.models import set_session_manager
 from src.domain.rag.personal_docs import PersonalDocsManager
-from src.api_key_manager import APIKeyManager
+from src.infra.auth.api_key_manager import APIKeyManager
 from src.domain.chat.preset_manager import PresetManager
 from src.domain.chat.chat_processor import ChatProcessor
 from src.infra.llm.model_discovery import ModelDiscovery

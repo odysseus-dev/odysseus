@@ -12,7 +12,7 @@ from sqlalchemy import or_, and_
 from dateutil.rrule import rrulestr
 
 from src.infra.database.database import SessionLocal, CalendarCal, CalendarEvent
-from src.auth_helpers import require_user
+from src.infra.auth.auth_helpers import require_user
 from src.infra.storage.upload_limits import read_upload_limited, ICS_MAX_BYTES
 
 logger = logging.getLogger(__name__)

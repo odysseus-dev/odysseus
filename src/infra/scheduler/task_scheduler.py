@@ -1603,7 +1603,7 @@ class TaskScheduler:
         try:
             from src.infra.database.database import SessionLocal, ModelEndpoint
             from src.infra.llm.endpoint_resolver import normalize_base, build_headers
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             db2 = SessionLocal()
             try:
                 ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
@@ -1732,7 +1732,7 @@ class TaskScheduler:
         try:
             from src.infra.database.database import ModelEndpoint
             from src.infra.llm.endpoint_resolver import normalize_base, build_headers
-            from src.auth_helpers import owner_filter
+            from src.infra.auth.auth_helpers import owner_filter
             db2 = db
             if not headers_from_resolver:
                 ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)

@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.infra.llm.endpoint_resolver import resolve_endpoint
-from src.auth_helpers import _auth_disabled, get_current_user
+from src.infra.auth.auth_helpers import _auth_disabled, get_current_user
 from src.pkg.constants import DEEP_RESEARCH_DIR
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
@@ -68,7 +68,7 @@ def _owned_enabled_endpoint(db, owner, endpoint_id=None):
     legacy mode).
     """
     from src.database import ModelEndpoint
-    from src.auth_helpers import owner_filter
+    from src.infra.auth.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
     if endpoint_id:
         q = q.filter(ModelEndpoint.id == endpoint_id)
@@ -383,7 +383,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
         """Launch a research job from the dedicated panel."""
-        from src.auth_helpers import require_privilege
+        from src.infra.auth.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_research")
         if user == "internal-tool":
             tool_owner = (request.headers.get("X-Odysseus-Owner") or "").strip()
