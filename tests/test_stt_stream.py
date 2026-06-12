@@ -41,6 +41,7 @@ from routes.stt_stream_routes import setup_stt_stream_routes
 class _StubSTT:
     """Stub service: 'transcribes' by reporting how many samples it saw."""
     available = True
+    local_stream_capable = True
 
     def transcribe_array(self, audio, language=None):
         return f"len={len(audio)}"
@@ -151,3 +152,15 @@ def test_ws_allows_when_auth_check_passes():
         ws.send_bytes(_pcm16(4000))
         ws.send_text(json.dumps({"event": "end"}))
         assert ws.receive_json()["final"] == "len=4000"
+
+
+def test_stream_rejects_non_local_provider():
+    class _EndpointProvider:
+        available = True
+        local_stream_capable = False
+        def transcribe_array(self, *a, **k): return "should-not-run"
+    client = _client(_EndpointProvider())
+    with client.websocket_connect("/api/stt/stream") as ws:
+        ws.send_bytes(_pcm16(1000))
+        msg = ws.receive_json()
+        assert "error" in msg

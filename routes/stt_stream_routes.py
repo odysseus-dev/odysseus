@@ -86,8 +86,8 @@ def setup_stt_stream_routes(stt_service, auth_check=None):
                             await ws.send_json({"wake": True})
                         continue
 
-                    if not getattr(stt_service, "available", False):
-                        await ws.send_json({"error": "STT service not available"})
+                    if not getattr(stt_service, "local_stream_capable", False):
+                        await ws.send_json({"error": "streaming STT requires the local provider"})
                         continue
                     buf.extend(msg["bytes"])
                     if len(buf) >= SAMPLE_RATE * 2 * MAX_UTTERANCE_S:

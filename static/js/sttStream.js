@@ -21,6 +21,7 @@ export async function createSttStream(opts) {
     ctx: null,
     node: null,
     source: null,
+    sink: null,
     attached: false,
     closed: false,
     connected: false,
@@ -79,12 +80,20 @@ export async function createSttStream(opts) {
         if (state.connected && state.attached) state.ws.send(e.data);
       };
       state.source.connect(state.node);
+      // Keep the worklet inside an active render graph: some engines only
+      // pull destination-connected subgraphs. Muted gain → destination.
+      state.sink = state.ctx.createGain();
+      state.sink.gain.value = 0;
+      state.node.connect(state.sink);
+      state.sink.connect(state.ctx.destination);
       state.attached = true;
     },
 
     detach() {
       state.attached = false;
       if (state.source && state.node) { try { state.source.disconnect(state.node); } catch (_) {} }
+      if (state.node && state.sink) { try { state.node.disconnect(state.sink); } catch (_) {} }
+      if (state.sink) { try { state.sink.disconnect(); } catch (_) {} state.sink = null; }
       state.node = null;
       state.source = null;
     },

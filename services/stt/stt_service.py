@@ -53,6 +53,17 @@ class STTService:
             return True  # assume reachable
         return False
 
+    @property
+    def local_stream_capable(self) -> bool:
+        """True when streaming transcription can honor the configured
+        provider — i.e. the provider IS the local faster-whisper model.
+        The streaming WS transcribes in-process via transcribe_array and
+        cannot dispatch to browser/endpoint providers."""
+        settings = self._load_settings()
+        if settings.get("stt_enabled") is False:
+            return False
+        return settings["stt_provider"] == "local" and self._get_whisper() is not None
+
     # ── Local Whisper ──
 
     def _get_whisper(self):
