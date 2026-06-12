@@ -38,3 +38,7 @@ markitdown[docx,pptx,xlsx,xls]==0.1.5
 # WebSocket protocol support for uvicorn — required by the streaming STT
 # endpoint (WS /api/stt/stream) used by voice dialog mode.
 websockets
+
+# Wake-word standby for voice dialog mode (server-side detection on the
+# streaming STT WebSocket). CPU-only.
+openwakeword
