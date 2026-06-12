@@ -5,6 +5,7 @@ This guide provides instuctions on how to setup Odysseus using Podman and system
 For this setup please make sure 
 - Linux
 - Podman Desktop
+- git
 - nano
 
 are installed properly. (It migth work with Podman Engine, but I have not tested that)
