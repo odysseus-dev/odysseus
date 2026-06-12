@@ -19,7 +19,6 @@ from src.embedding_lanes import (
     dedupe_results,
     migrate_legacy_collection,
 )
-from src.tool_security import BUILTIN_EMAIL_TOOLS
 
 try:
     import numpy as np
@@ -47,10 +46,9 @@ ALWAYS_AVAILABLE = frozenset({
 
 # Tools that the Personal Assistant always has access to during scheduled
 # check-ins and proactive tasks, in addition to RAG-selected tools.
-# Email tools come from BUILTIN_EMAIL_TOOLS (unioned below) so the assistant's
-# reach can't drift from what the email server exposes. A CrewMember's
-# enabled_tools selection still filters this at runtime.
-ASSISTANT_ALWAYS_AVAILABLE = BUILTIN_EMAIL_TOOLS | frozenset({
+ASSISTANT_ALWAYS_AVAILABLE = frozenset({
+    "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email",
+    "bulk_email", "archive_email", "delete_email", "mark_email_read",
     "manage_calendar", "manage_notes", "manage_tasks",
     "manage_memory", "web_search", "read_file",
     "create_document", "update_document",
@@ -116,11 +114,6 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "delete_email": "Delete an email — moves to Trash by default, or expunges permanently with permanent=true.",
     "mark_email_read": "Mark an email as read or unread by toggling the \\Seen flag.",
     "bulk_email": "Perform one action on many emails at once. Use for delete all those, archive these, mark all read, move spam to junk. Takes explicit UIDs from list_emails or all_unread=true. Always pass account for Gmail/work/custom mailbox results.",
-    "search_emails": "Search emails by free-text query matching sender, subject, or body, across INBOX, Sent, and Archive by default. Use when the user names a person or topic that isn't in the recent inbox slice — 'invoice from EY', 'last email about the property'. Returns matching emails with UIDs for read_email or reply.",
-    "draft_email": "Write a new email as a compose draft document the user reviews and sends from Odysseus — does NOT send. Default way to write an email for the user: 'write an email to X', 'compose a message about Y'.",
-    "draft_email_reply": "Write a reply to an existing email as a threaded draft document the user reviews and sends — does NOT send. Use for 'draft a reply', 'write a response to this email' with a known UID.",
-    "ai_draft_email_reply": "Generate an AI-written reply draft for an email using the user's writing-style settings, opened as a compose document for review — does NOT send. Use when asked to reply to an email without dictating the body.",
-    "download_attachment": "Download an email attachment to local disk and return the file path for reading with read_file. Use to review a PDF, spreadsheet, or other file attached to an email.",
     "resolve_contact": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.",
     "manage_contact": "Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.",
     "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
@@ -352,7 +345,7 @@ class ToolIndex:
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
         frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
-            set(BUILTIN_EMAIL_TOOLS) | {"resolve_contact", "ui_control"},
+            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):

@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Iterable, Mapping, Optional, Set, Tuple
 
-from src.tool_security import BUILTIN_EMAIL_TOOLS
-
 
 GUIDE_ONLY_DIRECTIVE = (
     "## GUIDE-ONLY MODE - TOOL POLICY\n"
@@ -19,19 +17,20 @@ GUIDE_ONLY_DIRECTIVE = (
 )
 
 
-# Email tool names come from BUILTIN_EMAIL_TOOLS (unioned below) so this
-# best-effort known-names set can't drift from what the email server exposes.
 _COMMON_TOOL_NAMES = {
     "api_call",
     "app_api",
+    "archive_email",
     "ask_teacher",
     "ask_user",
     "bash",
+    "bulk_email",
     "builtin_browser",
     "cancel_download",
     "chat_with_model",
     "create_document",
     "create_session",
+    "delete_email",
     "download_model",
     "edit_document",
     "edit_file",
@@ -42,6 +41,7 @@ _COMMON_TOOL_NAMES = {
     "list_cached_models",
     "list_cookbook_servers",
     "list_downloads",
+    "list_emails",
     "list_models",
     "list_serve_presets",
     "list_served_models",
@@ -61,12 +61,16 @@ _COMMON_TOOL_NAMES = {
     "manage_tasks",
     "manage_tokens",
     "manage_webhooks",
+    "mark_email_read",
     "pipeline",
     "python",
+    "read_email",
     "read_file",
+    "reply_to_email",
     "resolve_contact",
     "search_chats",
     "search_hf_models",
+    "send_email",
     "send_to_session",
     "serve_model",
     "serve_preset",
@@ -82,7 +86,7 @@ _COMMON_TOOL_NAMES = {
     "web_fetch",
     "web_search",
     "write_file",
-} | BUILTIN_EMAIL_TOOLS
+}
 
 
 _GUIDE_ONLY_PATTERNS: Tuple[Tuple[re.Pattern[str], str], ...] = tuple(

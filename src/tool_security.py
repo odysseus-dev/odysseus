@@ -95,16 +95,15 @@ PLAN_MODE_READONLY_TOOLS = {
     "search_chats",
     "list_models",
     "list_sessions",
-    # Read-only email tools. Keep this subset in sync with the bare/qualified
-    # alias gate in execute_tool_block: plan mode blocks the qualified
-    # mcp__email__* names of everything that ISN'T clearly read-only (via
-    # mcp_tool_is_readonly), and a bare denylist entry blocks the qualified
-    # spelling too — so a read-only email tool missing here would be blocked
-    # in plan mode under BOTH spellings despite being safe to call.
+    # Read-only email tools. list_email_accounts must be here because the
+    # bare/qualified alias gate in execute_tool_block works both ways: it has
+    # a native function schema, so plan mode's schema-derived bare denylist
+    # contains it — and without this allowlist entry that bare entry would
+    # also block the qualified mcp__email__list_email_accounts call that the
+    # MCP read-only filter deliberately allows.
     "list_email_accounts",
     "list_emails",
     "read_email",
-    "search_emails",
     "list_served_models",
     "list_downloads",
     "list_cached_models",
@@ -138,13 +137,7 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "manage_webhooks", "manage_tokens", "manage_settings", "manage_contact",
     "manage_calendar", "api_call", "app_api", "ui_control",
     "send_email", "reply_to_email", "bulk_email", "delete_email",
-    "archive_email", "mark_email_read",
-    # Draft tools create documents and download_attachment writes to disk —
-    # mutating, so they stay blocked in plan mode even if the schema list
-    # fails to load.
-    "draft_email", "draft_email_reply", "ai_draft_email_reply",
-    "download_attachment",
-    "download_model", "serve_model",
+    "archive_email", "mark_email_read", "download_model", "serve_model",
     "stop_served_model", "cancel_download", "adopt_served_model", "serve_preset",
     "generate_image", "edit_image", "trigger_research", "manage_research",
     # Shell is never read-only-safe; block it explicitly so it stays out of plan
