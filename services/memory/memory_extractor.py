@@ -117,6 +117,9 @@ GLACIER_INTERVAL = 50  # prune least used items to prevent state/heap creep
 _extractions_since_glacier = 0
 _glacier_lock = asyncio.Lock()
 
+# Hard references to prevent GC of background tasks
+_glacier_tasks = set()
+
 def _message_text(message) -> str:
     content = getattr(message, "content", None)
     if content is None and isinstance(message, dict):
@@ -492,8 +495,15 @@ async def extract_and_store(
 
                     try:
                         from services.memory.service import MemoryService
-                        # do not await blocking io here
-                        asyncio.create_task(asyncio.to_thread(MemoryService().archive_cold_to_glacier))
+
+                        # decouple: inject the specific directory used by this invocation
+                        data_dir = os.path.dirname(memory_manager.memory_file)
+                        svc = MemoryService(data_dir=data_dir)
+
+                        # retain a strong reference so the gc doesnt kill task during io
+                        task = asyncio.create_task(asyncio.to_thread(svc.archive_cold_to_glacier))
+                        _glacier_tasks.add(task)
+                        task.add_done_callback(_glacier_tasks.discard)
                     except Exception as e:
                         logger.error(f"Failed to dispatch Glacier offload task: {e}", exc_info=True)
 
