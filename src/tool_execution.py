@@ -385,13 +385,20 @@ _MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
 # becomes a corrupted hidden-tool operation. Keyed off membership only (the
 # primary key never changes), so this can't drift; an unrecognized object
 # safely falls through to the line-based parser, i.e. the previous behavior.
+#
+# Every entry MUST be in _MCP_TOOL_MAP — _build_mcp_args is only reached via
+# _call_mcp_tool, which only runs for _MCP_TOOL_MAP tools. An entry outside it
+# is dead code (manage_memory was, until this was caught: the tag routes
+# through dispatch_ai_tool -> do_manage_memory, not here). The same inline-JSON
+# corruption for those non-_MCP_TOOL_MAP tools is tracked separately; the fix
+# there is to route fenced JSON through function_call_to_tool_block. The
+# test_mcp_json_primary_keys_are_all_live regression pins this invariant.
 _MCP_JSON_PRIMARY_KEYS: Dict[str, tuple] = {
     "web_search":     ("query", "queries"),
     "web_fetch":      ("url",),
     "read_file":      ("path",),
     "write_file":     ("path",),
     "generate_image": ("prompt",),
-    "manage_memory":  ("action",),
 }
 
 

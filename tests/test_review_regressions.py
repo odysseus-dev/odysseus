@@ -840,6 +840,19 @@ async def test_legacy_mcp_tools_decode_inline_json_args(monkeypatch):
     }
 
 
+def test_mcp_json_primary_keys_are_all_live():
+    """Every _MCP_JSON_PRIMARY_KEYS entry must be reachable: _build_mcp_args is
+    only called from _call_mcp_tool, which only runs for _MCP_TOOL_MAP tools.
+    An entry outside _MCP_TOOL_MAP is dead code whose inline-JSON decode never
+    executes — manage_memory was exactly that (it routes through
+    dispatch_ai_tool), and a unit test on _build_mcp_args passed on the dead
+    path while the real call still corrupted. This pins it so it can't recur."""
+    from src.tool_execution import _MCP_JSON_PRIMARY_KEYS, _MCP_TOOL_MAP
+
+    dead = set(_MCP_JSON_PRIMARY_KEYS) - set(_MCP_TOOL_MAP)
+    assert not dead, f"dead JSON-primary entries (never reach _build_mcp_args): {sorted(dead)}"
+
+
 @pytest.mark.asyncio
 async def test_plan_mode_blocks_mutating_email_aliases_without_mcp_inventory(monkeypatch):
     """Plan-mode safety for bare email aliases must hold from the STATIC
