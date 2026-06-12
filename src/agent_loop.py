@@ -19,7 +19,7 @@ from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
-from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
+from src.tool_security import BUILTIN_EMAIL_TOOLS, blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
@@ -267,7 +267,7 @@ _DOMAIN_RULES = {
 _DOMAIN_TOOL_MAP = {
     "web": {"web_search", "web_fetch", "trigger_research", "manage_research"},
     "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
-    "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
+    "email": set(BUILTIN_EMAIL_TOOLS) | {"resolve_contact", "manage_contact"},
     "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
@@ -442,6 +442,11 @@ Bulk delete/archive/mark emails. Use this for "delete all those" after listing e
     "delete_email": "- ```delete_email``` — Delete one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "archive_email": "- ```archive_email``` — Archive one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "mark_email_read": "- ```mark_email_read``` — Mark one email read/unread. Args (JSON): {\"uid\":\"...\", \"read\":true, \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
+    "search_emails": "- ```search_emails``` — Search emails by free-text query across INBOX/Sent/Archive (matches sender, subject, body). Args (JSON): {\"query\": \"...\", \"max_results\": 20, \"account\": \"Gmail\"}. Use when the user names a person/topic that isn't in the recent inbox slice; returns UIDs for read_email/reply.",
+    "draft_email": "- ```draft_email``` — Create an email compose DRAFT document for the user to review (does NOT send). Args (JSON): {\"to\": \"...\", \"subject\": \"...\", \"body\": \"...\", \"account\": \"Gmail\"}. Prefer this over send_email when the user asks you to write/compose an email without saying send.",
+    "draft_email_reply": "- ```draft_email_reply``` — Create a threaded reply DRAFT document for an email UID (does NOT send). Args (JSON): {\"uid\": \"...\", \"body\": \"...\", \"account\": \"Gmail\"}. Prefer this over reply_to_email when the user wants the reply written, not sent.",
+    "ai_draft_email_reply": "- ```ai_draft_email_reply``` — Generate an AI-written reply draft for an email UID using the user's writing-style settings (does NOT send). Args (JSON): {\"uid\": \"...\", \"account\": \"Gmail\"}. Use when asked to draft a reply without dictating the exact body.",
+    "download_attachment": "- ```download_attachment``` — Download an email attachment to disk and return the local path (read it with read_file). Args (JSON): {\"uid\": \"...\", \"index\": 0, \"account\": \"Gmail\"}. `index` comes from read_email's attachments list.",
     "resolve_contact": "- ```resolve_contact``` — Look up a contact's email by name. Searches CardDAV address book + sent email history. Args (JSON): {\"name\": \"...\"}. Use BEFORE send_email when the user gives only a name.",
     "manage_contact": "- ```manage_contact``` — Create/update/delete/list CardDAV contacts. Args (JSON): {\"action\": \"list|add|update|delete\", \"name\": \"...\", \"email\": \"...\", \"uid\": \"...\"}. Use only for explicit address-book/contact requests with contact details. Do NOT use for user identity facts like 'my name is <name>'; save those with manage_memory. For update/delete, call action=list first to get the uid.",
     "manage_calendar": """\

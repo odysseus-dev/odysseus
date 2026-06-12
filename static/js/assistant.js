@@ -120,7 +120,9 @@ function _esc(s) {
 
 // Tool groups for the tool selector UI
 const TOOL_GROUPS = {
-  'Email': ['list_emails', 'read_email', 'send_email', 'reply_to_email', 'archive_email', 'delete_email', 'mark_email_read'],
+  // Keep in sync with BUILTIN_EMAIL_TOOLS (src/tool_security.py) — every tool
+  // the email MCP server exposes, so the selector can grant/revoke all of them.
+  'Email': ['list_email_accounts', 'list_emails', 'search_emails', 'read_email', 'send_email', 'reply_to_email', 'draft_email', 'draft_email_reply', 'ai_draft_email_reply', 'archive_email', 'delete_email', 'mark_email_read', 'bulk_email', 'download_attachment'],
   'Calendar & Notes': ['manage_calendar', 'manage_notes', 'manage_tasks'],
   'Knowledge': ['web_search', 'read_file', 'manage_memory', 'manage_rag', 'search_chats'],
   'Code': ['bash', 'python', 'write_file'],
