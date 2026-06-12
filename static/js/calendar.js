@@ -9,7 +9,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import {
-  WEEKDAYS, MONTHS, MON_SHORT,
+  WEEKDAYS, WEEKDAYS_SUN, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
   _trashIcon, _moreIcon, _bellIcon,
   _isCalBgImage, _calBgImageUrl, _calBgCss,
@@ -64,6 +64,8 @@ let _hiddenTypes = new Set();   // event_type values to hide
 let _onlyImportant = false;
 
 let _filtersCollapsed = localStorage.getItem('cal-filters-collapsed') === '1';
+// Week-start preference: 'mon' (default, Mon=first col) or 'sun' (Sun=first col).
+let _weekStartSun = localStorage.getItem('cal-week-start') === 'sun';
 let _selectedDay = null;
 let _view = 'month';
 let _searchQuery = '';
@@ -360,14 +362,14 @@ function _today() { return _ds(new Date()); }
 function _monthRange(d) {
   const y = d.getFullYear(), m = d.getMonth();
   const first = new Date(y, m, 1);
-  const dow = (first.getDay() + 6) % 7;
+  const dow = _weekStartSun ? first.getDay() : (first.getDay() + 6) % 7;
   const gs = new Date(y, m, 1 - dow);
   const ge = new Date(gs); ge.setDate(gs.getDate() + 42);
   return [_ds(gs), _ds(ge)];
 }
 
 function _weekRange(d) {
-  const dow = (d.getDay() + 6) % 7;
+  const dow = _weekStartSun ? d.getDay() : (d.getDay() + 6) % 7;
   const s = new Date(d); s.setDate(d.getDate() - dow);
   const e = new Date(s); e.setDate(s.getDate() + 7);
   return [_ds(s), _ds(e)];
@@ -928,11 +930,11 @@ async function _renderMonth() {
   _slideDir = 0;
   let h = _headerHTML() + _filtersRowHTML() + `<div class="cal-grid${slideClass}">`;
   h += '<div class="cal-week-headers">';
-  for (const wd of WEEKDAYS) h += `<div class="cal-weekday">${wd}</div>`;
+  for (const wd of (_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)) h += `<div class="cal-weekday">${wd}</div>`;
   h += '</div>';
 
   const first = new Date(y, m, 1);
-  const dow = (first.getDay() + 6) % 7;
+  const dow = _weekStartSun ? first.getDay() : (first.getDay() + 6) % 7;
   const gs = new Date(y, m, 1 - dow);
 
   const multiDay = _events.filter(e => {
@@ -1204,8 +1206,8 @@ async function _renderWeek() {
     const timedEvents  = _eventsForDay(ds).filter(e => _eventVisible(e) && !e.all_day);
 
     const isSun = d.getDay() === 0;
-    colsHtml += `<div class="cal-wk-col${isToday ? ' cal-wk-today' : ''}${isSun ? ' cal-wk-sun' : ''}" data-date="${ds}">`;
-    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${WEEKDAYS[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
+    colsHtml += `<div class="cal-wk-col${isToday ? ' cal-wk-today' : ''}${isSun && !_weekStartSun ? ' cal-wk-sun' : ''}" data-date="${ds}">`;
+    colsHtml += `<div class="cal-wk-col-head"><span class="cal-wk-dn">${(_weekStartSun ? WEEKDAYS_SUN : WEEKDAYS)[idx]}</span><span class="cal-wk-dt">${d.getDate()}</span></div>`;
     // All-day strip
     colsHtml += `<div class="cal-wk-allday">`;
     for (const ev of allDayEvents) {
@@ -1724,9 +1726,9 @@ async function _renderYear() {
   for (let m = 0; m < 12; m++) {
     h += `<div class="cal-year-month" data-month="${m}"><div class="cal-year-month-title">${MON_SHORT[m]}</div>`;
     h += '<div class="cal-year-grid">';
-    for (const wd of ['M', 'T', 'W', 'T', 'F', 'S', 'S']) h += `<div class="cal-year-wd">${wd}</div>`;
+    for (const wd of (_weekStartSun ? ['S','M','T','W','T','F','S'] : ['M','T','W','T','F','S','S'])) h += `<div class="cal-year-wd">${wd}</div>`;
     const first = new Date(y, m, 1);
-    const dow = (first.getDay() + 6) % 7;
+    const dow = _weekStartSun ? first.getDay() : (first.getDay() + 6) % 7;
     const daysInMonth = new Date(y, m + 1, 0).getDate();
     for (let p = 0; p < dow; p++) h += '<div class="cal-year-cell"></div>';
     for (let d = 1; d <= daysInMonth; d++) {
@@ -2475,6 +2477,13 @@ async function _showCalSettings() {
           <div style="font-size:10px;opacity:0.4;margin-top:4px;">Download a calendar as .ics for backup or to import into another app.</div>
         </div>
         <div style="border-top:1px solid var(--border);padding-top:12px;">
+          <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Week starts on</div>
+          <div style="display:flex;gap:6px;">
+            <button id="cal-wstart-mon" type="button" style="font-size:12px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);background:${!_weekStartSun ? 'color-mix(in srgb, var(--accent,var(--red)) 18%, var(--panel))' : 'var(--panel)'};color:var(--fg);cursor:pointer;transition:background 0.1s,border-color 0.1s;outline:none;">Monday</button>
+            <button id="cal-wstart-sun" type="button" style="font-size:12px;padding:3px 10px;border-radius:4px;border:1px solid var(--border);background:${_weekStartSun ? 'color-mix(in srgb, var(--accent,var(--red)) 18%, var(--panel))' : 'var(--panel)'};color:var(--fg);cursor:pointer;transition:background 0.1s,border-color 0.1s;outline:none;">Sunday</button>
+          </div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:12px;">
           <div style="font-size:11px;opacity:0.5;margin-bottom:6px;">Sync</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button class="memory-toolbar-btn" id="cal-settings-sync-now" style="cursor:pointer;">
@@ -2493,6 +2502,28 @@ async function _showCalSettings() {
   const cleanup = () => overlay.remove();
   overlay.querySelector('#cal-settings-close').addEventListener('click', cleanup);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(); });
+
+  // Week-start toggle: save to localStorage, update module state, re-render.
+  const _monBtn = overlay.querySelector('#cal-wstart-mon');
+  const _sunBtn = overlay.querySelector('#cal-wstart-sun');
+  const _activeStyle  = 'color-mix(in srgb, var(--accent,var(--red)) 18%, var(--panel))';
+  const _inactiveStyle = 'var(--panel)';
+  const _applyWeekStartActive = () => {
+    if (_monBtn) _monBtn.style.background = _weekStartSun ? _inactiveStyle : _activeStyle;
+    if (_sunBtn) _sunBtn.style.background = _weekStartSun ? _activeStyle : _inactiveStyle;
+  };
+  _monBtn?.addEventListener('click', () => {
+    _weekStartSun = false;
+    localStorage.setItem('cal-week-start', 'mon');
+    _applyWeekStartActive();
+    if (_open) _render();
+  });
+  _sunBtn?.addEventListener('click', () => {
+    _weekStartSun = true;
+    localStorage.setItem('cal-week-start', 'sun');
+    _applyWeekStartActive();
+    if (_open) _render();
+  });
 
   // Create a new (local) calendar. Defaults the name + next palette color, then
   // reopens the panel so the user can rename it inline and pick a color.
