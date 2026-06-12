@@ -5,7 +5,7 @@ import uiModule from './ui.js';
 import markdownModule from './markdown.js';
 import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
-import { providerLogo } from './providers.js';
+import { providerLogo, providerLabel } from './providers.js';
 import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
@@ -62,20 +62,52 @@ function _initGroupTab() {
   }
 
   function _render() {
+    // Clean up any orphaned search dropdowns from body
+    document.querySelectorAll('.group-model-search-dropdown').forEach(el => el.remove());
     participantsEl.innerHTML = '';
     _groupParticipants.forEach((p, idx) => {
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 6px;background:color-mix(in srgb, var(--fg) 3%, transparent);border-radius:6px;';
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;background:color-mix(in srgb, var(--fg) 4%, transparent);border:1px solid color-mix(in srgb, var(--border) 60%, transparent);border-radius:8px;transition:background 0.15s;';
+      row.addEventListener('mouseenter', () => { row.style.background = 'color-mix(in srgb, var(--fg) 7%, transparent)'; });
+      row.addEventListener('mouseleave', () => { row.style.background = 'color-mix(in srgb, var(--fg) 4%, transparent)'; });
+
       const label = p.character ? p.character.name : (p.model ? p.model.display : '?');
-      const sublabel = p.model ? p.model.display : '';
-      row.innerHTML = `
-        <span style="flex:1;min-width:0;">
-          <span style="font-size:12px;font-weight:500;">${uiModule.esc(label)}</span>
-          ${sublabel && sublabel !== label ? '<span style="font-size:10px;opacity:0.35;margin-left:4px;">' + uiModule.esc(sublabel) + '</span>' : ''}
-        </span>
-        <button style="background:none;border:none;color:var(--fg);opacity:0.5;cursor:pointer;font-size:16px;padding:0 4px;line-height:1;position:relative;top:-4px;" data-idx="${idx}" title="Remove">&times;</button>
-      `;
-      row.querySelector('button').addEventListener('click', () => { _groupParticipants.splice(idx, 1); _render(); });
+      const providerBadge = p.model ? (providerLabel(p.model.url) || '') : '';
+      const logo = p.model ? (providerLogo(p.model.mid) || '') : '';
+
+      const leftWrap = document.createElement('span');
+      leftWrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex:1;min-width:0;overflow:hidden;';
+
+      if (logo) {
+        const logoWrap = document.createElement('span');
+        logoWrap.style.cssText = 'opacity:0.45;flex-shrink:0;display:flex;align-items:center;width:14px;height:14px;';
+        logoWrap.innerHTML = logo.replace(/(width|height)="[^"]*"/g, '').replace('<svg', '<svg width="14" height="14"');
+        leftWrap.appendChild(logoWrap);
+      }
+
+      const nameSpan = document.createElement('span');
+      nameSpan.style.cssText = 'font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
+      nameSpan.textContent = label;
+      leftWrap.appendChild(nameSpan);
+
+      if (providerBadge) {
+        const badge = document.createElement('span');
+        badge.style.cssText = 'font-size:8px;font-weight:700;padding:1px 5px;border-radius:4px;background:color-mix(in srgb, var(--fg) 8%, transparent);border:1px solid color-mix(in srgb, var(--fg) 14%, transparent);font-family:monospace;letter-spacing:0.3px;text-transform:uppercase;opacity:0.65;flex-shrink:0;';
+        badge.textContent = providerBadge;
+        leftWrap.appendChild(badge);
+      }
+
+      row.appendChild(leftWrap);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.style.cssText = 'background:none;border:none;color:var(--fg);opacity:0.4;cursor:pointer;font-size:15px;padding:0 2px;line-height:1;flex-shrink:0;transition:opacity 0.1s;';
+      removeBtn.title = 'Remove';
+      removeBtn.innerHTML = '&times;';
+      removeBtn.addEventListener('mouseenter', () => { removeBtn.style.opacity = '0.8'; });
+      removeBtn.addEventListener('mouseleave', () => { removeBtn.style.opacity = '0.4'; });
+      removeBtn.addEventListener('click', () => { _groupParticipants.splice(idx, 1); _render(); });
+      row.appendChild(removeBtn);
+
       participantsEl.appendChild(row);
     });
     // startBtn is shared — don't disable it
@@ -85,34 +117,164 @@ function _initGroupTab() {
     const [models, characters] = await Promise.all([_getModels(), _getCharacterList()]);
 
     const picker = document.createElement('div');
-    picker.style.cssText = 'display:flex;gap:4px;align-items:center;';
+    picker.className = 'group-add-picker-row';
+    picker.style.cssText = 'display:flex;gap:4px;align-items:stretch;margin-top:4px;';
 
     const charSel = document.createElement('select');
     charSel.className = 'preset-input';
-    charSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
+    charSel.style.cssText = 'font-size:11px;flex:1;box-sizing:border-box;';
     charSel.innerHTML = '<option value="">Empty...</option>' +
       characters.map(c => '<option value="' + c.id + '">' + uiModule.esc(c.name) + '</option>').join('');
 
-    const modelSel = document.createElement('select');
-    modelSel.className = 'preset-input';
-    modelSel.style.cssText = 'font-size:11px;flex:1;height:26px;';
-    modelSel.innerHTML = '<option value="">Model…</option>' +
-      models.map(m => '<option value="' + m.mid + '">' + uiModule.esc(m.display) + '</option>').join('');
+    const modelSelWrapper = document.createElement('div');
+    modelSelWrapper.style.cssText = 'position:relative;flex:1;display:flex;align-items:stretch;';
 
-    // Auto-add when model is selected
-    modelSel.addEventListener('change', () => {
-      if (!modelSel.value) return;
-      if (_groupParticipants.length >= 8) { uiModule.showToast('Max 8'); return; }
-      const entry = { character: null, model: null };
-      entry.model = models.find(m => m.mid === modelSel.value) || null;
-      if (charSel.value) entry.character = characters.find(c => c.id === charSel.value) || null;
-      _groupParticipants.push(entry);
-      picker.remove();
-      _render();
+    const modelInput = document.createElement('input');
+    modelInput.type = 'text';
+    modelInput.className = 'preset-input';
+    modelInput.placeholder = 'Search model…';
+    modelInput.style.cssText = 'font-size:11px;width:100%;padding-left:8px;padding-right:22px;box-sizing:border-box;transition:border-color 0.15s,box-shadow 0.15s;';
+
+    const chevron = document.createElement('span');
+    chevron.innerHTML = '&#9662;'; // downward triangle
+    chevron.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:9px;opacity:0.5;pointer-events:none;color:var(--fg);';
+
+    modelSelWrapper.appendChild(modelInput);
+    modelSelWrapper.appendChild(chevron);
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'group-model-search-dropdown';
+    dropdown.style.cssText = 'position:fixed;z-index:10000;background:var(--bg, #1e222a);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,0.45);max-height:200px;overflow-y:auto;display:none;padding:4px 0;';
+
+    function positionDropdown() {
+      const rect = modelInput.getBoundingClientRect();
+      dropdown.style.left = rect.left + 'px';
+      dropdown.style.top = (rect.bottom + 2) + 'px';
+      dropdown.style.width = rect.width + 'px';
+    }
+
+    const scrollResizeHandler = () => {
+      if (dropdown.style.display === 'block') {
+        positionDropdown();
+      }
+    };
+    window.addEventListener('scroll', scrollResizeHandler, { passive: true });
+    window.addEventListener('resize', scrollResizeHandler, { passive: true });
+
+    function renderList(filterText = '') {
+      dropdown.innerHTML = '';
+      const query = filterText.toLowerCase();
+      const filtered = models.filter(m => {
+        const provider = providerLabel(m.url) || 'API';
+        const searchString = `${provider} ${m.display} ${m.mid}`.toLowerCase();
+        return searchString.includes(query);
+      });
+
+      if (filtered.length === 0) {
+        const noResult = document.createElement('div');
+        noResult.style.cssText = 'padding:8px;font-size:11px;opacity:0.5;color:var(--fg);text-align:center;';
+        noResult.textContent = 'No models found';
+        dropdown.appendChild(noResult);
+        return;
+      }
+
+      filtered.forEach(m => {
+        const provider = providerLabel(m.url) || 'API';
+        const item = document.createElement('div');
+        item.style.cssText = 'display:flex;align-items:center;padding:6px 10px;font-size:11px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background 0.1s, color 0.1s;color:var(--fg);margin:2px 4px;border-radius:4px;';
+
+        const badgeSpan = document.createElement('span');
+        badgeSpan.style.cssText = 'display:inline-block;font-size:8px;font-weight:700;padding:1px 4px;border-radius:4px;background:color-mix(in srgb, var(--fg) 8%, transparent);color:var(--fg);opacity:0.75;border:1px solid color-mix(in srgb, var(--fg) 12%, transparent);margin-right:8px;font-family:monospace;letter-spacing:0.3px;text-transform:uppercase;flex-shrink:0;';
+        badgeSpan.textContent = provider;
+
+        const nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;';
+        nameSpan.textContent = m.display;
+
+        item.appendChild(badgeSpan);
+        item.appendChild(nameSpan);
+
+        item.addEventListener('mouseenter', () => {
+          item.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)';
+        });
+        item.addEventListener('mouseleave', () => {
+          item.style.background = '';
+        });
+
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          modelInput.value = m.display;
+          dropdown.style.display = 'none';
+
+          if (_groupParticipants.length >= 8) { uiModule.showToast('Max 8'); return; }
+          const entry = { character: null, model: null };
+          entry.model = m;
+          if (charSel.value) entry.character = characters.find(c => c.id === charSel.value) || null;
+          _groupParticipants.push(entry);
+          picker.remove();
+          _render();
+        });
+
+        dropdown.appendChild(item);
+      });
+    }
+
+    modelInput.addEventListener('focus', () => {
+      modelInput.style.borderColor = 'var(--accent, var(--red))';
+      modelInput.style.boxShadow = '0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent)';
+      if (!document.body.contains(dropdown)) document.body.appendChild(dropdown);
+      dropdown.style.display = 'block';
+      positionDropdown();
+      renderList(modelInput.value);
     });
 
+    modelInput.addEventListener('blur', () => {
+      // Delay so a click inside the dropdown isn't eaten by the blur
+      setTimeout(() => {
+        if (dropdown.style.display === 'none') {
+          modelInput.style.borderColor = '';
+          modelInput.style.boxShadow = '';
+        }
+      }, 150);
+    });
+
+    modelInput.addEventListener('input', () => {
+      dropdown.style.display = 'block';
+      positionDropdown();
+      renderList(modelInput.value);
+    });
+
+    modelInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const firstItem = dropdown.querySelector('div:not(:empty)');
+        if (firstItem && firstItem.textContent !== 'No models found') {
+          firstItem.click();
+        }
+      } else if (e.key === 'Escape') {
+        dropdown.style.display = 'none';
+        modelInput.blur();
+      }
+    });
+
+    const clickOutsideHandler = (e) => {
+      if (!modelSelWrapper.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.style.display = 'none';
+      }
+    };
+    document.addEventListener('click', clickOutsideHandler);
+
+    const originalRemove = picker.remove;
+    picker.remove = function() {
+      dropdown.remove();
+      document.removeEventListener('click', clickOutsideHandler);
+      window.removeEventListener('scroll', scrollResizeHandler);
+      window.removeEventListener('resize', scrollResizeHandler);
+      originalRemove.call(picker);
+    };
+
     picker.appendChild(charSel);
-    picker.appendChild(modelSel);
+    picker.appendChild(modelSelWrapper);
     participantsEl.appendChild(picker);
   });
 
