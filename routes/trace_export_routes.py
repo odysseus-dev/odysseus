@@ -32,7 +32,7 @@ async def export_trace(
     try:
         data = build_trace_records(
             db=db,
-            current_user=current_user,  # <--- Change this back! Remove the .id
+            current_user=current_user,
             session_id=payload.session_id,
             message_ids=payload.message_ids,
             label=payload.label,

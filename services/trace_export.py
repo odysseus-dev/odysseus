@@ -61,6 +61,9 @@ def build_trace_records(
         .all()
     )
 
+    if len(messages) != len(message_ids):
+        raise ValueError("Mismatch: Some requested messages do not belong to this session")
+
     messages_list = []
     for msg in messages:
         meta_val = None
@@ -105,7 +108,6 @@ def build_trace_records(
     export_json("chats_export", [session_properties])
     print(f"✓ Exported trace for session '{session_id}' user '{current_user}'")
     
-    # FIXED: Return the data so the router has something to send to the frontend!
     return session_properties
 
 # Tests:
@@ -163,7 +165,8 @@ def test_build_trace_records():
             session_id="8571ae67-b6f8-471c-bba7-6ce26e786d8d",
             message_ids=[
                 "6b19fa1a-df3c-49cf-95b2-6c7ffe37c975",
-                "adcadbf1-d197-491d-b7b6-63fba7c273e6",
+                # "adcadbf1-d197-491d-b7b6-63fba7c273e6",
+                "6b19fa1a-df3c-49cf-95b2-6c7ffe37c975",
             ],
             label="success",
             note="needs review",
