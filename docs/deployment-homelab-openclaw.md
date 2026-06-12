@@ -70,7 +70,7 @@ services:
       - ./config:/app/config:z
       # Event state, DB, logs (persisted across restarts)
       - ./data:/app/data:z
-      # Option A — direct Docker socket (full daemon access; use with trust)
+      # Option A — direct Docker socket (see security note below)
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Option B — docker-socket-proxy (recommended; see below)
       # (comment out Option A and uncomment Option B + the proxy service)
@@ -151,7 +151,7 @@ Set these in your `.env` file on the Pi (see `.env.example` for the full list).
 |---|---|---|
 | `./config` | `/app/config` | Homelab service registry (`homelab_services.json`) |
 | `./data` | `/app/data` | SQLite DB, event store (`homelab_events.json`), SSH keys, model cache |
-| `/var/run/docker.sock` | `/var/run/docker.sock:ro` | Docker container health checks (Option A) |
+| `/var/run/docker.sock` | `/var/run/docker.sock` | Docker container health checks (Option A) |
 
 ### Homelab service registry
 
@@ -166,19 +166,22 @@ cp config/homelab_services.example.json config/homelab_services.json
 
 ## Docker socket access options
 
-### Option A — direct socket mount (simpler)
+### Option A — direct socket mount
 
 ```yaml
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock:ro
 ```
 
-This gives Odysseus read-only access to the Docker daemon. Odysseus only calls
-`docker inspect` with `shell=False` and a hard-coded argument list; it never
-executes arbitrary commands. Suitable for personal/homelab use where you trust
-the container.
+> **Security note:** Mounting the Docker socket — even with `:ro` — still grants
+> significant daemon access. The `:ro` flag only prevents the bind mount itself
+> from being remounted; the underlying Unix socket remains fully writable.
+> Odysseus currently only issues a hard-coded `docker inspect` command with
+> `shell=False`, so it does not execute arbitrary commands or mutate containers.
+> For a homelab setup where you trust the container, this is acceptable. For a
+> more hardened deployment, use Option B.
 
-### Option B — docker-socket-proxy (safer)
+### Option B — docker-socket-proxy (recommended)
 
 Run [tecnativa/docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)
 as a sidecar. Configure it to expose only `CONTAINERS=1` (inspect) and block all
@@ -197,6 +200,9 @@ socket-proxy:
     - CONTAINERS=1
     - POST=0
 ```
+
+This restricts the API surface to container read operations only, regardless of
+what code runs inside the Odysseus container.
 
 ---
 
@@ -266,36 +272,43 @@ Run these from macOS after deployment. Replace the token and URL.
 TOKEN="ody_your_token_here"
 BASE="https://odysseus.yourdomain.ts.net"
 
-# 1. OpenClaw bridge health (no Converge check)
+# 1. OpenClaw bridge health
+#    Requires: chat scope
 curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/openclaw/health" | jq .
 
-# 2. Converge integration health (requires CONVERGE_BASE_URL + CONVERGE_API_KEY)
+# 2. Converge integration health
+#    Requires: converge:read scope; CONVERGE_BASE_URL + CONVERGE_API_KEY must be set
 curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/openclaw/converge/health" | jq .
 
-# 3. Homelab service health (requires homelab_services.json + homelab:read)
+# 3. Homelab service health (read-only, no event recording)
+#    Requires: homelab:read scope
 curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/homelab/health" | jq .
 
-# 4. Homelab health with event recording (requires events:write)
-curl -sf -X POST -H "Authorization: Bearer $TOKEN" \
-  "$BASE/api/openclaw/homelab/health/record" | jq .
+# 4. Homelab health with event recording
+#    Requires: homelab:read + events:write scopes
+curl -sf -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/homelab/health?record_events=true" | jq .
 
-# 5. Open event summary (requires events:read)
+# 5. Open event summary (top 10 open events, compact format)
+#    Requires: events:read scope
 curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/events/summary" | jq .
 
-# 6. List open events via OpenClaw route
+# 6. Full event list filtered to open, limited to 10
+#    Requires: events:read scope
 curl -sf -H "Authorization: Bearer $TOKEN" \
-  "$BASE/api/openclaw/homelab/events?status=open" | jq .
+  "$BASE/api/events?status=open&limit=10" | jq .
 ```
 
-Expected responses:
+Expected response shapes (fields vary; do not assert exact values):
 
-| Route | Healthy response |
+| Route | Shape |
 |---|---|
-| `/api/openclaw/health` | `{"status":"ok","message":"OpenClaw bridge is operational."}` |
-| `/api/openclaw/converge/health` | `{"status":"ok","converge_url":"http://converge:3000"}` |
-| `/api/homelab/health` | `{"status":"ok","services":[…]}` |
-| `/api/openclaw/homelab/health/record` | `{"status":"ok","message":"… no events recorded."}` |
-| `/api/events/summary` | `{"status":"ok","events":[]}` |
+| `GET /api/openclaw/health` | `{"status":"ok","message":"OpenClaw bridge reachable","owner":"…","odysseus":{"ok":true},"task_runner":{…}}` |
+| `GET /api/openclaw/converge/health` | `{"status":"ok","converge":{"configured":true,"ok":true,"health_status":200,…}}` |
+| `GET /api/homelab/health` | `{"status":"ok","services":[{"name":"…","status":"ok",…}]}` |
+| `GET /api/homelab/health?record_events=true` | Same shape; events written to `data/homelab_events.json` for unhealthy services |
+| `GET /api/events/summary` | `{"status":"ok","events":[…]}` (compact, max 10 open events) |
+| `GET /api/events?status=open&limit=10` | `{"status":"ok","events":[…]}` (full event objects) |
 
 ---
 
