@@ -43,6 +43,7 @@ export async function createSttStream(opts) {
         if (data.partial !== undefined && opts.onPartial) opts.onPartial(data.partial);
         if (data.final !== undefined && opts.onFinal) opts.onFinal(data.final);
         if (data.error && opts.onError) opts.onError(new Error(data.error));
+        if (data.wake && opts.onWake) opts.onWake();
       };
       ws.onerror = () => reject(new Error('WS connect failed'));
       ws.onclose = async () => {
@@ -94,6 +95,10 @@ export async function createSttStream(opts) {
 
     abortUtterance() {
       if (state.connected) state.ws.send(JSON.stringify({ event: 'abort' }));
+    },
+
+    setMode(mode) {
+      if (state.connected) state.ws.send(JSON.stringify({ mode }));
     },
 
     close() {

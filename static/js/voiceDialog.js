@@ -17,7 +17,7 @@ const THRESHOLD_LISTEN = 0.5;
 const THRESHOLD_PLAYBACK = 0.8;     // raised while TTS audible (self-echo guard)
 const MAX_ANSWER_WAIT_MS = 180000;
 
-// States: 'off' | 'listening' | 'transcribing' | 'waiting' | 'speaking'
+// States: 'off' | 'listening' | 'transcribing' | 'waiting' | 'speaking' | 'standby'
 let _state = 'off';
 let _btn = null;
 let _chip = null;
@@ -30,6 +30,7 @@ let _watchStartedAt = 0;
 let _sawTTSActivity = false;
 let _stt = null;        // sttStream instance or null
 let _useStream = false; // false → v1 single-shot POST fallback
+let _standbyEnabled = false; // toggle cycle: off → dialog → dialog+standby → off
 
 const ICON_DIALOG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/></svg>';
 
@@ -189,6 +190,20 @@ function _resumeListening() {
   _startWave();
 }
 
+function _enterStandby() {
+  if (_state === 'off') return;
+  if (!_standbyEnabled || !_useStream || !_stt || !_stt.connected) {
+    _resumeListening(); // no wake channel → stay in open-mic dialog
+    return;
+  }
+  _state = 'standby';
+  _engine.pause();                       // VAD off — server listens for the wake word
+  _stt.setMode('wake');
+  const mic = _micStream();
+  if (mic) { _stt.attach(mic).catch(() => { _useStream = false; _resumeListening(); }); }
+  _setUI('vd-on', 'standby', 'Voice dialog: standby — say "hey soloway" (click to stop)');
+}
+
 // ── Send + answer watch ──
 
 function _send(text) {
@@ -230,7 +245,7 @@ function _watchAnswer() {
       _setUI('vd-speaking', 'speaking', 'Voice dialog: speaking… (speak to interrupt, click to stop)');
     }
   } else if (_sawTTSActivity) {
-    _resumeListening();
+    _enterStandby();   // falls back to _resumeListening() when standby is off
     return;
   }
 
@@ -285,6 +300,10 @@ async function start() {
         console.warn('Voice dialog: stt stream degraded → single-shot fallback', err);
         _useStream = false;
       },
+      onWake: () => {
+        if (_state !== 'standby') return;
+        _resumeListening();
+      },
     });
     const micStream = _micStream();
     if (micStream) { await _stt.attach(micStream); _useStream = true; }
@@ -298,6 +317,7 @@ async function start() {
 }
 
 function stop() {
+  _standbyEnabled = false;
   _state = 'off';
   if (_watchTimer) { clearTimeout(_watchTimer); _watchTimer = null; }
   if (_bargeTimer) { clearTimeout(_bargeTimer); _bargeTimer = null; }
@@ -312,7 +332,18 @@ function stop() {
   _setUI(null, '', 'Voice dialog mode');
 }
 
-function _toggle() { if (_state === 'off') start(); else stop(); }
+function _toggle() {
+  if (_state === 'off') {
+    _standbyEnabled = false;
+    start();
+  } else if (!_standbyEnabled) {
+    _standbyEnabled = true;
+    _toast('Standby mode: after each reply, say "hey soloway" to continue');
+    if (_state === 'listening') _enterStandby();
+  } else {
+    stop();
+  }
+}
 
 function _toast(msg) {
   if (window.uiModule && window.uiModule.showToast) window.uiModule.showToast(msg);
