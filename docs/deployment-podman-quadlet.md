@@ -22,7 +22,7 @@ git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd ~/odysseus
 ```
 
-3. The default Odysseus branch is ```dev``` for a stable build use the main branch by running the following code.
+3. The default Odysseus branch is ```dev``` for a stable build use the main branch by running the following code
 ```bash
 git checkout main
 ```
@@ -52,7 +52,7 @@ mkdir -p ~/.config/containers/systemd/
 nano ~/.config/containers/systemd/odysseus.container
 ```
 
-3. Add the following into the file (use ```Ctrl+Shift+V``` to paste) and save and exit (```Ctrl+0```, ```Enter``` and ```Ctrl+X```)
+3. Add the following into the file (use ```Ctrl+Shift+V``` to paste) and save and exit (```Ctrl+0```, ```Enter``` and ```Ctrl+X```).
 ```Ini, TOML
 [Container]
 Image=localhost/odysseus:latest
@@ -114,27 +114,27 @@ WantedBy=timers.target
 ## Step 5: Start and Enable Everything
 Finally, we build the inital container and activate the automatic background tasks.
 
-1. Reload systemd so it recognizes all the new files we have created.
+1. Reload systemd so it recognizes all the new files we have created
 ```bash
 systemctl --user daemon-reload
 ```
 
-2. Start and enable the daily update timer.
+2. Start and enable the daily update timer
 ```bash
 systemctl --user enable --now odysseus-updater.timer
 ```
 
-3. Build the Odysseus image manually for this very first run.
+3. Build the Odysseus image manually for this very first run
 ```bash
 cd ~/odysseus && podman build -t localhost/odysseus:latest .
 ```
 
-4. Start your new Odysseus container.
+4. Start your new Odysseus container
 ```bash
 systemctl --user start odysseus
 ```
 
-## Step 6: You're done! Time to login. 
+## Step 6: You're done, time to login!
 If you installed Podman Desktop, you will see the odysseus container up and running and you can visit http://localhost:7000 to use it.
 
 When you visit http://localhost:7000 for the first time the app generates a temporary admin password, it can be found in the background system logs. Run the following to read the logs.
