@@ -343,8 +343,8 @@ class ToolIndex:
     _WEB_RE = re.compile(
         r"https?://|www\.|"
         r"\b(?:search|google|look up|weather|forecast|website|url)\b|"
-        r"\b(?:wyszukaj|sprawd[źz]|znajd[źz]|pogod[aeęy]|temperatur[aeęy]|"
-        r"internet(?:ie|u)?|online|ceny|cen[ay]|dzisiaj)\b|"
+        r"\b(?:wyszukaj|sprawd[źz]|znajd[źz]|poszukaj|pogod[aeęy]|temperatur[aeęy]|"
+        r"internet(?:ie|u)?|internecie|online|ceny|cen[ay]|kurs|dzisiaj|aktualna|najnowsza)\b|"
         r"wyszukaj\s+w\s+internecie|"
         r"sprawd[źz]\s+(?:w\s+internecie|online)|"
         r"znajd[źz]\s+informacje\s+o|"

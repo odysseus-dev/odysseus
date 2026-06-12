@@ -30,6 +30,14 @@ def test_polish_generic_search_force_includes_web_tools():
     assert "web_fetch" in tools
 
 
+def test_polish_price_search_force_includes_web_tools():
+    ti = _index_without_embeddings()
+    q = "Poszukaj najnowsza cena i kurs euro"
+    tools = ti.get_tools_for_query(q)
+    assert "web_search" in tools
+    assert "web_fetch" in tools
+
+
 def test_english_weather_search_still_force_includes_web_tools():
     ti = _index_without_embeddings()
     q = "Search the web for the weather forecast in London today"

@@ -39,6 +39,7 @@ try:
         _compute_final_metrics,
         _append_tool_results,
         _MCP_KEYWORDS,
+        _apply_agent_loop_tool_hints,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
 finally:
@@ -60,6 +61,25 @@ def test_import_stubs_do_not_leak_into_later_tests():
 
 def test_mcp_keyword_gate_matches_literal_mcp_requests():
     assert "mcp" in _MCP_KEYWORDS
+
+
+def test_agent_loop_polish_web_query_force_includes_web_tools():
+    tools = _apply_agent_loop_tool_hints(
+        {"bash"},
+        "Wyszukaj w internecie aktualna temperatura w Lubartowie",
+    )
+    assert {"web_search", "web_fetch"}.issubset(tools)
+    assert "bash" in tools
+
+
+def test_agent_loop_bare_domain_query_force_includes_web_tools():
+    tools = _apply_agent_loop_tool_hints({"bash"}, "check example.com")
+    assert {"web_search", "web_fetch"}.issubset(tools)
+
+
+def test_agent_loop_non_web_query_leaves_tools_unchanged():
+    original = {"bash"}
+    assert _apply_agent_loop_tool_hints(original, "write a short poem") is original
 
 
 # ---------------------------------------------------------------------------
