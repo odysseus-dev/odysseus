@@ -39,10 +39,18 @@ ALLOWED_SCOPES = {
     "events:resolve",
 }
 TOKEN_PROFILES = {
-    "chat": ["chat"],
-    "openclaw_bridge": ["chat", "converge:read"],
-    "codex_todos": ["todos:read", "todos:write"],
-    "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
+    'chat': ['chat'],
+    'openclaw_bridge': [
+        'chat',
+        'converge:read',
+        'homelab:read',
+        'events:read',
+        'events:write',
+        'events:ack',
+        'events:resolve',
+    ],
+    'codex_todos': ['todos:read', 'todos:write'],
+    'codex_email_drafts': ['email:read', 'email:draft', 'documents:read', 'documents:write'],
 }
 
 
