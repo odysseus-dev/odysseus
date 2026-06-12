@@ -5,11 +5,14 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 import os
 
+import logging
 import heapq
 import json
 import time
 from datetime import timedelta
 import threading
+
+logger = logging.getLogger(__name__)
 
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
@@ -126,17 +129,15 @@ class MemoryService:
         """Get frequently used/recent memories, using an mtime-validated memory cache."""
         file_path = self.manager.memory_file
 
-        with self._io_lock:
+        with self.manager.lock:
             try:
                 current_mtime = os.path.getmtime(file_path)
             except OSError:
                 current_mtime = 0.0
 
-            # Cache Hit: The disk file has not been touched since our last read.
             if MemoryService._hot_cache and current_mtime <= MemoryService._last_disk_mtime:
                 records = MemoryService._hot_cache
             else:
-                # Cache Miss: File modified (or first boot). Pay the I/O and JSON parse cost once.
                 records = self.manager.load_all()
                 if records:
                     MemoryService._hot_cache = records
@@ -151,14 +152,20 @@ class MemoryService:
             except (TypeError, ValueError):
                 return 0
 
+        def _safe_bool(val: Any) -> bool:
+            if isinstance(val, str):
+                return val.lower() in ('true', '1', 't', 'y', 'yes')
+            return bool(val)
+
         # O(N log K) heap extraction runs entirely in RAM.
         top_records = heapq.nlargest(
             limit,
             records,
             key=lambda x: (
-                x.get("pinned", False),
+                _safe_bool(x.get("pinned", False)),
                 _safe_int(x.get("uses")),
-                _safe_int(x.get("timestamp"))
+                _safe_int(x.get("timestamp")),
+                str(x.get("id", ""))  # Tie-breaker guarantees it never compares raw dicts
             )
         )
         return [self._to_memory(m) for m in top_records]
@@ -222,7 +229,7 @@ class MemoryService:
             return len(cold_memories)
 
     def delete(self, memory_id: str) -> bool:
-        """Delete a memory by ID."""
+       """Delete a memory by ID."""
        with self._io_lock:
             memories = self.manager.load_all()
             remaining = [m for m in memories if m.get("id") != memory_id]
