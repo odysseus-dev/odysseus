@@ -42,6 +42,7 @@ source material to review.
     "counts_by_kind": {
       "memory": 1,
       "skill": 1,
+      "conversation_thread": 1,
       "archive_document": 1
     },
     "warning_count": 0
@@ -59,6 +60,10 @@ Supported item kinds in the first pass:
 - `memory` — a candidate memory with `text`, `category`, `source`, and
   provenance metadata.
 - `skill` — a `SKILL.md` file with content and parsed frontmatter metadata.
+- `conversation_thread` — a normalized transcript thread from an exported chat
+  history. Message content is optional; adapters can preserve only thread
+  metadata, message counts, timestamps, and hashes when a manifest should stay
+  small or avoid embedding private transcript text.
 - `archive_document` — long-form source material. Content is optional; adapters
   can preserve only path/hash/size metadata when a manifest should stay small.
 
@@ -72,6 +77,7 @@ python3 scripts/agent_migration_manifest.py \
   --source-kind generic \
   --memory-json /path/to/memories.json \
   --skills-dir /path/to/skills \
+  --conversation-json /path/to/conversations.json \
   --archive /path/to/notes \
   --output /tmp/agent-migration.json
 ```
@@ -114,6 +120,49 @@ python3 scripts/agent_migration_manifest.py \
   --output /tmp/notes-manifest.json
 ```
 
+Conversation exports are also metadata-only by default:
+
+```bash
+python3 scripts/agent_migration_manifest.py \
+  --source-name chatgpt-export \
+  --source-kind chatgpt \
+  --conversation-json /path/to/conversations.json \
+  --output /tmp/chatgpt-conversations-manifest.json
+```
+
+The first pass supports generic conversation JSON such as:
+
+```json
+[
+  {
+    "id": "thread-1",
+    "title": "Project plan",
+    "messages": [
+      {"role": "user", "content": "Can we design this?"},
+      {"role": "assistant", "content": "Yes, start with a narrow slice."}
+    ]
+  }
+]
+```
+
+It also recognizes ChatGPT-style `mapping` exports from `conversations.json`.
+To embed normalized messages:
+
+```bash
+python3 scripts/agent_migration_manifest.py \
+  --source-name chatgpt-export \
+  --source-kind chatgpt \
+  --conversation-json /path/to/conversations.json \
+  --include-conversation-content \
+  --max-conversation-messages 2000 \
+  --output /tmp/chatgpt-conversations-with-content.json
+```
+
+Content embedding is explicit because exported chat histories can be huge and
+private. A future source-specific adapter can add ZIP traversal, attachment
+metadata, and provider-specific project/workspace fields while still emitting
+the same `conversation_thread` manifest item.
+
 ## Recommended apply behavior
 
 A future Odysseus importer should treat the manifest as untrusted user-provided
@@ -123,10 +172,13 @@ data and apply it in stages:
 2. Back up current `data/` state before writing anything.
 3. Import archive documents as documents or another searchable source, not as
    memory.
-4. Show memory candidates for review before saving through the normal memory
+4. Import conversation threads as searchable archived context first, with
+   citations back to the source thread. Do not turn whole transcripts into
+   memory.
+5. Show memory candidates for review before saving through the normal memory
    path.
-5. Import skills only after name/category conflict checks.
-6. Skip secrets by default. Credentials need explicit, provider-specific flows.
+6. Import skills only after name/category conflict checks.
+7. Skip secrets by default. Credentials need explicit, provider-specific flows.
 
 ## What belongs in source adapters?
 
@@ -134,7 +186,9 @@ Adapters can be source-specific. The core manifest should not be.
 
 For example, an OpenClaw adapter may know about OpenClaw's workspace files. A
 Hermes adapter may know about `~/.hermes/config.yaml` and `~/.hermes/skills`.
-A generic adapter may only know about memory JSON, `SKILL.md`, and Markdown
-folders.
+A ChatGPT adapter may know about `conversations.json`, uploaded-file metadata,
+and image attachment directories. A Claude adapter may know about Claude's
+export shape and project boundaries. A generic adapter may only know about
+memory JSON, conversation JSON, `SKILL.md`, and Markdown folders.
 
 Nonstandard folders should be adapter details, not required Odysseus concepts.

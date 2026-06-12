@@ -145,6 +145,141 @@ def test_archive_skips_symlinked_root(tmp_path):
     assert warnings[0].message == "archive path is a symlink; skipped"
 
 
+def test_conversation_json_imports_generic_threads_metadata_only(tmp_path):
+    migration = load_module()
+    path = tmp_path / "conversations.json"
+    path.write_text(
+        json.dumps(
+            {
+                "conversations": [
+                    {
+                        "id": "thread-1",
+                        "title": "Project plan",
+                        "created_at": "2026-06-01T00:00:00Z",
+                        "messages": [
+                            {"role": "user", "content": "Can we design this?"},
+                            {"role": "assistant", "content": "Yes, start with a narrow slice."},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items, warnings = migration.collect_conversation_json(path, "example-agent")
+
+    assert warnings == []
+    assert len(items) == 1
+    assert items[0]["kind"] == "conversation_thread"
+    assert items[0]["title"] == "Project plan"
+    assert items[0]["metadata"]["source_id"] == "thread-1"
+    assert items[0]["metadata"]["message_count"] == 2
+    assert items[0]["metadata"]["content_included"] is False
+    assert "messages" not in items[0]
+
+
+def test_conversation_json_can_embed_generic_thread_content(tmp_path):
+    migration = load_module()
+    path = tmp_path / "conversations.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Preference",
+                    "messages": [
+                        {"sender": "human", "content": [{"type": "text", "text": "Use terse replies."}]},
+                        {"sender": "ai", "text": "Noted."},
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    items, warnings = migration.collect_conversation_json(path, "example-agent", include_content=True)
+
+    assert warnings == []
+    assert items[0]["metadata"]["content_included"] is True
+    assert items[0]["messages"] == [
+        {"role": "user", "text": "Use terse replies."},
+        {"role": "assistant", "text": "Noted."},
+    ]
+
+
+def test_conversation_json_imports_chatgpt_mapping_ordered_by_time(tmp_path):
+    migration = load_module()
+    path = tmp_path / "conversations.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "chatgpt-thread",
+                    "title": "ChatGPT export",
+                    "mapping": {
+                        "b": {
+                            "message": {
+                                "id": "m2",
+                                "create_time": 20,
+                                "author": {"role": "assistant"},
+                                "content": {"content_type": "text", "parts": ["Second"]},
+                            }
+                        },
+                        "a": {
+                            "message": {
+                                "id": "m1",
+                                "create_time": 10,
+                                "author": {"role": "user"},
+                                "content": {"content_type": "text", "parts": ["First"]},
+                            }
+                        },
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    items, warnings = migration.collect_conversation_json(path, "chatgpt", include_content=True)
+
+    assert warnings == []
+    assert items[0]["metadata"]["source_format"] == "chatgpt_mapping"
+    assert items[0]["messages"] == [
+        {"role": "user", "text": "First", "created_at": "1970-01-01T00:00:10Z", "source_id": "m1"},
+        {"role": "assistant", "text": "Second", "created_at": "1970-01-01T00:00:20Z", "source_id": "m2"},
+    ]
+
+
+def test_conversation_content_respects_message_limit(tmp_path):
+    migration = load_module()
+    path = tmp_path / "conversations.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Long thread",
+                    "messages": [
+                        {"role": "user", "content": "one"},
+                        {"role": "assistant", "content": "two"},
+                    ],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    items, warnings = migration.collect_conversation_json(
+        path,
+        "example-agent",
+        include_content=True,
+        max_messages=1,
+    )
+
+    assert "messages" not in items[0]
+    assert items[0]["metadata"]["content_included"] is False
+    assert warnings[0].message == "skipped conversation content at index 0: over 1 messages"
+
+
 def test_archive_missing_path_warns(tmp_path):
     migration = load_module()
     missing = tmp_path / "missing"
@@ -153,6 +288,32 @@ def test_archive_missing_path_warns(tmp_path):
 
     assert items == []
     assert warnings[0].message == "archive path does not exist"
+
+
+def test_main_writes_manifest_with_conversation_thread(tmp_path):
+    migration = load_module()
+    conversation_path = tmp_path / "conversations.json"
+    output_path = tmp_path / "manifest.json"
+    conversation_path.write_text(
+        json.dumps([{"title": "A thread", "messages": [{"role": "user", "content": "hello"}]}]),
+        encoding="utf-8",
+    )
+
+    exit_code = migration.main(
+        [
+            "--source-name",
+            "example-agent",
+            "--conversation-json",
+            str(conversation_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+    manifest = json.loads(output_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert manifest["summary"]["counts_by_kind"] == {"conversation_thread": 1}
+    assert manifest["items"][0]["title"] == "A thread"
 
 
 def test_main_writes_manifest(tmp_path):

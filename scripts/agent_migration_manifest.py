@@ -101,6 +101,14 @@ def memory_metadata(item: Any, source_path: Path, index: int) -> dict[str, Any]:
     return metadata
 
 
+def payload_items(payload: Any, keys: tuple[str, ...]) -> Any:
+    if isinstance(payload, dict):
+        for key in keys:
+            if isinstance(payload.get(key), list):
+                return payload[key]
+    return payload
+
+
 def collect_memory_json(path: Path, source_name: str) -> tuple[list[dict[str, Any]], list[InputWarning]]:
     warnings: list[InputWarning] = []
     try:
@@ -108,11 +116,7 @@ def collect_memory_json(path: Path, source_name: str) -> tuple[list[dict[str, An
     except Exception as exc:
         return [], [InputWarning(str(path), f"could not read JSON: {exc}")]
 
-    if isinstance(payload, dict):
-        for key in ("memories", "memory", "items", "data"):
-            if isinstance(payload.get(key), list):
-                payload = payload[key]
-                break
+    payload = payload_items(payload, ("memories", "memory", "items", "data"))
 
     if not isinstance(payload, list):
         return [], [InputWarning(str(path), "expected a JSON list or an object containing a memory list")]
@@ -141,6 +145,205 @@ def collect_memory_json(path: Path, source_name: str) -> tuple[list[dict[str, An
                 "metadata": memory_metadata(item, path, index),
             }
         )
+    return items, warnings
+
+
+def normalize_timestamp(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return (
+                datetime.fromtimestamp(float(value), timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        except (OverflowError, OSError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def normalize_role(value: Any) -> str:
+    role = str(value or "unknown").strip().lower()
+    if role in {"human", "user"}:
+        return "user"
+    if role in {"assistant", "ai", "bot", "model"}:
+        return "assistant"
+    if role in {"system", "tool"}:
+        return role
+    return role or "unknown"
+
+
+def content_part_text(part: Any) -> str:
+    if isinstance(part, str):
+        return part
+    if isinstance(part, dict):
+        for key in ("text", "content", "value"):
+            value = part.get(key)
+            if isinstance(value, str):
+                return value
+        if part.get("type") == "text" and isinstance(part.get("text"), str):
+            return part["text"]
+    return ""
+
+
+def normalize_message_text(message: dict[str, Any]) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(text for text in (content_part_text(part).strip() for part in content) if text)
+    if isinstance(content, dict):
+        parts = content.get("parts")
+        if isinstance(parts, list):
+            return "\n".join(text for text in (content_part_text(part).strip() for part in parts) if text)
+        for key in ("text", "content", "value"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+    for key in ("text", "body", "message"):
+        value = message.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def normalize_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    author = message.get("author") if isinstance(message.get("author"), dict) else {}
+    role = (
+        message.get("role")
+        or message.get("sender")
+        or message.get("speaker")
+        or author.get("role")
+        or author.get("name")
+    )
+    text = normalize_message_text(message).strip()
+    if not text:
+        return None
+    normalized: dict[str, Any] = {
+        "role": normalize_role(role),
+        "text": text,
+    }
+    timestamp = normalize_timestamp(message.get("created_at") or message.get("create_time") or message.get("timestamp"))
+    if timestamp:
+        normalized["created_at"] = timestamp
+    message_id = message.get("id")
+    if message_id is not None:
+        normalized["source_id"] = str(message_id)
+    return normalized
+
+
+def chatgpt_mapping_messages(conversation: dict[str, Any]) -> list[dict[str, Any]]:
+    mapping = conversation.get("mapping")
+    if not isinstance(mapping, dict):
+        return []
+    rows: list[tuple[float, int, dict[str, Any]]] = []
+    for index, node in enumerate(mapping.values()):
+        if not isinstance(node, dict) or not isinstance(node.get("message"), dict):
+            continue
+        message = node["message"]
+        sort_value = message.get("create_time")
+        try:
+            sort_key = float(sort_value)
+        except (TypeError, ValueError):
+            sort_key = float(index)
+        normalized = normalize_message(message)
+        if normalized:
+            rows.append((sort_key, index, normalized))
+    return [row[2] for row in sorted(rows, key=lambda row: (row[0], row[1]))]
+
+
+def conversation_messages(conversation: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    mapped = chatgpt_mapping_messages(conversation)
+    if mapped:
+        return mapped, "chatgpt_mapping"
+    for key in ("messages", "chat_messages", "turns"):
+        raw_messages = conversation.get(key)
+        if isinstance(raw_messages, list):
+            messages = [
+                normalized
+                for raw in raw_messages
+                if isinstance(raw, dict)
+                for normalized in [normalize_message(raw)]
+                if normalized
+            ]
+            return messages, key
+    return [], "unknown"
+
+
+def conversation_title(conversation: dict[str, Any], index: int) -> str:
+    for key in ("title", "name", "summary"):
+        value = conversation.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return f"Conversation {index + 1}"
+
+
+def collect_conversation_json(
+    path: Path,
+    source_name: str,
+    *,
+    include_content: bool = False,
+    max_messages: int = 2000,
+) -> tuple[list[dict[str, Any]], list[InputWarning]]:
+    warnings: list[InputWarning] = []
+    try:
+        payload = read_json(path)
+    except Exception as exc:
+        return [], [InputWarning(str(path), f"could not read JSON: {exc}")]
+
+    payload = payload_items(payload, ("conversations", "conversation", "items", "data"))
+    if isinstance(payload, dict):
+        payload = [payload]
+    if not isinstance(payload, list):
+        return [], [InputWarning(str(path), "expected a JSON list or an object containing a conversation list")]
+
+    items: list[dict[str, Any]] = []
+    for index, conversation in enumerate(payload):
+        if not isinstance(conversation, dict):
+            warnings.append(InputWarning(str(path), f"skipped conversation at index {index}: expected object"))
+            continue
+        messages, format_hint = conversation_messages(conversation)
+        if not messages:
+            warnings.append(InputWarning(str(path), f"skipped conversation at index {index}: no text messages found"))
+            continue
+        title = conversation_title(conversation, index)
+        source_id = conversation.get("id") or conversation.get("uuid") or conversation.get("conversation_id")
+        text_digest = sha256_text("\n".join(f"{msg['role']}:{msg['text']}" for msg in messages))
+        metadata: dict[str, Any] = {
+            "source_path": str(path),
+            "source_index": index,
+            "source_format": format_hint,
+            "message_count": len(messages),
+            "text_sha256": text_digest,
+            "content_included": False,
+        }
+        if source_id is not None:
+            metadata["source_id"] = str(source_id)
+        for key in ("create_time", "created_at", "update_time", "updated_at"):
+            timestamp = normalize_timestamp(conversation.get(key))
+            if timestamp:
+                metadata[f"source_{key}"] = timestamp
+        item: dict[str, Any] = {
+            "id": stable_id("conversation", source_name, path, source_id or index, text_digest),
+            "kind": "conversation_thread",
+            "title": title,
+            "source": source_name,
+            "metadata": metadata,
+        }
+        if include_content:
+            if len(messages) > max_messages:
+                warnings.append(
+                    InputWarning(
+                        str(path),
+                        f"skipped conversation content at index {index}: over {max_messages} messages",
+                    )
+                )
+            else:
+                item["messages"] = messages
+                item["metadata"]["content_included"] = True
+        items.append(item)
     return items, warnings
 
 
@@ -314,6 +517,16 @@ def build_manifest(args) -> dict[str, Any]:
         items.extend(collected)
         warnings.extend(got_warnings)
 
+    for path in args.conversation_json:
+        collected, got_warnings = collect_conversation_json(
+            path,
+            args.source_name,
+            include_content=args.include_conversation_content,
+            max_messages=args.max_conversation_messages,
+        )
+        items.extend(collected)
+        warnings.extend(got_warnings)
+
     if args.archive:
         collected, got_warnings = collect_archive_paths(
             args.archive,
@@ -371,6 +584,13 @@ def parse_args(argv: list[str] | None = None):
         help="Text/Markdown/JSON file or directory to preserve as archive documents.",
     )
     parser.add_argument(
+        "--conversation-json",
+        action="append",
+        type=Path,
+        default=[],
+        help="Conversation export JSON. Supports generic message lists and ChatGPT-style conversations.json.",
+    )
+    parser.add_argument(
         "--include-archive-content",
         action="store_true",
         help="Embed archive document content in the manifest. By default only metadata is included.",
@@ -380,6 +600,17 @@ def parse_args(argv: list[str] | None = None):
         type=int,
         default=256_000,
         help="Maximum bytes to embed per archive file when --include-archive-content is used.",
+    )
+    parser.add_argument(
+        "--include-conversation-content",
+        action="store_true",
+        help="Embed normalized conversation messages. By default only thread metadata is included.",
+    )
+    parser.add_argument(
+        "--max-conversation-messages",
+        type=int,
+        default=2000,
+        help="Maximum messages to embed per conversation when --include-conversation-content is used.",
     )
     parser.add_argument("--output", type=Path, help="Write manifest JSON to this path instead of stdout.")
     parser.add_argument("--compact", action="store_true", help="Write compact JSON without indentation.")
