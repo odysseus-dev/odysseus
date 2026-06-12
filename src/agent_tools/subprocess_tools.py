@@ -118,7 +118,7 @@ class BashTool:
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"bash: timed out after {DEFAULT_BASH_TIMEOUT}s — process killed", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            return {"error": f"bash: timed out after {int(DEFAULT_BASH_TIMEOUT/60)}m — process killed. For long-running commands (builds, installs, batch processing), use #!bg as the FIRST line to run in the BACKGROUND. Example: #!bg\\ncd /project && for d in */; do bun tsc --noEmit; done", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:
