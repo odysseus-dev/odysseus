@@ -40,10 +40,16 @@ DEFAULT_SETTINGS = {
     # (e.g., urgency alert email). Example: "https://chat.example.com"
     "app_public_url": "",
     "tts_enabled": True,
-    "tts_provider": "disabled",
+    # Read-aloud is on by default with the local CPU Piper provider. A default
+    # low-tier voice is auto-downloaded on first startup; when Piper or the
+    # voice is unavailable the service falls back to browser Web Speech.
+    "tts_provider": "piper",
     "tts_model": "tts-1",
     "tts_voice": "alloy",
     "tts_speed": "1",
+    # Global fallback voice for the Piper provider when a user has no per-user
+    # tts_voice preference (or their saved voice file was removed).
+    "tts_piper_default_voice": "en_US-lessac-low",
     "stt_enabled": False,
     "stt_provider": "disabled",
     "stt_model": "base",
@@ -247,6 +253,8 @@ _PER_USER_KEYS = {
     "default_endpoint_id", "default_model", "default_model_fallbacks",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
+    # TTS voice is a personal preference — provider/speed stay admin-global.
+    "tts_voice",
 }
 
 

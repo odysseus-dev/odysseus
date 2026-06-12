@@ -1568,6 +1568,12 @@ export function createMsgFooter(msgElement) {
   }
 
   footer.appendChild(actions);
+
+  // Read-aloud (TTS) speaker button — every AI message gets one when a TTS
+  // provider is enabled. addAITTSButton defers until the availability check
+  // resolves and no-ops when TTS is disabled, so this is safe on page load.
+  addAITTSButton(msgElement, msgElement.dataset?.raw || '');
+
   return footer;
 }
 

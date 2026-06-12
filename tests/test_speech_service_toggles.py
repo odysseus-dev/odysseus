@@ -6,7 +6,7 @@ def test_tts_disabled_toggle_blocks_synthesis(monkeypatch, tmp_path):
     service = TTSService(cache_dir=str(tmp_path))
     calls = {"endpoint": 0, "kokoro": 0}
 
-    monkeypatch.setattr(service, "_load_settings", lambda: {
+    monkeypatch.setattr(service, "_load_settings", lambda owner="": {
         "tts_enabled": False,
         "tts_provider": "endpoint:voice-endpoint",
         "tts_model": "tts-1",

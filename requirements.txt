@@ -35,6 +35,11 @@ python-dateutil
 # fetch across Radicale, Nextcloud, Apple, Fastmail; we'd be reinventing
 # the protocol without it.
 caldav
+# Local text-to-speech (read-aloud) via Piper — ONNX models on CPU, the
+# default TTS provider. Cheap to ship by default: onnxruntime is already a
+# core transitive dep via fastembed. Voices download into data/piper_voices/
+# (a default low-tier voice is fetched automatically on first startup).
+piper-tts
 cryptography
 bcrypt
 mcp

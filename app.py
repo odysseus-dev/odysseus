@@ -140,6 +140,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/api/tts",             # CPU synthesis of long answers + voice downloads can exceed 45s
 )
 
 
@@ -970,6 +971,18 @@ async def _startup_event():
             logger.debug(f"Warmup ping skipped: {e}")
 
     _startup_tasks.append(asyncio.create_task(_warmup_endpoints()))
+
+    # TTS voice bootstrap — first boot with the Piper provider has no voice
+    # files yet (they're 20-60MB, not shipped in the repo). Download the
+    # default low-tier voice in the background; until it lands (or if the box
+    # is offline) the TTS service reports a browser-TTS fallback instead.
+    async def _ensure_piper_voice():
+        try:
+            await asyncio.to_thread(tts_service.ensure_default_voice)
+        except Exception as e:
+            logger.warning(f"Piper voice bootstrap failed (non-critical, will use browser TTS fallback): {e}")
+
+    _startup_tasks.append(asyncio.create_task(_ensure_piper_voice()))
 
     # Keep-alive: ping endpoints every 60 seconds to prevent cold starts
     async def _keepalive_loop():
