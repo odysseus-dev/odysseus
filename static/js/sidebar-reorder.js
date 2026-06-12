@@ -47,6 +47,8 @@ let sidebarDragContentTop = null;
 let sidebarDragContentBottom = null;
 /** @type {HTMLElement | null} */
 let activeDragListRoot = null;
+/** @type {HTMLElement | null} */
+let cachedFallbackEl = null;
 let sidebarClampRafId = null;
 let sidebarDragPointerX = 0;
 let sidebarDragPointerY = 0;
@@ -57,6 +59,8 @@ let sidebarPointerProxyUpHandler = null;
 let lastPointerMoveEvent = null;
 let dragStartIndex = null;
 let pointerReorderHandled = false;
+let sidebarLockTopDirty = false;
+let lastClampedTop = null;
 
 /** Keeps the in-list source row hidden after Sortable strips chosenClass on drop. */
 const TOOL_REORDER_SOURCE_HOLD = 'tool-reorder-drag-source';
@@ -70,10 +74,6 @@ function sortableForList(listRoot) {
   if (listRoot?.id === SIDEBAR_TOOLS_LIST_ID) return sidebarSortable;
   if (listRoot?.id === RAIL_TOOLS_LIST_ID) return railSortable;
   return null;
-}
-
-function findActiveToolFallback() {
-  return document.querySelector('.tool-sortable-fallback');
 }
 
 /** Lowest Y for the drag mirror — top of #sidebar-tools-list, below the Tools header. */
@@ -94,6 +94,7 @@ function refreshSidebarDragLockTop() {
   const container = document.getElementById('sidebar');
   const fallbackTop = container?.getBoundingClientRect().top ?? sidebarDragBounds.top;
   sidebarDragBounds.top = resolveSidebarToolsDragFloor(fallbackTop);
+  sidebarLockTopDirty = false;
 }
 
 function captureDragBounds(sourceItem, listRoot) {
@@ -118,6 +119,7 @@ function captureDragBounds(sourceItem, listRoot) {
     width: itemRect.width,
   };
   sidebarDragListBounds = listRoot.getBoundingClientRect();
+  sidebarLockTopDirty = isSidebarList;
 }
 
 function effectiveDragPointerY() {
@@ -219,6 +221,9 @@ function refreshSidebarDragContentExtents(listRoot) {
   const lastRect = items[items.length - 1].getBoundingClientRect();
   sidebarDragContentTop = firstRect.top;
   sidebarDragContentBottom = lastRect.bottom;
+  if (activeDragListRoot?.id === SIDEBAR_TOOLS_LIST_ID) {
+    sidebarLockTopDirty = true;
+  }
 }
 
 function pointerPastDragContentEdge(pointerY) {
@@ -338,19 +343,25 @@ function clampSidebarFallbackPosition(fallbackEl) {
     height,
   );
 
+  if (nextTop !== lastClampedTop) {
+    fallbackEl.style.top = `${nextTop}px`;
+    lastClampedTop = nextTop;
+  }
+
   fallbackEl.style.position = 'fixed';
   fallbackEl.style.transform = 'none';
   fallbackEl.style.webkitTransform = 'none';
   fallbackEl.style.margin = '0';
-  fallbackEl.style.top = `${nextTop}px`;
   fallbackEl.style.left = `${left}px`;
   fallbackEl.style.width = `${width}px`;
 }
 
 function sidebarClampLoop() {
-  refreshSidebarDragLockTop();
-  const fallback = findActiveToolFallback();
-  if (fallback) clampSidebarFallbackPosition(fallback);
+  if (sidebarLockTopDirty) refreshSidebarDragLockTop();
+  if (!cachedFallbackEl || !cachedFallbackEl.isConnected) {
+    cachedFallbackEl = document.querySelector('.tool-sortable-fallback');
+  }
+  if (cachedFallbackEl) clampSidebarFallbackPosition(cachedFallbackEl);
   sidebarClampRafId = requestAnimationFrame(sidebarClampLoop);
 }
 
@@ -358,6 +369,8 @@ function startSidebarFallbackClamp(sourceItem, sortableEvt, listRoot) {
   stopSidebarFallbackClamp();
   captureDragBounds(sourceItem, listRoot);
   refreshSidebarDragContentExtents(listRoot);
+  cachedFallbackEl = null;
+  lastClampedTop = null;
   const original = sortableEvt?.originalEvent;
   const itemRect = sourceItem?.getBoundingClientRect();
   if (original && typeof original.clientY === 'number' && itemRect) {
@@ -386,6 +399,9 @@ function stopSidebarFallbackClamp() {
   sidebarDragContentTop = null;
   sidebarDragContentBottom = null;
   activeDragListRoot = null;
+  cachedFallbackEl = null;
+  lastClampedTop = null;
+  sidebarLockTopDirty = false;
 }
 
 function motionReduced() {
