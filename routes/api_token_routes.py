@@ -32,6 +32,7 @@ ALLOWED_SCOPES = {
     "memory:write",
     "cookbook:read",
     "cookbook:launch",
+    "homelab:read",
 }
 TOKEN_PROFILES = {
     "chat": ["chat"],
