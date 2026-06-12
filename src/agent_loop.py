@@ -1896,6 +1896,7 @@ async def stream_agent_loop(
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
                         _relevant_tools = set(ALWAYS_AVAILABLE)
+                        _relevant_tools.update(workspace_file_tools())
         except Exception as e:
             logger.warning(f"[tool-rag] Retrieval failed, using keyword fallback: {e}")
             _relevant_tools = None
