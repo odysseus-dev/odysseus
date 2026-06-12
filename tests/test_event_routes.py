@@ -76,7 +76,7 @@ async def test_severity_mapping(mock_event_store, monkeypatch):
     def mock_load_services():
         return [{"name": "s1"}, {"name": "s2"}]
         
-    async def mock_check_service_health(srv):
+    async def mock_check_service_health(srv, *, client=None):
         if srv["name"] == "s1":
             return {"name": "s1", "status": "error", "container_status": "exited"}
         return {"name": "s2", "status": "degraded", "http_status": 502}
@@ -102,7 +102,7 @@ async def test_stable_dedupe(mock_event_store, monkeypatch):
         return [{"name": "pihole"}]
         
     status_to_return = {"name": "pihole", "status": "error", "http_status": 500}
-    async def mock_check_service_health(srv):
+    async def mock_check_service_health(srv, *, client=None):
         return status_to_return
 
     monkeypatch.setattr("routes.homelab_routes._load_services", mock_load_services)

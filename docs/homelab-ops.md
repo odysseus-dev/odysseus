@@ -83,3 +83,43 @@ curl -H "Authorization: Bearer <token>" http://localhost:7000/api/homelab/health
 }
 ```
 *Note: The top-level `status` can be `"ok"`, `"degraded"`, or `"error"` depending on the individual service statuses.*
+
+## Performance & Concurrency (Phase 2.1)
+
+### Concurrent health checks
+
+All service checks run concurrently using `asyncio.gather()` rather than sequentially. A semaphore limits the number of checks in flight at once.
+
+**Environment variable:** `HOMELAB_HEALTH_CONCURRENCY`
+
+| Value | Behaviour |
+|---|---|
+| Unset | Default: **5** concurrent checks |
+| Valid integer (1–50) | Uses that value |
+| `0` or negative | Clamped to **1** |
+| `> 50` | Clamped to **50** |
+| Non-numeric | Logs a warning and falls back to **5** |
+
+```bash
+# Example: allow up to 10 parallel checks
+HOMELAB_HEALTH_CONCURRENCY=10
+```
+
+### Shared HTTP client
+
+A single `httpx.AsyncClient` is created per health request and reused across all service checks, avoiding repeated TLS handshakes and connection overhead.
+
+### Non-blocking Docker checks
+
+`docker inspect` is executed in a thread pool via `asyncio.to_thread()` so it cannot block the event loop. `shell=False` is always enforced; the container name comes only from the registry config, never from user input.
+
+### Serial event recording
+
+Even though health checks run concurrently, **event recording is always serial**. After all checks complete, results are looped in order and written one at a time to `data/homelab_events.json`. This prevents concurrent writes that could corrupt the JSON store and ensures deduplication works correctly.
+
+```
+Concurrent phase:  [check s1] [check s2] [check s3]  ← asyncio.gather
+                        ↓
+Serial phase:      record s1 → record s2 → record s3  ← sequential loop
+```
+
