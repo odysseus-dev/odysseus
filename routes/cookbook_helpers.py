@@ -125,8 +125,6 @@ def _shell_path(p: str) -> str:
         return '"$HOME"'
     if p.startswith("~/"):
         return '"$HOME/' + p[2:] + '"'
-    # Escape backslashes so Windows paths survive double-quoted shell expansion
-    p = p.replace("\\", "\\\\")
     return '"' + p + '"'
 
 

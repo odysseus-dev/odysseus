@@ -1,7 +1,7 @@
 """Tests for Windows-specific bug fixes from issue #2642.
 
 Covers:
-- _shell_path() backslash escaping (Bug B)
+- _shell_path() handling of Windows paths (Bug B)
 - snapshot_download repo_id JSON quoting in code runner (Bug A)
 - Stale endpoint cache cleared on re-registration (Bug C)
 """
@@ -14,20 +14,18 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Bug B — _shell_path() backslash escaping
+# Bug B — _shell_path() Windows path handling
 # ---------------------------------------------------------------------------
 
 from routes.cookbook_helpers import _shell_path
 
 
-def test_shell_path_escapes_backslashes_in_windows_path():
-    """Windows GGUF paths with backslashes must be double-escaped so the shell
-    does not misinterpret \\U, \\M, etc. as escape sequences."""
+def test_shell_path_passes_through_windows_path_unchanged():
+    """Windows GGUF paths with backslashes pass through unescaped: inside a
+    double-quoted bash string, a backslash followed by an ordinary character
+    is preserved literally, so no extra escaping is needed."""
     result = _shell_path("C:\\Users\\Models\\my-model.gguf")
-    assert result == '"C:\\\\Users\\\\Models\\\\my-model.gguf"'
-    # The raw string inside the quotes should have doubled backslashes
-    inner = result[1:-1]
-    assert "\\\\" in inner
+    assert result == '"C:\\Users\\Models\\my-model.gguf"'
 
 
 def test_shell_path_no_regression_unix_path():
