@@ -1887,6 +1887,39 @@ async def stream_agent_loop(
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
+    # The skill index injected by _build_system_prompt tells the model to
+    # call `manage_skills action=view`, and Jaccard-matched skills are pasted
+    # into the prompt as procedures to follow — but neither path goes through
+    # tool selection, so the model can be handed a procedure naming tools
+    # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
+    # in lockstep: manage_skills is callable whenever any skill is indexed,
+    # and a matched skill's declared requires_toolsets ride along with it.
+    if not guide_only and _relevant_tools is not None:
+        try:
+            from services.memory.skills import SkillsManager
+            from src.constants import DATA_DIR
+            _skills_on = True
+            try:
+                from routes.prefs_routes import _load_for_user as _load_prefs
+                _skills_on = (_load_prefs(owner) or {}).get("skills_enabled", True)
+            except Exception:
+                pass
+            _sm = SkillsManager(DATA_DIR)
+            _owner_skills = _sm.load(owner=owner) if _skills_on else []
+            if _owner_skills:
+                _relevant_tools.add("manage_skills")
+                if _retrieval_query:
+                    for _sk in _sm.get_relevant_skills(
+                        _retrieval_query, skills=_owner_skills,
+                        threshold=0.25, max_items=3,
+                    ):
+                        _relevant_tools.update(
+                            t for t in (_sk.get("requires_toolsets") or [])
+                            if t in TOOL_SECTIONS
+                        )
+        except Exception as _e:
+            logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
@@ -2141,9 +2174,17 @@ async def stream_agent_loop(
         elif _is_api_model:
             # Filter schemas by RAG-selected tools (if available)
             if _relevant_tools:
+                # _build_base_prompt unions _ADMIN_TOOLS into the prompt
+                # sections when admin intent fires — the schema list must
+                # offer the same names, or the model reads prose describing
+                # tools it cannot call and substitutes the nearest schema
+                # it does have (e.g. manage_memory for manage_skills).
+                _schema_names = set(_relevant_tools)
+                if _needs_admin:
+                    _schema_names |= _ADMIN_TOOLS
                 base_schemas = [
                     s for s in FUNCTION_TOOL_SCHEMAS
-                    if s.get("function", {}).get("name") in _relevant_tools
+                    if s.get("function", {}).get("name") in _schema_names
                 ]
                 _mcp_filtered = [
                     s for s in mcp_schemas
@@ -2678,6 +2719,44 @@ async def stream_agent_loop(
                         f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
                     )
                 desc, result = await _tool_task
+
+            # A skill the model just loaded can prescribe tools that weren't
+            # RAG-selected this turn (declared via requires_toolsets in its
+            # frontmatter). Union them into the selection so the NEXT round's
+            # schema list includes them — otherwise the model reads "use
+            # grep" from the skill it fetched but has no grep schema to call.
+            if (
+                block.tool_type == "manage_skills"
+                and _relevant_tools is not None
+                and not result.get("error")
+            ):
+                _ms_args = {}
+                _ms_raw = (block.content or "").strip()
+                if _ms_raw.startswith("{"):
+                    try:
+                        _ms_args = json.loads(_ms_raw)
+                    except json.JSONDecodeError:
+                        _ms_args = {}
+                _ms_name = str(_ms_args.get("name", "") or "").strip()
+                if _ms_name and _ms_args.get("action") in ("view", "view_ref"):
+                    try:
+                        from services.memory.skills import SkillsManager as _SkM
+                        from src.constants import DATA_DIR as _DD
+                        for _sk in _SkM(_DD).load(owner=owner):
+                            if _sk.get("name") == _ms_name:
+                                _new = {
+                                    t for t in (_sk.get("requires_toolsets") or [])
+                                    if t in TOOL_SECTIONS and t not in _relevant_tools
+                                }
+                                if _new:
+                                    _relevant_tools.update(_new)
+                                    logger.info(
+                                        "[tool-rag] skill '%s' unlocked tools for next round: %s",
+                                        _ms_name, sorted(_new),
+                                    )
+                                break
+                    except Exception as _e:
+                        logger.debug(f"skill requires_toolsets unlock skipped: {_e}")
 
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
