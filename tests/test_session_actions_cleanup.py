@@ -21,7 +21,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
-from core.database import ChatMessage as DbMessage, Session as DbSession, utcnow_naive
+from core.database import ChatMessage as DbMessage, GroupChatState, Session as DbSession, utcnow_naive
 import src.session_actions as session_actions
 
 
@@ -162,5 +162,58 @@ def test_auto_sort_still_deletes_old_throwaway_sessions(monkeypatch):
     try:
         assert db.query(DbSession).filter(DbSession.id == sid).first() is None
         assert "Cleaned 1 sessions" in result
+    finally:
+        db.close()
+
+
+def test_auto_sort_keeps_group_parent_and_participants(monkeypatch):
+    session_factory = _make_session_factory()
+    _install_session_factory(monkeypatch, session_factory)
+
+    old_time = utcnow_naive() - timedelta(hours=2)
+    parent_id = "p-" + uuid.uuid4().hex
+    child_ids = ["c-" + uuid.uuid4().hex, "c-" + uuid.uuid4().hex]
+    db = session_factory()
+    try:
+        for sid, name in [
+            (parent_id, "[GRP] Athena, Mistral"),
+            (child_ids[0], "[GRP] Athena"),
+            (child_ids[1], "[GRP] Mistral"),
+        ]:
+            db.add(
+                DbSession(
+                    id=sid,
+                    owner="alice",
+                    name=name,
+                    endpoint_url="",
+                    model="",
+                    archived=False,
+                    message_count=0,
+                    created_at=old_time,
+                    updated_at=old_time,
+                    last_accessed=old_time,
+                    last_message_at=old_time,
+                )
+            )
+        db.commit()
+        db.add(
+            GroupChatState(
+                parent_session_id=parent_id,
+                owner="alice",
+                mode="parallel",
+                state={"participantSessions": child_ids},
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    result = asyncio.run(session_actions.run_auto_sort("alice", skip_llm=True))
+
+    db = session_factory()
+    try:
+        remaining_ids = {row.id for row in db.query(DbSession).all()}
+        assert {parent_id, *child_ids} <= remaining_ids
+        assert "Cleaned 0 sessions" in result
     finally:
         db.close()
