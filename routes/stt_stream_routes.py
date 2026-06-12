@@ -17,6 +17,7 @@ import time
 
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from services.stt.wakeword import get_wakeword_detector
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ def setup_stt_stream_routes(stt_service):
         buf = bytearray()
         last_partial_at = time.monotonic()  # start clock now; first partial only after interval
         last_partial_text = None
+        mode = "dictate"            # 'dictate' | 'wake'
+        detector = None
 
         async def _transcribe() -> str | None:
             if not buf:
@@ -62,6 +65,18 @@ def setup_stt_stream_routes(stt_service):
                     break
 
                 if msg.get("bytes") is not None:
+                    if mode == "wake":
+                        if detector is None:
+                            continue
+                        fired = await asyncio.to_thread(detector.feed, msg["bytes"])
+                        if fired:
+                            detector.reset()
+                            mode = "dictate"
+                            buf.clear()
+                            last_partial_text = None
+                            await ws.send_json({"wake": True})
+                        continue
+
                     if not getattr(stt_service, "available", False):
                         await ws.send_json({"error": "STT service not available"})
                         continue
@@ -77,8 +92,23 @@ def setup_stt_stream_routes(stt_service):
 
                 if msg.get("text") is not None:
                     try:
-                        event = json.loads(msg["text"]).get("event")
+                        payload = json.loads(msg["text"])
+                        event = payload.get("event")
+                        req_mode = payload.get("mode")
                     except (json.JSONDecodeError, AttributeError):
+                        continue
+                    if req_mode == "wake":
+                        detector = get_wakeword_detector()
+                        if detector is None:
+                            await ws.send_json({"error": "wake word unavailable"})
+                        else:
+                            detector.reset()
+                            mode = "wake"
+                            buf.clear()
+                            last_partial_text = None
+                        continue
+                    if req_mode == "dictate":
+                        mode = "dictate"
                         continue
                     if event == "abort":
                         buf.clear()

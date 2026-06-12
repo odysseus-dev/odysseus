@@ -90,3 +90,45 @@ def test_stream_unavailable_service():
         ws.send_text(json.dumps({"event": "end"}))
         msg = ws.receive_json()
         assert "error" in msg
+
+
+class _FakeDetector:
+    def __init__(self, fire_on_feed=2):
+        self._n = 0
+        self._fire_on = fire_on_feed
+        self.resets = 0
+
+    def feed(self, pcm):
+        self._n += 1
+        return self._n >= self._fire_on
+
+    def reset(self):
+        self.resets += 1
+
+
+def test_wake_mode_fires_and_switches_to_dictate(monkeypatch):
+    import routes.stt_stream_routes as mod
+    detector = _FakeDetector(fire_on_feed=2)
+    monkeypatch.setattr(mod, "get_wakeword_detector", lambda: detector)
+    client = _client()
+    with client.websocket_connect("/api/stt/stream") as ws:
+        ws.send_text(json.dumps({"mode": "wake"}))
+        ws.send_bytes(_pcm16(1280))     # feed 1 — no wake
+        ws.send_bytes(_pcm16(1280))     # feed 2 — fires
+        msg = ws.receive_json()
+        assert msg == {"wake": True}
+        # auto-switched to dictate: audio now buffers for transcription
+        ws.send_bytes(_pcm16(16000))
+        ws.send_text(json.dumps({"event": "end"}))
+        msg = ws.receive_json()
+        assert msg["final"] == "len=16000"
+
+
+def test_wake_mode_unavailable_detector(monkeypatch):
+    import routes.stt_stream_routes as mod
+    monkeypatch.setattr(mod, "get_wakeword_detector", lambda: None)
+    client = _client()
+    with client.websocket_connect("/api/stt/stream") as ws:
+        ws.send_text(json.dumps({"mode": "wake"}))
+        msg = ws.receive_json()
+        assert "error" in msg
