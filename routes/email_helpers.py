@@ -304,6 +304,7 @@ OWNER_SCOPED_EMAIL_CACHE_TABLES = {
     "email_ai_replies",
     "email_calendar_extractions",
     "email_urgency_alerts",
+    "sender_signatures",
 }
 
 
@@ -339,6 +340,55 @@ def _ensure_owner_scoped_email_cache_table(conn, table: str, create_sql: str, co
     except Exception as _mig_e:
         import logging as _lg
         _lg.getLogger(__name__).warning(f"{table} owner-migration skipped: {_mig_e}")
+
+
+def _ensure_sender_signatures_table(conn):
+    """Create/migrate learned sender signatures to an owner-scoped cache."""
+    create_sql = """
+        CREATE TABLE IF NOT EXISTS sender_signatures (
+            from_address TEXT,
+            owner TEXT DEFAULT '',
+            signature_text TEXT,
+            sample_count INTEGER,
+            last_built_at TEXT NOT NULL,
+            model_used TEXT,
+            source TEXT,
+            PRIMARY KEY (from_address, owner)
+        )
+    """
+    conn.execute(create_sql)
+    try:
+        info = conn.execute("PRAGMA table_info(sender_signatures)").fetchall()
+        cols = [r[1] for r in info]
+        pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
+        if "owner" in cols and pk_cols == ["from_address", "owner"]:
+            return
+
+        conn.execute("ALTER TABLE sender_signatures RENAME TO sender_signatures__old")
+        conn.execute(create_sql)
+        old_cols = [r[1] for r in conn.execute("PRAGMA table_info(sender_signatures__old)").fetchall()]
+        copy_cols = [
+            c for c in (
+                "from_address",
+                "signature_text",
+                "sample_count",
+                "last_built_at",
+                "model_used",
+                "source",
+            )
+            if c in old_cols
+        ]
+        source_owner = "COALESCE(owner, '')" if "owner" in old_cols else "''"
+        conn.execute(
+            f"INSERT OR IGNORE INTO sender_signatures "
+            f"({', '.join([*copy_cols, 'owner'])}) "
+            f"SELECT {', '.join([*copy_cols, source_owner])} "
+            f"FROM sender_signatures__old"
+        )
+        conn.execute("DROP TABLE sender_signatures__old")
+    except Exception as _mig_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"sender_signatures owner-migration skipped: {_mig_e}")
 
 
 def attachment_extract_dir(folder: str, uid: str) -> Path:
@@ -559,20 +609,10 @@ def _init_scheduled_db():
             conn.execute("ALTER TABLE email_boundaries ADD COLUMN turns_json TEXT")
     except Exception:
         pass
-    # Per-sender signature cache. Populated by `learn_sender_signatures`
-    # action: the LLM extracts the common trailing block across N emails
-    # from each sender; the renderer folds it consistently for every
-    # future email from that address.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sender_signatures (
-            from_address TEXT PRIMARY KEY,
-            signature_text TEXT,
-            sample_count INTEGER,
-            last_built_at TEXT NOT NULL,
-            model_used TEXT,
-            source TEXT
-        )
-    """)
+    # Per-sender signature cache. Populated by `learn_sender_signatures`.
+    # Message sender addresses are global, so signatures must be scoped to the
+    # mailbox owner before `/read` returns them to the renderer.
+    _ensure_sender_signatures_table(conn)
     conn.commit()
     conn.close()
 
@@ -738,7 +778,16 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
     port = int(port or 993)
     if starttls:
         conn = imaplib.IMAP4(host, port, timeout=timeout)
-        conn.starttls()
+        try:
+            conn.starttls()
+        except Exception:
+            # Don't leak the open plain socket if the STARTTLS upgrade is
+            # rejected; close it before propagating. (#3174)
+            try:
+                conn.shutdown()
+            except Exception:
+                pass
+            raise
     elif port == 993:
         conn = imaplib.IMAP4_SSL(host, port, timeout=timeout)
     else:
@@ -753,10 +802,14 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
     imaplib._MAXLINE = 50_000_000
     return conn
 
-def _imap_connect(account_id: str | None = None, owner: str = ""):
+def _imap_connect(account_id: str | None = None, owner: str = "",
+                  timeout: int = _IMAP_TIMEOUT_SECONDS):
     # SECURITY: passing `owner` scopes the fallback config lookup so a brand
     # new user doesn't get connected against another user's default mailbox
     # when they have no account configured.
+    #
+    # `timeout` is overridable so short-lived callers (e.g. the service-health
+    # probe) can impose a tighter budget than the default IMAP timeout.
     cfg = _get_email_config(account_id, owner=owner)
     # Connection mode:
     #   STARTTLS on → plain + upgrade
@@ -769,9 +822,20 @@ def _imap_connect(account_id: str | None = None, owner: str = ""):
         cfg["imap_host"],
         cfg["imap_port"],
         starttls=bool(cfg.get("imap_starttls")),
-        timeout=_IMAP_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    try:
+        conn.login(cfg["imap_user"], cfg["imap_password"])
+    except Exception:
+        # A failed AUTHENTICATE (e.g. an Office 365 app password on an
+        # MFA-enabled tenant, #3174) otherwise orphans the already-connected
+        # socket; close it before propagating so a misconfigured account
+        # can't leak one descriptor per retry / background poller pass.
+        try:
+            conn.shutdown()
+        except Exception:
+            pass
+        raise
     return conn
 
 

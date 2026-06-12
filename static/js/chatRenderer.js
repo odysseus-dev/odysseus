@@ -863,6 +863,20 @@ export function stripToolBlocks(text) {
 }
 
 /**
+ * Plain-text payload for the message copy buttons: the reply as the renderer
+ * displays it — tool blocks and <think> reasoning stripped. dataset.raw keeps
+ * the full model output (chat.js even embeds the elapsed time into the
+ * <think> tag for reload persistence), so copying it verbatim leaks the
+ * thinking block (#3722). Falls back to the raw text when stripping leaves
+ * nothing (e.g. turns interrupted mid-thinking).
+ */
+export function copyMessageText(msgElement) {
+  const raw = msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '';
+  const { content } = markdownModule.extractThinkingBlocks(stripToolBlocks(raw));
+  return content || raw;
+}
+
+/**
  * Build a collapsible sources box (used by both research and web search).
  */
 export function buildSourcesBox(sources, type, expanded) {
@@ -1372,7 +1386,7 @@ export function createMsgFooter(msgElement) {
     { id: 'copy', icon: COPY_ICON, title: 'Copy message', cls: 'footer-copy-btn', html: true, handler(e) {
       e.stopPropagation();
       const btn = e.currentTarget;
-      uiModule.copyToClipboard(msgElement.dataset.raw || msgElement.querySelector('.body')?.textContent || '');
+      uiModule.copyToClipboard(copyMessageText(msgElement));
       btn.innerHTML = CHECK_ICON;
       setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1500);
     }},
@@ -2118,6 +2132,28 @@ export function addMessage(role, content, modelName, metadata) {
       return lastWrap;
     }
 
+    // --- Wake-task / supervisor system check-in ---
+    // The self-wake mechanism injects "Did you finish?" as a user message
+    // (or persisted history shows a "[Task] Self-check: <id>" envelope)
+    // so the agent loop re-enters and re-checks status. Render as a
+    // normal user-style bubble — same chrome as a real user message,
+    // just with role "Supervisor" and a short summary body — instead of
+    // a slim system chip. Matches chat style and integrates cleanly
+    // into the conversation flow.
+    let _isWakeCheck = !!(metadata?.wake_check_in || metadata?.hidden_from_user_view);
+    if (!_isWakeCheck && typeof textRaw === 'string') {
+      // Also catch historical messages persisted as "[Task] Self-check: <sid>"
+      // (older wake tasks that didn't set wake_check_in metadata).
+      if (/^\s*\[Task\]\s+Self-check:/i.test(textRaw)) {
+        _isWakeCheck = true;
+      }
+    }
+    if (_isWakeCheck) {
+      // Supervisor self-check messages are an internal control signal —
+      // skip rendering entirely so they don't show up in the conversation.
+      return null;
+    }
+
     // --- Standard single-bubble message ---
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
@@ -2422,6 +2458,7 @@ const chatRenderer = {
   updateSessionCostUI,
   roleTimestamp,
   stripToolBlocks,
+  copyMessageText,
   safeToolScreenshotSrc,
   safeDisplayImageSrc,
   buildSourcesBox,

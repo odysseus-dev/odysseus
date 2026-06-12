@@ -519,6 +519,15 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 else bool(req.notifications_enabled) if req.notifications_enabled is not None
                 else True
             )
+            # Validate chained task belongs to same owner
+            if req.then_task_id:
+                chain_target = db.query(ScheduledTask).filter(
+                    ScheduledTask.id == req.then_task_id
+                ).first()
+                if not chain_target:
+                    raise HTTPException(400, "Chained task not found")
+                if chain_target.owner != user:
+                    raise HTTPException(403, "Cannot chain to another user's task")
             task = ScheduledTask(
                 id=task_id,
                 owner=user,
@@ -974,7 +983,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "tag", "label", "move", "archive", "delete", "mark", "schedule",
         )
         try:
-            from src.agent_tools import get_mcp_manager
+            from src.tool_utils import get_mcp_manager
             mcp = get_mcp_manager()
             if mcp:
                 for tool in mcp.get_all_tools():
