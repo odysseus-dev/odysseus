@@ -871,15 +871,29 @@ async def _execute_tool_block_impl(
         # so is_public_blocked_tool() above already rejected them.
         mcp = get_mcp_manager()
         qualified = f"mcp__email__{tool}"
+        desc = f"email: {tool}"
         if mcp:
-            try:
-                args = json.loads(content) if content.strip().startswith("{") else {}
-            except (json.JSONDecodeError, TypeError):
-                args = {}
-            desc = f"email: {tool}"
-            result = await mcp.call_tool(qualified, args)
+            _raw = content.strip()
+            args = {}
+            if _raw.startswith(("{", "[")):
+                try:
+                    args = json.loads(_raw)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+            if not isinstance(args, dict):
+                # The fence parser accepts JSON arrays as inline args, but
+                # every email tool takes an object. Answer with a correctable
+                # error instead of silently calling with no args (#3966 class).
+                result = {
+                    "error": (
+                        f"'{tool}' arguments must be a JSON object, "
+                        'e.g. {"uid": "..."} — got a JSON array/value instead.'
+                    ),
+                    "exit_code": 1,
+                }
+            else:
+                result = await mcp.call_tool(qualified, args)
         else:
-            desc = f"email: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
     elif tool.startswith("mcp__"):
         # MCP tool dispatch

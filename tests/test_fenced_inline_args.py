@@ -71,6 +71,25 @@ def test_markdown_info_string_is_not_executable_bash():
     assert blocks == [], blocks
 
 
+def test_empty_email_fence_is_an_executable_call():
+    # ```list_email_accounts``` with no body is a real shape local models emit
+    # for no-arg tools — it must dispatch (with empty args), not vanish.
+    blocks = parse_tool_blocks('```list_email_accounts\n```')
+    assert [(b.tool_type, b.content) for b in blocks] == [("list_email_accounts", "")]
+
+
+def test_empty_non_email_fence_still_skipped():
+    # Empty bash/python/other fences stay inert: empty content is nothing to run.
+    for tag in ("bash", "python", "manage_memory"):
+        assert parse_tool_blocks(f'```{tag}\n```') == []
+
+
+def test_empty_email_fence_is_stripped_from_display():
+    # Executed (empty-args) email fences mirror like any executed fence.
+    text = 'One sec.\n```list_email_accounts\n```\nDone.'
+    assert strip_tool_blocks(text) == 'One sec.\n\nDone.'
+
+
 def test_inline_json_array_args_still_parse():
     # The narrowed same-line rule must keep accepting JSON args: { or [.
     blocks = parse_tool_blocks('```bulk_email {"action": "archive", "uids": [1, 2]}\n```')
@@ -141,8 +160,9 @@ def test_markdown_info_string_fence_is_left_intact_in_display():
 def test_parse_strip_mirror_across_fence_shape_grid():
     # Invariant for ANY single fence: either it executes AND is stripped, or
     # it doesn't execute AND stays fully visible. The one allowed exception is
-    # an empty tool-shaped fence (no header, no body): never executed, but
-    # stripped as noise — pre-PR behavior, kept deliberately.
+    # an empty NON-EMAIL tool fence (no header, no body): never executed, but
+    # stripped as noise — pre-PR behavior, kept deliberately. (Empty EMAIL
+    # fences execute with empty args, so they fall under the first branch.)
     from src.agent_tools import TOOL_TAGS
 
     tags = ["bash", "python", "list_emails", "bulk_email", "manage_memory",

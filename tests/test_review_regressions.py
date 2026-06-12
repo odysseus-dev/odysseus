@@ -747,6 +747,67 @@ async def test_disable_tool_email_covers_full_builtin_set(monkeypatch):
     assert store["disabled_tools"] == []
 
 
+def _install_admin_auth_stub(monkeypatch):
+    auth_mod = _install_core_auth_stub(monkeypatch)
+
+    class FakeAdminAuth:
+        is_configured = True
+
+        def is_admin(self, username):
+            return True
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAdminAuth())
+
+
+class _FakeMcpManager:
+    def __init__(self):
+        self.calls = []
+
+    async def call_tool(self, name, args):
+        self.calls.append((name, args))
+        return {"output": "ok", "exit_code": 0}
+
+
+@pytest.mark.asyncio
+async def test_bare_email_dispatch_rejects_non_object_json_args(monkeypatch):
+    """The fence parser accepts JSON arrays as inline args, but email tools
+    take objects — a correctable error must come back instead of a silent
+    empty-args call (same class as #3966)."""
+    _install_admin_auth_stub(monkeypatch)
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    mcp = _FakeMcpManager()
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="bulk_email", content='["10", "11"]'),
+        owner="admin-user",
+    )
+    assert result["exit_code"] == 1
+    assert "JSON object" in result["error"]
+    assert mcp.calls == [], "non-object args must never reach the MCP server"
+
+
+@pytest.mark.asyncio
+async def test_bare_email_dispatch_empty_content_calls_with_empty_args(monkeypatch):
+    """An empty fence (```list_email_accounts``` with no body) dispatches with
+    {} args — the no-arg call shape local models really emit."""
+    _install_admin_auth_stub(monkeypatch)
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    mcp = _FakeMcpManager()
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="list_email_accounts", content=""),
+        owner="admin-user",
+    )
+    assert result["exit_code"] == 0
+    assert mcp.calls == [("mcp__email__list_email_accounts", {})]
+
+
 def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     auth_mod = _install_core_auth_stub(monkeypatch)
     from src.tool_security import blocked_tools_for_owner
