@@ -1186,6 +1186,28 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_archived_memory",
+            "description": (
+                "Search the cold storage archive (memory glacier) for past events, "
+                "preferences, or facts that are no longer in your immediate hot memory. "
+                "Use this tool when the user asks about something you vaguely remember "
+                "or explicitly asks you to 'think back' or 'check your archives'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search terms to look for in the archived memory."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
 ]
 
 

@@ -112,6 +112,47 @@ class MemoryManager:
             with open(self.memory_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
 
+    def search_glacier(self, query: str, owner: str = None, limit: int = 5) -> List[Dict]:
+        """
+        Synchronously scan the cold storage JSONL for semantic matches.
+        This is an expensive O(N) disk read, meant to be used sparingly
+        when triggered by a heuristic 'nudge' or an explicit tool call.
+        """
+        glacier_path = os.path.join(os.path.dirname(self.memory_file), "memory_glacier.jsonl")
+        if not os.path.exists(glacier_path):
+            return []
+
+        query_tokens = set(tokenize(query.lower()))
+        if not query_tokens:
+            return []
+
+        results = []
+        try:
+            with open(glacier_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        mem = json.loads(line)
+                        if owner and mem.get("owner") != owner:
+                            continue
+
+                        mem_text = mem.get("text", "").lower()
+                        mem_tokens = set(tokenize(mem_text))
+                        if not mem_tokens: continue
+
+                        score = len(query_tokens & mem_tokens) / len(query_tokens | mem_tokens)
+                        if score > 0.08:  # Faint semantic match threshold
+                            results.append((score, mem))
+                    except json.JSONDecodeError:
+                        continue
+        except Exception as e:
+            logger.error("Failed to read glacier: %s", e)
+
+        results.sort(key=lambda x: x, reverse=True)
+        return [m for _, m in results[:limit]]
+
+
     def load_all(self) -> List[Dict]:
         """Load all memory entries from JSON file (unfiltered)."""
         if not os.path.exists(self.memory_file):

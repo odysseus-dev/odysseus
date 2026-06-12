@@ -4030,3 +4030,26 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}
+
+# interface for cold memory storage
+# TODO: this file could probably use some organization or sharding
+async def recall_archived_memory(query: str, owner: str = None, memory_manager=None, **kwargs) -> str:
+    """
+    Tool implementation to actively read from memory_glacier.jsonl.
+    """
+    if not memory_manager:
+        return "Error: Memory manager is not available."
+
+    # Offload the synchronous disk read to a background thread to prevent blocking the async event loop
+    import asyncio
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(
+        None,
+        lambda: memory_manager.search_glacier(query, owner=owner, limit=10)
+    )
+
+    if not results:
+        return "I searched the deep archives but couldn't find anything matching that query."
+
+    formatted_results = "\n".join([f"- {mem['text']} (Archived)" for mem in results])
+    return f"I recalled the following from the archives:\n{formatted_results}"

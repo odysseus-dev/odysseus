@@ -51,7 +51,7 @@ class ChatProcessor:
     # Minimum similarity score for RAG results to be injected
     RAG_SIMILARITY_THRESHOLD = 0.35
 
-    def _hybrid_retrieve(self, message: str, mem_entries: list, k: int = 5) -> list:
+    def _hybrid_retrieve(self, message: str, mem_entries: list, k: int = 5, owner: Optional[str] = None) -> list:
         """Retrieve memories relevant to the message.
 
         Uses BM25-style keyword scoring + optional vector similarity.
@@ -101,6 +101,7 @@ class ChatProcessor:
         # ── Score all candidates ──
         has_vector = self.memory_vector and self.memory_vector.healthy
         vector_scores = {}
+        highest_faint_score = 0.0
 
         if has_vector:
             results = self.memory_vector.search(message, k=min(k * 3, 20))
@@ -152,6 +153,16 @@ class ChatProcessor:
 
             if final > 0.12:
                 scored.append((final, mem))
+            elif final > 0.06:
+                highest_faint_score = max(highest_faint_score, final)
+
+        # nudge: if we missed the primary threshold but caught a faint trace, think harder
+        if not scored and highest_faint_score > 0.06:
+            logger.info("Faint memory trace detected (score: %.2f). Triggering glacier scan.", highest_faint_score)
+            glacier_hits = self.memory_manager.search_glacier(message, owner=owner, limit=k)
+            if glacier_hits:
+                for gm in glacier_hits:
+                    scored.append((0.15, gm)) # Boost to ensure injection
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [mem for _, mem in scored[:k]]
@@ -224,7 +235,7 @@ class ChatProcessor:
                         _used_ids.append(m["id"])
 
             if extended:
-                relevant = self._hybrid_retrieve(message, extended, k=3)
+                relevant = self._hybrid_retrieve(message, extended, k=3, owner=owner)
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(
