@@ -802,15 +802,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         } else {
           fd.append('use_web', 'true');
         }
+      } else if (isAgentMode) {
+        fd.append('allow_web_search', 'false');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
         // Research always runs in chat mode — override agent if set
         fd.set('mode', 'chat');
       }
-      if (el('bash-toggle').checked) {
-        fd.append('allow_bash', 'true');
-      }
+      fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -818,6 +818,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const incognitoChk = el('incognito-toggle');
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
+      }
+      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      if (_ws) {
+        fd.append('workspace', _ws);
       }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
@@ -1781,6 +1785,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
                 }
+              } else if (json.type === 'workspace_rejected') {
+                // Server refused to bind the posted workspace (deleted folder,
+                // file path, sensitive dir, filesystem root). Clear the stored
+                // value so the pill stops claiming a confinement that is not in
+                // effect, and tell the user.
+                const _wsPath = (json.data && json.data.path) || '';
+                import('./workspace.js').then((m) => {
+                  const ws = m.default || m;
+                  if (ws && ws.setWorkspace) ws.setWorkspace('');
+                });
+                uiModule.showToast(
+                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; running without confinement`,
+                  6000
+                );
+                continue;
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback
                 var _fbData = json.data || {};
