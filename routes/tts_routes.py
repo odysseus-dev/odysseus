@@ -149,6 +149,16 @@ def setup_tts_routes(tts_service):
                     tts_service.synthesize_to_base64, request.text, owner
                 )
                 if not audio_b64:
+                    settings = await asyncio.to_thread(tts_service._load_settings, owner)
+                    configured = settings.get("tts_provider", "")
+                    if configured in ("piper", "local"):
+                        raise HTTPException(
+                            status_code=503,
+                            detail={
+                                "message": "Local TTS synthesis failed — using browser voices",
+                                "fallback": "browser",
+                            },
+                        )
                     raise HTTPException(
                         status_code=500,
                         detail={"message": "Synthesis failed"}
@@ -160,6 +170,19 @@ def setup_tts_routes(tts_service):
                     lambda: tts_service.synthesize(request.text, owner=owner)
                 )
                 if not audio_data:
+                    # Piper/Kokoro were configured but synthesis failed at runtime
+                    # (corrupt voice, ONNX error, etc.) — degrade to browser TTS
+                    # instead of a hard 500 that silences read-aloud.
+                    settings = await asyncio.to_thread(tts_service._load_settings, owner)
+                    configured = settings.get("tts_provider", "")
+                    if configured in ("piper", "local"):
+                        raise HTTPException(
+                            status_code=503,
+                            detail={
+                                "message": "Local TTS synthesis failed — using browser voices",
+                                "fallback": "browser",
+                            },
+                        )
                     raise HTTPException(
                         status_code=500,
                         detail={"message": "Synthesis failed"}

@@ -992,15 +992,23 @@ async function initTtsSettings() {
       if (!res.ok) throw new Error('PUT tts_voice returned ' + res.status);
       ttsMsg.textContent = 'Voice saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       // Client audio cache is keyed by text only — old voice's audio is stale.
-      if (window.aiTTSManager) { window.aiTTSManager.clearCache(); window.aiTTSManager.checkAvailability(); }
+      // Stop playback first so we never pause UI while audio keeps running on a
+      // revoked blob URL or the previous voice.
+      if (window.aiTTSManager) {
+        window.aiTTSManager.stop();
+        window.aiTTSManager.clearCache();
+        window.aiTTSManager.checkAvailability();
+      }
     } catch (e) { ttsMsg.textContent = 'Failed to save voice'; ttsMsg.style.color = 'var(--red)'; }
   }
 
   async function saveAndClearCache() {
     await saveTTS();
     fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
-    // Client audio cache is keyed by text only — model/speed changes make it stale.
-    if (window.aiTTSManager) window.aiTTSManager.clearCache();
+    if (window.aiTTSManager) {
+      window.aiTTSManager.stop();
+      window.aiTTSManager.clearCache();
+    }
   }
 
   provSel.addEventListener('change', async function() {
@@ -1011,8 +1019,10 @@ async function initTtsSettings() {
     else if (prov === 'piper') await loadPiperVoices(userVoice || globalSettings.tts_piper_default_voice || '');
     updateVisibility();
     saveTTS();
-    // Cached client audio belongs to the previous provider
-    if (window.aiTTSManager) window.aiTTSManager.clearCache();
+    if (window.aiTTSManager) {
+      window.aiTTSManager.stop();
+      window.aiTTSManager.clearCache();
+    }
   });
   modelSelect.addEventListener('change', saveAndClearCache);
   modelInput.addEventListener('change', saveTTS);

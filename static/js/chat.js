@@ -2771,12 +2771,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               // Flush remaining partial sentence and attach the real button
               window.aiTTSManager.streamingEnd(accumulated);
               window.aiTTSManager.streamingAttachButton(ttsBtn, resetFn);
-              // If still playing sentences from the stream, show pause control
-              if (window.aiTTSManager.isPlaying || window.aiTTSManager._processing) {
-                ttsBtn.innerHTML = TTS_ICONS.pause;
-                ttsBtn.classList.add('playing');
-                ttsBtn.style.color = '#ccc';
-                ttsBtn.title = 'Pause';
+              // Sync icon with the real playback session (may already be loading/playing)
+              const mgr = window.aiTTSManager;
+              const pb = mgr._playback;
+              if (pb && pb.button === ttsBtn && pb.state !== 'idle') {
+                mgr._applyButtonState(ttsBtn, pb.state);
               }
             } else {
               // Non-streaming fallback (autoPlay toggled mid-stream, etc.)

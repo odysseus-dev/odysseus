@@ -9,40 +9,59 @@ const ICON_PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="curren
 const ICON_RESUME = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
 const ICON_LOADING = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9" stroke-dasharray="42" stroke-dashoffset="12" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
 
+/** @typedef {'idle'|'loading'|'playing'|'paused'} PlaybackState */
+
 class AITTSManager {
     constructor() {
-        this.currentAudio = null;
-        this.isPlaying = false;
-        this.isPaused = false;
         this.available = false;
         this.useBrowserTTS = false;
         this.browserVoice = '';
         this.playbackSpeed = 1;
         this._provider = 'disabled';
         this.autoPlay = false;
-        this.cache = new Map(); // Client-side audio cache
-        this._activeButton = null; // Speaker button of the message now playing/paused
+        this.cache = new Map();
 
-        // Queue for sequential auto-play
-        this._queue = [];       // Array of { text, button, resetFn }
-        this._processing = false;
+        // Monotonic session id — incremented on every stop(). Async work checks
+        // this so stale synthesize/play promises cannot touch UI or audio after
+        // the user switches messages, changes voice, or cancels.
+        this._gen = 0;
+
+        /** @type {null | { gen:number, button:HTMLElement, resetFn:Function, audio:HTMLAudioElement|null, utterance:SpeechSynthesisUtterance|null, state:PlaybackState, plainText:string }} */
+        this._playback = null;
+
+        // Sequential queue (streaming auto-play only)
+        this._queue = [];
+        this._queueGen = 0;
+        this._queueRunning = false;
 
         // Streaming sentence-by-sentence TTS state
-        this._streamSentencesSent = 0;  // chars of plain text already queued
+        this._streamSentencesSent = 0;
         this._streamActive = false;
         this._streamButton = null;
         this._streamResetFn = null;
         this._streamDebounceTimer = null;
 
-        // Check if TTS service is available. Keep the promise so button
-        // creation on history reload can wait for the answer instead of
-        // racing it (page load renders messages before this resolves).
         this.ready = this.checkAvailability();
     }
 
+    // ── Legacy flags for callers that still read them (chat.js, keyboard-shortcuts) ──
+
+    get isPlaying() {
+        return this._playback != null && this._playback.state === 'playing';
+    }
+
+    get isPaused() {
+        return this._playback != null && this._playback.state === 'paused';
+    }
+
+    get _processing() {
+        return this._queueRunning || (this._playback != null && this._playback.state === 'loading');
+    }
+
+    // ── Availability ──
+
     async checkAvailability() {
         try {
-            // Check user setting first — if TTS is disabled in settings, don't show buttons
             try {
                 const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
                 const settings = await settingsRes.json();
@@ -63,13 +82,8 @@ class AITTSManager {
                 this.useBrowserTTS = true;
                 this.browserVoice = stats.voice || '';
                 this.available = 'speechSynthesis' in window;
-                if (!this.available) {
-                    console.warn('TTS: browser mode selected but speechSynthesis not supported');
-                }
             } else if (this.available) {
                 this.useBrowserTTS = false;
-            } else {
-                console.warn('TTS: not available');
             }
         } catch (error) {
             console.error('Failed to check TTS availability:', error);
@@ -78,67 +92,42 @@ class AITTSManager {
     }
 
     extractPlainText(content) {
-        // Delegate to the shared markdown→speech cleaner (ttsText.js) so TTS
-        // never reads markdown syntax ("double star", URLs, LaTeX) aloud.
         return markdownToSpeech(content);
     }
 
     getCacheKey(text) {
-        // Audio depends on provider + speed + text; voice changes clear the
-        // cache explicitly (settings.js) since the voice isn't tracked here.
         const keySource = `${this._provider}|${this.playbackSpeed}|${text}`;
         let hash = 0;
         for (let i = 0; i < keySource.length; i++) {
-            const char = keySource.charCodeAt(i);
-            hash = ((hash << 5) - hash) + char;
+            hash = ((hash << 5) - hash) + keySource.charCodeAt(i);
             hash = hash & hash;
         }
         return hash.toString(36);
     }
 
-    /**
-     * Synthesize `text` server-side and return an object URL for the audio.
-     * Results are cached client-side (keyed by provider/speed/text; the cache
-     * is cleared when the voice changes) so replaying a message never hits
-     * the synthesizer again.
-     */
-    async synthesize(text) {
-        if (!this.available) {
-            throw new Error('AI TTS service not available');
-        }
+    // ── Synthesis ──
+
+    async synthesize(text, gen) {
+        if (!this.available) throw new Error('AI TTS service not available');
 
         const plainText = this.extractPlainText(text);
+        if (!plainText) throw new Error('No text to synthesize');
 
-        if (!plainText) {
-            throw new Error('No text to synthesize');
-        }
-
-        // Browser TTS doesn't synthesize — _playBrowser speaks directly
-        if (this.useBrowserTTS) {
-            return '__browser_tts__';
-        }
+        if (this.useBrowserTTS) return '__browser_tts__';
 
         const cacheKey = this.getCacheKey(plainText);
-
-        if (this.cache.has(cacheKey)) {
-            return this.cache.get(cacheKey);
-        }
+        if (this.cache.has(cacheKey)) return this.cache.get(cacheKey);
 
         const response = await fetch('/api/tts/synthesize', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                text: plainText,
-                format: 'audio'
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: plainText, format: 'audio' }),
         });
+
+        if (gen !== this._gen) throw new Error('aborted');
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({}));
-            // The server degraded to browser voices mid-session (e.g. the
-            // last Piper voice was deleted) — switch over and retry locally.
             if (error.detail?.fallback === 'browser' && 'speechSynthesis' in window) {
                 this.useBrowserTTS = true;
                 this._provider = 'browser';
@@ -148,10 +137,10 @@ class AITTSManager {
         }
 
         const audioBlob = await response.blob();
+        if (gen !== this._gen) throw new Error('aborted');
+
         const audioUrl = URL.createObjectURL(audioBlob);
-
         this.cache.set(cacheKey, audioUrl);
-
         return audioUrl;
     }
 
@@ -159,80 +148,76 @@ class AITTSManager {
         if (!this.browserVoice) return null;
         const voices = window.speechSynthesis.getVoices();
         const target = this.browserVoice.toLowerCase();
-        // Try exact match first, then partial
         return voices.find(v => v.name.toLowerCase() === target) ||
                voices.find(v => v.name.toLowerCase().includes(target)) ||
                null;
     }
 
-    _playBrowser(plainText) {
-        return new Promise((resolve, reject) => {
-            const utterance = new SpeechSynthesisUtterance(plainText);
-            const voice = this._findBrowserVoice();
-            if (voice) utterance.voice = voice;
-            utterance.rate = this.playbackSpeed;
+    // ── UI helpers ──
 
-            utterance.onend = () => {
-                this.isPlaying = false;
-                resolve();
-            };
-            utterance.onerror = (e) => {
-                this.isPlaying = false;
-                reject(new Error('Browser TTS error: ' + e.error));
-            };
-
-            window.speechSynthesis.speak(utterance);
-            this.isPlaying = true;
-        });
-    }
-
-    /**
-     * Pause the active playback, keeping its position so resume() continues
-     * from the exact spot without re-synthesizing.
-     */
-    pause() {
-        if (!this.isPlaying || this.isPaused) return;
-        if (this.useBrowserTTS) {
-            window.speechSynthesis.pause();
-        } else if (this.currentAudio) {
-            this.currentAudio.pause();
-        } else {
-            return;
-        }
-        this.isPaused = true;
-        this._setActiveButtonState('paused');
-    }
-
-    resume() {
-        if (!this.isPaused) return;
-        if (this.useBrowserTTS) {
-            window.speechSynthesis.resume();
-        } else if (this.currentAudio) {
-            this.currentAudio.play().catch(() => {});
-        }
-        this.isPaused = false;
-        this._setActiveButtonState('playing');
-    }
-
-    /** True when `button` belongs to the message currently playing or paused. */
-    isActiveButton(button) {
-        return !!button && this._activeButton === button && (this.isPlaying || this._processing);
-    }
-
-    _setActiveButtonState(state) {
-        const button = this._activeButton;
+    _applyButtonState(button, state) {
         if (!button) return;
-        if (state === 'paused') {
+        button.classList.remove('playing', 'loading');
+        if (state === 'loading') {
+            button.innerHTML = ICON_LOADING;
+            button.classList.add('loading');
+            button.style.color = '#ccc';
+            button.title = 'Loading...';
+        } else if (state === 'playing') {
+            button.innerHTML = ICON_PAUSE;
+            button.classList.add('playing');
+            button.style.color = '#ccc';
+            button.title = 'Pause';
+        } else if (state === 'paused') {
             button.innerHTML = ICON_RESUME;
+            button.classList.add('playing');
+            button.style.color = '#ccc';
             button.title = 'Resume';
         } else {
-            button.innerHTML = ICON_PAUSE;
-            button.title = 'Pause';
+            button.innerHTML = ICON_SPEAKER;
+            button.style.color = '#6b7280';
+            button.title = 'Read aloud';
         }
     }
 
+    _resetPlaybackButton(pb) {
+        if (pb && pb.resetFn) pb.resetFn();
+        else if (pb && pb.button) this._applyButtonState(pb.button, 'idle');
+    }
+
+    _stopMedia() {
+        if ('speechSynthesis' in window) {
+            try { window.speechSynthesis.cancel(); } catch {}
+        }
+        const audio = this._playback?.audio;
+        if (audio) {
+            audio.onended = null;
+            audio.onerror = null;
+            audio.onpause = null;
+            try {
+                audio.pause();
+                audio.currentTime = 0;
+            } catch {}
+        }
+        if (this._playback) {
+            this._playback.audio = null;
+            this._playback.utterance = null;
+        }
+    }
+
+    /** End the current clip only — does not flush the streaming queue. */
+    _endSession() {
+        this._gen++;
+        this._stopMedia();
+        this._resetPlaybackButton(this._playback);
+        this._playback = null;
+    }
+
+    /** Hard stop — aborts in-flight work, clears the queue, resets all playback UI. */
     stop() {
-        // Cancel streaming TTS
+        this._endSession();
+        this._queueGen++;
+
         this._streamActive = false;
         if (this._streamDebounceTimer) {
             clearTimeout(this._streamDebounceTimer);
@@ -240,119 +225,191 @@ class AITTSManager {
         }
         this._streamSentencesSent = 0;
 
-        // Clear the entire queue and reset all queued buttons
         for (const item of this._queue) {
             if (item.resetFn) item.resetFn();
         }
         this._queue = [];
-        this._processing = false;
-        this.isPaused = false;
-        this._activeButton = null;
+        this._queueRunning = false;
 
-        if (this.useBrowserTTS) {
-            window.speechSynthesis.cancel();
-            this.isPlaying = false;
+        this._stopMedia();
+        this._resetPlaybackButton(this._playback);
+        this._playback = null;
+    }
+
+    /** True when `button` owns the current playback session (playing or paused). */
+    isActiveButton(button) {
+        return !!button && this._playback && this._playback.button === button &&
+            (this._playback.state === 'playing' || this._playback.state === 'paused' || this._playback.state === 'loading');
+    }
+
+    pause() {
+        const pb = this._playback;
+        if (!pb || pb.state !== 'playing') return;
+
+        if (pb.audio) {
+            pb.audio.pause();
+        } else if (pb.utterance && 'speechSynthesis' in window) {
+            window.speechSynthesis.pause();
         }
-        if (this.currentAudio) {
-            this.currentAudio.pause();
-            this.currentAudio.currentTime = 0;
-            this.currentAudio = null;
-            this.isPlaying = false;
+        pb.state = 'paused';
+        this._applyButtonState(pb.button, 'paused');
+    }
+
+    resume() {
+        const pb = this._playback;
+        if (!pb || pb.state !== 'paused') return;
+
+        if (pb.audio) {
+            pb.audio.play().catch(err => console.error('TTS resume failed:', err));
+        } else if (pb.utterance && 'speechSynthesis' in window) {
+            window.speechSynthesis.resume();
         }
+        pb.state = 'playing';
+        this._applyButtonState(pb.button, 'playing');
     }
 
     /**
-     * Enqueue a message for auto-play. Plays sequentially — each message
-     * finishes before the next starts. Stopping any message clears the queue.
+     * Start read-aloud for one message. Stops any previous playback first so
+     * switching between responses is always a clean hand-off.
      */
+    async play(text, button, resetFn) {
+        this.stop();
+        await this._runPlayback(text, button, resetFn);
+    }
+
+    /** Play one clip without clearing the streaming queue (used by enqueue). */
+    async _runPlayback(text, button, resetFn) {
+        this._endSession();
+        const gen = this._gen;
+        const plainText = this.extractPlainText(text);
+        if (!plainText) return;
+
+        this._playback = {
+            gen, button, resetFn, audio: null, utterance: null,
+            state: 'loading', plainText,
+        };
+        this._applyButtonState(button, 'loading');
+
+        try {
+            const audioUrl = await this.synthesize(text, gen);
+            if (gen !== this._gen || !this._playback || this._playback.gen !== gen) return;
+
+            if (this.useBrowserTTS || audioUrl === '__browser_tts__') {
+                await this._playBrowserSession(gen, plainText);
+            } else {
+                await this._playAudioSession(gen, audioUrl);
+            }
+        } catch (err) {
+            if (err.message !== 'aborted') console.error('TTS play error:', err);
+            if (gen === this._gen && this._playback && this._playback.gen === gen) {
+                this._resetPlaybackButton(this._playback);
+                this._playback = null;
+            }
+        }
+    }
+
+    async _playAudioSession(gen, audioUrl) {
+        const pb = this._playback;
+        if (!pb || pb.gen !== gen) return;
+
+        const audio = new Audio(audioUrl);
+        pb.audio = audio;
+
+        await new Promise((resolve, reject) => {
+            const finish = () => {
+                audio.onended = null;
+                audio.onerror = null;
+                resolve();
+            };
+
+            audio.onended = () => {
+                if (gen !== this._gen || this._playback?.gen !== gen) { finish(); return; }
+                pb.state = 'idle';
+                finish();
+            };
+            audio.onerror = () => {
+                if (gen !== this._gen) { finish(); return; }
+                reject(new Error('Audio playback error'));
+            };
+
+            audio.play()
+                .then(() => {
+                    if (gen !== this._gen || this._playback?.gen !== gen) {
+                        audio.pause();
+                        finish();
+                        return;
+                    }
+                    pb.state = 'playing';
+                    this._applyButtonState(pb.button, 'playing');
+                })
+                .catch(reject);
+        });
+
+        if (gen === this._gen && this._playback && this._playback.gen === gen) {
+            this._resetPlaybackButton(pb);
+            this._playback = null;
+        }
+    }
+
+    async _playBrowserSession(gen, plainText) {
+        const pb = this._playback;
+        if (!pb || pb.gen !== gen) return;
+
+        await new Promise((resolve, reject) => {
+            const utterance = new SpeechSynthesisUtterance(plainText);
+            pb.utterance = utterance;
+            const voice = this._findBrowserVoice();
+            if (voice) utterance.voice = voice;
+            utterance.rate = this.playbackSpeed;
+
+            utterance.onstart = () => {
+                if (gen !== this._gen || this._playback?.gen !== gen) return;
+                pb.state = 'playing';
+                this._applyButtonState(pb.button, 'playing');
+            };
+            utterance.onend = () => {
+                if (gen !== this._gen || this._playback?.gen !== gen) { resolve(); return; }
+                pb.state = 'idle';
+                resolve();
+            };
+            utterance.onerror = (e) => {
+                if (gen !== this._gen) { resolve(); return; }
+                if (e.error === 'interrupted' || e.error === 'canceled') { resolve(); return; }
+                reject(new Error('Browser TTS error: ' + e.error));
+            };
+
+            window.speechSynthesis.speak(utterance);
+        });
+
+        if (gen === this._gen && this._playback && this._playback.gen === gen) {
+            this._resetPlaybackButton(pb);
+            this._playback = null;
+        }
+    }
+
+    // ── Queue (streaming auto-play) ──
+
     enqueue(text, button, resetFn) {
         this._queue.push({ text, button, resetFn });
-        if (!this._processing) {
-            this._processQueue();
-        }
+        if (!this._queueRunning) this._processQueue();
     }
 
     async _processQueue() {
-        if (this._processing) return;
-        this._processing = true;
+        if (this._queueRunning) return;
+        this._queueRunning = true;
+        const queueGen = this._queueGen;
 
-        while (this._queue.length > 0) {
-            const item = this._queue[0];
+        while (this._queue.length > 0 && queueGen === this._queueGen) {
+            const item = this._queue.shift();
             try {
-                await this._playQueueItem(item);
+                await this._runPlayback(item.text, item.button, item.resetFn);
             } catch (err) {
                 console.error('TTS queue item error:', err);
             }
-            if (this._queue.length > 0 && this._queue[0] === item) {
-                this._queue.shift();
-            }
-            if (!this._processing) return;
+            if (queueGen !== this._queueGen) break;
         }
 
-        this._processing = false;
-    }
-
-    async _playQueueItem(item) {
-        const { text, button, resetFn } = item;
-
-        button.innerHTML = ICON_LOADING;
-        button.classList.add('loading');
-        button.style.color = '#ccc';
-        button.title = 'Loading...';
-
-        try {
-            if (!this._processing) return;
-
-            const audioUrl = await this.synthesize(text);
-
-            if (!this._processing) return;
-
-            button.innerHTML = ICON_PAUSE;
-            button.classList.remove('loading');
-            button.classList.add('playing');
-            button.title = 'Pause';
-            this._activeButton = button;
-            this.isPaused = false;
-
-            if (this.useBrowserTTS) {
-                const plainText = this.extractPlainText(text);
-                await this._playBrowser(plainText);
-            } else {
-                if (this.currentAudio) {
-                    this.currentAudio.pause();
-                    this.currentAudio = null;
-                }
-
-                await new Promise((resolve, reject) => {
-                    const audio = new Audio(audioUrl);
-                    this.currentAudio = audio;
-                    audio.onended = () => {
-                        this.isPlaying = false;
-                        if (this.currentAudio === audio) this.currentAudio = null;
-                        resolve();
-                    };
-                    audio.onerror = () => {
-                        this.isPlaying = false;
-                        if (this.currentAudio === audio) this.currentAudio = null;
-                        reject(new Error('Audio playback error'));
-                    };
-                    audio.onpause = () => {
-                        // A real pause() keeps currentAudio set — only resolve
-                        // when stop() detached the element (skip/cancel).
-                        if (this.currentAudio !== audio) {
-                            resolve();
-                        }
-                    };
-                    audio.play().then(() => {
-                        this.isPlaying = true;
-                    }).catch(reject);
-                });
-            }
-        } finally {
-            if (this._activeButton === button) this._activeButton = null;
-            this.isPaused = false;
-            if (resetFn) resetFn();
-        }
+        this._queueRunning = false;
     }
 
     // ── Streaming TTS (sentence-by-sentence) ──
@@ -384,7 +441,6 @@ class AITTSManager {
         if (!plainText || plainText.length <= this._streamSentencesSent) return;
 
         var newRegion = plainText.substring(this._streamSentencesSent);
-
         var sentences = [];
         var current = '';
         for (var i = 0; i < newRegion.length; i++) {
@@ -428,12 +484,13 @@ class AITTSManager {
     streamingAttachButton(button, resetFn) {
         this._streamButton = button;
         this._streamResetFn = resetFn;
-        if (this._activeButton && this._activeButton.classList.contains('streaming-placeholder')) {
-            this._activeButton = button;
-            this._setActiveButtonState(this.isPaused ? 'paused' : 'playing');
+        if (this._playback && this._playback.button?.classList?.contains('streaming-placeholder')) {
+            this._playback.button = button;
+            this._playback.resetFn = resetFn;
+            this._applyButtonState(button, this._playback.state === 'paused' ? 'paused' : 'playing');
         }
         for (var i = 0; i < this._queue.length; i++) {
-            if (this._queue[i].button && this._queue[i].button.classList.contains('streaming-placeholder')) {
+            if (this._queue[i].button?.classList?.contains('streaming-placeholder')) {
                 this._queue[i].button = button;
                 this._queue[i].resetFn = resetFn;
             }
@@ -472,12 +529,8 @@ class AITTSManager {
     }
 }
 
-// Create global AI TTS manager instance
 window.aiTTSManager = new AITTSManager();
 
-// Function to add AI TTS button to a message element's action bar.
-// Defers until the availability check has completed, so it is safe to call
-// during history rendering on page load.
 export function addAITTSButton(messageElement, text) {
     const mgr = window.aiTTSManager;
     if (!mgr) return;
@@ -495,7 +548,6 @@ function _addAITTSButtonNow(messageElement, text) {
         return;
     }
 
-    // Find the msg-actions container in the footer
     const actions = messageElement.querySelector('.msg-actions');
     if (!actions) return;
 
@@ -508,58 +560,45 @@ function _addAITTSButtonNow(messageElement, text) {
 
     playButton.addEventListener('mouseenter', () => { playButton.style.color = '#ccc'; });
     playButton.addEventListener('mouseleave', () => {
-        if (!playButton.classList.contains('playing') && !playButton.classList.contains('loading')) playButton.style.color = '#6b7280';
+        if (!playButton.classList.contains('playing') && !playButton.classList.contains('loading')) {
+            playButton.style.color = '#6b7280';
+        }
     });
 
     function resetButton() {
-        playButton.innerHTML = ICON_SPEAKER;
-        playButton.classList.remove('playing', 'loading');
-        playButton.style.color = '#6b7280';
-        playButton.title = 'Read aloud';
+        window.aiTTSManager._applyButtonState(playButton, 'idle');
     }
 
-    playButton.addEventListener('click', async (e) => {
+    playButton.addEventListener('click', (e) => {
         e.stopPropagation();
         const mgr = window.aiTTSManager;
 
-        // Clicking while this message is still synthesizing cancels it.
-        if (playButton.classList.contains('loading')) {
+        // Loading → cancel
+        if (mgr.isActiveButton(playButton) && mgr._playback?.state === 'loading') {
             mgr.stop();
-            resetButton();
             return;
         }
 
-        // This message is the one playing — toggle pause/resume in place.
-        // The audio element (and its position) is kept, so resuming never
-        // re-synthesizes.
+        // Same message → pause / resume
         if (mgr.isActiveButton(playButton)) {
-            if (mgr.isPaused) mgr.resume(); else mgr.pause();
+            if (mgr.isPaused) mgr.resume();
+            else mgr.pause();
             return;
         }
 
-        // Another message is playing — stop it, then start this one.
-        if (mgr.isPlaying || mgr._processing) {
-            mgr.stop();
-        }
-
-        // Prefer the message's raw markdown (kept fresh across edits/regens)
-        // over the text snapshot captured when the button was created.
+        // Different message (or idle) → play() stops the previous session first
         const raw = messageElement.closest?.('.msg')?.dataset?.raw
             || messageElement.dataset?.raw || text;
-        mgr.enqueue(raw, playButton, resetButton);
+        mgr.play(raw, playButton, resetButton);
     });
 
     actions.appendChild(playButton);
 }
 
-// Stop audio when navigating away
 window.addEventListener('beforeunload', () => {
-    if (window.aiTTSManager) {
-        window.aiTTSManager.stop();
-    }
+    if (window.aiTTSManager) window.aiTTSManager.stop();
 });
 
-// Shared glyphs so other modules (chat.js streaming auto-play) stay in sync
 export const TTS_ICONS = {
     speaker: ICON_SPEAKER,
     pause: ICON_PAUSE,
