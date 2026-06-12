@@ -333,6 +333,25 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
 | `PyMuPDF` | PDF page rendering in the side viewer panel and form-filling. (Note: AGPL-3.0) |
 | `markitdown` | Office/EPUB document text extraction (converts .docx/.xlsx/.pptx/.xls/.epub to Markdown). |
 
+### Faster, reproducible installs with uv (optional)
+[uv](https://docs.astral.sh/uv/) works as a drop-in replacement for the
+venv + pip steps in the native install guides, no project changes are needed but this change results in faster installs along with a lockfile for reproducible environments. After [installing `uv`](https://docs.astral.sh/uv/getting-started/installation/), use:
+
+```bash
+uv venv venv --python 3.13
+uv pip install -r requirements.txt
+# then continue as usual: python setup.py, uvicorn, ...
+```
+
+`requirements.txt` is intentionally unpinned, so two installs at different times can produce different package versions. If you want a reproducible environment (e.g. across your own machines, or to roll back after a bad upgrade), snapshot and restore exact versions with:
+
+```bash
+uv pip compile requirements.txt -o requirements.lock   # snapshot current resolution
+uv pip sync requirements.lock                          # reproduce it exactly later
+```
+
+`requirements.lock` is gitignored and platform-specific (compile it on the OS you deploy to). Regenerate it deliberately when you want to take upgrades. The plain `uv pip install -r requirements.txt` keeps following the unpinned requirements like pip does.
+
 ### Outlook / Office 365 email
 Odysseus email accounts currently use IMAP/SMTP username-password auth. Outlook
 and Microsoft 365 generally require OAuth instead, so normal Microsoft mailbox
