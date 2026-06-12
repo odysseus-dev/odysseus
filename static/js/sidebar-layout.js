@@ -54,6 +54,8 @@ export function initSidebarLayout(Storage, opts) {
         iconRail.style.right = 'auto';
       }
     } else {
+      // Fix for #3871: when sidebar is visible, ensure icon rail is hidden
+      // (was possible for both to be visible during expand from minimized)
       iconRail.style.display = (sidebarHidden && !railHidden) ? '' : 'none';
     }
     // Hamburger is always visible — just update body classes for CSS layout adjustments
