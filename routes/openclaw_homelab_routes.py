@@ -43,7 +43,7 @@ def _sanitize_dict(data: dict) -> dict:
     redact_keys = {'token', 'secret', 'password', 'api_key', 'authorization', 'headers', 'auth'}
     clean = {}
     for k, v in data.items():
-        # Convert camelCase to snake_case before lowercasing and matching
+        # Normalize camelCase to snake_case before sensitive-key matching.
         k_norm = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', k).lower()
         if any(re.search(rf'(^|[-_]){re.escape(rk)}s?([-_]|$)', k_norm) for rk in redact_keys):
             clean[k] = '***REDACTED***'
