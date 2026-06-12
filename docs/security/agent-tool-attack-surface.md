@@ -91,6 +91,21 @@ untrusted; only the label authority differs. (Legacy entries with no `source` de
 break) before wrapping, applied to **both** `untrusted_context_message` and
 `wrap_untrusted_tool_output`. Test asserts exactly one real closing fence survives.
 
+### F-6 — Ledger write-path confinement  *(verified-in-code · FIXED)*
+**Severity: Medium.** The ledger DB lives at `data/ledger/*.ledger.db` — **under
+`DATA_DIR`, an allowed write root** — and `_is_sensitive_path` did not cover it. So
+`write_file`/`edit_file` could write the append-only chain directly, corrupting it. The
+only legitimate writer is the append-only `propose()` path (`src/deterministic_db.py` /
+host bridge), which does **not** go through these tools; tamper-evidence detects a direct
+write on the next `verify_chain`, but prevention beats detection.
+
+**Fix:** `tool_execution._is_write_protected_path()` plus a `for_write` flag on
+`_resolve_tool_path` / `_resolve_tool_path_in_workspace`. The `ledger` subtree under
+`DATA_DIR` (and any `LEDGER_DIR` override) is now **readable but write-blocked** via the
+file tools — `write_file` and `edit_file` pass `for_write=True`; `read_file` and the
+code-nav tools (grep/glob/ls) do not, so inspection still works. `bash`/`python` are not
+confinable at the tool layer and remain under R-1.
+
 ### F-5 — Health gold-tier ingestion  *(verified-in-code · acceptable, with one caveat)*
 The gold tier (`mcp/rag.py`) ingests **only from the verified hash-chained ledger**:
 integrity-gated (a tampered chain is never indexed, `rag.py:60-62`), retraction-aware
@@ -109,7 +124,9 @@ trust-aware retrieval (see R-3).
 | `src/prompt_security.py` | New `UNTRUSTED_OUTPUT_TOOLS`, `is_untrusted_tool_output()`, `wrap_untrusted_tool_output()`; `_neutralize_fences()` anti-escape on both wrappers (F-1, F-4). |
 | `src/agent_loop.py` | Fence content-bearing mid-loop tool results at the `format_tool_result` chokepoint (F-1); import update. |
 | `src/chat_processor.py` | Partition pinned memory by source so only user-asserted facts get the "Core facts" label (F-3). |
+| `src/tool_execution.py` | `_is_write_protected_path()` + `for_write` flag; `write_file`/`edit_file` can no longer write the append-only ledger subtree, reads unaffected (F-6). |
 | `tests/test_untrusted_tool_output.py` | 30 tests: classification (incl. fail-closed + mcp\_\_\*), wrapping, fence-escape neutralization. |
+| `tests/test_ledger_write_protection.py` | 7 tests: ledger write blocked, read allowed, normal data writable, `LEDGER_DIR` override honored (F-6). |
 
 All 30 new tests pass. Imports verified (circular agent_tools↔agent_loop cluster resolves).
 `compileall` clean. Existing failures in the bare audit venv are missing-dependency
@@ -129,15 +146,15 @@ regressions.
   confidence label to demote `INFERRED`/`CLAIMED` on every retrieval path. Lower priority
   now that all retrieval paths are fenced, but it would make the demotion content-aware
   rather than blanket.
-- **R-4 — Ledger write-path confinement.** Ensure the agent cannot write
-  `data/ledger/*.db` directly via `write_file`/`bash` (bypassing append-only `propose()`);
-  tamper-evidence detects but doesn't prevent corruption.
+- **R-4 — Ledger write-path confinement.** ✅ **Resolved** for the structured file
+  tools — see F-6. `write_file`/`edit_file` can no longer write the ledger subtree.
+  Residual: `bash`/`python` can still touch it (no shell sandbox — folds into R-1).
 
 ## 6. How to re-verify
 
 ```bash
 # Unit tests for the hardening (no heavy deps):
-PYTHONPATH=. python -m pytest tests/test_untrusted_tool_output.py -q
+PYTHONPATH=. python -m pytest tests/test_untrusted_tool_output.py tests/test_ledger_write_protection.py -q
 # Compile check (CI parity):
-python -m compileall -q src/prompt_security.py src/agent_loop.py src/chat_processor.py
+python -m compileall -q src/prompt_security.py src/agent_loop.py src/chat_processor.py src/tool_execution.py
 ```

@@ -86,8 +86,8 @@ async def _do_edit_file(content: str, workspace: Optional[str] = None) -> Dict[s
     # Confine to the workspace when set, else the same allowlist + sensitive-file
     # policy as read/write_file.
     try:
-        path = (_resolve_tool_path_in_workspace(workspace, raw_path)
-                if workspace else _resolve_tool_path(raw_path))
+        path = (_resolve_tool_path_in_workspace(workspace, raw_path, for_write=True)
+                if workspace else _resolve_tool_path(raw_path, for_write=True))
     except ValueError as e:
         return {"error": f"edit_file: {e}", "exit_code": 1}
     if old == "":
@@ -184,6 +184,44 @@ def _is_sensitive_path(resolved: str) -> bool:
     return False
 
 
+# Append-only / integrity-critical subtrees under DATA_DIR. These are READABLE
+# (the agent should be able to inspect health data) but must never be written
+# through write_file / edit_file. The ledger is a hash-chained, tamper-evident
+# store; its only legitimate writer is the append-only propose() path
+# (src/deterministic_db.py and the host bridge), which does NOT go through these
+# tools. A direct file write would corrupt the chain — tamper-evidence detects it
+# on the next verify, but prevention beats detection. R-4 in
+# docs/security/agent-tool-attack-surface.md.
+_WRITE_PROTECTED_SUBDIRS: tuple[str, ...] = ("ledger",)
+
+
+def _is_write_protected_path(resolved: str) -> bool:
+    """True if *resolved* is an append-only/integrity-critical path that must not
+    be written via write_file/edit_file. Reads are unaffected."""
+    from src.constants import DATA_DIR
+    try:
+        data_real = os.path.realpath(DATA_DIR)
+    except OSError:
+        data_real = DATA_DIR
+    protected_roots = [os.path.join(data_real, d) for d in _WRITE_PROTECTED_SUBDIRS]
+    # Honor a LEDGER_DIR override (deterministic_db._LEDGER_DIR reads the same env).
+    ledger_override = os.environ.get("LEDGER_DIR")
+    if ledger_override:
+        try:
+            protected_roots.append(os.path.realpath(ledger_override))
+        except OSError:
+            pass
+    for proot in protected_roots:
+        if resolved == proot:
+            return True
+        try:
+            if os.path.commonpath([resolved, proot]) == proot:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _tool_path_roots() -> list[str]:
     """Return the list of directory roots that read_file / write_file
     may touch. Default: project data/ + system temp dirs. Extra roots
@@ -233,14 +271,16 @@ def _tool_path_roots() -> list[str]:
     return out
 
 
-def _resolve_tool_path(raw_path: str) -> str:
+def _resolve_tool_path(raw_path: str, for_write: bool = False) -> str:
     """Resolve and confine a model-supplied path.
 
     Order of checks:
       1. Non-empty path.
       2. Sensitive-subpath deny list (blocks .ssh, .gnupg, etc.
          even when the root is on the allowlist).
-      3. Allowlist containment (must land under one of the roots).
+      3. Write-protected deny list (for_write only): append-only/integrity
+         paths like the ledger chain are readable but never writable here.
+      4. Allowlist containment (must land under one of the roots).
 
     Returns the realpath on success. Raises ValueError on rejection.
     Symlinks are resolved before comparison.
@@ -254,6 +294,12 @@ def _resolve_tool_path(raw_path: str) -> str:
         raise ValueError(
             f"path '{raw_path}' is inside a sensitive directory "
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
+        )
+
+    if for_write and _is_write_protected_path(resolved):
+        raise ValueError(
+            f"path '{raw_path}' is append-only (the ledger chain) and cannot be "
+            f"written directly; use the ledger's propose() path instead"
         )
 
     for root in _tool_path_roots():
@@ -270,14 +316,15 @@ def _resolve_tool_path(raw_path: str) -> str:
     )
 
 
-def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
+def _resolve_tool_path_in_workspace(workspace: str, raw_path: str, for_write: bool = False) -> str:
     """Confine a model-supplied path to the active workspace.
 
     Layered on top of upstream's path policy: the workspace is the allowed
     root (relative paths resolve under it; paths that escape it are rejected),
     and the sensitive-file deny list (.ssh, .gnupg, id_rsa, …) still applies
     inside it. When no workspace is set, callers use _resolve_tool_path (the
-    default data/tmp allowlist) instead.
+    default data/tmp allowlist) instead. for_write additionally blocks the
+    append-only ledger subtree (reads stay allowed).
     """
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
@@ -289,6 +336,11 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
         raise ValueError(
             f"path '{raw_path}' is inside a sensitive directory "
             f"(e.g. .ssh, .gnupg) or matches a sensitive filename"
+        )
+    if for_write and _is_write_protected_path(resolved):
+        raise ValueError(
+            f"path '{raw_path}' is append-only (the ledger chain) and cannot be "
+            f"written directly; use the ledger's propose() path instead"
         )
     if resolved != base:
         # normcase so containment holds on case-insensitive filesystems
@@ -781,8 +833,8 @@ async def _direct_fallback(
             raw_path = lines[0].strip()
             body = lines[1] if len(lines) > 1 else ""
             try:
-                path = (_resolve_tool_path_in_workspace(workspace, raw_path)
-                        if workspace else _resolve_tool_path(raw_path))
+                path = (_resolve_tool_path_in_workspace(workspace, raw_path, for_write=True)
+                        if workspace else _resolve_tool_path(raw_path, for_write=True))
             except ValueError as e:
                 return {"error": f"write_file: {e}", "exit_code": 1}
             try:
