@@ -1057,7 +1057,8 @@ class TaskScheduler:
             result, success = await action_fn(**kwargs)
             return result, success
         except TaskNoop:
-            # Bubble up so _execute_task_locked can drop the run row silently.
+            # Bubble up so _execute_task_locked can mark the run as skipped
+            # with the TaskNoop message as the visible Activity reason.
             raise
         except Exception as e:
             logger.error(f"Action '{task.action}' failed: {e}")

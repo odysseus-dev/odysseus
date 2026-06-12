@@ -169,7 +169,7 @@ async def run_document_tidy(owner: str) -> str:
             db.commit()
 
         if deleted == 0:
-            # Use sentinel so the scheduler can drop the run row entirely.
+            # Use sentinel so the scheduler records a skipped no-op run.
             from src.builtin_actions import TaskNoop
             raise TaskNoop(f"scanned {len(docs)} document(s), no junk")
         preview = "; ".join(deleted_examples)
