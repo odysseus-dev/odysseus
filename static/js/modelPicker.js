@@ -174,6 +174,20 @@ function _initModelPickerDropdown() {
     } catch (_) { /* leave stale data; picker still works */ }
   }
 
+  async function _applyModelControlDefaults(m, persist, sessionId) {
+    if (!m || !window.odysseusModelControls || typeof window.odysseusModelControls.applyDefaultsForContext !== 'function') {
+      return;
+    }
+    try {
+      await window.odysseusModelControls.applyDefaultsForContext(
+        { model: m.mid || '', endpointUrl: m.url || '' },
+        { persist: !!persist, sessionId: sessionId || null },
+      );
+    } catch (e) {
+      console.warn('Model picker: failed to apply model control defaults', e);
+    }
+  }
+
   function _getAllModels() {
     const items = (window.modelsModule && window.modelsModule.getCachedItems) ? window.modelsModule.getCachedItems() : [];
     const result = [];
@@ -500,6 +514,7 @@ function _initModelPickerDropdown() {
     if (!currentSessionId && _pendingChat) {
       // Already have a deferred session — just update the model
       _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
+      await _applyModelControlDefaults(m, false);
       // Header stays as session name — model switch only updates picker
       updateModelPicker();
       uiModule.showToast(`Using ${m.display}`);
@@ -507,6 +522,7 @@ function _initModelPickerDropdown() {
     } else if (!currentSessionId) {
       // No session yet — create one with this model
       await _deps.createDirectChat(m.url, m.mid, m.endpointId);
+      await _applyModelControlDefaults(m, false);
     } else {
       // Existing session with no model — PATCH it
       const fd = new FormData();
@@ -522,6 +538,7 @@ function _initModelPickerDropdown() {
         const sessions = _deps.getSessions();
         const s = sessions.find(x => x.id === currentSessionId);
         if (s) { s.model = m.mid; s.endpoint_url = m.url; }
+        await _applyModelControlDefaults(m, true, currentSessionId);
         // Header stays as session name — model info shown in picker only
       } catch (e) {
         uiModule.showError('Failed to set model: ' + e);

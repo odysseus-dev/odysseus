@@ -1793,12 +1793,25 @@ function _resolveInitialModelControls(modelControls) {
   };
 }
 
-function _currentComposerModelControls() {
-  const state = Storage.loadToggleState();
-  return {
-    reasoning_effort: _normalizePendingReasoning(state.reasoning_effort || ''),
-    verbosity: _normalizePendingVerbosity(state.verbosity || ''),
-  };
+function _hasExplicitModelControls(modelControls) {
+  if (!modelControls) return false;
+  return Object.prototype.hasOwnProperty.call(modelControls, 'reasoning_effort')
+    || Object.prototype.hasOwnProperty.call(modelControls, 'default_reasoning_effort')
+    || Object.prototype.hasOwnProperty.call(modelControls, 'verbosity')
+    || Object.prototype.hasOwnProperty.call(modelControls, 'default_verbosity');
+}
+
+function _defaultsForPendingModel(pending) {
+  if (
+    window.odysseusModelControls
+    && typeof window.odysseusModelControls.resolveDefaultsForContext === 'function'
+  ) {
+    return window.odysseusModelControls.resolveDefaultsForContext({
+      model: (pending && pending.modelId) || '',
+      endpointUrl: (pending && pending.url) || '',
+    });
+  }
+  return _resolveInitialModelControls(null);
 }
 
 export function createDirectChat(url, modelId, endpointId, modelControls = null) {
@@ -2302,7 +2315,9 @@ function _initAllDropdowns() {
     getSessions: () => sessions,
     getPendingChat: () => _pendingChat,
     setPendingChat: (v) => {
-      const controls = _resolveInitialModelControls({ ..._currentComposerModelControls(), ...(v || {}) });
+      const controls = _hasExplicitModelControls(v)
+        ? _resolveInitialModelControls(v)
+        : _resolveInitialModelControls(_defaultsForPendingModel(v));
       _pendingChat = v ? { ...v, ...controls } : v;
       if (_pendingChat && window.odysseusModelControls && window.odysseusModelControls.applySession) {
         window.odysseusModelControls.applySession({
