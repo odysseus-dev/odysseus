@@ -168,7 +168,7 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
 
 
 def test_calendar_routes_use_hardened_caldav_client_and_secret_storage():
-    text = Path("routes/calendar_routes.py").read_text(encoding="utf-8")
+    text = Path("src/api/router/calendar_routes.py").read_text(encoding="utf-8")
 
     assert "validate_caldav_url(body.get(\"url\", \"\"))" in text
     assert "encrypt(body[\"password\"])" in text

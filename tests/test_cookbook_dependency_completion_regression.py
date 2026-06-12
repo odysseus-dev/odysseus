@@ -9,7 +9,7 @@ def _read(rel_path: str) -> str:
 
 
 def test_backend_status_treats_download_exit_zero_as_completed():
-    source = _read("routes/cookbook_routes.py")
+    source = _read("src/api/router/cookbook_routes.py")
 
     assert "exit_match = re.search(r\"=== process exited with code\\s+(-?\\d+)\"" in source
     assert "elif has_exit and task_type == \"download\":" in source
@@ -84,7 +84,7 @@ def test_dependency_install_payload_keeps_env_path_for_refresh():
 
 
 def test_local_dependency_probe_refreshes_user_site_visibility():
-    source = _read("routes/shell_routes.py")
+    source = _read("src/api/router/shell_routes.py")
 
     assert "importlib.invalidate_caches()" in source
     assert "user_site = site.getusersitepackages()" in source

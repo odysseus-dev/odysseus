@@ -45,6 +45,6 @@ def test_route_uses_dist_name_helper_not_munged_import_name():
     """Lock the wiring: the local package check must look up metadata by the
     derived distribution name, not the old `name.replace('_','-')` (the exact
     bug that hid llama-cpp-python)."""
-    src = (Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "shell_routes.py").read_text(encoding="utf-8")
     assert "importlib_metadata.version(_pip_dist_name(pkg))" in src
     assert 'importlib_metadata.version(pkg["name"].replace("_", "-"))' not in src

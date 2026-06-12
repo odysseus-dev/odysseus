@@ -127,7 +127,7 @@ def test_readme_native_quickstart_uses_loopback():
 
 
 def test_ollama_cookbook_runner_does_not_force_public_bind():
-    route = Path("routes/cookbook_routes.py").read_text(encoding="utf-8")
+    route = Path("src/api/router/cookbook_routes.py").read_text(encoding="utf-8")
     cookbook_js = Path("static/js/cookbook.js").read_text(encoding="utf-8")
     assert 'OLLAMA_HOST="0.0.0.0:${ODYSSEUS_OLLAMA_PORT}" ollama serve' not in route
     assert 'OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve' in route

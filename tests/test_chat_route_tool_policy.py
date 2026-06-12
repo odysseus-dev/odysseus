@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-CHAT_ROUTES = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
+CHAT_ROUTES = Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "chat_routes.py"
 
 
 def _source() -> str:

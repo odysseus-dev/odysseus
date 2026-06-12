@@ -358,7 +358,7 @@ def test_compare_start_rejects_unowned_endpoint_id(monkeypatch):
 
 
 def test_compare_endpoint_key_lookup_is_owner_scoped():
-    body = Path("routes/compare_routes.py").read_text(encoding="utf-8")
+    body = Path("src/api/router/compare_routes.py").read_text(encoding="utf-8")
     start_body = body.split("def start_comparison", 1)[1].split("# Store comparison record", 1)[0]
     helper_body = body.split("def _owned_endpoint_by_url", 1)[1].split("class RecordVoteRequest", 1)[0]
     id_helper_body = body.split("def _owned_endpoint_by_id", 1)[1].split("class RecordVoteRequest", 1)[0]
@@ -377,7 +377,7 @@ def test_compare_endpoint_key_lookup_is_owner_scoped():
 
 
 def test_gallery_image_endpoint_lookups_are_owner_scoped():
-    body = Path("routes/gallery_routes.py").read_text(encoding="utf-8")
+    body = Path("src/api/router/gallery_routes.py").read_text(encoding="utf-8")
     helper_body = body.split("def _visible_image_endpoint_query", 1)[1].split(
         "def _first_visible_image_endpoint", 1
     )[0]
@@ -402,7 +402,7 @@ def test_gallery_image_endpoint_lookups_are_owner_scoped():
 
 
 def test_research_endpoint_resolution_passes_owner():
-    body = Path("routes/research_routes.py").read_text(encoding="utf-8")
+    body = Path("src/api/router/research_routes.py").read_text(encoding="utf-8")
 
     assert "def _resolve_research_endpoint(sess, owner:" in body
     assert 'resolve_endpoint("research", owner=user)' in body

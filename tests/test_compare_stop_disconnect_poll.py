@@ -278,7 +278,7 @@ def test_compare_mode_branch_skips_agent_runs_in_source():
     call below it — otherwise compare streams would still be detached and a
     pane's Stop (closing the SSE) wouldn't cancel the upstream call."""
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py").read_text(encoding="utf-8")
+    src = (Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "chat_routes.py").read_text(encoding="utf-8")
 
     branch_idx = src.index("if compare_mode:")
     direct_return_idx = src.index("return StreamingResponse(_safe_stream(), media_type=", branch_idx)

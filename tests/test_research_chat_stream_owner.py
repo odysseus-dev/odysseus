@@ -4,7 +4,7 @@ import ast
 import textwrap
 from pathlib import Path
 
-_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "chat_routes.py"
+_CHAT_ROUTES = Path(__file__).resolve().parent.parent / "src" / "api" / "router" / "chat_routes.py"
 
 
 def test_chat_stream_start_research_passes_owner():

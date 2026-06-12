@@ -331,7 +331,7 @@ def test_serve_runner_installs_llama_cpp_server_extra():
     extra is never reinstalled."""
     import pathlib
     src = (pathlib.Path(__file__).resolve().parent.parent
-           / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+           / "src" / "api" / "router" / "cookbook_routes.py").read_text(encoding="utf-8")
     # No serve path may install a bare (extra-less) llama-cpp-python.
     assert "pip install llama-cpp-python " not in src
     assert "_pip_install_fallback_chain('llama-cpp-python'" not in src
@@ -344,7 +344,7 @@ def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     import pathlib
 
     src = (pathlib.Path(__file__).resolve().parent.parent
-        / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+        / "src" / "api" / "router" / "cookbook_routes.py").read_text(encoding="utf-8")
 
     assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
     assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src

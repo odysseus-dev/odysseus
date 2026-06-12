@@ -56,7 +56,7 @@ def test_codex_as_owner_can_call_nested_user_routes(monkeypatch):
 
 
 def test_codex_plugin_downloads_use_general_authenticated_gate():
-    source = Path("routes/codex_routes.py").read_text(encoding="utf-8")
+    source = Path("src/api/router/codex_routes.py").read_text(encoding="utf-8")
 
     assert "require_authenticated_request" in source
     assert source.count("require_authenticated_request(request)") == 2
