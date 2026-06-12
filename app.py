@@ -616,6 +616,10 @@ app.include_router(setup_embedding_routes())
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
 
+# Local LLM Router (read-only status for model picker)
+from routes.local_llm_router_routes import setup_local_llm_router_routes
+app.include_router(setup_local_llm_router_routes())
+
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
 app.include_router(setup_copilot_routes())
