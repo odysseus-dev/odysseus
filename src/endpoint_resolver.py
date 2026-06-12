@@ -250,26 +250,22 @@ def resolve_endpoint(
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
 
-    # If the specific endpoint is not configured, but the caller provided a
+    # Fall back to utility model for task/research/auto-naming if not specifically configured.
+    if not ep_id and setting_prefix not in ("utility", "default"):
+        ep_id = _stg("utility_endpoint_id")
+        model = _stg("utility_model")
+
+    # If the endpoint is STILL not configured, but the caller provided a
     # valid fallback (e.g. the active session model), use that immediately.
     # This prevents background tasks from jumping to the global default_model
     # when the user is mid-conversation with a different model.
     if not ep_id and fallback_url and fallback_model:
         return fallback_url, fallback_model, fallback_headers
 
-    # Unset Utility means "same as Default Chat Model".
-    if setting_prefix == "utility" and not ep_id:
+    # Unset Utility (or anything else that didn't have a fallback) means "same as Default Chat Model".
+    if not ep_id:
         ep_id = _stg("default_endpoint_id")
         model = _stg("default_model")
-
-    # Fall back to utility model for task/research/auto-naming if not specifically configured.
-    # If Utility itself is unset, the block above makes that resolve to Default Chat.
-    if not ep_id and setting_prefix != "utility":
-        ep_id = _stg("utility_endpoint_id")
-        model = _stg("utility_model")
-        if not ep_id:
-            ep_id = _stg("default_endpoint_id")
-            model = _stg("default_model")
 
     if not ep_id:
         return fallback_url, fallback_model, fallback_headers
