@@ -134,6 +134,13 @@ immediately and doesn't conflict with Tier B (the env-scrub + rlimits carry into
 image). Tier B is a day of Compose + a tiny RPC, not a rewrite.
 
 ## 5. Acceptance checks (how we'll know it works)
+
+**Enforced in CI** — the `sandbox-isolation` job (`.github/workflows/ci.yml`) runs on every
+PR: a static guard (`scripts/check_sandbox_compose.py`) fails if the sandbox service drops any
+isolation flag or gains a sensitive mount/secret, and a runtime check builds the image, runs
+it with the hardened flags, and drives `scripts/sandbox_acceptance.py` from a sibling
+container to prove the guarantees below actually hold. So the isolation can't silently regress.
+
 - `env` inside the agent's `bash` shows **no** API key / admin password (A).
 - `cat /app/data/sessions.json` from the agent's `bash` **fails** (B; A moves the cwd only).
 - `curl https://example.com` and `curl host.docker.internal:8770` from the agent's `bash`

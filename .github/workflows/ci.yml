@@ -42,6 +42,68 @@ jobs:
             node --check "$f"
           done
 
+  sandbox-isolation:
+    name: Sandbox isolation (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.11"
+
+      # 1. Static guard: the sandbox service must keep its isolation flags
+      #    (network none, read-only, cap_drop ALL, no-new-privileges, no
+      #    sensitive mounts/secrets). Catches a config regression even if the
+      #    runtime test below is ever skipped.
+      - name: Static compose hardening check
+        run: |
+          pip install --quiet pyyaml
+          docker compose config > /tmp/compose.rendered.yml
+          python scripts/check_sandbox_compose.py /tmp/compose.rendered.yml
+
+      # 2. Tier-B runner unit/e2e tests (spawn the runner over a local Unix
+      #    socket — no Docker, fast).
+      - name: Sandbox runner tests
+        run: |
+          mkdir -p data
+          PYTHONPATH=. python -m pytest -q \
+            tests/test_sandbox_runner.py tests/test_bash_python_sandbox_tierA.py
+
+      # 3. Runtime acceptance: run the sandbox image with the same hardened flags
+      #    as compose, then drive it from a SIBLING container sharing the IPC
+      #    volume (container↔container UDS, mirrors production). Asserts exec
+      #    works but network egress, the data volume, and env secrets are all
+      #    unreachable from inside the sandbox.
+      - name: Build sandbox image
+        run: docker build -t ody-sandbox ./docker/sandbox
+      - name: Runtime isolation acceptance
+        run: |
+          docker volume create ody_sbxipc >/dev/null
+          docker run -d --rm --name ody-sandbox \
+            --network none --read-only \
+            --tmpfs /work:size=512m,mode=1777 --tmpfs /tmp:size=64m,mode=1777 \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --pids-limit 512 --memory 1g \
+            -e FAKE_SECRET_TOKEN=ci-should-not-leak \
+            -e RUNNER_SOCK=/ipc/runner.sock \
+            -v ody_sbxipc:/ipc \
+            ody-sandbox
+          # Wait for the runner to bind its socket inside the shared volume.
+          for i in $(seq 1 40); do
+            docker run --rm -v ody_sbxipc:/ipc busybox test -S /ipc/runner.sock && break
+            sleep 0.5
+          done
+          docker run --rm \
+            -v ody_sbxipc:/ipc \
+            -v "$PWD":/repo:ro -w /repo \
+            -e SANDBOX_RUNNER_SOCK=/ipc/runner.sock \
+            python:3.11-slim python scripts/sandbox_acceptance.py
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f ody-sandbox 2>/dev/null || true
+          docker volume rm ody_sbxipc 2>/dev/null || true
+
   python-tests:
     name: Python tests (pytest)
     runs-on: ubuntu-latest
