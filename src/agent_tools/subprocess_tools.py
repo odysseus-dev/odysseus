@@ -5,8 +5,8 @@ import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
 from src.constants import MAX_OUTPUT_CHARS
 
-DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
-DEFAULT_PYTHON_TIMEOUT = 60 * 60
+DEFAULT_BASH_TIMEOUT = 5 * 60      # 5 min — use #!bg for longer jobs
+DEFAULT_PYTHON_TIMEOUT = 5 * 60
 
 PROGRESS_INTERVAL_S = 2.0
 PROGRESS_TAIL_LINES = 12
@@ -118,7 +118,18 @@ class BashTool:
             progress_cb=progress_cb,
         )
         if timed_out:
-            return {"error": f"bash: timed out after {int(DEFAULT_BASH_TIMEOUT/60)}m — process killed. For long-running commands (builds, installs, batch processing), use #!bg as the FIRST line to run in the BACKGROUND. Example: #!bg\\ncd /project && for d in */; do bun tsc --noEmit; done", "exit_code": 124, "stdout": _truncate(stdout, MAX_OUTPUT_CHARS), "stderr": _truncate(stderr, MAX_OUTPUT_CHARS)}
+            mins = int(DEFAULT_BASH_TIMEOUT / 60)
+            return {
+                "error": (
+                    f"bash: timed out after {mins}m — process killed. "
+                    f"For batch processing, multi-dir loops, or long builds, "
+                    f"start with #!bg to run in the BACKGROUND:\n"
+                    f"```bash\n#!bg\n(your command)\n```"
+                ),
+                "exit_code": 124,
+                "stdout": _truncate(stdout, MAX_OUTPUT_CHARS),
+                "stderr": _truncate(stderr, MAX_OUTPUT_CHARS),
+            }
         output = stdout.rstrip()
         err = stderr.rstrip()
         if err:

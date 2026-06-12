@@ -303,7 +303,7 @@ TOOL_SECTIONS = {
 Run any shell command. Output is returned to you. Use for: installing packages, checking files, git, system info, process management, etc.
 Do NOT use bash/curl for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.
 File writes: PREFER write_file (creates/rewrites) or edit_file (targeted edits) — they show a diff. If write_file/edit_file report a path restriction error ("outside the allowed roots"), you MAY fall back to bash with cat > path << '''EOF''' ... EOF or tee to write the file. Do NOT use sed -i or awk -i for in-place edits. bash is also for read-only tasks: ls, cat to READ, grep, git status/git diff, builds, installs.
-For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, training, builds — anything that may take more than ~20s), make the FIRST line `#!bg` to run it in the BACKGROUND. You get a job id back immediately and are automatically re-invoked with the full output when it finishes — so you never block the chat waiting. Example:
+For commands that could take more than ~30s — builds, compilers, batch processing, multi-directory loops, find+xargs, wc, grep across many files — make the FIRST line `#!bg` to run in the BACKGROUND. You get a job id back immediately and are automatically re-invoked when it finishes. Example:
 ```bash
 #!bg
 pip install openai-whisper
