@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -671,6 +672,16 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
     assert 'pip install' not in cmd
     assert 'git clone' not in cmd
     assert 'curl' not in cmd and 'wget' not in cmd
+
+
+def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
+    routes_src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+    running_src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js").read_text(encoding="utf-8")
+
+    assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
+    assert "function Stop-Tree([int]$Id)" in running_src
+    assert "ParentProcessId = $Id" in running_src
+    assert "Stop-Tree ([int]$p)" in running_src
 
 
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
