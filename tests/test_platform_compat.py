@@ -83,6 +83,7 @@ def test_is_wsl_true_when_proc_version_mentions_microsoft(monkeypatch):
     def fake_open(path, mode="r", *args, **kwargs):
         assert path == "/proc/version"
         assert mode == "r"
+        assert kwargs == {"encoding": "utf-8", "errors": "ignore"}
         return io.StringIO("Linux version 6.6.0 microsoft standard")
 
     monkeypatch.setattr("builtins.open", fake_open)
