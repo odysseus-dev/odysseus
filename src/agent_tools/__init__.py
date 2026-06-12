@@ -131,6 +131,7 @@ from src.tool_parsing import (  # noqa: E402, F401
 from src.tool_schemas import (  # noqa: E402, F401
     FUNCTION_TOOL_SCHEMAS,
     function_call_to_tool_block,
+    get_function_schemas,
 )
 
 # Execution

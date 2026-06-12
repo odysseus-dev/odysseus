@@ -34,11 +34,12 @@ from src.agent_tools import (
     set_active_document,
     set_active_model,
     function_call_to_tool_block,
-    FUNCTION_TOOL_SCHEMAS,
+    get_function_schemas,
     TOOL_TAGS,
     ToolBlock,
     MAX_AGENT_ROUNDS,
 )
+from src.capabilities.providers.mcp import get_mcp_function_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -1352,7 +1353,10 @@ def _build_system_prompt(
     # Dynamic parts that change per request
     mcp_schemas = []
     if mcp_mgr:
-        mcp_schemas = mcp_mgr.get_all_openai_schemas(mcp_disabled_map or {})
+        mcp_schemas = get_mcp_function_schemas(
+            mcp_mgr,
+            disabled_map=mcp_disabled_map or {},
+        )
 
     set_active_model(model)
 
@@ -2947,6 +2951,7 @@ async def stream_agent_loop(
             # write the answer instead of flailing further.
             all_tool_schemas = []
         elif _is_api_model:
+            function_schemas = get_function_schemas()
             # Filter schemas by RAG-selected tools (if available)
             if _relevant_tools:
                 # _build_base_prompt unions _ADMIN_TOOLS into the prompt
@@ -2958,7 +2963,7 @@ async def stream_agent_loop(
                 if _needs_admin:
                     _schema_names |= _ADMIN_TOOLS
                 base_schemas = [
-                    s for s in FUNCTION_TOOL_SCHEMAS
+                    s for s in function_schemas
                     if s.get("function", {}).get("name") in _schema_names
                 ]
                 _mcp_filtered = [
@@ -2967,8 +2972,8 @@ async def stream_agent_loop(
                 ]
                 all_tool_schemas = base_schemas + _mcp_filtered
             else:
-                base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
-                    s for s in FUNCTION_TOOL_SCHEMAS
+                base_schemas = function_schemas if _needs_admin else [
+                    s for s in function_schemas
                     if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
                 ]
                 all_tool_schemas = base_schemas + mcp_schemas

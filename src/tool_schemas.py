@@ -8,13 +8,17 @@ Extracted from agent_tools.py to keep schema definitions separate from
 tool parsing / execution logic.
 """
 
+from __future__ import annotations
+
 import json
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from src.agent_tools import ToolBlock, TOOL_TAGS
-from src.tool_parsing import _TOOL_NAME_MAP
+from src.capabilities.providers.builtin import get_builtin_function_schemas
 from src.tool_security import BUILTIN_EMAIL_TOOLS
+
+if TYPE_CHECKING:
+    from src.agent_tools import ToolBlock
 
 logger = logging.getLogger(__name__)
 
@@ -1208,6 +1212,11 @@ FUNCTION_TOOL_SCHEMAS = [
 ]
 
 
+def get_function_schemas() -> list[dict]:
+    """Return builtin function-tool schemas through the capability registry."""
+    return get_builtin_function_schemas(FUNCTION_TOOL_SCHEMAS)
+
+
 # ---------------------------------------------------------------------------
 # Converter: native function call -> ToolBlock
 # ---------------------------------------------------------------------------
@@ -1281,6 +1290,9 @@ def _repair_document_function_args(tool_type: str, arguments: str) -> Optional[d
 
 def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock]:
     """Convert a native function call into a ToolBlock for the existing execution pipeline."""
+    from src.agent_tools import ToolBlock, TOOL_TAGS
+    from src.tool_parsing import _TOOL_NAME_MAP
+
     tool_type = _TOOL_NAME_MAP.get(name, name)
     try:
         if not arguments or (isinstance(arguments, str) and not arguments.strip()):
