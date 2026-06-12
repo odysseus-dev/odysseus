@@ -3,6 +3,8 @@
 import os
 
 APP_VERSION = "1.0.0"
+# Bump when local/dev behavior changes so you can confirm reload (shown in UI + /api/version).
+BUILD_STAMP = "auto-route-mode-v1"
 
 # Base paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
@@ -67,6 +69,11 @@ MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
 MAX_CONTEXT_MESSAGES = 90
 REQUEST_TIMEOUT = 20
 OPENAI_COMPAT_PATH = "/v1/chat/completions"
+
+# Session sentinel for Auto (Local LLMs). Stored value must stay stable.
+LOCAL_LLM_ROUTER_AUTO_MODEL_ID = "__auto_stack__"
+LOCAL_LLM_ROUTER_NAME = "Local-LLM-Router"
+AUTO_SELECT_LABEL = "Auto (Local LLMs)"
 
 # Environment variables with defaults
 DEFAULT_HOST = os.getenv("LLM_HOST", "localhost")
