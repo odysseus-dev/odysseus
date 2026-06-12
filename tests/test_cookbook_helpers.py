@@ -588,6 +588,8 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
     script = "\n".join(runner_lines)
 
+    assert "mkdir -p ~/bin" in script
+    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp && rm -rf build")
     assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script

@@ -742,6 +742,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('    done')
     # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
     # or HIP attempt) doesn't cause the next configure to reuse stale settings.
+    runner_lines.append('    mkdir -p ~/bin')
     runner_lines.append('    cd ~/llama.cpp && rm -rf build')
     runner_lines.append('    if command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]; then')
     runner_lines.append('      if command -v hipconfig &>/dev/null; then')
