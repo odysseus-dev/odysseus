@@ -23,10 +23,8 @@ class TaskNoop(BaseException):
 
     Inherits from BaseException (not Exception) so the standard
     `except Exception` wrappers each action uses for real error handling
-    don't accidentally catch it. The scheduler explicitly catches TaskNoop,
-    drops the queued TaskRun row, advances last_run / next_run, and exits
-    silently. Nothing appears in the Activity log; the message is logged
-    server-side only.
+    don't accidentally catch it. The scheduler explicitly catches TaskNoop and
+    records the run as skipped with the message as the visible Activity reason.
     """
 
 
@@ -2327,7 +2325,14 @@ async def _agent_handle_email_received(
             except Exception:
                 pass
 
-            return f"Email analysed: {verdict}", True
+            verdict_upper = verdict.upper()
+            if verdict_upper.startswith("NEEDS_ACTION"):
+                return f"Email analysed: {verdict}", True
+            if verdict_upper.startswith("SKIP"):
+                raise TaskNoop(f"Skipped email from {from_name}: {subject[:60]}")
+            if verdict_upper.startswith("INFORMATIONAL"):
+                raise TaskNoop(f"Informational email from {from_name}: {subject[:60]}")
+            raise TaskNoop(f"Unclear email triage from {from_name}: {subject[:60]}")
     except Exception as e:
         logger.debug("email_received LLM analysis failed: %s", e)
 
