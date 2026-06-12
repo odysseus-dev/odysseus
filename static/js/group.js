@@ -6,7 +6,7 @@ import markdownModule from './markdown.js';
 import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
-import { PROMPT_TEMPLATES, getAllPresets, getUserTemplates } from './presets.js';
+import { PROMPT_TEMPLATES, getUserTemplates } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
 
@@ -227,9 +227,9 @@ function _initGroupTab() {
     const characterSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=character");
     const modelSelections = participantsEl.querySelectorAll("select.preset-input[data-selection-type=model");
 
-    if (characterSelections.length !== 0) { 
+    if (characterSelections.length !== 0) {
       const characters = await _getCharacterList();
- 
+
       characterSelections.forEach((characterSelection) => {
 
         const chosenCharacter = characterSelection.value;
@@ -360,7 +360,7 @@ async function _getCharacterList() {
   } catch (e) {}
 
   // Also merge in-memory templates from presets.js — these may include
-  // newly created characters whose async save-to-API hasn't completed yet.  
+  // newly created characters whose async save-to-API hasn't completed yet.
   const memTemplates = getUserTemplates();
 
   if (Array.isArray(memTemplates)) {
