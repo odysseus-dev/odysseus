@@ -57,7 +57,12 @@ class APIKeyManager:
             # Legacy/wrong shape (e.g. a list) — .items() would raise. Ignore it.
             logger.warning("API keys file has unexpected shape (%s); ignoring", type(encrypted_keys).__name__)
             return {}
-        return encrypted_keys
+
+        return {
+            str(provider): key
+            for provider, key in encrypted_keys.items()
+            if isinstance(key, str)
+        }
 
     def save(self, provider: str, api_key: str):
         """Save encrypted API key to file.
@@ -82,4 +87,3 @@ class APIKeyManager:
             except (InvalidToken, ValueError) as e:
                 logger.warning("Failed to decrypt API key for %s: %s", provider, e)
         return decrypted
-

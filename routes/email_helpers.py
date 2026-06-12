@@ -304,6 +304,7 @@ OWNER_SCOPED_EMAIL_CACHE_TABLES = {
     "email_ai_replies",
     "email_calendar_extractions",
     "email_urgency_alerts",
+    "sender_signatures",
 }
 
 
@@ -339,6 +340,55 @@ def _ensure_owner_scoped_email_cache_table(conn, table: str, create_sql: str, co
     except Exception as _mig_e:
         import logging as _lg
         _lg.getLogger(__name__).warning(f"{table} owner-migration skipped: {_mig_e}")
+
+
+def _ensure_sender_signatures_table(conn):
+    """Create/migrate learned sender signatures to an owner-scoped cache."""
+    create_sql = """
+        CREATE TABLE IF NOT EXISTS sender_signatures (
+            from_address TEXT,
+            owner TEXT DEFAULT '',
+            signature_text TEXT,
+            sample_count INTEGER,
+            last_built_at TEXT NOT NULL,
+            model_used TEXT,
+            source TEXT,
+            PRIMARY KEY (from_address, owner)
+        )
+    """
+    conn.execute(create_sql)
+    try:
+        info = conn.execute("PRAGMA table_info(sender_signatures)").fetchall()
+        cols = [r[1] for r in info]
+        pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
+        if "owner" in cols and pk_cols == ["from_address", "owner"]:
+            return
+
+        conn.execute("ALTER TABLE sender_signatures RENAME TO sender_signatures__old")
+        conn.execute(create_sql)
+        old_cols = [r[1] for r in conn.execute("PRAGMA table_info(sender_signatures__old)").fetchall()]
+        copy_cols = [
+            c for c in (
+                "from_address",
+                "signature_text",
+                "sample_count",
+                "last_built_at",
+                "model_used",
+                "source",
+            )
+            if c in old_cols
+        ]
+        source_owner = "COALESCE(owner, '')" if "owner" in old_cols else "''"
+        conn.execute(
+            f"INSERT OR IGNORE INTO sender_signatures "
+            f"({', '.join([*copy_cols, 'owner'])}) "
+            f"SELECT {', '.join([*copy_cols, source_owner])} "
+            f"FROM sender_signatures__old"
+        )
+        conn.execute("DROP TABLE sender_signatures__old")
+    except Exception as _mig_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"sender_signatures owner-migration skipped: {_mig_e}")
 
 
 def attachment_extract_dir(folder: str, uid: str) -> Path:
@@ -559,20 +609,10 @@ def _init_scheduled_db():
             conn.execute("ALTER TABLE email_boundaries ADD COLUMN turns_json TEXT")
     except Exception:
         pass
-    # Per-sender signature cache. Populated by `learn_sender_signatures`
-    # action: the LLM extracts the common trailing block across N emails
-    # from each sender; the renderer folds it consistently for every
-    # future email from that address.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sender_signatures (
-            from_address TEXT PRIMARY KEY,
-            signature_text TEXT,
-            sample_count INTEGER,
-            last_built_at TEXT NOT NULL,
-            model_used TEXT,
-            source TEXT
-        )
-    """)
+    # Per-sender signature cache. Populated by `learn_sender_signatures`.
+    # Message sender addresses are global, so signatures must be scoped to the
+    # mailbox owner before `/read` returns them to the renderer.
+    _ensure_sender_signatures_table(conn)
     conn.commit()
     conn.close()
 
