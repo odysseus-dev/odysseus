@@ -11,15 +11,6 @@ if str(repo_root) not in sys.path:
 from typing import List
 from core.database import Session as DbSession, ChatMessage as DbChatMessage, SessionLocal
 
-def export_json(file_name: str, data: list[dict]):
-    with open(f'{file_name}.json', 'w') as json_file:
-        json.dump(data, json_file, indent=4, default=str)
-    print(f"Data written to '{file_name}.json'")
-
-
-# current_user will be passed from the router
-# In services/trace_export.py:
-
 def build_trace_records(
     db,
     current_user: str,
@@ -105,7 +96,6 @@ def build_trace_records(
         "note": note
     }
 
-    export_json("chats_export", [session_properties])
     print(f"✓ Exported trace for session '{session_id}' user '{current_user}'")
     
     return session_properties
