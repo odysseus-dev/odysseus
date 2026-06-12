@@ -573,6 +573,36 @@ _GGUF_PRELUDE_RE = re.compile(
 _OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
 _OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
 _OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+_LLAMA_CPP_PYTHON_GGML_TYPES = {
+    "f32": "0",
+    "f16": "1",
+    "q4_0": "2",
+    "q4_1": "3",
+    "q5_0": "6",
+    "q5_1": "7",
+    "q8_0": "8",
+    "q8_1": "9",
+    "q2_k": "10",
+    "q3_k": "11",
+    "q4_k": "12",
+    "q5_k": "13",
+    "q6_k": "14",
+    "q8_k": "15",
+    "iq2_xxs": "16",
+    "iq2_xs": "17",
+    "iq3_xxs": "18",
+    "iq1_s": "19",
+    "iq4_nl": "20",
+    "iq3_s": "21",
+    "iq2_s": "22",
+    "iq4_xs": "23",
+    "mxfp4": "39",
+    "nvfp4": "40",
+    "q1_0": "41",
+}
+_LLAMA_CPP_PYTHON_TYPE_FLAG_RE = re.compile(
+    r"(?P<flag>--type_[kv])(?P<sep>\s+|=)(?P<quote>['\"]?)(?P<value>[A-Za-z0-9_]+)(?P=quote)"
+)
 
 
 def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -> tuple[str, str]:
@@ -602,6 +632,22 @@ def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -
     if port_num < 1 or port_num > 65535:
         return "127.0.0.1", "11434"
     return f"[{host}]" if bracketed_host else host, port
+
+
+def _normalize_llama_cpp_python_cache_types(cmd: str | None) -> str | None:
+    """Map llama.cpp KV cache type names to llama-cpp-python's integer enum."""
+    if not cmd or "llama_cpp.server" not in cmd:
+        return cmd
+
+    def repl(match: re.Match[str]) -> str:
+        value = match.group("value")
+        mapped = _LLAMA_CPP_PYTHON_GGML_TYPES.get(value.lower())
+        if not mapped:
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{match.group('flag')}{match.group('sep')}{quote}{mapped}{quote}"
+
+    return _LLAMA_CPP_PYTHON_TYPE_FLAG_RE.sub(repl, cmd)
 
 
 def _check_serve_binary(seg: str) -> None:

@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -21,6 +22,7 @@ from routes.cookbook_helpers import (
     _safe_env_prefix,
     _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
+    _normalize_llama_cpp_python_cache_types,
     _validate_gpus,
     _validate_local_dir,
     _validate_repo_id,
@@ -547,6 +549,35 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
         "--host 0.0.0.0 --port 8000 --n_gpu_layers 99 --n_ctx 32768 --flash_attn true --type_k q4_0 --type_v q4_0"
     )
     assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_normalize_llama_cpp_python_cache_types_for_stale_client_cmd():
+    cmd = (
+        "python -m llama_cpp.server --model model.gguf --host 0.0.0.0 --port 8000 "
+        "--type_k q4_0 --type_v q4_0"
+    )
+
+    assert _normalize_llama_cpp_python_cache_types(cmd).endswith("--type_k 2 --type_v 2")
+
+
+def test_normalize_llama_cpp_python_cache_types_preserves_native_cache_flags():
+    cmd = (
+        "llama-server --model model.gguf --cache-type-k q4_0 --cache-type-v q4_0 "
+        "|| python3 -m llama_cpp.server --model model.gguf --type_k=q8_0 --type_v='f16'"
+    )
+
+    normalized = _normalize_llama_cpp_python_cache_types(cmd)
+    assert "--cache-type-k q4_0 --cache-type-v q4_0" in normalized
+    assert "--type_k=8" in normalized
+    assert "--type_v='1'" in normalized
+
+
+def test_model_serve_normalizes_llama_cpp_python_cache_types_after_validation():
+    src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert "req.cmd = _validate_serve_cmd(req.cmd) or \"\"" in src
+    assert "req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or \"\"" in src
+    assert src.index("_validate_serve_cmd(req.cmd)") < src.index("_normalize_llama_cpp_python_cache_types(req.cmd)")
 
 
 def test_ollama_serve_defaults_to_loopback_bind():

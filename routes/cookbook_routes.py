@@ -46,6 +46,7 @@ from routes.cookbook_helpers import (
     _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _normalize_llama_cpp_python_cache_types,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -1211,6 +1212,7 @@ def setup_cookbook_routes() -> APIRouter:
         # many downstream `"engine" in req.cmd` membership checks can't hit
         # `TypeError: argument of type 'NoneType'` (a 500 instead of a clean 400).
         req.cmd = _validate_serve_cmd(req.cmd) or ""
+        req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or ""
         req.cmd = _venv_safe_local_pip_install_cmd(
             req.cmd,
             local=not bool(req.remote_host),
