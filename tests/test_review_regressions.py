@@ -854,6 +854,40 @@ def test_mcp_json_primary_keys_are_all_live():
 
 
 @pytest.mark.asyncio
+async def test_write_file_inline_json_args(monkeypatch):
+    """write_file has no MCP server, so it runs via _direct_fallback ->
+    WriteFileTool, NOT _build_mcp_args. Inline JSON must therefore be decoded
+    by the handler itself: drive the LIVE path (execute_tool_block, no MCP) and
+    assert the file is written to the intended path with the intended content,
+    not a file literally named with the JSON blob. A _build_mcp_args unit test
+    can't catch this — it's on the dead MCP path for write_file."""
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    monkeypatch.setattr(tool_execution, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setattr(tool_execution, "is_public_blocked_tool", lambda t: False)
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: None)
+
+    captured = {}
+    import src.agent_tools.filesystem_tools as fst
+
+    def fake_resolve(p):
+        captured["path"] = p
+        raise ValueError("probe-stop-before-disk")
+
+    monkeypatch.setattr(tool_execution, "_resolve_tool_path", fake_resolve)
+
+    from src.tool_parsing import parse_tool_blocks
+    blocks = parse_tool_blocks('```write_file {"path": "/tmp/wf.txt", "content": "hi"}\n```')
+    for b in blocks:
+        await execute_tool_block(b, owner="admin")
+
+    assert captured.get("path") == "/tmp/wf.txt", (
+        f"write_file did not decode inline JSON args; got path {captured.get('path')!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_plan_mode_blocks_mutating_email_aliases_without_mcp_inventory(monkeypatch):
     """Plan-mode safety for bare email aliases must hold from the STATIC
     partition alone — no MCP read-only inventory involved: mutators (the

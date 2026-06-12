@@ -160,6 +160,21 @@ class WriteFileTool:
         lines = content.split("\n", 1)
         raw_path = lines[0].strip()
         body = lines[1] if len(lines) > 1 else ""
+        # Decode JSON-object args (the fenced inline-args shape
+        # ```write_file {"path": "...", "content": "..."}```), matching
+        # ReadFileTool above. Without this the whole JSON string becomes the
+        # path and the file is written under a garbage name. This is the live
+        # path: there is no filesystem MCP server, so write_file always runs
+        # here via _direct_fallback, not through _build_mcp_args.
+        _stripped = content.strip()
+        if _stripped.startswith("{"):
+            try:
+                _a = json.loads(_stripped)
+                if isinstance(_a, dict) and "path" in _a:
+                    raw_path = str(_a.get("path", "")).strip()
+                    body = str(_a.get("content", ""))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
         try:
             path = _resolve_tool_path(raw_path)
         except ValueError as e:

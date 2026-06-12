@@ -380,19 +380,20 @@ _MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
 # Primary argument key(s) for the legacy line-parsed tools. When a fenced
 # block's content is a JSON object carrying one of these keys, it's structured
 # inline args (the relaxed parser's ```web_search {"query": "..."}``` shape) —
-# use the object directly. Without this, the line-based parsers below wrap the
-# whole JSON string as the query/url/path/prompt, so the model's real argument
-# becomes a corrupted hidden-tool operation. Keyed off membership only (the
-# primary key never changes), so this can't drift; an unrecognized object
+# use the object directly instead of letting the line-based parsers wrap the
+# whole JSON string as the query/url/path/prompt. Keyed off membership only
+# (the primary key never changes), so this can't drift; an unrecognized object
 # safely falls through to the line-based parser, i.e. the previous behavior.
 #
-# Every entry MUST be in _MCP_TOOL_MAP — _build_mcp_args is only reached via
-# _call_mcp_tool, which only runs for _MCP_TOOL_MAP tools. An entry outside it
-# is dead code (manage_memory was, until this was caught: the tag routes
-# through dispatch_ai_tool -> do_manage_memory, not here). The same inline-JSON
-# corruption for those non-_MCP_TOOL_MAP tools is tracked separately; the fix
-# there is to route fenced JSON through function_call_to_tool_block. The
-# test_mcp_json_primary_keys_are_all_live regression pins this invariant.
+# IMPORTANT — this only covers the MCP path. _build_mcp_args is reached via
+# _call_mcp_tool only for _MCP_TOOL_MAP tools (so an entry outside that map is
+# dead, as manage_memory was). And of these, only generate_image has a live MCP
+# server today; web_search/web_fetch/read_file/write_file have none, so they run
+# via _direct_fallback -> TOOL_HANDLERS, whose handlers decode JSON themselves
+# (see ReadFileTool/WriteFileTool/WebSearchTool/WebFetchTool). The entries here
+# are kept as defense-in-depth for if/when those servers are added. The live
+# fix for each server-less tool lives in its handler. test_write_file_inline_
+# json_args and test_mcp_json_primary_keys_are_all_live pin both halves.
 _MCP_JSON_PRIMARY_KEYS: Dict[str, tuple] = {
     "web_search":     ("query", "queries"),
     "web_fetch":      ("url",),
