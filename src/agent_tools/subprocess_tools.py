@@ -102,16 +102,15 @@ async def _run_subprocess_streaming(
 
 class BashTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _AGENT_WORKDIR, _truncate
+        from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
-        workspace = ctx.get("workspace")
         _subproc_env = ctx.get("subproc_env")
         proc = await asyncio.create_subprocess_shell(
             content,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_subproc_env,
-            cwd=workspace or _AGENT_WORKDIR,
+            cwd=agent_cwd(),
         )
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
@@ -129,16 +128,15 @@ class BashTool:
 
 class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _AGENT_WORKDIR, _truncate
+        from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
-        workspace = ctx.get("workspace")
         _subproc_env = ctx.get("subproc_env")
         proc = await asyncio.create_subprocess_exec(
             (sys.executable or "python"), "-I", "-c", content,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=_subproc_env,
-            cwd=workspace or _AGENT_WORKDIR,
+            cwd=agent_cwd(),
         )
         stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
             proc,
