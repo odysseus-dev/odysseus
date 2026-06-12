@@ -76,7 +76,7 @@ class SileroEngine {
     } catch (_) { /* waveform is optional */ }
   }
 
-  start() { this._paused = false; this._vad.start(); }
+  start() { if (!this._paused) return; this._paused = false; this._vad.start(); }
   pause() { this._paused = true; try { this._vad.pause(); } catch (_) {} }
   setThreshold(t) {
     this._threshold = t;
@@ -107,6 +107,7 @@ class RmsEngine {
   async init() { /* nothing to preload */ }
 
   async start() {
+    if (!this._paused && this._recorder && this._recorder.state === 'recording') return; // already live
     this._paused = false;
     if (!this._stream) {
       this._stream = await navigator.mediaDevices.getUserMedia({

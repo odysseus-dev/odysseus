@@ -30,6 +30,8 @@ let _watchStartedAt = 0;
 let _sawTTSActivity = false;
 let _stt = null;        // sttStream instance or null
 let _useStream = false; // false → v1 single-shot POST fallback
+let _pendingAudio = null;   // VAD audio kept for fallback while awaiting stream final
+let _finalTimer = null;     // watchdog: no final within window → fallback
 let _standbyEnabled = false; // toggle cycle: off → dialog → dialog+standby → off
 
 const ICON_DIALOG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/></svg>';
@@ -143,20 +145,7 @@ function _onSpeechStart() {
   }
 }
 
-async function _onSpeechEnd(audio) {
-  if (_bargeTimer) { clearTimeout(_bargeTimer); _bargeTimer = null; }
-  if (_state !== 'listening') return;
-
-  _state = 'transcribing';
-  _setUI('vd-transcribing', 'transcribing', 'Voice dialog: transcribing…');
-  _engine.pause();
-
-  if (_useStream && _stt && _stt.connected) {
-    _stt.endUtterance(); // final arrives via onFinal → _send
-    return;
-  }
-
-  // v1 single-shot fallback
+async function _fallbackTranscribe(audio) {
   let blob;
   if (audio instanceof Blob) blob = audio;
   else if (audio && audio.length) blob = _float32ToWavBlob(audio);
@@ -174,6 +163,31 @@ async function _onSpeechEnd(audio) {
 
   if (!text) { _toast('Heard nothing — listening again'); _resumeListening(); return; }
   _send(text);
+}
+
+async function _onSpeechEnd(audio) {
+  if (_bargeTimer) { clearTimeout(_bargeTimer); _bargeTimer = null; }
+  if (_state !== 'listening') return;
+
+  _state = 'transcribing';
+  _setUI('vd-transcribing', 'transcribing', 'Voice dialog: transcribing…');
+  _engine.pause();
+
+  if (_useStream && _stt && _stt.connected) {
+    _pendingAudio = audio;
+    _stt.endUtterance(); // final arrives via onFinal → _send
+    if (_finalTimer) clearTimeout(_finalTimer);
+    _finalTimer = setTimeout(() => {
+      if (_state === 'transcribing') {
+        console.warn('Voice dialog: no stream final within 10s → single-shot fallback');
+        _useStream = false;
+        _fallbackTranscribe(_pendingAudio);
+      }
+    }, 10000);
+    return;
+  }
+
+  await _fallbackTranscribe(audio);
 }
 
 function _resumeListening() {
@@ -290,6 +304,8 @@ async function start() {
         }
       },
       onFinal: (text) => {
+        if (_finalTimer) { clearTimeout(_finalTimer); _finalTimer = null; }
+        _pendingAudio = null;
         const input = document.getElementById('message');
         if (input) input.style.opacity = '';
         if (_state !== 'transcribing') return;
@@ -299,6 +315,8 @@ async function start() {
       onError: (err) => {
         console.warn('Voice dialog: stt stream degraded → single-shot fallback', err);
         _useStream = false;
+        if (_finalTimer) { clearTimeout(_finalTimer); _finalTimer = null; }
+        if (_state === 'transcribing') _fallbackTranscribe(_pendingAudio);
       },
       onWake: () => {
         if (_state !== 'standby') return;
@@ -321,6 +339,8 @@ function stop() {
   _state = 'off';
   if (_watchTimer) { clearTimeout(_watchTimer); _watchTimer = null; }
   if (_bargeTimer) { clearTimeout(_bargeTimer); _bargeTimer = null; }
+  if (_finalTimer) { clearTimeout(_finalTimer); _finalTimer = null; }
+  _pendingAudio = null;
   if (_waveRAF) { cancelAnimationFrame(_waveRAF); _waveRAF = null; }
   if (_engine) { try { _engine.stop(); } catch (_) {} _engine = null; }
   const mgr = _mgr();
