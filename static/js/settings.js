@@ -978,6 +978,10 @@ async function initSttSettings() {
   var sttMsg = el('set-sttSettingsMsg');
   var sttEnabledToggle = el('set-sttEnabledToggle');
   var sttConfigWrap = el('set-sttConfigWrap');
+  var deviceSelect = el('set-sttDeviceSelect');
+  var computeSelect = el('set-sttComputeSelect');
+  var deviceRow = el('set-sttDeviceRow');
+  var computeRow = el('set-sttComputeRow');
   // STT was removed from AI Defaults — bail if the UI isn't present.
   if (!provSel) return;
 
@@ -988,8 +992,11 @@ async function initSttSettings() {
     var prov = provSel.value;
     var showModel = prov === 'local' || prov.startsWith('endpoint:');
     var showLang = prov !== 'disabled';
+    var showLocal = prov === 'local';
     modelRow.style.display = showModel ? 'flex' : 'none';
     langRow.style.display = showLang ? 'flex' : 'none';
+    if (deviceRow) deviceRow.style.display = showLocal ? 'flex' : 'none';
+    if (computeRow) computeRow.style.display = showLocal ? 'flex' : 'none';
     if (isEndpoint()) {
       modelSelect.style.display = 'none'; modelInput.style.display = '';
     } else {
@@ -1028,6 +1035,8 @@ async function initSttSettings() {
     if (settings.stt_model) { modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model; }
     if (settings.stt_language) langInput.value = settings.stt_language;
     if (sttEnabledToggle) sttEnabledToggle.checked = settings.stt_enabled !== false;
+    if (settings.stt_device && deviceSelect) deviceSelect.value = settings.stt_device;
+    if (settings.stt_compute_type && computeSelect) computeSelect.value = settings.stt_compute_type;
   } catch (e) { console.warn('Failed to load STT settings', e); }
 
   syncSttDisabled();
@@ -1038,7 +1047,7 @@ async function initSttSettings() {
       var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() }) });
+        body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim(), stt_device: deviceSelect ? deviceSelect.value : 'auto', stt_compute_type: computeSelect ? computeSelect.value : 'auto' }) });
       sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
       // Notify voiceRecorder of effective provider and update send button icon
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
@@ -1050,6 +1059,8 @@ async function initSttSettings() {
   modelSelect.addEventListener('change', saveSTT);
   modelInput.addEventListener('change', saveSTT);
   langInput.addEventListener('change', saveSTT);
+  if (deviceSelect) deviceSelect.addEventListener('change', saveSTT);
+  if (computeSelect) computeSelect.addEventListener('change', saveSTT);
   if (sttEnabledToggle) sttEnabledToggle.addEventListener('change', function() { syncSttDisabled(); saveSTT(); });
 }
 

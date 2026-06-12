@@ -1558,6 +1558,55 @@
             </div>
           </div>
           <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>Speech to Text<span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-sttEnabledToggle"><span class="admin-slider"></span></label></h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Transcribe voice recordings. Local provider requires <code>faster-whisper</code> (<code>pip install faster-whisper</code>).</div>
+            <div id="set-sttConfigWrap" class="settings-col">
+              <div class="settings-row">
+                <label class="settings-label">Provider</label>
+                <select id="set-sttProviderSelect" class="settings-select">
+                  <option value="disabled">Disabled</option>
+                  <option value="browser">Browser (built-in)</option>
+                  <option value="local">Local (faster-whisper)</option>
+                </select>
+              </div>
+              <div id="set-sttModelRow" class="settings-row">
+                <label class="settings-label">Model</label>
+                <select id="set-sttModelSelect" class="settings-select">
+                  <option value="tiny">tiny</option>
+                  <option value="base" selected>base</option>
+                  <option value="small">small</option>
+                  <option value="medium">medium</option>
+                  <option value="large-v2">large-v2</option>
+                  <option value="large-v3">large-v3</option>
+                </select>
+                <input id="set-sttModelInput" type="text" placeholder="model name" style="flex:1;padding:5px;display:none;">
+              </div>
+              <div id="set-sttLangRow" class="settings-row">
+                <label class="settings-label">Language</label>
+                <input id="set-sttLangInput" type="text" placeholder="auto-detect" class="settings-select">
+              </div>
+              <div id="set-sttDeviceRow" class="settings-row">
+                <label class="settings-label">Device</label>
+                <select id="set-sttDeviceSelect" class="settings-select">
+                  <option value="auto">Auto</option>
+                  <option value="cpu">CPU</option>
+                  <option value="cuda">CUDA (GPU)</option>
+                </select>
+              </div>
+              <div id="set-sttComputeRow" class="settings-row">
+                <label class="settings-label">Compute</label>
+                <select id="set-sttComputeSelect" class="settings-select">
+                  <option value="auto">Auto</option>
+                  <option value="int8_float32">int8_float32 (Apple Silicon)</option>
+                  <option value="int8">int8</option>
+                  <option value="float16">float16 (CUDA)</option>
+                  <option value="float32">float32</option>
+                </select>
+              </div>
+              <div id="set-sttSettingsMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+          </div>
+          <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>Teacher Model <span style="font-size:0.72em;opacity:0.55;font-weight:normal;">(Experimental)</span><span style="flex:1"></span><label class="admin-switch"><input type="checkbox" id="set-teacherEnabledToggle"><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">When a self-hosted student fails an agent-mode task, escalate to a SOTA teacher that writes a SKILL.md procedure so the student can do it next time. Off by default.</div>
             <div class="settings-col">
