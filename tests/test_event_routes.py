@@ -188,3 +188,41 @@ async def test_route_save_failure_500(mock_event_store, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await ack_event(_request(scopes=["events:ack"]), event_id=e["id"])
     assert exc.value.status_code == 500
+
+@pytest.mark.asyncio
+async def test_missing_event_returns_404(mock_event_store):
+    router = setup_event_routes()
+    ack = _endpoint(router, "/api/events/{event_id}/ack", "POST")
+    investigate = _endpoint(router, "/api/events/{event_id}/investigate", "POST")
+    resolve = _endpoint(router, "/api/events/{event_id}/resolve", "POST")
+    ignore = _endpoint(router, "/api/events/{event_id}/ignore", "POST")
+
+    fake_id = "non-existent-id"
+
+    for ep, scope in [(ack, "events:ack"), (investigate, "events:ack"), 
+                      (resolve, "events:resolve"), (ignore, "events:resolve")]:
+        with pytest.raises(HTTPException) as exc:
+            await ep(_request(scopes=[scope]), event_id=fake_id)
+        assert exc.value.status_code == 404
+
+@pytest.mark.asyncio
+async def test_event_sorting(mock_event_store):
+    router = setup_event_routes()
+    summary = _endpoint(router, "/api/events/summary", "GET")
+
+    e1 = mock_event_store.record_event("src", "s1", "warning", "t1", "s1", "k1")
+    e2 = mock_event_store.record_event("src", "s2", "critical", "t2", "s2", "k2")
+    
+    # Manipulate last_seen to make e1 newer than e2
+    events = mock_event_store._load()
+    for e in events:
+        if e["id"] == e1["id"]:
+            e["last_seen"] = "2099-01-01T00:00:00+00:00"
+        elif e["id"] == e2["id"]:
+            e["last_seen"] = "2020-01-01T00:00:00+00:00"
+    mock_event_store._save(events)
+
+    res = await summary(_request(scopes=["events:read"]))
+    assert len(res["events"]) == 2
+    assert res["events"][0]["id"] == e1["id"]
+    assert res["events"][1]["id"] == e2["id"]

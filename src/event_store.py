@@ -54,6 +54,8 @@ class EventStore:
         elif status:
             events = [e for e in events if e.get("status") == status]
             
+        events.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
+        
         if limit is not None:
             events = events[:limit]
             

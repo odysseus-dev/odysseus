@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 from typing import Optional
 from src.event_store import EventStore
 from routes.homelab_routes import _scope_owner
@@ -11,7 +11,7 @@ def setup_event_routes() -> APIRouter:
     router = APIRouter(prefix="/api/events", tags=["events"])
 
     @router.get("")
-    async def list_events(request: Request, status: Optional[str] = None, limit: Optional[int] = None):
+    async def list_events(request: Request, status: Optional[str] = None, limit: Optional[int] = Query(None, ge=1, le=100)):
         _scope_owner(request, EVENTS_READ_SCOPES)
         store = EventStore()
         try:
@@ -64,6 +64,8 @@ def setup_event_routes() -> APIRouter:
             if not event:
                 raise HTTPException(404, "Event not found")
             return {"status": "ok", "event": event}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(500, f"Persistence error: {str(e)}")
 
@@ -76,6 +78,8 @@ def setup_event_routes() -> APIRouter:
             if not event:
                 raise HTTPException(404, "Event not found")
             return {"status": "ok", "event": event}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(500, f"Persistence error: {str(e)}")
 
@@ -88,6 +92,8 @@ def setup_event_routes() -> APIRouter:
             if not event:
                 raise HTTPException(404, "Event not found")
             return {"status": "ok", "event": event}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(500, f"Persistence error: {str(e)}")
 
@@ -100,6 +106,8 @@ def setup_event_routes() -> APIRouter:
             if not event:
                 raise HTTPException(404, "Event not found")
             return {"status": "ok", "event": event}
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(500, f"Persistence error: {str(e)}")
 
