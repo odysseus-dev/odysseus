@@ -1643,6 +1643,14 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
 
+            # Fix for #4058: when start == end, expand to a full-day window.
+            # LLMs routinely emit start == end for natural-language single-day
+            # queries. When both parse to midnight, we need to expand to cover
+            # the whole day.
+            if end_dt <= start_dt:
+                # Single-day query: expand [start, start) to [start, start+1day)
+                end_dt = start_dt + timedelta(days=1)
+
             q = _event_query().filter(
                 CalendarEvent.dtstart < end_dt,
                 CalendarEvent.dtend > start_dt,
