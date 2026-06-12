@@ -151,7 +151,7 @@ Set these in your `.env` file on the Pi (see `.env.example` for the full list).
 |---|---|---|
 | `./config` | `/app/config` | Homelab service registry (`homelab_services.json`) |
 | `./data` | `/app/data` | SQLite DB, event store (`homelab_events.json`), SSH keys, model cache |
-| `/var/run/docker.sock` | `/var/run/docker.sock` | Docker container health checks (Option A) |
+| `/var/run/docker.sock` | `/var/run/docker.sock` | Docker socket bind mount, commonly mounted with `:ro` in the Compose example (Option A) |
 
 ### Homelab service registry
 
