@@ -1377,7 +1377,9 @@ def setup_cookbook_routes() -> APIRouter:
                 # Include the Homebrew bin dirs so a brew-installed llama-server /
                 # ollama is found (otherwise macOS falls back to a slow source build).
                 # /opt/homebrew = Apple Silicon, /usr/local = Intel; harmless on Linux.
-                runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
+                runner_lines.append('ODYSSEUS_LLAMA_CPP_DIR="${ODYSSEUS_LLAMA_CPP_DIR:-$HOME/llama.cpp}"')
+                runner_lines.append('ODYSSEUS_LLAMA_CPP_BIN_DIR="${ODYSSEUS_LLAMA_CPP_BIN_DIR:-$HOME/bin}"')
+                runner_lines.append('export PATH="$HOME/.local/bin:$ODYSSEUS_LLAMA_CPP_BIN_DIR:$ODYSSEUS_LLAMA_CPP_DIR/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
                 runner_lines.append('if [ -d /data/data/com.termux ]; then')
                 runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
                 runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
@@ -1387,8 +1389,8 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  fi')
                 runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
                 runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
-                runner_lines.append('  mkdir -p ~/bin')
-                runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
+                runner_lines.append('  mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR" "$(dirname "$ODYSSEUS_LLAMA_CPP_DIR")"')
+                runner_lines.append('  [ -d "$ODYSSEUS_LLAMA_CPP_DIR" ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp "$ODYSSEUS_LLAMA_CPP_DIR"')
                 # Build with the right accelerator: Metal on macOS (llama.cpp
                 # enables it automatically, no flag), CUDA on Linux when present,
                 # else a plain CPU build. nproc is Linux-only — fall back to
@@ -1401,9 +1403,9 @@ def setup_cookbook_routes() -> APIRouter:
                 # attempt) poisons build/CMakeCache.txt, so a plain `cmake -B build`
                 # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is
                 # explicit so the binary is optimized (Metal auto-enables on macOS).
-                runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+                runner_lines.append('    cd "$ODYSSEUS_LLAMA_CPP_DIR" && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
                 runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
-                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                runner_lines.append('      && ln -sf "$ODYSSEUS_LLAMA_CPP_DIR/build/bin/llama-server" "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server"')
                 runner_lines.append('  else')
                 _append_llama_cpp_linux_accel_build_lines(runner_lines)
                 runner_lines.append('  fi')

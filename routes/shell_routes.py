@@ -1278,8 +1278,8 @@ def setup_shell_routes() -> APIRouter:
     async def rebuild_engine(request: Request):
         """Clear the cached llama.cpp build so the next serve recompiles.
 
-        Admin only — this removes the Cookbook-managed ``~/bin/llama-server``
-        symlink and ``~/llama.cpp/build`` directory, locally or on the selected
+        Admin only — this removes the Cookbook-managed ``llama-server`` symlink
+        and configured ``llama.cpp/build`` directory, locally or on the selected
         remote server. It installs and downloads nothing; the next llama.cpp
         serve rebuilds from source and picks up CUDA/HIP if a toolchain is now
         present. This is the missing "force a fresh GPU build" lever for hosts
