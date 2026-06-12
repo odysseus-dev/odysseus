@@ -149,35 +149,20 @@ function pointerNeedsProjection(clientX, clientY) {
   return clientX < left || clientX > right || clientY < top || clientY > bottom;
 }
 
-function dispatchProjectedPointerMove(sourceEvent, clientX, clientY) {
-  if (!sidebarDragBounds) return;
-  const projectedX = sidebarDragBounds.left + sidebarDragBounds.width / 2;
-  const projectedY = projectPointerY(clientY);
-
-  const init = {
-    bubbles: true,
-    cancelable: true,
-    clientX: projectedX,
-    clientY: projectedY,
-    screenX: sourceEvent.screenX,
-    screenY: sourceEvent.screenY,
-    button: sourceEvent.button,
-    buttons: sourceEvent.buttons,
-  };
-
-  if (typeof PointerEvent !== 'undefined' && sourceEvent instanceof PointerEvent) {
-    document.dispatchEvent(new PointerEvent('pointermove', {
-      ...init,
-      pointerId: sourceEvent.pointerId,
-      pointerType: sourceEvent.pointerType,
-    }));
-    return;
+function readPointer(event, phase = 'move') {
+  let clientX = event.clientX;
+  let clientY = event.clientY;
+  if (event.type === 'touchmove' && event.touches?.length) {
+    clientX = event.touches[0].clientX;
+    clientY = event.touches[0].clientY;
+  } else if (phase === 'up' && event.type === 'touchend' && event.changedTouches?.length) {
+    clientX = event.changedTouches[0].clientX;
+    clientY = event.changedTouches[0].clientY;
   }
-
-  document.dispatchEvent(new MouseEvent('mousemove', init));
+  return { clientX, clientY };
 }
 
-function dispatchSortableListEdgeMove(sourceEvent, clientY) {
+function dispatchSyntheticMove(sourceEvent, clientY) {
   if (!sidebarDragBounds || !sourceEvent) return;
   const init = {
     bubbles: true,
@@ -243,73 +228,49 @@ function feedSortableEdgeSlot(listRoot) {
   const clientY = edge === 'bottom'
     ? sidebarDragContentBottom + LIST_EDGE_SLACK_PX
     : Math.max(minEdgeY, sidebarDragContentTop - LIST_EDGE_SLACK_PX);
-  dispatchSortableListEdgeMove(lastPointerMoveEvent, clientY);
+  dispatchSyntheticMove(lastPointerMoveEvent, clientY);
   forceSortableDragOver(listRoot);
 }
 
-function onSidebarPointerProxy(event) {
+function handleSidebarPointerEvent(event, phase) {
   if (!sidebarDragBounds) return;
 
-  let clientX = event.clientX;
-  let clientY = event.clientY;
-  if (event.type === 'touchmove' && event.touches?.length) {
-    clientX = event.touches[0].clientX;
-    clientY = event.touches[0].clientY;
-  }
-
+  const { clientX, clientY } = readPointer(event, phase);
   sidebarDragPointerX = clientX;
   sidebarDragPointerY = clientY;
   lastPointerMoveEvent = event;
 
-  if (
-    isToolsList(activeDragListRoot)
-    && !pointerNeedsProjection(clientX, clientY)
-    && pointerPastDragContentEdge(clientY)
-  ) {
+  const toolsDrag = isToolsList(activeDragListRoot);
+  const pastEdge = pointerPastDragContentEdge(clientY);
+
+  if (toolsDrag && pastEdge && (phase === 'up' || !pointerNeedsProjection(clientX, clientY))) {
     feedSortableEdgeSlot(activeDragListRoot);
   }
 
   if (!pointerNeedsProjection(clientX, clientY)) return;
 
-  event.stopImmediatePropagation();
-  dispatchProjectedPointerMove(event, clientX, clientY);
+  if (phase === 'move') event.stopImmediatePropagation();
+  dispatchSyntheticMove(event, projectPointerY(clientY));
+}
+
+function onSidebarPointerProxy(event) {
+  handleSidebarPointerEvent(event, 'move');
 }
 
 function onSidebarPointerProxyUp(event) {
-  if (!sidebarDragBounds) return;
-
-  let clientX = event.clientX;
-  let clientY = event.clientY;
-  if (event.type === 'touchend' && event.changedTouches?.length) {
-    clientX = event.changedTouches[0].clientX;
-    clientY = event.changedTouches[0].clientY;
-  }
-
-  sidebarDragPointerX = clientX;
-  sidebarDragPointerY = clientY;
-  lastPointerMoveEvent = event;
-
-  if (
-    isToolsList(activeDragListRoot)
-    && pointerPastDragContentEdge(clientY)
-  ) {
-    feedSortableEdgeSlot(activeDragListRoot);
-  }
-
-  if (!pointerNeedsProjection(clientX, clientY)) return;
-
-  dispatchProjectedPointerMove(event, clientX, clientY);
+  handleSidebarPointerEvent(event, 'up');
 }
 
 function startSidebarPointerProxy() {
   stopSidebarPointerProxy();
   sidebarPointerProxyHandler = onSidebarPointerProxy;
   sidebarPointerProxyUpHandler = onSidebarPointerProxyUp;
-  document.addEventListener('mousemove', sidebarPointerProxyHandler, true);
-  document.addEventListener('pointermove', sidebarPointerProxyHandler, true);
+  const capturePassive = { capture: true, passive: true };
+  document.addEventListener('mousemove', sidebarPointerProxyHandler, capturePassive);
+  document.addEventListener('pointermove', sidebarPointerProxyHandler, capturePassive);
   document.addEventListener('touchmove', sidebarPointerProxyHandler, { capture: true, passive: false });
-  document.addEventListener('mouseup', sidebarPointerProxyUpHandler, true);
-  document.addEventListener('pointerup', sidebarPointerProxyUpHandler, true);
+  document.addEventListener('mouseup', sidebarPointerProxyUpHandler, capturePassive);
+  document.addEventListener('pointerup', sidebarPointerProxyUpHandler, capturePassive);
   document.addEventListener('touchend', sidebarPointerProxyUpHandler, { capture: true, passive: true });
 }
 
@@ -601,6 +562,20 @@ function reorderToPointer(listRoot, dragged, pointerY, animationMs, targetKeys =
   return true;
 }
 
+function attemptPointerReorder(listRoot, item, pointerY, animationMs, requireUnmoved = false) {
+  if (!isToolsList(listRoot)) return false;
+  if (requireUnmoved) {
+    const currentIndex = [...listRoot.children].indexOf(item);
+    if (currentIndex !== dragStartIndex) return false;
+  }
+  const targetKeys = pointerReorderTarget(listRoot, item, pointerY);
+  if (!targetKeys) return false;
+  item.classList.add(TOOL_REORDER_SOURCE_HOLD);
+  const handled = reorderToPointer(listRoot, item, pointerY, animationMs, targetKeys);
+  item.classList.remove(TOOL_REORDER_SOURCE_HOLD);
+  return handled;
+}
+
 function persistToolOrderFromDom(sourceList, deferApplyMs = 0) {
   const subsetOrder = readOrderFromList(sourceList);
   if (!subsetOrder.length) return;
@@ -621,11 +596,7 @@ function createSortableOptions(listRoot) {
   const reduceMotionUi = motionReduced();
   const touchUi = coarsePointer();
   const isSidebarList = listRoot.id === SIDEBAR_TOOLS_LIST_ID;
-  const isRailList = listRoot.id === RAIL_TOOLS_LIST_ID;
   const animationMs = reduceMotionUi ? 0 : 240;
-  // Sidebar rows are <div class="list-item"> with touch-action: pan-y for scroll.
-  // Native HTML5 drag also leaves the row in-place with drag styling. forceFallback
-  // appends a body-level clone that actually follows the pointer.
   const useFallback = true;
   return {
     animation: animationMs,
@@ -641,7 +612,7 @@ function createSortableOptions(listRoot) {
     direction: 'vertical',
     swapThreshold: isSidebarList ? 0.5 : 0.65,
     invertSwap: false,
-    emptyInsertThreshold: (isSidebarList || isRailList) ? LIST_EDGE_SLACK_PX : 5,
+    emptyInsertThreshold: LIST_EDGE_SLACK_PX,
     delay: touchUi ? 120 : 0,
     delayOnTouchOnly: true,
     forceFallback: useFallback,
@@ -660,40 +631,22 @@ function createSortableOptions(listRoot) {
       }
     },
     onUnchoose(evt) {
-      if (!isToolsList(listRoot) || dragStartIndex == null) return;
-      const currentIndex = [...listRoot.children].indexOf(evt.item);
-      if (currentIndex !== dragStartIndex) return;
-      const targetKeys = pointerReorderTarget(
-        listRoot,
-        evt.item,
-        effectiveDragPointerY(),
-      );
-      if (!targetKeys) return;
-      pointerReorderHandled = true;
-      evt.item.classList.add(TOOL_REORDER_SOURCE_HOLD);
-      reorderToPointer(
-        listRoot,
-        evt.item,
-        sidebarDragPointerY,
-        animationMs,
-        targetKeys,
-      );
-      evt.item.classList.remove(TOOL_REORDER_SOURCE_HOLD);
+      if (dragStartIndex == null) return;
+      if (attemptPointerReorder(listRoot, evt.item, effectiveDragPointerY(), animationMs, true)) {
+        pointerReorderHandled = true;
+      }
     },
     onEnd(evt) {
-      const pointerY = effectiveDragPointerY();
       const sortableMoved = evt.oldIndex != null
         && evt.newIndex != null
         && evt.oldIndex !== evt.newIndex;
-      if (!sortableMoved && !pointerReorderHandled && isToolsList(listRoot)) {
-        evt.item.classList.add(TOOL_REORDER_SOURCE_HOLD);
-        pointerReorderHandled = reorderToPointer(
+      if (!sortableMoved && !pointerReorderHandled) {
+        pointerReorderHandled = attemptPointerReorder(
           listRoot,
           evt.item,
-          pointerY,
+          effectiveDragPointerY(),
           animationMs,
         );
-        evt.item.classList.remove(TOOL_REORDER_SOURCE_HOLD);
       }
       const pointerReorder = pointerReorderHandled;
       const moved = sortableMoved || pointerReorder;
