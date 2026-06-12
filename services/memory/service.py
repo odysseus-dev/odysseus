@@ -9,6 +9,7 @@ import heapq
 import json
 import time
 from datetime import timedelta
+import threading
 
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
@@ -49,6 +50,8 @@ class MemoryService:
     # Class-level cache to persist across ephemeral MemoryService() instantiations
     _hot_cache: List[Dict[str, Any]] = []
     _last_disk_mtime: float = 0.0
+    # Thread lock to serialize disk I/O and cache updates across the threadpool
+    _io_lock = threading.RLock()
 
     def __init__(self, data_dir: str = DATA_DIR):
         self.manager = MemoryManager(data_dir)
@@ -123,20 +126,21 @@ class MemoryService:
         """Get frequently used/recent memories, using an mtime-validated memory cache."""
         file_path = self.manager.memory_file
 
-        try:
-            current_mtime = os.path.getmtime(file_path)
-        except OSError:
-            current_mtime = 0.0
+        with self._io_lock:
+            try:
+                current_mtime = os.path.getmtime(file_path)
+            except OSError:
+                current_mtime = 0.0
 
-        # Cache Hit: The disk file has not been touched since our last read.
-        if MemoryService._hot_cache and current_mtime <= MemoryService._last_disk_mtime:
-            records = MemoryService._hot_cache
-        else:
-            # Cache Miss: File modified (or first boot). Pay the I/O and JSON parse cost once.
-            records = self.manager.load_all()
-            if records:
-                MemoryService._hot_cache = records
-                MemoryService._last_disk_mtime = current_mtime
+            # Cache Hit: The disk file has not been touched since our last read.
+            if MemoryService._hot_cache and current_mtime <= MemoryService._last_disk_mtime:
+                records = MemoryService._hot_cache
+            else:
+                # Cache Miss: File modified (or first boot). Pay the I/O and JSON parse cost once.
+                records = self.manager.load_all()
+                if records:
+                    MemoryService._hot_cache = records
+                    MemoryService._last_disk_mtime = current_mtime
 
         if not records:
             return []
@@ -156,63 +160,60 @@ class MemoryService:
     def archive_cold_to_glacier(self, age_threshold_sec: int = DEFAULT_GLACIER_AGE_SEC) -> int:
         """
         Moves older records to memory_glacier.jsonl atomically.
-        Batches vector deletes and prevents data duplication on crash.
+        Thread-safe to prevent read-modify-write data loss and cache races.
         """
-        all_memories = self.manager.load_all()
-        if not all_memories:
-            return 0
+        with self._io_lock:
+            all_memories = self.manager.load_all()
+            if not all_memories:
+                return 0
 
-        current_time = int(time.time())
-        hot_memories, cold_memories = [], []
+            current_time = int(time.time())
+            hot_memories, cold_memories = [], []
 
-        for m in all_memories:
-            # Strict type handling for timestamps to prevent TypeError crashes
-            ts = m.get("timestamp", 0)
-            if not isinstance(ts, (int, float)):
-                ts = 0
-            age = current_time - ts
+            for m in all_memories:
+                ts = m.get("timestamp", 0)
+                if not isinstance(ts, (int, float)):
+                    ts = 0
+                age = current_time - ts
 
-            if not m.get("pinned", False) and m.get("uses", 0) == 0 and age > age_threshold_sec:
-                cold_memories.append(m)
-            else:
-                hot_memories.append(m)
-
-        if not cold_memories:
-            return 0
-
-        # 1. Append to colder O(1) memory storage using a single batched I/O write
-        glacier_path = os.path.join(os.path.dirname(self.manager.memory_file), "memory_glacier.jsonl")
-        try:
-            with open(glacier_path, "a", encoding="utf-8") as f:
-                f.writelines(json.dumps(cold_mem) + "\n" for cold_mem in cold_memories)
-        except IOError as e:
-            logger.error(f"Glacier append failed, aborting archive to prevent data loss: {e}")
-            return 0
-
-        # 2. Commit the truncated hot memory array back to disk.
-        # Writing this file will update the OS mtime, which automatically invalidates
-        # the get_all() cache for the next read, keeping our workers syncd
-        try:
-            self.manager.save(hot_memories)
-        except Exception as e:
-            logger.critical(f"Failed to save hot memories after glacier append! Duplication risk! {e}")
-            # Intentionally not returning here so we still attempt vector cleanup
-
-        # 3. Evict dead weight from the vector store in a single batch
-        if self.vector_store and self.vector_store.healthy:
-            cold_ids = [m["id"] for m in cold_memories if "id" in m]
-            try:
-                # If vector_store doesn't have remove_batch yet, implement it.
-                # N+1 deletes over the network will kill performance.
-                if hasattr(self.vector_store, 'remove_batch'):
-                    self.vector_store.remove_batch(cold_ids)
+                if not m.get("pinned", False) and m.get("uses", 0) == 0 and age > age_threshold_sec:
+                    cold_memories.append(m)
                 else:
-                    for cid in cold_ids:
-                        self.vector_store.remove(cid)
-            except Exception as e:
-                logger.error(f"Vector store eviction failed: {e}", exc_info=True)
+                    hot_memories.append(m)
 
-        return len(cold_memories)
+            if not cold_memories:
+                return 0
+
+            # 1. Append to colder O(1) memory storage using a single batched I/O write
+            glacier_path = os.path.join(os.path.dirname(self.manager.memory_file), "memory_glacier.jsonl")
+            try:
+                with open(glacier_path, "a", encoding="utf-8") as f:
+                    f.writelines(json.dumps(cold_mem) + "\n" for cold_mem in cold_memories)
+            except IOError as e:
+                logger.error(f"Glacier append failed, aborting archive: {e}")
+                return 0
+
+            # 2. Evict dead weight from the vector DB BEFORE committing to JSON.
+            # This prevents ghost vectors if the network call fails or times out.
+            if self.vector_store and self.vector_store.healthy:
+                cold_ids = [m["id"] for m in cold_memories if "id" in m]
+                try:
+                    if hasattr(self.vector_store, 'remove_batch'):
+                        self.vector_store.remove_batch(cold_ids)
+                    else:
+                        for cid in cold_ids:
+                            self.vector_store.remove(cid)
+                except Exception as e:
+                    logger.error(f"Vector store eviction failed, aborting disk save to prevent split-brain: {e}", exc_info=True)
+                    return 0
+
+            # 3. Commit the truncated hot memory array back to disk safely inside the lock.
+            try:
+                self.manager.save(hot_memories)
+            except Exception as e:
+                logger.critical(f"Failed to save hot memories! Duplication risk! {e}")
+
+            return len(cold_memories)
 
     def delete(self, memory_id: str) -> bool:
         """Delete a memory by ID."""
