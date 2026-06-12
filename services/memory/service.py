@@ -145,14 +145,20 @@ class MemoryService:
         if not records:
             return []
 
+        def _safe_int(val: Any) -> int:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return 0
+
         # O(N log K) heap extraction runs entirely in RAM.
         top_records = heapq.nlargest(
             limit,
             records,
             key=lambda x: (
                 x.get("pinned", False),
-                x.get("uses", 0),
-                x.get("timestamp", 0)
+                _safe_int(x.get("uses")),
+                _safe_int(x.get("timestamp"))
             )
         )
         return [self._to_memory(m) for m in top_records]
