@@ -218,7 +218,7 @@ docker compose exec odysseus sh -lc 'test -e /dev/kfd && test -d /dev/dri && ls 
 > the CUDA Toolkit at runtime. If Cookbook logs show `Unable to find cudart
 > library`, `Could NOT find CUDAToolkit`, `CUDA Toolkit not found`, or
 > tensors/layers assigned to CPU, that is a Cookbook/llama.cpp build issue —
-> not a Docker passthrough failure. Re-install the serve engine via
+> not a Docker passthrough failure. Reinstall the serve engine via
 > **Cookbook → Dependencies** to get a CUDA-enabled build.
 >
 > The same split applies to AMD/ROCm: seeing `/dev/kfd` and `/dev/dri` inside

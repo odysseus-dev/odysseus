@@ -25,7 +25,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access)",
+            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -39,7 +39,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something",
+            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -139,6 +139,14 @@ FUNCTION_TOOL_SCHEMAS = [
                 },
                 "required": []
             }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_workspace",
+            "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
     {
@@ -1246,6 +1254,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = args.get("path", "")
     elif tool_type in ("grep", "glob", "ls"):
         content = json.dumps(args) if args else "{}"
+    elif tool_type == "get_workspace":
+        content = ""
     elif tool_type == "write_file":
         content = args.get("path", "") + "\n" + args.get("content", "")
     elif tool_type == "edit_file":
