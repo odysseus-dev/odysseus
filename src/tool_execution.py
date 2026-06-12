@@ -377,8 +377,34 @@ _MCP_ARG_PARSERS: Dict[str, Callable[[str], Dict[str, str]]] = {
 }
 
 
+# Primary argument key(s) for the legacy line-parsed tools. When a fenced
+# block's content is a JSON object carrying one of these keys, it's structured
+# inline args (the relaxed parser's ```web_search {"query": "..."}``` shape) —
+# use the object directly. Without this, the line-based parsers below wrap the
+# whole JSON string as the query/url/path/prompt, so the model's real argument
+# becomes a corrupted hidden-tool operation. Keyed off membership only (the
+# primary key never changes), so this can't drift; an unrecognized object
+# safely falls through to the line-based parser, i.e. the previous behavior.
+_MCP_JSON_PRIMARY_KEYS: Dict[str, tuple] = {
+    "web_search":     ("query", "queries"),
+    "web_fetch":      ("url",),
+    "read_file":      ("path",),
+    "write_file":     ("path",),
+    "generate_image": ("prompt",),
+    "manage_memory":  ("action",),
+}
+
+
 def _build_mcp_args(tool: str, content: str) -> Dict:
     """Convert fenced-block text content to structured MCP arguments."""
+    primaries = _MCP_JSON_PRIMARY_KEYS.get(tool)
+    if primaries and content.strip().startswith("{"):
+        try:
+            decoded = json.loads(content.strip())
+        except (json.JSONDecodeError, TypeError):
+            decoded = None
+        if isinstance(decoded, dict) and any(k in decoded for k in primaries):
+            return decoded
     parser = _MCP_ARG_PARSERS.get(tool)
     return parser(content) if parser else {}
 
@@ -876,28 +902,31 @@ async def _execute_tool_block_impl(
             _raw = content.strip()
             args = {}
             _args_error = None
-            if _raw.startswith(("{", "[")):
+            if _raw:
+                # A non-empty body is always meant to be the call's arguments,
+                # and every email tool takes a JSON object. Anything that
+                # isn't one is a correctable error — NOT a silent empty-args
+                # call, which would read the DEFAULT mailbox/folder instead of
+                # the one the model meant (#3966 class). Only an EMPTY body
+                # keeps the no-arg path (e.g. ```list_email_accounts```).
                 try:
-                    args = json.loads(_raw)
+                    parsed = json.loads(_raw)
                 except (json.JSONDecodeError, TypeError) as _je:
-                    # The classic tag/body form reaches execution unvalidated
-                    # (only INLINE args are JSON-checked by the parser). A body
-                    # like {account: "work"} silently becoming {} would read
-                    # the DEFAULT mailbox instead of the one the model meant —
-                    # answer with a correctable parse error instead.
+                    # Covers both `{account: "work"}` (looks like JSON, bad)
+                    # and `account: work` (not JSON at all).
                     _args_error = (
                         f"'{tool}' arguments are not valid JSON ({_je}). "
                         'Send a JSON object, e.g. {"account": "work"} — '
-                        "keys and strings need double quotes."
+                        "keys and string values need double quotes."
                     )
-            if _args_error is None and not isinstance(args, dict):
-                # The fence parser accepts JSON arrays as inline args, but
-                # every email tool takes an object. Answer with a correctable
-                # error instead of silently calling with no args (#3966 class).
-                _args_error = (
-                    f"'{tool}' arguments must be a JSON object, "
-                    'e.g. {"uid": "..."} — got a JSON array/value instead.'
-                )
+                else:
+                    if isinstance(parsed, dict):
+                        args = parsed
+                    else:
+                        _args_error = (
+                            f"'{tool}' arguments must be a JSON object, "
+                            'e.g. {"uid": "..."} — got a JSON array/value instead.'
+                        )
             if _args_error is not None:
                 result = {"error": _args_error, "exit_code": 1}
             else:

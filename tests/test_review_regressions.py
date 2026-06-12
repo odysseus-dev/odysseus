@@ -792,23 +792,52 @@ async def test_bare_email_dispatch_rejects_non_object_json_args(monkeypatch):
 @pytest.mark.asyncio
 async def test_bare_email_dispatch_rejects_invalid_json_body(monkeypatch):
     """The classic tag/body form reaches execution unvalidated (only INLINE
-    args are JSON-checked by the parser). A body like {account: "work"} must
-    return a correctable parse error — silently becoming {} args would read
-    the DEFAULT mailbox instead of the one the model meant."""
+    args are JSON-checked by the parser). A non-JSON-object body must return a
+    correctable parse error — silently becoming {} args would read the DEFAULT
+    mailbox instead of the one the model meant. Covers both the brace-looking
+    `{account: "work"}` and the bare `account: work` shapes."""
     _install_admin_auth_stub(monkeypatch)
     import src.tool_execution as tool_execution
     from src.tool_execution import execute_tool_block
 
-    mcp = _FakeMcpManager()
-    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
+    for bad_body in ('{account: "work"}', "account: work"):
+        mcp = _FakeMcpManager()
+        monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
+        desc, result = await execute_tool_block(
+            SimpleNamespace(tool_type="list_emails", content=bad_body),
+            owner="admin-user",
+        )
+        assert result["exit_code"] == 1, bad_body
+        assert "not valid JSON" in result["error"], bad_body
+        assert mcp.calls == [], f"malformed args must never reach MCP: {bad_body!r}"
 
-    desc, result = await execute_tool_block(
-        SimpleNamespace(tool_type="list_emails", content='{account: "work"}'),
-        owner="admin-user",
-    )
-    assert result["exit_code"] == 1
-    assert "not valid JSON" in result["error"]
-    assert mcp.calls == [], "malformed args must never reach the MCP server"
+
+@pytest.mark.asyncio
+async def test_legacy_mcp_tools_decode_inline_json_args(monkeypatch):
+    """The relaxed parser accepts inline JSON for non-code tags, but the legacy
+    line-based arg builders (web_search/web_fetch/read_file/write_file/
+    generate_image) would wrap the whole JSON string as the query/path/prompt.
+    A JSON object carrying the tool's primary key must be used directly."""
+    import src.tool_execution as tool_execution
+    from src.tool_execution import _build_mcp_args
+
+    cases = {
+        "web_search": ('{"query": "odysseus pr 3681"}', {"query": "odysseus pr 3681"}),
+        "web_fetch": ('{"url": "https://example.com"}', {"url": "https://example.com"}),
+        "read_file": ('{"path": "/tmp/x.txt"}', {"path": "/tmp/x.txt"}),
+        "write_file": ('{"path": "/tmp/x", "content": "hi"}', {"path": "/tmp/x", "content": "hi"}),
+        "generate_image": ('{"prompt": "a cat"}', {"prompt": "a cat"}),
+    }
+    for tool, (content, expected) in cases.items():
+        assert _build_mcp_args(tool, content) == expected, tool
+
+    # Freeform (non-JSON) content keeps the line-based behavior.
+    assert _build_mcp_args("web_search", "latest python release") == {"query": "latest python release"}
+    # A JSON object WITHOUT the tool's primary key is not args — fall back
+    # (write_file content the model happened to write as a bare object).
+    assert _build_mcp_args("write_file", '{"config": "value"}') == {
+        "path": '{"config": "value"}', "content": "",
+    }
 
 
 @pytest.mark.asyncio
