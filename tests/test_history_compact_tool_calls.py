@@ -99,44 +99,6 @@ class _FakeSession:
         ]
 
 
-def _compact_prompt_for(monkeypatch, history):
-    captured = {}
-
-    async def fake_llm_call_async(endpoint_url, model, messages, **kwargs):
-        captured["messages"] = messages
-        return "Summary text"
-
-    monkeypatch.setattr(history_routes, "_verify_session_owner", lambda request, session_id: None)
-    monkeypatch.setattr(history_routes, "SessionLocal", lambda: _FakeDb())
-
-    import src.agent_runs as agent_runs
-    import src.endpoint_resolver as endpoint_resolver
-    import src.llm_core as llm_core
-    import src.model_context as model_context
-
-    monkeypatch.setattr(agent_runs, "is_active", lambda session_id: False)
-    def fake_resolve_endpoint(kind, owner=None):
-        captured.setdefault("resolve_calls", []).append((kind, owner))
-        return None, None, {}
-
-    monkeypatch.setattr(endpoint_resolver, "resolve_endpoint", fake_resolve_endpoint)
-    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
-    monkeypatch.setattr(model_context, "estimate_tokens", lambda messages: 100)
-    monkeypatch.setattr(model_context, "get_context_length", lambda endpoint_url, model: 1000)
-
-    session = _FakeSession(history)
-    manager = _FakeSessionManager(session)
-    app = FastAPI()
-    app.include_router(history_routes.setup_history_routes(manager))
-
-    response = TestClient(app).post("/api/session/session-1/compact")
-
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
-    assert manager.saved is True
-    return captured["messages"][1]["content"]
-
-
 def _registered_compact_response(monkeypatch, history, active_run=False):
     captured = {}
 
@@ -175,24 +137,8 @@ def _registered_compact_response(monkeypatch, history, active_run=False):
     return response, captured, manager
 
 
-def test_manual_compact_tolerates_chatmessage_with_none_content(monkeypatch):
-    compact_prompt = _compact_prompt_for(
-        monkeypatch,
-        [
-            ChatMessage(role="user", content="start"),
-            ChatMessage(role="assistant", content=None),
-            ChatMessage(role="tool", content="tool result"),
-            ChatMessage(role="assistant", content="done"),
-            ChatMessage(role="user", content="next"),
-            ChatMessage(role="assistant", content="final"),
-        ],
-    )
-    assert "ASSISTANT: None" not in compact_prompt
-    assert "ASSISTANT: " in compact_prompt
-
-
 def test_manual_compact_tolerates_dict_message_with_none_content(monkeypatch):
-    compact_prompt = _compact_prompt_for(
+    response, captured, manager = _registered_compact_response(
         monkeypatch,
         [
             {"role": "user", "content": "start"},
@@ -203,8 +149,13 @@ def test_manual_compact_tolerates_dict_message_with_none_content(monkeypatch):
             ChatMessage(role="assistant", content="final"),
         ],
     )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    compact_prompt = captured["messages"][1]["content"]
     assert "ASSISTANT: None" not in compact_prompt
     assert "ASSISTANT: " in compact_prompt
+    assert manager.replaced_messages is not None
 
 
 def test_registered_manual_compact_route_tolerates_none_content(monkeypatch):

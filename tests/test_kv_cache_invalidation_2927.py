@@ -69,7 +69,7 @@ def _build_context_harness(monkeypatch, chat_helpers, history):
             temperature=0.7, max_tokens=1024, system_prompt="You are Odysseus.", character_name=None,
         )
 
-    def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False):
+    async def fake_add_user_message(sess, chat_handler, preprocessed, session_manager, session_id, incognito=False):
         sess.messages.append({"role": "user", "content": preprocessed.user_content})
 
     async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
@@ -107,7 +107,8 @@ def _build_context_harness(monkeypatch, chat_helpers, history):
     chat_processor = SimpleNamespace(build_context_preface=fake_build_context_preface)
     request = SimpleNamespace()
     chat_handler = SimpleNamespace()
-    return sess, request, chat_handler, chat_processor
+    session_manager = SimpleNamespace(session_lock=lambda session_id: asyncio.Lock())
+    return sess, request, chat_handler, chat_processor, session_manager
 
 
 def _consolidated_system_text(messages):
@@ -129,7 +130,7 @@ async def test_static_system_prefix_is_byte_identical_across_turns(monkeypatch):
 
     # Turn 1: clock reads 09:16
     user_time.clear_user_time_context()
-    sess, request, chat_handler, chat_processor = _build_context_harness(monkeypatch, chat_helpers, history=[])
+    sess, request, chat_handler, chat_processor, session_manager = _build_context_harness(monkeypatch, chat_helpers, history=[])
     monkeypatch.setattr(
         user_time, "current_datetime_context_message",
         lambda now_utc=None: {"role": "user", "content": "[Context — current date/time]\nToday is 2026-06-07, 09:16 UTC."},
@@ -138,6 +139,7 @@ async def test_static_system_prefix_is_byte_identical_across_turns(monkeypatch):
 
     ctx1 = await chat_helpers.build_chat_context(
         sess=sess, request=request, chat_handler=chat_handler, chat_processor=chat_processor,
+        session_manager=session_manager,
         message="What's the weather like?", session_id="session-A",
     )
     sess.messages.append({"role": "assistant", "content": "It's sunny."})
@@ -150,6 +152,7 @@ async def test_static_system_prefix_is_byte_identical_across_turns(monkeypatch):
     )
     ctx2 = await chat_helpers.build_chat_context(
         sess=sess, request=request, chat_handler=chat_handler, chat_processor=chat_processor,
+        session_manager=session_manager,
         message="And tomorrow?", session_id="session-A",
     )
 
@@ -181,7 +184,7 @@ async def test_changed_instructions_do_change_the_system_prefix(monkeypatch):
     import src.user_time as user_time
     user_time.clear_user_time_context()
 
-    sess, request, chat_handler, chat_processor = _build_context_harness(monkeypatch, chat_helpers, history=[])
+    sess, request, chat_handler, chat_processor, session_manager = _build_context_harness(monkeypatch, chat_helpers, history=[])
     monkeypatch.setattr(
         user_time, "current_datetime_context_message",
         lambda now_utc=None: {"role": "user", "content": "[Context — current date/time]\nToday is 2026-06-07."},
@@ -190,6 +193,7 @@ async def test_changed_instructions_do_change_the_system_prefix(monkeypatch):
 
     ctx1 = await chat_helpers.build_chat_context(
         sess=sess, request=request, chat_handler=chat_handler, chat_processor=chat_processor,
+        session_manager=session_manager,
         message="hi", session_id="session-B",
     )
 
@@ -208,6 +212,7 @@ async def test_changed_instructions_do_change_the_system_prefix(monkeypatch):
 
     ctx2 = await chat_helpers.build_chat_context(
         sess=sess, request=request, chat_handler=chat_handler, chat_processor=chat_processor,
+        session_manager=session_manager,
         message="hi again", session_id="session-B",
     )
 
