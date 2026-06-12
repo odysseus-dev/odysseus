@@ -41,7 +41,7 @@ except Exception:  # pragma: no cover
             super().__init__(detail)
 
 
-from src.upload_handler import UploadHandler  # noqa: E402
+from src.infra.storage.upload_handler import UploadHandler  # noqa: E402
 
 
 N_WRITERS = 10

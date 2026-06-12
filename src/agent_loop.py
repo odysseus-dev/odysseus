@@ -15,7 +15,7 @@ import logging
 from typing import AsyncGenerator, List, Dict, Optional, Set
 from urllib.parse import urlparse
 
-from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
+from src.infra.llm.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 def _load_mcp_disabled_map() -> Dict[str, set]:
     """Load per-server disabled tool sets from the database."""
-    from core.database import McpServer, SessionLocal
+    from src.infra.database.database import McpServer, SessionLocal
     disabled_map: Dict[str, set] = {}
     db = SessionLocal()
     try:
@@ -645,7 +645,7 @@ def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
 
     add(raw)
     try:
-        from src.endpoint_resolver import normalize_base
+        from src.infra.llm.endpoint_resolver import normalize_base
         add(normalize_base(raw))
     except Exception:
         pass
@@ -1339,7 +1339,7 @@ def _build_base_prompt(
 
     # Inject integration descriptions
     if not suppress_local_context:
-        from src.integrations import get_integrations_prompt
+        from src.infra.integration.integrations import get_integrations_prompt
         integ_prompt = get_integrations_prompt()
         if integ_prompt:
             agent_prompt += "\n\n" + integ_prompt
@@ -1584,7 +1584,7 @@ async def _run_verifier_subagent(
     didn't do the work reads it cold. Returns a list of failure reasons
     (empty = pass, or silently empty on any error so it can't block a valid
     completion)."""
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
     prompt = (
         "You are an independent verifier. Another assistant just claimed the "
         "following task is complete. Using ONLY the request and the record of "
@@ -1887,7 +1887,7 @@ async def stream_agent_loop(
     # default to fenced tools, otherwise fall through to keyword + host checks.
     _endpoint_supports: Optional[bool] = None
     try:
-        from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+        from src.infra.database.database import SessionLocal as _SL, ModelEndpoint as _ME
         _db = _SL()
         try:
             _ep = None
@@ -2345,7 +2345,7 @@ async def stream_agent_loop(
                 # result) before falling back to the canned apology.
                 _synth = ""
                 try:
-                    from src.llm_core import llm_call_async
+                    from src.infra.llm.llm_core import llm_call_async
                     _synth_messages = list(messages) + [{
                         "role": "user",
                         "content": (

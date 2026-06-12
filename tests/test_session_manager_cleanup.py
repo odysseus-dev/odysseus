@@ -2,7 +2,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from core.session_manager import SessionManager
+from src.infra.database.session_manager import SessionManager
 import core.session_manager as SM
 
 

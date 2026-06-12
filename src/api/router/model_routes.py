@@ -15,12 +15,12 @@ from urllib.parse import urlparse, urlunparse
 from fastapi import APIRouter, HTTPException, Form, Query, Body, Request, Response
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
-from core.database import SessionLocal, ModelEndpoint, Session as DbSession
+from src.infra.database.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
-from src.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
+from src.infra.llm.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
 from src.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
-from src.endpoint_resolver import (
+from src.infra.llm.endpoint_resolver import (
     normalize_base as _normalize_base,
     build_chat_url,
     build_models_url,
@@ -515,7 +515,7 @@ def _delete_orphaned_provider_auth(db, auth_id: Optional[str], exclude_ep_id: Op
     """Delete a ProviderAuthSession once no endpoint still references it."""
     if not auth_id:
         return False
-    from core.database import ProviderAuthSession
+    from src.infra.database.database import ProviderAuthSession
     still_referenced = db.query(ModelEndpoint.id).filter(
         ModelEndpoint.provider_auth_id == auth_id,
         ModelEndpoint.id != exclude_ep_id,
@@ -563,7 +563,7 @@ def _is_discovery_only_provider(provider: str) -> bool:
 def _resolve_probe_key(ep) -> Optional[str]:
     """API key/bearer to probe an endpoint with."""
     try:
-        from src.endpoint_resolver import resolve_endpoint_runtime
+        from src.infra.llm.endpoint_resolver import resolve_endpoint_runtime
         _base, key = resolve_endpoint_runtime(ep, owner=getattr(ep, "owner", None))
         return key
     except Exception as exc:
@@ -584,7 +584,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
     _test_tools = [{"type": "function", "function": {"name": "test", "description": "Test tool", "parameters": {"type": "object", "properties": {}}}}] if with_tools else None
 
     if provider == "anthropic":
-        from src.llm_core import _normalize_anthropic_url, _build_anthropic_headers, _build_anthropic_payload
+        from src.infra.llm.llm_core import _normalize_anthropic_url, _build_anthropic_headers, _build_anthropic_payload
         target_url = _normalize_anthropic_url(base)
         auth_headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         h = _build_anthropic_headers(auth_headers)
@@ -592,7 +592,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
         if _test_tools:
             payload["tools"] = [{"name": "test", "description": "Test tool", "input_schema": {"type": "object", "properties": {}}}]
     elif provider == "ollama":
-        from src.llm_core import _build_ollama_payload
+        from src.infra.llm.llm_core import _build_ollama_payload
         target_url = build_chat_url(base)
         h = _safe_build_headers(api_key, base)
         h["Content-Type"] = "application/json"
@@ -601,7 +601,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
         target_url = build_chat_url(base)
         h = _safe_build_headers(api_key, base)
         h["Content-Type"] = "application/json"
-        from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+        from src.infra.llm.llm_core import _uses_max_completion_tokens, _restricts_temperature
         _max_key = "max_completion_tokens" if _uses_max_completion_tokens(model_id) else "max_tokens"
         payload = {"model": model_id, "messages": messages, _max_key: 5}
         # Reasoning models (o1/o3/o4/gpt-5) reject an explicit temperature, so a
@@ -687,11 +687,11 @@ def _effective_endpoint_kind(ep: Any, base_url: str) -> str:
 def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> List[str]:
     """Probe a base URL's /models endpoint and return list of model IDs.
     For Anthropic, queries their /v1/models API, falling back to hardcoded list."""
-    from src.endpoint_resolver import resolve_url
+    from src.infra.llm.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     provider = _safe_detect_provider(base)
     if provider == "chatgpt-subscription":
-        from src.chatgpt_subscription import fetch_available_models
+        from src.infra.integration.chatgpt_subscription import fetch_available_models
         if api_key:
             return fetch_available_models(api_key, timeout=timeout)
         return []
@@ -777,7 +777,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
 
 def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> Dict[str, Any]:
     """Reachability probe that does not require installed/listed models."""
-    from src.endpoint_resolver import resolve_url
+    from src.infra.llm.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     headers = _safe_build_headers(api_key, base)
 
@@ -1576,7 +1576,7 @@ def setup_model_routes(model_discovery):
         if not base_url:
             raise HTTPException(400, "Base URL is required")
         # Resolve hostname via Tailscale if DNS fails
-        from src.endpoint_resolver import resolve_url
+        from src.infra.llm.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
         # In Docker, manually added loopback URLs usually point at a host-local
         # server. Cookbook local serves are launched inside Odysseus itself, so
@@ -1733,7 +1733,7 @@ def setup_model_routes(model_discovery):
             # to list first.
             settings = _load_settings()
             if not settings.get("default_endpoint_id"):
-                from src.endpoint_resolver import _first_chat_model
+                from src.infra.llm.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
                 settings["default_model"] = _first_chat_model(model_ids) or ""
                 _save_settings(settings)
@@ -1770,7 +1770,7 @@ def setup_model_routes(model_discovery):
         base_url = _normalize_base(base_url)
         if not base_url:
             raise HTTPException(400, "Base URL is required")
-        from src.endpoint_resolver import resolve_url
+        from src.infra.llm.endpoint_resolver import resolve_url
         base_url = resolve_url(base_url)
         base_url = _rewrite_loopback_for_docker(base_url)
         requested_kind = _normalize_endpoint_kind(endpoint_kind)

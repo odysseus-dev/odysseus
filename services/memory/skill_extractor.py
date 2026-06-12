@@ -128,7 +128,7 @@ async def maybe_extract_skill(
         return None
 
     try:
-        from src.llm_core import llm_call_async
+        from src.infra.llm.llm_core import llm_call_async
 
         # Get recent messages
         history = session.get_context_messages()
@@ -270,7 +270,7 @@ async def maybe_extract_skill(
             status=_initial_status,
         )
         try:
-            from src.event_bus import fire_event
+            from src.infra.scheduler.event_bus import fire_event
             fire_event("skill_added", owner)
         except Exception:
             logger.debug("skill_added event dispatch failed", exc_info=True)

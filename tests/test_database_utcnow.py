@@ -6,7 +6,7 @@ sqlalchemy = pytest.importorskip("sqlalchemy")
 if not isinstance(sqlalchemy, types.ModuleType):
     pytest.skip("sqlalchemy is stubbed in this environment", allow_module_level=True)
 
-from core.database import ChatMessage, DocumentVersion, Session, TaskRun, UserToolData, utcnow_naive
+from src.infra.database.database import ChatMessage, DocumentVersion, Session, TaskRun, UserToolData, utcnow_naive
 
 
 def test_utcnow_naive_returns_naive_utc_datetime():

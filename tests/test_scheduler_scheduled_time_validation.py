@@ -12,7 +12,7 @@ Now it fails closed (returns None) like an invalid cron expression does.
 """
 from datetime import datetime
 
-from src.task_scheduler import compute_next_run
+from src.infra.scheduler.task_scheduler import compute_next_run
 
 
 def test_malformed_scheduled_time_returns_none():

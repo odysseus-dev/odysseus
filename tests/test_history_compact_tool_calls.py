@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
-from core.models import ChatMessage
+from src.infra.database.models import ChatMessage
 import routes.history_routes as history_routes
 import routes.session_routes as session_routes
 

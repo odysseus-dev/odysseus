@@ -10,10 +10,10 @@ from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
-from core.database import Session as DbSession
+from src.infra.database.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
+from src.infra.database.database import Session as DbSession
 from src.auth_helpers import get_current_user, owner_filter, require_privilege
-from src.upload_limits import (
+from src.infra.storage.upload_limits import (
     read_upload_limited,
     GALLERY_UPLOAD_MAX_BYTES,
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
@@ -920,7 +920,7 @@ def setup_gallery_routes() -> APIRouter:
             # tool events AND a "Generated image for: …" body, drop the
             # whole row so there's no remnant.
             try:
-                from core.database import ChatMessage as _ChatMessage
+                from src.infra.database.database import ChatMessage as _ChatMessage
                 from sqlalchemy import or_ as _or
                 import json as _json
                 # Match by image_id OR by filename — older messages
@@ -1820,7 +1820,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "No vision-capable endpoint configured"}
 
             # Call vision model — format differs between Anthropic and OpenAI
-            from src.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
+            from src.infra.llm.llm_core import _detect_provider, _restricts_temperature, _uses_max_completion_tokens
             provider = _detect_provider(chat_url)
             tag_prompt = (
                 "Analyze this photo. Return ONLY a comma-separated list of tags. "

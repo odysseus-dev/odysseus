@@ -7,10 +7,10 @@ from datetime import datetime
 from fastapi import APIRouter, Form, HTTPException, Response, Request
 import logging
 
-from core.session_manager import SessionManager
-from core.models import ChatMessage
+from src.infra.database.session_manager import SessionManager
+from src.infra.database.models import ChatMessage
 from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
+from src.infra.database.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
 from src.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
 from src.session_actions import is_session_recently_active
 
@@ -184,14 +184,14 @@ _HIDDEN_SYSTEM_SESSION_NAMES = {
 
 def _pick_endpoint_for_sort(owner=None):
     """Pick model endpoint for auto-sort LLM call — uses utility endpoint setting, falls back to default."""
-    from src.endpoint_resolver import resolve_endpoint
+    from src.infra.llm.endpoint_resolver import resolve_endpoint
     # Try utility endpoint first (what the user configured for background tasks)
     url, model, headers = resolve_endpoint("utility", owner=owner)
     if url and model:
         return url, model, headers
     # Fall back to task endpoint
     try:
-        from src.task_endpoint import resolve_task_endpoint
+        from src.infra.scheduler.task_endpoint import resolve_task_endpoint
         url, model, headers = resolve_task_endpoint(owner=owner)
         if url and model:
             return url, model, headers
@@ -227,7 +227,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             _cutoff = _dt.utcnow() - _td(minutes=10)
             _purge_db = SessionLocal()
             try:
-                from core.database import ChatMessage as _DbMsg
+                from src.infra.database.database import ChatMessage as _DbMsg
                 _ghosts = _purge_db.query(DbSession).filter(
                     DbSession.name.in_(("Nobody", "Incognito")),
                     DbSession.created_at < _cutoff,
@@ -333,9 +333,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_base_url = ""
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
         if endpoint_id and endpoint_id.strip():
-            from core.database import ModelEndpoint
+            from src.infra.database.database import ModelEndpoint
             from src.auth_helpers import owner_filter
-            from src.endpoint_resolver import build_chat_url, normalize_base
+            from src.infra.llm.endpoint_resolver import build_chat_url, normalize_base
             _db = SessionLocal()
             try:
                 q = _db.query(ModelEndpoint).filter(
@@ -361,7 +361,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         effective_api_key = request_api_key or endpoint_api_key
         validation_headers = None
         if effective_api_key:
-            from src.endpoint_resolver import build_headers
+            from src.infra.llm.endpoint_resolver import build_headers
             validation_headers = build_headers(effective_api_key, endpoint_base_url or endpoint_url)
 
         if skip_val:
@@ -371,7 +371,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             # in). Probing here was 400-ing those with "Cannot reach /v1/models".
             pass
         elif not model_to_use:
-            from src.llm_core import list_model_ids
+            from src.infra.llm.llm_core import list_model_ids
             ids = list_model_ids(
                 endpoint_url,
                 timeout=REQUEST_TIMEOUT,
@@ -389,7 +389,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             chat_ids = [m for m in ids if not any(p in m.lower() for p in _NON_CHAT)]
             model_to_use = (chat_ids or ids)[0]
         else:
-            from src.llm_core import list_model_ids
+            from src.infra.llm.llm_core import list_model_ids
             import os as _os
             req_base = _os.path.basename(model_to_use.rstrip("/"))
             avail = list_model_ids(
@@ -429,7 +429,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             resolved_key = endpoint_api_key
             resolved_base = endpoint_base_url
         if resolved_key:
-            from src.endpoint_resolver import build_headers
+            from src.infra.llm.endpoint_resolver import build_headers
             session.headers = build_headers(resolved_key, resolved_base)
             _persist_session_headers(sid, session.headers)
         # Fire webhook (sync-safe)
@@ -438,7 +438,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 "session_id": sid, "name": session.name, "model": model_to_use,
             })
         # Fire event for automation tasks
-        from src.event_bus import fire_event
+        from src.infra.scheduler.event_bus import fire_event
         fire_event("session_created", user)
         return SessionResponse(
             id=sid,
@@ -482,9 +482,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             endpoint_api_key = ""
             endpoint_base_url = ""
             if endpoint_id:
-                from core.database import ModelEndpoint
+                from src.infra.database.database import ModelEndpoint
                 from src.auth_helpers import owner_filter
-                from src.endpoint_resolver import build_chat_url, normalize_base
+                from src.infra.llm.endpoint_resolver import build_chat_url, normalize_base
                 _db = SessionLocal()
                 try:
                     q = _db.query(ModelEndpoint).filter(
@@ -505,7 +505,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             session.endpoint_url = endpoint_url
             # Update auth headers from the endpoint's stored API key
             if endpoint_api_key:
-                from src.endpoint_resolver import build_headers
+                from src.infra.llm.endpoint_resolver import build_headers
                 session.headers = build_headers(endpoint_api_key, endpoint_base_url)
             else:
                 session.headers = {}
@@ -535,7 +535,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(404, f"Session {sid} not found")
         body = await request.json()
         messages = body.get("messages", [])
-        from core.models import ChatMessage
+        from src.infra.database.models import ChatMessage
         for m in messages:
             sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
         session_manager.save_sessions()
@@ -549,7 +549,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.post("/sessions/bulk-delete")
     async def bulk_delete_sessions(request: Request):
         """Delete multiple sessions (for compare cleanup via sendBeacon)."""
-        from core.database import ChatMessage as _CM
+        from src.infra.database.database import ChatMessage as _CM
         try:
             body = await request.json()
             ids = body.get("ids", [])
@@ -617,7 +617,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
 
         db = SessionLocal()
         try:
-            from core.database import ChatMessage as DbChatMessage
+            from src.infra.database.database import ChatMessage as DbChatMessage
             count = db.query(DbSession).count()
             db.query(DbChatMessage).delete()
             db.query(DbSession).delete()
@@ -872,7 +872,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         )
         session.headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
         session_manager.save_sessions()
-        from src.event_bus import fire_event
+        from src.infra.scheduler.event_bus import fire_event
         fire_event("session_created", user)
         return {"id": sid, "name": "", "model": model}
     
@@ -936,8 +936,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             raise HTTPException(400, "Nothing old enough to compact")
 
         from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.llm_core import llm_call_async
 
         owner = getattr(session, "owner", None) or effective_user(request)
         url, model, headers = resolve_endpoint("utility", owner=owner)
@@ -1002,12 +1002,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         after Phase 1 — used by the "Tidy (no AI)" UI affordance so
         users can clean junk without spending tokens.
         """
-        from src.llm_core import llm_call
+        from src.infra.llm.llm_core import llm_call
         user = effective_user(request)
         user_sessions = session_manager.get_sessions_for_user(user)
 
         # Delete empty and throwaway sessions before sorting
-        from core.database import ChatMessage as DbMsg
+        from src.infra.database.database import ChatMessage as DbMsg
         db = SessionLocal()
         deleted_empty = 0
         deleted_throwaway = 0
@@ -1142,7 +1142,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             return {"status": "skipped", "reason": "No unfiled sessions to sort"}
 
         # Pick an endpoint — prefer admin-configured task endpoint
-        from src.task_endpoint import resolve_task_endpoint
+        from src.infra.scheduler.task_endpoint import resolve_task_endpoint
         url, model, headers = resolve_task_endpoint(owner=user)
         if not url:
             url, model, headers = _pick_endpoint_for_sort(owner=user)

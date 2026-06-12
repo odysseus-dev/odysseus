@@ -5,7 +5,7 @@ not exist on ModelDiscovery, so it raised AttributeError every run and pinged
 nothing. `ModelDiscovery.warmup_ping_urls()` resolves the /models probe URLs
 from the real discovery API.
 """
-from src.model_discovery import ModelDiscovery
+from src.infra.llm.model_discovery import ModelDiscovery
 
 
 def _md():

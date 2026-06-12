@@ -18,7 +18,7 @@ for mod in [
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-from src.llm_core import _sanitize_llm_messages  # noqa: E402
+from src.infra.llm.llm_core import _sanitize_llm_messages  # noqa: E402
 
 
 def test_sanitize_preserves_reasoning_content_on_assistant_tool_call():

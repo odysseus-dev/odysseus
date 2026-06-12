@@ -5,9 +5,9 @@ import sqlite3
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from core.database import Base
-from core.database import ChatMessage as DbChatMessage
-from core.database import Session as DbSession
+from src.infra.database.database import Base
+from src.infra.database.database import ChatMessage as DbChatMessage
+from src.infra.database.database import Session as DbSession
 from src.session_search import SessionSearchResult, search_session_messages
 
 

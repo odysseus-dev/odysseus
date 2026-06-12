@@ -13,7 +13,7 @@ from src.constants import (
     DEFAULT_MAX_TOKENS,
     UPLOAD_DIR,
 )
-from core.models import ChatMessage
+from src.infra.database.models import ChatMessage
 from src.chat_helpers import extract_urls, model_supports_vision
 from src.document_processor import build_user_content, analyze_image_with_vl_result
 from src.youtube_handler import (

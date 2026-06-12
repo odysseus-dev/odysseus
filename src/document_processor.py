@@ -8,7 +8,7 @@ import base64
 import tempfile
 from typing import List, Dict, Any
 
-from src.llm_core import llm_call
+from src.infra.llm.llm_core import llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -315,7 +315,7 @@ def analyze_image_with_vl_result(image_path: str, owner: str | None = None) -> d
         # downed vision endpoint can fall through to the next configured model
         # — same shape as task/chat but its own list (`vision_model_fallbacks`).
         try:
-            from src.endpoint_resolver import resolve_vision_fallback_candidates
+            from src.infra.llm.endpoint_resolver import resolve_vision_fallback_candidates
             _vl_candidates = [(url, model_id, headers)] + resolve_vision_fallback_candidates(owner=owner)
         except Exception:
             _vl_candidates = [(url, model_id, headers)]

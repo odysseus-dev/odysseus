@@ -8,8 +8,8 @@ from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 
 from sqlalchemy import case, func, or_
-from core.database import SessionLocal, Document, DocumentVersion
-from core.database import Session as DbSession
+from src.infra.database.database import SessionLocal, Document, DocumentVersion
+from src.infra.database.database import Session as DbSession
 from src.auth_helpers import get_current_user
 from src.constants import MAIL_ATTACHMENTS_DIR
 
@@ -143,7 +143,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             db.commit()
             db.refresh(doc)
             try:
-                from src.event_bus import fire_event
+                from src.infra.scheduler.event_bus import fire_event
                 fire_event("document_created", doc.owner)
             except Exception:
                 logger.debug("document_created event dispatch failed", exc_info=True)
@@ -881,9 +881,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     async def ai_tidy_documents(request: Request) -> Dict[str, Any]:
         """Use AI to judge if documents are junk/test/accidental, then delete them.
         Caches verdicts so previously-reviewed docs are skipped."""
-        from src.task_endpoint import resolve_task_endpoint
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.infra.scheduler.task_endpoint import resolve_task_endpoint
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.llm_core import llm_call_async
 
         user = get_current_user(request)
         url, model, headers = resolve_task_endpoint(owner=user or None)
@@ -1162,7 +1162,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         import fitz
         from src.pdf_form_doc import find_source_upload_id
         from src.document_processor import _resolve_vl_model, _load_vl_settings
-        from src.llm_core import llm_call_async
+        from src.infra.llm.llm_core import llm_call_async
 
         body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
         instruction = (body or {}).get("instruction", "").strip()
@@ -1303,7 +1303,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_annotations
-        from core.database import Signature
+        from src.infra.database.database import Signature
 
         # Track temp files for this request so they get unlinked AFTER
         # the response is fully sent (BackgroundTask runs post-send).
@@ -1397,7 +1397,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from starlette.background import BackgroundTask
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from core.database import Signature
+        from src.infra.database.database import Signature
 
         _to_unlink: list[str] = []
         def _cleanup_temps():
@@ -1538,7 +1538,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             load_field_sidecar, parse_markdown_annotations,
         )
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
-        from core.database import Signature
+        from src.infra.database.database import Signature
         # COMPOSE_UPLOADS_DIR lives in email_routes — re-derive here so we
         # don't import from a routes file (cycle-prone). Same env override
         # as email_routes (ODYSSEUS_MAIL_ATTACHMENTS_DIR).

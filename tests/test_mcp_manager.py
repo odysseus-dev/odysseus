@@ -1,7 +1,7 @@
 import asyncio
 from unittest.mock import patch
 
-from src.mcp_manager import _format_mcp_connection_error, McpManager
+from src.infra.mcp.mcp_manager import _format_mcp_connection_error, McpManager
 
 
 def test_playwright_mcp_connection_error_includes_install_hint():

@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 
 # Stub `core.auth` / `core.database` before importing the route module.
-# `routes.auth_routes` does `from core.auth import AuthManager`, and importing
+# `routes.auth_routes` does `from src.infra.auth.auth import AuthManager`, and importing
 # any `core.*` submodule first runs `core/__init__.py`, which transitively
 # imports `src.llm_core` (hangs at import under the project venv) and the
 # SQLAlchemy declarative models (metaclass blows up on a bare `core.database`

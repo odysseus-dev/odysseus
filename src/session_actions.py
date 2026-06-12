@@ -65,9 +65,9 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
 
     Returns a human-readable summary of what was done.
     """
-    from core.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg
-    from src.llm_core import llm_call_async
-    from src.task_endpoint import resolve_task_endpoint
+    from src.infra.database.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg
+    from src.infra.llm.llm_core import llm_call_async
+    from src.infra.scheduler.task_endpoint import resolve_task_endpoint
 
     db = SessionLocal()
     try:

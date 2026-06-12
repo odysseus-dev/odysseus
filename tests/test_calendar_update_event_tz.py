@@ -14,7 +14,7 @@ import uuid
 import pytest
 
 import core.database as cdb
-from core.database import CalendarEvent
+from src.infra.database.database import CalendarEvent
 from tests.helpers.sqlite_db import make_temp_sqlite
 
 _TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)

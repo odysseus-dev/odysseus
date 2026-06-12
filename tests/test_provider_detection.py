@@ -10,7 +10,7 @@ import pytest
 
 from src import llm_core
 from src import endpoint_resolver
-from src.endpoint_resolver import build_chat_url, build_models_url
+from src.infra.llm.endpoint_resolver import build_chat_url, build_models_url
 
 
 class TestHostMatch:

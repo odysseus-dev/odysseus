@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional
 
 from pydantic import BaseModel
 
-from core.database import GalleryImage
+from src.infra.database.database import GalleryImage
 from src.auth_helpers import _auth_disabled
 
 logger = logging.getLogger(__name__)

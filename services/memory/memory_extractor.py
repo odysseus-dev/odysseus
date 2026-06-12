@@ -291,7 +291,7 @@ async def extract_and_store(
         return
 
     try:
-        from src.llm_core import llm_call_async
+        from src.infra.llm.llm_core import llm_call_async
 
         # Get last N messages from session
         messages = session.get_context_messages()
@@ -462,7 +462,7 @@ async def extract_and_store(
         if added > 0:
             memory_manager.save(existing)
             try:
-                from src.event_bus import fire_event
+                from src.infra.scheduler.event_bus import fire_event
                 for _ in range(added):
                     fire_event("memory_added", _owner)
             except Exception:
@@ -503,7 +503,7 @@ async def audit_memories(
     Errors are logged, never raised.
     """
     try:
-        from src.llm_core import llm_call_async
+        from src.infra.llm.llm_core import llm_call_async
 
         existing = memory_manager.load(owner=owner)
         if not existing:

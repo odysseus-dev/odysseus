@@ -8,7 +8,7 @@ validates the id first, the saved bytes became permanently unreachable.
 """
 import pytest
 
-from src.upload_handler import _build_upload_id, is_valid_upload_id
+from src.infra.storage.upload_handler import _build_upload_id, is_valid_upload_id
 
 
 @pytest.mark.parametrize("name", [

@@ -109,7 +109,7 @@ def test_block_all_models_blocks_regardless_of_allowed_models_contents(monkeypat
 
 
 def test_admin_user_is_never_blocked(monkeypatch):
-    from core.auth import ADMIN_PRIVILEGES
+    from src.infra.auth.auth import ADMIN_PRIVILEGES
 
     monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "admin")
 

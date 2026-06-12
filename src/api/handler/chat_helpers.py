@@ -8,11 +8,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from core.models import ChatMessage
-from core.database import SessionLocal
-from core.database import Session as DBSession, ModelEndpoint
-from src.llm_core import normalize_model_id
-from src.endpoint_resolver import normalize_base
+from src.infra.database.models import ChatMessage
+from src.infra.database.database import SessionLocal
+from src.infra.database.database import Session as DBSession, ModelEndpoint
+from src.infra.llm.llm_core import normalize_model_id
+from src.infra.llm.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
@@ -107,7 +107,7 @@ def _enforce_chat_privileges(request, sess) -> None:
         return
 
     from datetime import datetime as _dt, timedelta as _td
-    from core.database import Session as _DbSess, ChatMessage as _Cm
+    from src.infra.database.database import Session as _DbSess, ChatMessage as _Cm
     db = SessionLocal()
     try:
         count = (
@@ -139,8 +139,8 @@ def needs_auto_name(name: str) -> bool:
 async def auto_name_session(session_manager, sess):
     """Generate a short title for a session from its first user message."""
     try:
-        from src.llm_core import llm_call_async
-        from src.task_endpoint import resolve_task_endpoint
+        from src.infra.llm.llm_core import llm_call_async
+        from src.infra.scheduler.task_endpoint import resolve_task_endpoint
 
         # Find first user message
         first_msg = ""
@@ -204,14 +204,14 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
     Returns {"model": ..., "endpoint_url": ..., "endpoint_name": ...} or None.
     """
     import requests as _req
-    from src.endpoint_resolver import (
+    from src.infra.llm.endpoint_resolver import (
         build_chat_url,
         build_headers,
         build_models_url,
         normalize_base,
         resolve_endpoint_runtime,
     )
-    from src.chatgpt_subscription import is_chatgpt_subscription_base
+    from src.infra.integration.chatgpt_subscription import is_chatgpt_subscription_base
 
     current_url = sess.endpoint_url or ""
     owner = getattr(sess, "owner", None)
@@ -341,7 +341,7 @@ def fire_message_event(request, webhook_manager, session_id: str, sess, message:
         asyncio.create_task(webhook_manager.fire("chat.message", {
             "session_id": session_id, "model": sess.model, "message": message[:2000],
         }))
-    from src.event_bus import fire_event
+    from src.infra.scheduler.event_bus import fire_event
     user = get_current_user(request)
     fire_event("message_sent", user)
 
@@ -350,7 +350,7 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     if not session_url or not endpoint_base:
         return False
     try:
-        from src.endpoint_resolver import build_chat_url, normalize_base
+        from src.infra.llm.endpoint_resolver import build_chat_url, normalize_base
 
         sess_url = session_url.rstrip("/")
         base = normalize_base(endpoint_base).rstrip("/")
@@ -373,7 +373,7 @@ def _has_auth_keys(headers) -> bool:
 def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
     """Ensure session has auth headers — resolve from endpoint DB if missing."""
     try:
-        from src.chatgpt_subscription import is_chatgpt_subscription_base
+        from src.infra.integration.chatgpt_subscription import is_chatgpt_subscription_base
         is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(sess, "endpoint_url", "") or "")
     except Exception:
         is_chatgpt_subscription = False
@@ -382,7 +382,7 @@ def resolve_session_auth(sess, session_id: str, owner: Optional[str] = None):
         return
 
     try:
-        from src.endpoint_resolver import build_headers, resolve_endpoint_runtime
+        from src.infra.llm.endpoint_resolver import build_headers, resolve_endpoint_runtime
         db = SessionLocal()
         try:
             target_url = getattr(sess, "endpoint_url", "") or ""
@@ -911,7 +911,7 @@ def save_assistant_response(
     sess.add_message(ChatMessage("assistant", _content, metadata=md))
 
     if not incognito:
-        from core.database import update_session_last_accessed
+        from src.infra.database.database import update_session_last_accessed
         update_session_last_accessed(session_id)
         session_manager.save_sessions()
 
@@ -1022,7 +1022,7 @@ def run_post_response_tasks(
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
     if allow_background_extraction and not incognito and not compare_mode and _should_extract and uprefs.get("auto_memory", True):
         from services.memory.memory_extractor import extract_and_store
-        from src.task_endpoint import resolve_task_endpoint
+        from src.infra.scheduler.task_endpoint import resolve_task_endpoint
         t_url, t_model, t_headers = resolve_task_endpoint(
             sess.endpoint_url, sess.model, sess.headers, owner=owner,
         )
@@ -1060,7 +1060,7 @@ def run_post_response_tasks(
             )
         else:
             from services.memory.skill_extractor import maybe_extract_skill
-            from src.task_endpoint import resolve_task_endpoint
+            from src.infra.scheduler.task_endpoint import resolve_task_endpoint
             s_url, s_model, s_headers = resolve_task_endpoint(
                 sess.endpoint_url, sess.model, sess.headers, owner=owner,
             )

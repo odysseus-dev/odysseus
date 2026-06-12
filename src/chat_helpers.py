@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from fastapi import UploadFile
 from typing import List, Optional
 
-from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
+from src.infra.storage.upload_limits import format_byte_limit, get_chat_upload_max_bytes
 
 logger = logging.getLogger(__name__)
 

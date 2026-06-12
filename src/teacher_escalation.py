@@ -232,7 +232,7 @@ portable across users / hosts.
 async def _call_teacher(teacher_model_spec: str, prompt: str,
                         owner: Optional[str] = None) -> Optional[str]:
     """Call the configured teacher endpoint with the escalation prompt."""
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
     from src.ai_interaction import _resolve_model, _TEACHER_SYSTEM_PROMPT
     try:
         url, model, headers = _resolve_model(teacher_model_spec, owner=owner)

@@ -307,7 +307,7 @@ def test_pop_notifications_owner_filtered():
         if s not in sys.modules:
             mod = types.ModuleType(s)
             sys.modules[s] = mod
-    from src.task_scheduler import TaskScheduler
+    from src.infra.scheduler.task_scheduler import TaskScheduler
     sch = TaskScheduler.__new__(TaskScheduler)  # bypass __init__ network etc.
     sch._pending_notifications = []
     sch.add_notification("t1", "success", "id1", owner="alice")

@@ -163,7 +163,7 @@ def _find_existing_event(db, pending, uid_val, calendar_id):
     collision then fails the PK insert inside the per-calendar try/except
     instead of hijacking the row. (import_ics was already fixed this way.)
     """
-    from core.database import CalendarEvent
+    from src.infra.database.database import CalendarEvent
     return pending.get(uid_val) or db.query(CalendarEvent).filter(
         CalendarEvent.uid == uid_val,
         CalendarEvent.calendar_id == calendar_id,
@@ -262,7 +262,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
     # Lazy imports so a missing `caldav` dep doesn't break app startup —
     # the integrations form still works, sync just no-ops with an error.
     from caldav.lib.error import AuthorizationError, NotFoundError
-    from core.database import CalendarCal, CalendarEvent, SessionLocal
+    from src.infra.database.database import CalendarCal, CalendarEvent, SessionLocal
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
@@ -496,7 +496,7 @@ def _load_caldav_accounts(owner: str) -> list:
 async def sync_caldav(owner: str) -> dict:
     """Pull CalDAV state into local DB for `owner` across all configured accounts.
     Returns aggregated counts + per-account errors."""
-    from src.secret_storage import decrypt
+    from src.infra.storage.secret_storage import decrypt
 
     accounts = _load_caldav_accounts(owner)
     if not accounts:

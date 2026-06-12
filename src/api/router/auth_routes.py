@@ -11,8 +11,8 @@ import json
 import re
 from pathlib import Path
 
-from core.atomic_io import atomic_write_json, atomic_write_text
-from core.auth import AuthManager
+from src.infra.storage.atomic_io import atomic_write_json, atomic_write_text
+from src.infra.auth.auth import AuthManager
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, SKILLS_DIR
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
@@ -23,7 +23,7 @@ from src.settings import (
     save_features as _save_features,
     DEFAULT_SETTINGS,
 )
-from src.integrations import (
+from src.infra.integration.integrations import (
     load_integrations,
     add_integration,
     update_integration,
@@ -323,7 +323,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # docs, email accounts, tasks, etc.
         try:
             from sqlalchemy import func
-            from core.database import Base, SessionLocal
+            from src.infra.database.database import Base, SessionLocal
             db = SessionLocal()
             try:
                 for mapper in Base.registry.mappers:

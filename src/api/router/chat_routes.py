@@ -12,23 +12,23 @@ from fastapi import APIRouter, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from core.models import ChatMessage
+from src.infra.database.models import ChatMessage
 from src.request_models import ChatRequest
-from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
+from src.infra.llm.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
 from src import agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
-from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
+from src.infra.llm.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from src.api.router.session_routes import _verify_session_owner
 from src.api.handler.document_helpers import _owner_session_filter
-from core.database import SessionLocal, get_session_mode, set_session_mode
-from core.database import Session as DBSession, ChatMessage as DBChatMessage
-from core.database import Document as DBDocument, ModelEndpoint
+from src.infra.database.database import SessionLocal, get_session_mode, set_session_mode
+from src.infra.database.database import Session as DBSession, ChatMessage as DBChatMessage
+from src.infra.database.database import Document as DBDocument, ModelEndpoint
 from src.api.router.research_routes import _resolve_research_endpoint
 from src.api.router.model_routes import _visible_models
 from src.api.handler.chat_helpers import (
@@ -177,7 +177,7 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
     is_chatgpt_subscription = False
     if current_model:
         try:
-            from src.chatgpt_subscription import is_chatgpt_subscription_base
+            from src.infra.integration.chatgpt_subscription import is_chatgpt_subscription_base
             is_chatgpt_subscription = is_chatgpt_subscription_base(endpoint_url)
             if not is_chatgpt_subscription:
                 return False
@@ -203,7 +203,7 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             return False
         if not is_chatgpt_subscription:
             try:
-                from src.chatgpt_subscription import is_chatgpt_subscription_base
+                from src.infra.integration.chatgpt_subscription import is_chatgpt_subscription_base
                 is_chatgpt_subscription = is_chatgpt_subscription_base(getattr(ep, "base_url", "") or endpoint_url)
             except Exception:
                 is_chatgpt_subscription = False
@@ -224,8 +224,8 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             live_models = []
             if getattr(ep, "provider_auth_id", None):
                 try:
-                    from src.chatgpt_subscription import fetch_available_models
-                    from src.endpoint_resolver import resolve_endpoint_runtime
+                    from src.infra.integration.chatgpt_subscription import fetch_available_models
+                    from src.infra.llm.endpoint_resolver import resolve_endpoint_runtime
                     _base, api_key = resolve_endpoint_runtime(ep, owner=owner)
                     if api_key:
                         live_models = fetch_available_models(api_key)
@@ -405,7 +405,7 @@ def setup_chat_routes(
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
 
-        from core.database import update_session_last_accessed
+        from src.infra.database.database import update_session_last_accessed
         update_session_last_accessed(session)
         session_manager.save_sessions()
 
@@ -916,7 +916,7 @@ def setup_chat_routes(
             # order if the session's primary model fails before producing
             # output. Resolved once per request.
             try:
-                from src.endpoint_resolver import resolve_chat_fallback_candidates
+                from src.infra.llm.endpoint_resolver import resolve_chat_fallback_candidates
                 _fallback_candidates = resolve_chat_fallback_candidates(owner=_user)
             except Exception:
                 _fallback_candidates = []

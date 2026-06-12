@@ -9,7 +9,7 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
-from src.llm_core import _build_anthropic_payload
+from src.infra.llm.llm_core import _build_anthropic_payload
 
 
 def _sys_msg_no_content():

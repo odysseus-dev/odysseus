@@ -732,7 +732,7 @@ def setup_codex_routes(
             raise HTTPException(404, f"tmux session {sess!r} not found on {host or 'local'}")
         # Write into cookbook_state.json.
         import time as _t, json as _json
-        from core.atomic_io import atomic_write_json
+        from src.infra.storage.atomic_io import atomic_write_json
         from pathlib import Path as _Path
         cookbook_state_path = _Path(COOKBOOK_STATE_FILE)
         try:

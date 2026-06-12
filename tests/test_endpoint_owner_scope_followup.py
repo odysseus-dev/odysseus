@@ -159,7 +159,7 @@ def test_compare_start_rejects_before_creating_any_session_on_mixed_endpoints(mo
     # A's Authorization header left behind. Fails on the old interleaved loop
     # that created A's session before reaching (and rejecting) B.
     import routes.compare_routes as cr
-    from src.endpoint_resolver import normalize_base
+    from src.infra.llm.endpoint_resolver import normalize_base
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
     owned = SimpleNamespace(id=7, api_key="sk-secret", base_url="http://127.0.0.1:8000/v1")
@@ -200,7 +200,7 @@ def test_compare_start_binds_session_to_registered_endpoint_url(monkeypatch):
     # that differs from the messy raw input so a regression to `endpoint_url=
     # endpoint` would surface here.
     import routes.compare_routes as cr
-    from src.endpoint_resolver import build_chat_url, normalize_base
+    from src.infra.llm.endpoint_resolver import build_chat_url, normalize_base
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
     owned = SimpleNamespace(id=7, api_key="sk-secret", base_url="http://127.0.0.1:8000/v1")
@@ -276,7 +276,7 @@ def test_compare_start_prefers_endpoint_id_over_url(monkeypatch):
     # whichever row sorts first, so it can copy the WRONG key. Passing the
     # explicit id must pin the intended endpoint and copy ITS key.
     import routes.compare_routes as cr
-    from src.endpoint_resolver import build_chat_url, build_headers, normalize_base
+    from src.infra.llm.endpoint_resolver import build_chat_url, build_headers, normalize_base
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
 

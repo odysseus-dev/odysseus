@@ -28,7 +28,7 @@ from tests.helpers.import_state import clear_module, preserve_import_state
 # Import the *real* core.session_manager + routes.session_routes under conftest's
 # MagicMock sqlalchemy stub. The real core.database defines declarative classes
 # that blow up under that stub, so temporarily swap in MagicMock module objects
-# (auto-creating attributes satisfy any `from core.database import X`). Crucially
+# (auto-creating attributes satisfy any `from src.infra.database.database import X`). Crucially
 # preserve_import_state restores both sys.modules AND the parent `routes`/`core`
 # package attributes after import, so these stubs never leak into sibling modules
 # — the local SM/SR bindings keep their captured stub modules for this file's own

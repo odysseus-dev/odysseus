@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from src.upload_limits import format_byte_limit, read_upload_limited
+from src.infra.storage.upload_limits import format_byte_limit, read_upload_limited
 
 REPO = Path(__file__).resolve().parent.parent
 

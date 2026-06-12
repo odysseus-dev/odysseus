@@ -208,7 +208,7 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict):
     """Persist settings to disk (atomic; see core.atomic_io)."""
-    from core.atomic_io import atomic_write_json
+    from src.infra.storage.atomic_io import atomic_write_json
     atomic_write_json(SETTINGS_FILE, settings, indent=2)
     _invalidate_caches()
 
@@ -291,6 +291,6 @@ def load_features() -> dict:
 
 def save_features(features: dict):
     """Persist feature flags to disk (atomic)."""
-    from core.atomic_io import atomic_write_json
+    from src.infra.storage.atomic_io import atomic_write_json
     atomic_write_json(FEATURES_FILE, features, indent=2)
     _invalidate_caches()

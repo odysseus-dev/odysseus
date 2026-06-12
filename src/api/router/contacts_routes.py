@@ -38,7 +38,7 @@ def _load_settings():
 
 
 def _save_settings(settings):
-    from core.atomic_io import atomic_write_json
+    from src.infra.storage.atomic_io import atomic_write_json
     atomic_write_json(str(SETTINGS_FILE), settings, indent=2)
 
 
@@ -107,7 +107,7 @@ def _load_local_contacts() -> List[Dict]:
 
 
 def _save_local_contacts(contacts: List[Dict]) -> None:
-    from core.atomic_io import atomic_write_json
+    from src.infra.storage.atomic_io import atomic_write_json
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     atomic_write_json(str(LOCAL_CONTACTS_FILE), {"contacts": [_normalize_contact(c) for c in contacts]}, indent=2)
     _contact_cache["contacts"] = [_normalize_contact(c) for c in contacts]

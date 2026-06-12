@@ -33,7 +33,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 
 from src.auth_helpers import _auth_disabled, get_current_user
-from src.secret_storage import decrypt as _decrypt
+from src.infra.storage.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,7 @@ def _assert_owns_account(account_id: str, owner: str) -> None:
     if not account_id or not owner:
         return
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
         db = _SL()
         try:
             row = db.query(_EA).filter(_EA.id == account_id).first()
@@ -533,7 +533,7 @@ def _init_scheduled_db():
         ).fetchall()
         if legacy_accounts:
             try:
-                from core.database import SessionLocal as _SL, EmailAccount as _EA
+                from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
                 _db = _SL()
                 try:
                     for (acct_id,) in legacy_accounts:
@@ -587,7 +587,7 @@ def _load_settings():
 
 
 def _save_settings(settings):
-    from core.atomic_io import atomic_write_json
+    from src.infra.storage.atomic_io import atomic_write_json
     atomic_write_json(str(SETTINGS_FILE), settings, indent=2)
 
 
@@ -611,7 +611,7 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
     `owner` from the route's auth dependency to scope the lookup.
     """
     import os
-    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
 
     def _owner_or_matching_legacy_account(query):
         if not owner:
@@ -702,7 +702,7 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
 def _list_email_accounts() -> list[dict]:
     """Return all enabled accounts in creation order. Used by background loops
     that iterate over every account (auto-summarize, urgency, etc.)."""
-    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
     try:
         db = _SL()
         try:

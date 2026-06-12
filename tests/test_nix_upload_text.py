@@ -1,5 +1,5 @@
 from src.document_processor import _is_text_file, _process_text_file
-from src.upload_handler import UploadHandler
+from src.infra.storage.upload_handler import UploadHandler
 
 
 def test_nix_files_are_treated_as_readable_documents(tmp_path):

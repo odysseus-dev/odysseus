@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 import src.endpoint_resolver as endpoint_resolver
-from src.endpoint_resolver import resolve_endpoint
+from src.infra.llm.endpoint_resolver import resolve_endpoint
 
 
 class _FakeColumn:

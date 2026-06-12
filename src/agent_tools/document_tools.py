@@ -317,7 +317,7 @@ class CreateDocumentTool:
 
             set_active_document(doc_id)
             try:
-                from src.event_bus import fire_event
+                from src.infra.scheduler.event_bus import fire_event
                 fire_event("document_created", _owner)
             except Exception:
                 logger.debug("document_created event dispatch failed", exc_info=True)
@@ -531,7 +531,7 @@ class ManageDocumentTool:
         clickable `[Title](#document-<id>)` anchor + relative timestamps
         so the user can click straight from chat to open the editor.
         """
-        from core.database import SessionLocal, Document
+        from src.infra.database.database import SessionLocal, Document
         from datetime import datetime, timezone
 
         owner = ctx.get("owner")

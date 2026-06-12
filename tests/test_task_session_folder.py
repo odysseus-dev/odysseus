@@ -1,6 +1,6 @@
 """Task sessions must be assigned folder='Tasks' at creation time."""
 import inspect
-from src.task_scheduler import TaskScheduler
+from src.infra.scheduler.task_scheduler import TaskScheduler
 
 
 def test_llm_task_session_gets_tasks_folder():

@@ -39,7 +39,7 @@ def _get_db_session():
 # core.database; under conftest's sqlalchemy stubs the real module can't load.
 # A __getattr__ module resolves any non-dunder name to a MagicMock, while keeping
 # our real get_db_session/ApiToken for the mint test. Dunder names (e.g. __all__)
-# are NOT auto-resolved — the next test file does `from core.database import *`,
+# are NOT auto-resolved — the next test file does `from src.infra.database.database import *`,
 # which would otherwise see a MagicMock where a list-of-str is required.
 class _DBStub(types.ModuleType):
     def __getattr__(self, name):  # noqa: D401

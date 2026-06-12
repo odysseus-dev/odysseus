@@ -54,9 +54,9 @@ from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
-from core.database import SessionLocal, ApiToken
+from src.infra.database.database import SessionLocal, ApiToken
 from src.api.middleware.security_headers import SecurityHeadersMiddleware, is_cors_preflight
-from core.auth import AuthManager, normalize_known_username
+from src.infra.auth.auth import AuthManager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
     LLMServiceError, WebSearchError,
@@ -422,7 +422,7 @@ async def serve_generated_image(filename: str, request: Request):
     # auth and verify ownership via the gallery row (when one exists).
     try:
         from src.auth_helpers import get_current_user
-        from core.database import SessionLocal as _SL, GalleryImage as _GI
+        from src.infra.database.database import SessionLocal as _SL, GalleryImage as _GI
         _user = get_current_user(request)
         if _user:
             _db = _SL()
@@ -492,7 +492,7 @@ session_manager   = components["session_manager"]
 from src.assistant_log import set_session_manager as _set_asst_sm
 _set_asst_sm(session_manager)
 # Set the global session manager singleton (used by core.models.Session.add_message)
-from core.models import set_session_manager_instance
+from src.infra.database.models import set_session_manager_instance
 set_session_manager_instance(session_manager)
 app.state.session_manager = session_manager
 memory_manager    = components["memory_manager"]
@@ -652,9 +652,9 @@ from src.api.router.editor_draft_routes import setup_editor_draft_routes
 app.include_router(setup_editor_draft_routes())
 
 # Scheduled tasks + event bus
-from src.task_scheduler import TaskScheduler
+from src.infra.scheduler.task_scheduler import TaskScheduler
 task_scheduler = TaskScheduler(session_manager)
-from src.event_bus import set_task_scheduler
+from src.infra.scheduler.event_bus import set_task_scheduler
 set_task_scheduler(task_scheduler)
 from src.api.router.task_routes import setup_task_routes
 app.include_router(setup_task_routes(task_scheduler))
@@ -696,7 +696,7 @@ app.include_router(setup_font_routes())
 
 
 # MCP (Model Context Protocol)
-from src.mcp_manager import McpManager
+from src.infra.mcp.mcp_manager import McpManager
 from src.agent_tools import set_mcp_manager
 from src.api.router.mcp_routes import setup_mcp_routes
 
@@ -883,7 +883,7 @@ async def _startup_event():
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.
     try:
-        from core.database import SessionLocal as _SL, Session as _DbSess, ChatMessage as _DbMsg
+        from src.infra.database.database import SessionLocal as _SL, Session as _DbSess, ChatMessage as _DbMsg
         _db = _SL()
         try:
             _ghosts = _db.query(_DbSess).filter(_DbSess.name.in_(("Nobody", "Incognito"))).all()
@@ -906,7 +906,7 @@ async def _startup_event():
     # Always-on monitor that auto-continues the agent when a background bash
     # job (#!bg) finishes — re-invokes the turn with the job output.
     try:
-        from src.bg_monitor import start_bg_monitor
+        from src.infra.scheduler.bg_monitor import start_bg_monitor
         _startup_tasks.append(start_bg_monitor())
     except Exception as _e:
         logger.warning("Failed to start background-job monitor: %s", _e)
@@ -914,7 +914,7 @@ async def _startup_event():
     # the web server is accepting traffic instead of delaying the whole UI.
     async def _startup_mcp_connections():
         try:
-            from src.builtin_mcp import register_builtin_servers
+            from src.infra.mcp.builtin_mcp import register_builtin_servers
             await register_builtin_servers(mcp_manager)
         except BaseException as e:
             logger.warning(f"Built-in MCP registration failed (non-critical): {type(e).__name__}: {e}")
@@ -995,8 +995,8 @@ async def _startup_event():
         # up stale/demo/deleted-user built-ins that are no longer in auth.json;
         # otherwise their old scheduled rows can keep firing forever.
         try:
-            from core.database import SessionLocal, ScheduledTask
-            from src.task_scheduler import HOUSEKEEPING_DEFAULTS
+            from src.infra.database.database import SessionLocal, ScheduledTask
+            from src.infra.scheduler.task_scheduler import HOUSEKEEPING_DEFAULTS
             builtin_names = []
             for defs in HOUSEKEEPING_DEFAULTS.values():
                 builtin_names.append(defs["name"])
@@ -1066,7 +1066,7 @@ async def _startup_event():
         while True:
             try:
                 await asyncio.sleep(3600)
-                from core.database import _migrate_assign_legacy_owner
+                from src.infra.database.database import _migrate_assign_legacy_owner
                 await asyncio.to_thread(_migrate_assign_legacy_owner)
             except Exception as e:
                 logger.debug(f"Null-owner sweep skipped: {e}")

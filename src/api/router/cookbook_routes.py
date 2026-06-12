@@ -67,11 +67,11 @@ def setup_cookbook_routes() -> APIRouter:
     def _decrypt_secret(value: str | None) -> str:
         if not value:
             return ""
-        from src.secret_storage import decrypt
+        from src.infra.storage.secret_storage import decrypt
         return decrypt(value)
 
     def _encrypt_secret(value: str) -> str:
-        from src.secret_storage import encrypt
+        from src.infra.storage.secret_storage import encrypt
         return encrypt(value)
 
     def _strip_task_secrets(state):
@@ -825,7 +825,7 @@ def setup_cookbook_routes() -> APIRouter:
     def _auto_register_image_endpoint(req: ServeRequest, remote: str | None) -> str | None:
         """Register a diffusion model as an image endpoint so it appears in the model selector."""
         import re
-        from core.database import SessionLocal, ModelEndpoint
+        from src.infra.database.database import SessionLocal, ModelEndpoint
 
         # Parse port from command (--port NNNN), default 8100 for diffusion_server
         port_match = re.search(r'--port\s+(\d+)', req.cmd)
@@ -1006,7 +1006,7 @@ def setup_cookbook_routes() -> APIRouter:
                 return
             # Non-zero exit — drop the endpoint.
             try:
-                from core.database import SessionLocal as _SL, ModelEndpoint as _ME
+                from src.infra.database.database import SessionLocal as _SL, ModelEndpoint as _ME
                 db = _SL()
                 try:
                     ep = db.query(_ME).filter(_ME.id == endpoint_id).first()
@@ -1040,7 +1040,7 @@ def setup_cookbook_routes() -> APIRouter:
             f"remote={remote!r} cmd_prefix={req.cmd[:80]!r}"
         )
         import re
-        from core.database import SessionLocal, ModelEndpoint
+        from src.infra.database.database import SessionLocal, ModelEndpoint
 
         # Port: ordered fallbacks so we match whatever the user actually
         # asked for, not a hardcoded default:
@@ -2114,7 +2114,7 @@ def setup_cookbook_routes() -> APIRouter:
         require_admin(request)
         RACE_WINDOW_MS = 60_000
         try:
-            from core.atomic_io import atomic_write_json
+            from src.infra.storage.atomic_io import atomic_write_json
             data = await request.json()
             if not isinstance(data, dict):
                 data = {}
@@ -2487,7 +2487,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         if adopted_any:
             try:
-                from core.atomic_io import atomic_write_json
+                from src.infra.storage.atomic_io import atomic_write_json
                 state["tasks"] = tasks
                 atomic_write_json(_cookbook_state_path, state)
             except Exception as e:

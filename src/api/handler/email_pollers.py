@@ -29,7 +29,7 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-from src.llm_core import llm_call_async
+from src.infra.llm.llm_core import llm_call_async
 
 from src.api.handler.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, _load_settings, _save_settings, _get_email_config,
@@ -49,7 +49,7 @@ def _owner_for_email_account(account_id: str | None) -> str:
     if not account_id:
         return ""
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
         db = _SL()
         try:
             row = db.query(_EA.owner).filter(_EA.id == account_id).first()
@@ -138,7 +138,7 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
     # Multi-account fan-out: if the caller didn't pick an account, hit them all.
     if account_id is None:
         try:
-            from core.database import SessionLocal as _SL, EmailAccount as _EA
+            from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
             db = _SL()
             try:
                 rows = (
@@ -176,8 +176,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
     import asyncio
     import sqlite3 as _sql3
     import requests as _req
-    from src.endpoint_resolver import resolve_endpoint
-    from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+    from src.infra.llm.endpoint_resolver import resolve_endpoint
+    from src.infra.llm.llm_core import _uses_max_completion_tokens, _restricts_temperature
 
     settings = _load_settings()
     auto_sum = settings.get("email_auto_summarize", False)
@@ -494,7 +494,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     try:
                         # Pull a snapshot of upcoming events so the LLM can decide
                         # create vs update vs cancel based on what already exists.
-                        from core.database import get_upcoming_events
+                        from src.infra.database.database import get_upcoming_events
                         # Owner-scoped so the LLM never sees other tenants' events.
                         _existing_summary = get_upcoming_events(_acct_owner, horizon_days=60, limit=40)
                         existing_json = json.dumps(_existing_summary)

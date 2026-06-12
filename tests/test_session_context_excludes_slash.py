@@ -7,7 +7,7 @@ UI chatter the user never meant as conversation, so ``get_context_messages``
 display. See issue #2634.
 """
 
-from core.models import Session, ChatMessage
+from src.infra.database.models import Session, ChatMessage
 
 
 def _session_with_slash():

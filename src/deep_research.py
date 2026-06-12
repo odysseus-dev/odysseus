@@ -381,7 +381,7 @@ class DeepResearcher:
     async def _llm(self, messages: List[Dict], temperature: float = 0.3,
                    max_tokens: int = 4096, timeout: int = 60) -> str:
         """Call the LLM asynchronously and strip thinking tags."""
-        from src.llm_core import llm_call_async
+        from src.infra.llm.llm_core import llm_call_async
         response = await llm_call_async(
             url=self.llm_endpoint,
             model=self.llm_model,

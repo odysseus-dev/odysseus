@@ -27,8 +27,8 @@ clear_fake_database_modules()
 
 import core.database as cdb
 import routes.document_routes as droutes
-from core.database import Document
-from core.database import Session as DbSession
+from src.infra.database.database import Document
+from src.infra.database.database import Session as DbSession
 from routes.document_helpers import DocumentPatch
 from src.agent_tools.document_tools import set_active_document, get_active_document
 

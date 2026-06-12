@@ -1,7 +1,7 @@
 """Tests for the calendar check-in digest windows (src/task_scheduler.py)."""
 from datetime import datetime, timedelta
 
-from src.task_scheduler import _digest_windows
+from src.infra.scheduler.task_scheduler import _digest_windows
 
 
 def test_windows_are_contiguous_with_no_gap():

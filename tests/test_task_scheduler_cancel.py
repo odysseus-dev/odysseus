@@ -54,7 +54,7 @@ def test_stop_task_cleans_up_queued_handle_and_run(tmp_path, monkeypatch):
     db.commit()
     db.close()
 
-    from src.task_scheduler import TaskScheduler
+    from src.infra.scheduler.task_scheduler import TaskScheduler
 
     async def drive():
         scheduler = TaskScheduler.__new__(TaskScheduler)

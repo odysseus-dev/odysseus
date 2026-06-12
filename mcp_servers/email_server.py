@@ -242,7 +242,7 @@ def _load_config(account: str | None = None) -> dict:
         # (same path email_helpers.py:369 uses). Falling back to the raw
         # ciphertext is what produced AUTHENTICATIONFAILED previously.
         try:
-            from src.secret_storage import decrypt as _decrypt
+            from src.infra.storage.secret_storage import decrypt as _decrypt
         except Exception:
             _decrypt = lambda v: v  # noqa: E731
         cfg["imap_password"] = _decrypt(row["imap_password"]) if row["imap_password"] else cfg["imap_password"]
@@ -1017,9 +1017,9 @@ def _create_email_draft_document(
     source_message_id=None,
 ):
     """Create an Odysseus email compose document for user review. Does not send."""
-    from core.database import SessionLocal, Document, DocumentVersion
+    from src.infra.database.database import SessionLocal, Document, DocumentVersion
     try:
-        from src.event_bus import fire_event
+        from src.infra.scheduler.event_bus import fire_event
     except Exception:
         fire_event = None
 
@@ -1201,12 +1201,12 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
             _extract_reply,
             _load_settings,
         )
-        from src.endpoint_resolver import (
+        from src.infra.llm.endpoint_resolver import (
             resolve_endpoint,
             resolve_utility_fallback_candidates,
             resolve_chat_fallback_candidates,
         )
-        from src.llm_core import llm_call_async_with_fallback
+        from src.infra.llm.llm_core import llm_call_async_with_fallback
     except Exception as exc:
         return {"error": f"AI reply helpers unavailable: {exc}"}
 

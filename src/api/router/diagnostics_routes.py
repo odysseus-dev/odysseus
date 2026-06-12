@@ -32,7 +32,7 @@ def setup_diagnostics_routes(
     async def get_database_stats(request: Request) -> Dict[str, Any]:
         require_admin(request)
         try:
-            from core.database import get_detailed_stats
+            from src.infra.database.database import get_detailed_stats
             return get_detailed_stats()
         except Exception as e:
             logger.error(f"DB stats error: {e}")

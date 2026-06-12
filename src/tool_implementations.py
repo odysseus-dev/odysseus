@@ -225,7 +225,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
                 f"a duplicate. View or edit it with action='view', name='{entry['name']}'."
             )}
         try:
-            from src.event_bus import fire_event
+            from src.infra.scheduler.event_bus import fire_event
             fire_event("skill_added", owner)
         except Exception:
             logger.debug("skill_added event dispatch failed", exc_info=True)
@@ -354,8 +354,8 @@ def _skill_dump(sk) -> Dict:
 async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_tasks tool calls: CRUD on scheduled tasks."""
     import uuid as _uuid
-    from core.database import SessionLocal, ScheduledTask
-    from src.task_scheduler import compute_next_run
+    from src.infra.database.database import SessionLocal, ScheduledTask
+    from src.infra.scheduler.task_scheduler import compute_next_run
 
     try:
         args = _parse_tool_args(content)
@@ -522,7 +522,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
             if owner and task.owner and task.owner != owner:
                 return {"error": "Access denied", "exit_code": 1}
 
-            from src.event_bus import get_task_scheduler
+            from src.infra.scheduler.event_bus import get_task_scheduler
             scheduler = get_task_scheduler()
             if scheduler:
                 started = await scheduler.run_task_now(task_id)
@@ -548,7 +548,7 @@ async def do_manage_tasks(content: str, owner: Optional[str] = None) -> Dict:
 
 async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict:
     """Manage model endpoints: list, add, delete, enable, disable."""
-    from core.database import SessionLocal, ModelEndpoint
+    from src.infra.database.database import SessionLocal, ModelEndpoint
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -624,7 +624,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         mcp = get_mcp_manager()
         if not mcp:
             return {"response": "No MCP manager available", "servers": [], "exit_code": 0}
-        from core.database import SessionLocal, McpServer
+        from src.infra.database.database import SessionLocal, McpServer
         db = SessionLocal()
         try:
             servers = db.query(McpServer).all()
@@ -641,7 +641,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             db.close()
 
     elif action == "add":
-        from core.database import SessionLocal, McpServer
+        from src.infra.database.database import SessionLocal, McpServer
         import uuid as _uuid
         from datetime import datetime
         name = args.get("name", "")
@@ -679,7 +679,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
 
     elif action == "delete":
         sid = args.get("server_id", "")
-        from core.database import SessionLocal, McpServer
+        from src.infra.database.database import SessionLocal, McpServer
         db = SessionLocal()
         try:
             srv = db.query(McpServer).filter(McpServer.id == sid).first()
@@ -705,7 +705,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": "MCP manager not available", "exit_code": 1}
         try:
             await mcp.disconnect_server(sid)
-            from core.database import SessionLocal, McpServer
+            from src.infra.database.database import SessionLocal, McpServer
             db2 = SessionLocal()
             try:
                 srv = db2.query(McpServer).filter(McpServer.id == sid).first()
@@ -731,7 +731,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
 
     elif action in ("enable", "disable"):
         sid = args.get("server_id", "")
-        from core.database import SessionLocal, McpServer
+        from src.infra.database.database import SessionLocal, McpServer
         db = SessionLocal()
         try:
             srv = db.query(McpServer).filter(McpServer.id == sid).first()
@@ -762,7 +762,7 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
 
 async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
     """Manage webhooks: list, add, delete, enable, disable, test."""
-    from core.database import SessionLocal
+    from src.infra.database.database import SessionLocal
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -771,7 +771,7 @@ async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
     action = args.get("action", "list")
     db = SessionLocal()
     try:
-        from core.database import Webhook
+        from src.infra.database.database import Webhook
         if action == "list":
             hooks = db.query(Webhook).all()
             items = [{"id": h.id, "name": h.name, "url": h.url,
@@ -834,7 +834,7 @@ async def do_manage_webhooks(content: str, owner: Optional[str] = None) -> Dict:
 
 async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
     """Manage API tokens: list, create, delete."""
-    from core.database import SessionLocal, ApiToken
+    from src.infra.database.database import SessionLocal, ApiToken
     try:
         args = _parse_tool_args(content)
     except ValueError:
@@ -894,7 +894,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
 
     action = args.get("action", "list")
 
-    from core.database import SessionLocal
+    from src.infra.database.database import SessionLocal
     db = SessionLocal()
     try:
         # set/get/list/delete operate on the REAL app settings (the same store
@@ -976,7 +976,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             """
             import json as _json
             import re as _re
-            from core.database import ModelEndpoint
+            from src.infra.database.database import ModelEndpoint
 
             wanted = (model_query or "").strip()
             wanted_slug = _model_slug(wanted)
@@ -1158,7 +1158,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
 
 async def do_api_call(content: str) -> Dict:
     """Execute an API call to a registered integration."""
-    from src.integrations import execute_api_call, load_integrations
+    from src.infra.integration.integrations import execute_api_call, load_integrations
     try:
         args = json.loads(content)
     except json.JSONDecodeError:
@@ -1200,7 +1200,7 @@ async def do_api_call(content: str) -> Dict:
 async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_notes tool calls: CRUD on notes and checklists."""
     import uuid as _uuid
-    from core.database import SessionLocal, Note
+    from src.infra.database.database import SessionLocal, Note
     from sqlalchemy.orm.attributes import flag_modified
 
     try:
@@ -1444,7 +1444,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
 async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
-    from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
+    from src.infra.database.database import SessionLocal, CalendarCal, CalendarEvent, Note
     from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
     import uuid as _uuid
 

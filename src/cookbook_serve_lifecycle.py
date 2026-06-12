@@ -177,7 +177,7 @@ async def _tick() -> None:
                     break
     if stopped_any:
         try:
-            from core.atomic_io import atomic_write_json
+            from src.infra.storage.atomic_io import atomic_write_json
             state["tasks"] = tasks
             atomic_write_json(state_path, state)
         except Exception as e:

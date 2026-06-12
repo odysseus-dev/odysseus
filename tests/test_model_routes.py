@@ -56,7 +56,7 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         _clear_user_pref_endpoint_refs,
         _PROVIDER_CURATED,
     )
-    from src.llm_core import ANTHROPIC_MODELS
+    from src.infra.llm.llm_core import ANTHROPIC_MODELS
 
 
 # ── speech endpoint settings ──

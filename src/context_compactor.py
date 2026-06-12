@@ -10,9 +10,9 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from src.model_context import get_context_length, estimate_tokens
-from src.llm_core import llm_call_async
-from src.endpoint_resolver import resolve_endpoint
-from core.models import ChatMessage
+from src.infra.llm.llm_core import llm_call_async
+from src.infra.llm.endpoint_resolver import resolve_endpoint
+from src.infra.database.models import ChatMessage
 
 logger = logging.getLogger(__name__)
 
@@ -438,7 +438,7 @@ def _update_session_history(session, split_point: int, summary: str,
     )
     new_history = system_prefix + [summary_msg] + recent_history
     try:
-        from core.models import get_session_manager_instance
+        from src.infra.database.models import get_session_manager_instance
         manager = get_session_manager_instance()
     except Exception:
         manager = None

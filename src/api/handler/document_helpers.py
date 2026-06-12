@@ -10,9 +10,9 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import Document, DocumentVersion
-from core.database import Session as DbSession
-from src.upload_handler import UploadHandler
+from src.infra.database.database import Document, DocumentVersion
+from src.infra.database.database import Session as DbSession
+from src.infra.storage.upload_handler import UploadHandler
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +171,7 @@ def _locate_upload(
 ):
     """Find an upload by its filename ID via UploadHandler.resolve_upload."""
     if upload_handler is None:
-        from src.upload_handler import UploadHandler
+        from src.infra.storage.upload_handler import UploadHandler
 
         base_dir = os.path.dirname(os.path.abspath(upload_dir))
         upload_handler = UploadHandler(base_dir, upload_dir)

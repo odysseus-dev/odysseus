@@ -11,8 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pytest
 
-from core.models import Session, ChatMessage
-from core.session_manager import SessionManager
+from src.infra.database.models import Session, ChatMessage
+from src.infra.database.session_manager import SessionManager
 
 
 @pytest.mark.asyncio

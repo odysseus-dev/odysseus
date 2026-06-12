@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
-from core.database import CalendarEvent, CalendarCal
+from src.infra.database.database import CalendarEvent, CalendarCal
 from src.caldav_sync import _find_existing_event
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)

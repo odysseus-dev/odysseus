@@ -11,9 +11,9 @@ from pydantic import BaseModel
 from sqlalchemy import or_, and_
 from dateutil.rrule import rrulestr
 
-from core.database import SessionLocal, CalendarCal, CalendarEvent
+from src.infra.database.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import require_user
-from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
+from src.infra.storage.upload_limits import read_upload_limited, ICS_MAX_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -617,7 +617,7 @@ def setup_calendar_routes() -> APIRouter:
         has_pw = False
         if pw:
             try:
-                from src.secret_storage import decrypt
+                from src.infra.storage.secret_storage import decrypt
                 has_pw = bool(decrypt(pw))
             except Exception:
                 has_pw = bool(pw)
@@ -654,7 +654,7 @@ def setup_calendar_routes() -> APIRouter:
         acc["url"] = validated_url
         acc["username"] = (body.get("username") or "").strip()
         if body.get("password"):
-            from src.secret_storage import encrypt
+            from src.infra.storage.secret_storage import encrypt
             acc["password"] = encrypt(body["password"])
         new_accounts = [acc] + (accounts[1:] if len(accounts) > 1 else [])
         _save_caldav_accounts(owner, new_accounts)
@@ -673,7 +673,7 @@ def setup_calendar_routes() -> APIRouter:
             has_pw = False
             if pw:
                 try:
-                    from src.secret_storage import decrypt
+                    from src.infra.storage.secret_storage import decrypt
                     has_pw = bool(decrypt(pw))
                 except Exception:
                     has_pw = bool(pw)
@@ -702,7 +702,7 @@ def setup_calendar_routes() -> APIRouter:
             raise HTTPException(400, str(e))
         if not body.get("password"):
             raise HTTPException(400, "Password is required")
-        from src.secret_storage import encrypt
+        from src.infra.storage.secret_storage import encrypt
         new_acc = {
             "id": str(_uuid.uuid4()),
             "label": (body.get("label") or "").strip() or "CalDAV",
@@ -739,7 +739,7 @@ def setup_calendar_routes() -> APIRouter:
         if body.get("username") is not None:
             acc["username"] = (body.get("username") or "").strip()
         if body.get("password"):
-            from src.secret_storage import encrypt
+            from src.infra.storage.secret_storage import encrypt
             acc["password"] = encrypt(body["password"])
         accounts[idx] = acc
         _save_caldav_accounts(owner, accounts)
@@ -785,7 +785,7 @@ def setup_calendar_routes() -> APIRouter:
                     pw = acc.get("password") or ""
                     if pw:
                         try:
-                            from src.secret_storage import decrypt
+                            from src.infra.storage.secret_storage import decrypt
                             pw = decrypt(pw)
                         except Exception:
                             pass
@@ -1362,8 +1362,8 @@ def setup_calendar_routes() -> APIRouter:
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
         owner = _require_user(request)
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.llm_core import llm_call_async
         from src.text_helpers import strip_think
         import json as _json
         import re as _re

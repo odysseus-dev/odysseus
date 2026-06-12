@@ -17,14 +17,14 @@ from tests.helpers.sqlite_db import make_temp_sqlite
 clear_fake_database_modules()
 
 import core.database as cdb
-from core.database import CalendarEvent
+from src.infra.database.database import CalendarEvent
 
 _TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)
 
 
 @pytest.fixture(autouse=True)
 def _bind_temp_db(monkeypatch):
-    # do_manage_calendar does `from core.database import SessionLocal` at call
+    # do_manage_calendar does `from src.infra.database.database import SessionLocal` at call
     # time, so patch the module attribute to our temp DB — via monkeypatch so it
     # is RESTORED after each test and can't leak into later tests in the process.
     monkeypatch.setitem(sys.modules, "core.database", cdb)

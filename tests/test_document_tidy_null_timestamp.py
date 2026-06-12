@@ -16,7 +16,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
-from core.database import Document
+from src.infra.database.database import Document
 
 
 @pytest.fixture

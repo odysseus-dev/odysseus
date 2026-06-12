@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, Signature
+from src.infra.database.database import SessionLocal, Signature
 from src.auth_helpers import get_current_user
 
 logger = logging.getLogger(__name__)

@@ -10,11 +10,11 @@ from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, ScheduledTask, TaskRun
+from src.infra.database.database import SessionLocal, ScheduledTask, TaskRun
 from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
-from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
+from src.infra.scheduler.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from src.api.router.prefs_routes import _load_for_user, _save_for_user
 
 logger = logging.getLogger(__name__)
@@ -259,7 +259,7 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
 
     try:
         if getattr(task, "session_id", None):
-            from core.database import Session as DbSession
+            from src.infra.database.database import Session as DbSession
             sess = db.query(DbSession).filter(DbSession.id == task.session_id).first()
             if sess and sess.endpoint_url:
                 return sess.endpoint_url or ""
@@ -271,7 +271,7 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
         return ""
 
     try:
-        from core.database import ModelEndpoint
+        from src.infra.database.database import ModelEndpoint
         eps = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
         for ep in eps:
             cached = []
@@ -296,8 +296,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     async def _generate_task_name(prompt: str, owner: Optional[str] = None) -> str:
         """Use LLM to generate a short task name from the prompt."""
         try:
-            from src.llm_core import llm_call_async
-            from core.database import Session as DbSession
+            from src.infra.llm.llm_core import llm_call_async
+            from src.infra.database.database import Session as DbSession
             db = SessionLocal()
             try:
                 q = db.query(DbSession).filter(
@@ -427,7 +427,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         if user == "internal-tool":
             return True
         try:
-            from core.auth import AuthManager
+            from src.infra.auth.auth import AuthManager
             auth = AuthManager()
             if not auth.is_configured:
                 # Unconfigured single-user deploy: trust the local owner.
@@ -1068,8 +1068,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         AI news and summarize it") into a structured task draft the frontend
         can pre-fill the form with. Returns a draft only — the user reviews and
         saves it, so a misread schedule never goes live unreviewed."""
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.llm_core import llm_call_async
         from src.text_helpers import strip_think as _strip_think
         import json as _json, re as _re
         from datetime import datetime as _dt

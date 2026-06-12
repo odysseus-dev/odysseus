@@ -9,8 +9,8 @@ from typing import List
 from pydantic import BaseModel
 import logging
 
-from core.database import Comparison, SessionLocal
-from core.session_manager import SessionManager
+from src.infra.database.database import Comparison, SessionLocal
+from src.infra.database.session_manager import SessionManager
 from src.auth_helpers import get_current_user
 from src.api.router.session_routes import _reject_raw_endpoint_url_for_non_admin
 
@@ -33,7 +33,7 @@ def _owned_endpoint_by_url(db, base_url, owner):
     session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
     legacy mode).
     """
-    from core.database import ModelEndpoint
+    from src.infra.database.database import ModelEndpoint
     from src.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(ModelEndpoint.base_url == base_url)
     return owner_filter(q, ModelEndpoint, owner).first()
@@ -51,7 +51,7 @@ def _owned_endpoint_by_id(db, endpoint_id, owner):
     only falls back to URL matching for legacy / admin raw-URL callers. Owner
     scoping is identical to _owned_endpoint_by_url (a null/empty owner is a no-op).
     """
-    from core.database import ModelEndpoint
+    from src.infra.database.database import ModelEndpoint
     from src.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(ModelEndpoint.id == endpoint_id)
     return owner_filter(q, ModelEndpoint, owner).first()
@@ -115,7 +115,7 @@ def setup_compare_routes(session_manager: SessionManager):
         # session behind with that header attached. Doing all the owner-scope
         # resolution + raw-URL rejection up front means a 403 on either endpoint
         # aborts the whole request with nothing created and no header copied.
-        from src.endpoint_resolver import build_chat_url, build_headers, normalize_base
+        from src.infra.llm.endpoint_resolver import build_chat_url, build_headers, normalize_base
         resolved = []
         db = SessionLocal()
         try:

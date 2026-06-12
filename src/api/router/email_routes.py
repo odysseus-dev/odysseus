@@ -34,8 +34,8 @@ from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPExc
 from fastapi.responses import FileResponse
 from src.constants import DATA_DIR
 
-from src.llm_core import llm_call_async
-from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
+from src.infra.llm.llm_core import llm_call_async
+from src.infra.storage.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
 
 from src.api.handler.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -63,7 +63,7 @@ ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
     aliases = [owner or ""]
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
         db = _SL()
         try:
             resolved_account_id = account_id
@@ -108,7 +108,7 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
     if not owner or (folder or "INBOX").upper() != "INBOX" or not emails:
         return
     try:
-        from src.event_bus import fire_event
+        from src.infra.scheduler.event_bus import fire_event
         account_key = (account_id or "default").strip() or "default"
         now = datetime.utcnow().isoformat() + "Z"
         keys = []
@@ -267,7 +267,7 @@ def _resolve_send_config(account_id: str | None = None, owner: str = "") -> dict
     if account_id:
         raise ValueError(f"Email account {cfg.get('account_name') or account_id} has no SMTP configured")
     try:
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
         from sqlalchemy import and_, or_
         db = _SL()
         try:
@@ -2407,7 +2407,7 @@ def setup_email_routes():
             # Call LLM to analyze writing style. Prefer the utility model;
             # fall back to the default chat model when utility isn't set
             # (matches how the background email tasks behave).
-            from src.endpoint_resolver import resolve_endpoint
+            from src.infra.llm.endpoint_resolver import resolve_endpoint
 
             url, model, headers = resolve_endpoint("utility", owner=owner)
             if not url or not model:
@@ -2455,8 +2455,8 @@ def setup_email_routes():
     async def summarize_email(data: dict, owner: str = Depends(require_owner)):
         """Generate a quick AI summary of an email body."""
         try:
-            from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import _uses_max_completion_tokens, _restricts_temperature
+            from src.infra.llm.endpoint_resolver import resolve_endpoint
+            from src.infra.llm.llm_core import _uses_max_completion_tokens, _restricts_temperature
             import requests as _req
 
             body = data.get("body", "")
@@ -2573,7 +2573,7 @@ def setup_email_routes():
     async def ai_reply(data: dict, owner: str = Depends(require_owner)):
         """Generate an AI-drafted reply to an email using the user's writing style."""
         try:
-            from src.endpoint_resolver import resolve_endpoint
+            from src.infra.llm.endpoint_resolver import resolve_endpoint
 
             to = data.get("to", "")
             subject = data.get("subject", "")
@@ -2626,7 +2626,7 @@ def setup_email_routes():
                     # chat-completions URL the chat path uses verbatim — so use
                     # those directly rather than rebuilding via a nonexistent
                     # `api_key` field.
-                    from core.database import SessionLocal as _SL, Session as _CS
+                    from src.infra.database.database import SessionLocal as _SL, Session as _CS
                     _db = _SL()
                     sess = _db.query(_CS).filter(_CS.id == session_id, _CS.owner == owner).first()
                     if sess and sess.endpoint_url:
@@ -2672,7 +2672,7 @@ def setup_email_routes():
             # --served-model-name, giving a 404 "model does not exist". Match
             # by exact id, then basename; fall back to the first served model.
             try:
-                from src.llm_core import list_model_ids
+                from src.infra.llm.llm_core import list_model_ids
                 _avail = list_model_ids(url, headers=headers)
                 if _avail and model not in _avail:
                     import os as _os
@@ -2737,8 +2737,8 @@ def setup_email_routes():
             # user's Utility / Default endpoints AND their configured
             # fallback chains. Dedupe by url+model so we don't retry
             # the same broken endpoint.
-            from src.llm_core import llm_call_async_with_fallback
-            from src.endpoint_resolver import (
+            from src.infra.llm.llm_core import llm_call_async_with_fallback
+            from src.infra.llm.endpoint_resolver import (
                 resolve_utility_fallback_candidates,
                 resolve_chat_fallback_candidates,
             )
@@ -2855,7 +2855,7 @@ def setup_email_routes():
         _save_settings(settings)
 
         # Credentials go into the default account row
-        from core.database import SessionLocal, EmailAccount
+        from src.infra.database.database import SessionLocal, EmailAccount
         import uuid as _uuid
         db = SessionLocal()
         try:
@@ -2881,7 +2881,7 @@ def setup_email_routes():
                     setattr(row, col_name, val)
             # Passwords: only update when a non-empty value is given.
             # Stored encrypted; see src/secret_storage.py.
-            from src.secret_storage import encrypt as _enc
+            from src.infra.storage.secret_storage import encrypt as _enc
             if data.get("imap_password"):
                 row.imap_password = _enc(data["imap_password"])
             if data.get("smtp_password"):
@@ -2925,7 +2925,7 @@ def setup_email_routes():
     @router.get("/accounts")
     async def list_email_accounts(owner: str = Depends(require_user)):
         """List all email accounts with credentials masked."""
-        from core.database import SessionLocal, EmailAccount
+        from src.infra.database.database import SessionLocal, EmailAccount
         from sqlalchemy import and_, or_
         db = SessionLocal()
         try:
@@ -2967,8 +2967,8 @@ def setup_email_routes():
     @router.post("/accounts")
     async def create_email_account(data: dict, owner: str = Depends(require_owner)):
         """Create a new email account."""
-        from core.database import SessionLocal, EmailAccount
-        from src.secret_storage import encrypt as _enc
+        from src.infra.database.database import SessionLocal, EmailAccount
+        from src.infra.storage.secret_storage import encrypt as _enc
         import uuid as _uuid
         name = (data.get("name") or "").strip()
         if not name:
@@ -3018,7 +3018,7 @@ def setup_email_routes():
         """Update an email account. Passwords only overwrite if non-empty."""
         # Path param account_id — dep validated via Query, re-check the path-param value.
         _assert_owns_account(account_id, owner)
-        from core.database import SessionLocal, EmailAccount
+        from src.infra.database.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
             row = db.get(EmailAccount, account_id)
@@ -3038,7 +3038,7 @@ def setup_email_routes():
                     setattr(row, key, bool(data[key]))
             # Passwords — only overwrite when a non-empty value is
             # provided. Stored encrypted; see src/secret_storage.py.
-            from src.secret_storage import encrypt as _enc
+            from src.infra.storage.secret_storage import encrypt as _enc
             if data.get("imap_password"):
                 row.imap_password = _enc(data["imap_password"])
             if data.get("smtp_password"):
@@ -3051,7 +3051,7 @@ def setup_email_routes():
     @router.delete("/accounts/{account_id}")
     async def delete_email_account(account_id: str, owner: str = Depends(require_user)):
         _assert_owns_account(account_id, owner)
-        from core.database import SessionLocal, EmailAccount
+        from src.infra.database.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
             row = db.get(EmailAccount, account_id)
@@ -3102,8 +3102,8 @@ def setup_email_routes():
         acc_id = body.get("account_id")
         if acc_id:
             _assert_owns_account(acc_id, owner)
-            from core.database import SessionLocal, EmailAccount
-            from src.secret_storage import decrypt as _decrypt
+            from src.infra.database.database import SessionLocal, EmailAccount
+            from src.infra.storage.secret_storage import decrypt as _decrypt
             db = SessionLocal()
             try:
                 row = db.get(EmailAccount, acc_id)
@@ -3196,7 +3196,7 @@ def setup_email_routes():
     @router.post("/accounts/{account_id}/set-default")
     async def set_default_account(account_id: str, owner: str = Depends(require_user)):
         _assert_owns_account(account_id, owner)
-        from core.database import SessionLocal, EmailAccount
+        from src.infra.database.database import SessionLocal, EmailAccount
         db = SessionLocal()
         try:
             row = db.get(EmailAccount, account_id)

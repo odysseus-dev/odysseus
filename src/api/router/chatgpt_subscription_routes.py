@@ -7,7 +7,7 @@ from typing import Dict, Optional
 
 from fastapi import HTTPException, Request
 
-from core.database import ModelEndpoint, ProviderAuthSession, SessionLocal, utcnow_naive
+from src.infra.database.database import ModelEndpoint, ProviderAuthSession, SessionLocal, utcnow_naive
 from src.api.handler.device_flow import (
     DeviceFlowPoll,
     DeviceFlowStart,

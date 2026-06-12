@@ -22,7 +22,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from core.database import Base, ChatMessage as DbChatMessage, Session as DbSession
+from src.infra.database.database import Base, ChatMessage as DbChatMessage, Session as DbSession
 
 
 HISTORY_ROUTES = Path(__file__).resolve().parent.parent / "routes" / "history_routes.py"

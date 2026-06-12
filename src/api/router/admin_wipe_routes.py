@@ -16,7 +16,7 @@ import shutil
 from fastapi import APIRouter, HTTPException, Request
 
 from core.middleware import require_admin
-from core.database import (
+from src.infra.database.database import (
     SessionLocal,
     Session as DbSession,
     ChatMessage as DbChatMessage,

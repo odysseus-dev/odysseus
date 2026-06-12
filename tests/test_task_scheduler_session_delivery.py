@@ -17,9 +17,9 @@ from tests.helpers.import_state import clear_fake_database_modules
 clear_fake_database_modules()
 
 import core.database as cdb
-from core.database import Base, Session as DbSession
-from core.models import ChatMessage as MemChatMessage
-from src.task_scheduler import TaskScheduler
+from src.infra.database.database import Base, Session as DbSession
+from src.infra.database.models import ChatMessage as MemChatMessage
+from src.infra.scheduler.task_scheduler import TaskScheduler
 
 # This test needs the real core.database (real SQLAlchemy Base/ChatMessage).
 # test_null_owner_gates.py no longer leaks its stubs (per-test fixture cleanup

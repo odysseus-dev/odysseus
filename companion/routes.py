@@ -105,8 +105,8 @@ def setup_companion_routes() -> APIRouter:
         """
         import json as _json
 
-        from core.database import SessionLocal, ModelEndpoint
-        from src.endpoint_resolver import build_chat_url
+        from src.infra.database.database import SessionLocal, ModelEndpoint
+        from src.infra.llm.endpoint_resolver import build_chat_url
 
         owner = token_owner(request)
         out = []

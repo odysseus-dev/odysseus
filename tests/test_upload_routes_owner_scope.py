@@ -41,7 +41,7 @@ def _upload_endpoints(upload_handler, monkeypatch):
 
 
 def _make_upload_store(tmp_path, monkeypatch):
-    from src.upload_handler import UploadHandler
+    from src.infra.storage.upload_handler import UploadHandler
     from src import constants
 
     upload_dir = tmp_path / "uploads"

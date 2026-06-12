@@ -106,7 +106,7 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
     """
     import json as _json
     import re as _re
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
 
     sys_prompt = (
         "You are a strict QA reviewer judging whether an AI 'skill' (a reusable "
@@ -259,7 +259,7 @@ async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: st
     purely a flag the UI surfaces."""
     import json as _json
     import re as _re
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
 
     catalog = "\n".join(f"- {o.get('name')}: {o.get('description', '')}" for o in others) or "(no other skills)"
     sys_prompt = (
@@ -342,7 +342,7 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
     """
     import json as _json
     import re as _re
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
 
     catalog = "\n".join(f"- {o.get('name')}: {o.get('description', '')}" for o in others[:80]) or "(no other skills)"
     sys_prompt = (
@@ -718,7 +718,7 @@ async def _improve_skill_md(skill_md: str, verdict: dict, transcript: str, url, 
     """Have a model rewrite SKILL.md to fix the reviewer's issues. Returns the
     corrected markdown, or None if it couldn't produce a usable change."""
     import re as _re
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
     issues = "\n".join("- " + str(i) for i in (verdict.get("issues") or []))
     sys_prompt = (
         "You are improving a reusable AI SKILL written in Markdown (frontmatter + body). "
@@ -999,12 +999,12 @@ def _resolve_audit_models(owner=None):
     by the manual /audit-all route and scheduled/event audits. Raises
     ValueError if no worker model.
     """
-    from src.endpoint_resolver import resolve_endpoint
+    from src.infra.llm.endpoint_resolver import resolve_endpoint
     url, model, headers = resolve_endpoint("utility", owner=owner)
     if not url or not model:
         raise ValueError("No model configured — set a Default or Utility model in Settings.")
     try:
-        from src.llm_core import list_model_ids
+        from src.infra.llm.llm_core import list_model_ids
         import os as _os
         _avail = list_model_ids(url, headers=headers)
         if _avail and model not in _avail:
@@ -1089,7 +1089,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
     def _fire_skill_added(user: Optional[str]):
         try:
-            from src.event_bus import fire_event
+            from src.infra.scheduler.event_bus import fire_event
             fire_event("skill_added", user)
         except Exception:
             logger.debug("skill_added event dispatch failed", exc_info=True)
@@ -1376,7 +1376,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         it untouched). It never changes the skill's published/draft STATUS."""
         import time as _time
         import asyncio as _asyncio
-        from src.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
 
         user = _owner(request)
         body = await request.json()
@@ -1406,7 +1406,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         # Normalize against the endpoint's served models (avoids 404 model drift).
         try:
-            from src.llm_core import list_model_ids
+            from src.infra.llm.llm_core import list_model_ids
             _avail = list_model_ids(url, headers=headers)
             if _avail and model not in _avail:
                 import os as _os

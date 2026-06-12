@@ -423,7 +423,7 @@ def _gather_inputs() -> Dict[str, Any]:
     except Exception as e:
         logger.debug(f"service_health: settings load failed: {e}")
     try:
-        from src.integrations import load_integrations
+        from src.infra.integration.integrations import load_integrations
         integrations = load_integrations() or []
     except Exception as e:
         logger.debug(f"service_health: integrations load failed: {e}")
@@ -433,7 +433,7 @@ def _gather_inputs() -> Dict[str, Any]:
     except Exception as e:
         logger.debug(f"service_health: email accounts load failed: {e}")
     try:
-        from core.database import SessionLocal, ModelEndpoint
+        from src.infra.database.database import SessionLocal, ModelEndpoint
         db = SessionLocal()
         try:
             rows = db.query(ModelEndpoint).filter(

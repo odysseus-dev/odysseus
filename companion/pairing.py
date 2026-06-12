@@ -87,7 +87,7 @@ def mint_token(owner: str, name: str = "companion") -> tuple[str, str]:
     are persisted. Mirrors routes/api_token_routes.py so cookie- and
     companion-minted tokens are indistinguishable to the auth middleware.
     """
-    from core.database import get_db_session, ApiToken
+    from src.infra.database.database import get_db_session, ApiToken
 
     raw_token = "ody_" + secrets.token_urlsafe(32)
     token_hash = bcrypt.hashpw(raw_token.encode(), bcrypt.gensalt()).decode()

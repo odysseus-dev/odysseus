@@ -21,7 +21,7 @@ from sqlalchemy.pool import NullPool
 import core.database as cdb
 import routes.calendar_routes as croutes
 import src.caldav_writeback as wb
-from core.database import CalendarCal
+from src.infra.database.database import CalendarCal
 from routes.calendar_routes import EventCreate
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)

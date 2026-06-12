@@ -64,7 +64,7 @@ def _setup_isolated_db():
 
 
 def test_scheduler_utcnow_preserves_naive_utc_contract():
-    from src.task_scheduler import _utcnow
+    from src.infra.scheduler.task_scheduler import _utcnow
 
     now = _utcnow()
 
@@ -77,7 +77,7 @@ def _drive_scheduler(monkeypatch, pre_start_setup=None):
     _stub_heavy()
     cd, ScheduledTask, TaskRun = _setup_isolated_db()
 
-    from src.task_scheduler import TaskScheduler
+    from src.infra.scheduler.task_scheduler import TaskScheduler
     sch = TaskScheduler.__new__(TaskScheduler)
     sch._executing = set()
     sch._executing_lock = asyncio.Lock()

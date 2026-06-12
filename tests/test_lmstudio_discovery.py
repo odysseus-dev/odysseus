@@ -1,6 +1,6 @@
 """Tests for LM Studio model discovery: port scanning, env host scanning,
 and native-API provider fingerprinting."""
-from src.model_discovery import ModelDiscovery
+from src.infra.llm.model_discovery import ModelDiscovery
 
 
 class _FakeResponse:

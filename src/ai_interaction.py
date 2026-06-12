@@ -38,7 +38,7 @@ def set_session_manager(mgr):
     """Set the global session manager. Syncs local cache + core singleton."""
     global _session_manager
     _session_manager = mgr
-    from core.models import set_session_manager_instance
+    from src.infra.database.models import set_session_manager_instance
     set_session_manager_instance(mgr)
 
 
@@ -63,7 +63,7 @@ def set_rag_manager(rag_mgr, personal_docs_mgr=None):
 # Model resolution
 # ---------------------------------------------------------------------------
 
-from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, resolve_endpoint_runtime
+from src.infra.llm.endpoint_resolver import build_chat_url, build_headers, build_models_url, resolve_endpoint_runtime
 
 
 def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Dict]:
@@ -77,7 +77,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.infra.llm.llm_core import _detect_provider, ANTHROPIC_MODELS
     from src.auth_helpers import owner_filter
 
     spec = spec.strip()
@@ -166,7 +166,7 @@ async def do_chat_with_model(content: str, session_id: Optional[str] = None, own
       Line 1: model_name (or model_name@endpoint_name)
       Line 2+: the message to send
     """
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
 
     lines = content.strip().split("\n", 1)
     if not lines or not lines[0].strip():
@@ -215,7 +215,7 @@ async def do_ask_teacher(content: str, session_id: Optional[str] = None, owner: 
       Line 1: model_name (or 'auto')
       Line 2+: the problem description
     """
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
     from src.settings import get_setting
 
     lines = content.strip().split("\n", 1)
@@ -267,7 +267,7 @@ async def do_second_opinion(content: str, session_id: Optional[str] = None, owne
       3. Send feedback back to the session's own model → evaluate & unify
       4. Return both the review and the unified response
     """
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
 
     lines = content.strip().split("\n", 1)
     if not lines or not lines[0].strip():
@@ -437,7 +437,7 @@ async def do_create_session(content: str, session_id: Optional[str] = None, owne
         if sess and headers:
             sess.headers = headers
         try:
-            from src.event_bus import fire_event
+            from src.infra.scheduler.event_bus import fire_event
             fire_event("session_created", owner)
         except Exception:
             logger.debug("session_created event dispatch failed", exc_info=True)
@@ -463,7 +463,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
     keyword = content.strip().lower() if content.strip() else None
 
     try:
-        from core.database import SessionLocal, Session as DbSession
+        from src.infra.database.database import SessionLocal, Session as DbSession
         from datetime import datetime, timezone
 
         # Pull every session's last_accessed from the DB so we can sort
@@ -542,8 +542,8 @@ async def do_send_to_session(content: str, session_id: Optional[str] = None, own
       Line 1: session_id
       Line 2+: message
     """
-    from src.llm_core import llm_call_async
-    from core.models import ChatMessage
+    from src.infra.llm.llm_core import llm_call_async
+    from src.infra.database.models import ChatMessage
 
     if not _session_manager:
         return {"error": "Session manager not available"}
@@ -617,7 +617,7 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
       Line 2: step2_model | step2_instruction
       ...
     """
-    from src.llm_core import llm_call_async
+    from src.infra.llm.llm_core import llm_call_async
 
     # Try JSON parse first
     steps = None
@@ -915,12 +915,12 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
             history = source.get_context_messages()
             if keep_count > 0:
                 history = history[:keep_count]
-            from core.models import ChatMessage as InMemoryMsg
+            from src.infra.database.models import ChatMessage as InMemoryMsg
             new_sess = _session_manager.get_session(new_sid)
             for msg in history:
                 new_sess.add_message(InMemoryMsg(msg["role"], msg["content"]))
             try:
-                from src.event_bus import fire_event
+                from src.infra.scheduler.event_bus import fire_event
                 fire_event("session_created", owner)
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
@@ -1004,7 +1004,7 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             except Exception:
                 pass
         try:
-            from src.event_bus import fire_event
+            from src.infra.scheduler.event_bus import fire_event
             fire_event("memory_added", owner)
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
@@ -1116,7 +1116,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
     """
     import httpx
     from src.database import SessionLocal, ModelEndpoint
-    from src.llm_core import _detect_provider, ANTHROPIC_MODELS
+    from src.infra.llm.llm_core import _detect_provider, ANTHROPIC_MODELS
     from src.auth_helpers import owner_filter
 
     keyword = content.strip().lower() if content.strip() else None

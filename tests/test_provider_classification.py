@@ -21,7 +21,7 @@ real module is side-effect free.
 """
 import pytest
 
-from src.llm_core import (
+from src.infra.llm.llm_core import (
     _detect_provider,
     _provider_label,
     _format_upstream_error,

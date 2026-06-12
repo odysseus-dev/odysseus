@@ -7,8 +7,8 @@ from typing import Dict, Any
 
 from fastapi import APIRouter, Request, HTTPException
 
-from core.models import ChatMessage
-from core.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
+from src.infra.database.models import ChatMessage
+from src.infra.database.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
 from src.topic_analyzer import analyze_topics
 from src.api.router.session_routes import (
     _message_role,
@@ -498,7 +498,7 @@ def setup_history_routes(session_manager) -> APIRouter:
                 meta = dict(msg.metadata) if isinstance(msg.metadata, dict) else None
                 new_session.add_message(ChatMessage(msg.role, msg.content, meta))
             try:
-                from src.event_bus import fire_event
+                from src.infra.scheduler.event_bus import fire_event
                 fire_event("session_created", getattr(source, 'owner', None))
             except Exception:
                 logger.debug("session_created event dispatch failed", exc_info=True)
@@ -538,8 +538,8 @@ def setup_history_routes(session_manager) -> APIRouter:
 
         try:
             from src.model_context import estimate_tokens, get_context_length
-            from src.llm_core import llm_call_async
-            from src.endpoint_resolver import resolve_endpoint
+            from src.infra.llm.llm_core import llm_call_async
+            from src.infra.llm.endpoint_resolver import resolve_endpoint
 
             if len(session.history) < 6:
                 return {"status": "ok", "message": "Not enough messages to compact"}

@@ -76,8 +76,8 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
         import json
         import re
         from src.constants import DATA_DIR
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.llm_core import llm_call_async
         from src.memory import MemoryManager
 
         manager = MemoryManager(DATA_DIR)
@@ -392,7 +392,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         import json
         from pathlib import Path
-        from core.database import SessionLocal, CalendarEvent
+        from src.infra.database.database import SessionLocal, CalendarEvent
         from sqlalchemy import func
 
         STATE_FILE = Path(TIDY_CALENDAR_STATE_FILE)
@@ -603,9 +603,9 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     importance + color. Re-classifies anything not already set."""
     try:
         from datetime import timedelta
-        from core.database import SessionLocal, CalendarEvent
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.infra.database.database import SessionLocal, CalendarEvent
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.llm_core import llm_call_async
         import re as _re, json as _json
 
         db = SessionLocal()
@@ -630,7 +630,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             # events are personal/social, not work.
             _memory_context = ""
             try:
-                from core.database import Memory as _Mem
+                from src.infra.database.database import Memory as _Mem
                 _mems = db.query(_Mem).filter(_Mem.owner == owner).limit(60).all() if owner else []
                 _lines = _memory_context_lines(_mems)
                 if _lines:
@@ -810,8 +810,8 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
         from routes.email_helpers import _imap_connect, SCHEDULED_DB
-        from src.endpoint_resolver import resolve_endpoint
-        from src.llm_core import llm_call_async
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.llm_core import llm_call_async
 
         # 1. Pull recent UIDs + From headers cheaply (header-only fetch).
         def _pull_headers():
@@ -1003,7 +1003,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         from datetime import datetime as _dt, timedelta as _td
         import json as _json
 
-        from core.database import SessionLocal, CalendarEvent, CalendarCal, Note
+        from src.infra.database.database import SessionLocal, CalendarEvent, CalendarCal, Note
         from routes.email_helpers import _imap_connect, _decode_header
 
         # ----- Calendar: today's events -----
@@ -1014,7 +1014,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         # user's daily brief must not include another user's notes or
         # events that happen to be stored with owner=None.
         try:
-            from core.auth import AuthManager
+            from src.infra.auth.auth import AuthManager
             _allow_null = not AuthManager().is_configured
         except Exception:
             _allow_null = False
@@ -1134,7 +1134,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         from services.memory.skills import SkillsManager
         from src.constants import DATA_DIR
         from routes.skills_routes import _run_skill_test_once, _skill_test_task
-        from src.endpoint_resolver import resolve_endpoint
+        from src.infra.llm.endpoint_resolver import resolve_endpoint
 
         # #3 SCOPE GUARD: refuse to run on a None/empty owner — otherwise
         # `sm.load(owner=None)` returns every user's skills and we'd cross-
@@ -1158,7 +1158,7 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         # `avail[0]` which could be an embedding-only model and produce 36
         # garbage transcripts → 36 'unknown' verdicts with no hint why.
         try:
-            from src.llm_core import list_model_ids
+            from src.infra.llm.llm_core import list_model_ids
             avail = list_model_ids(url, headers=headers)
             if avail and model not in avail:
                 import os as _os
@@ -1270,7 +1270,7 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
 
         url, model, headers, teacher = _resolve_audit_models()
         try:
-            from src.llm_core import seconds_since_model_activity
+            from src.infra.llm.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
         except Exception:
             recent = None
@@ -1319,7 +1319,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         import time as _time
         from datetime import datetime as _dt, timezone as _tz, timedelta as _td
         from pathlib import Path as _P
-        from core.database import SessionLocal as _SL, Note as _N
+        from src.infra.database.database import SessionLocal as _SL, Note as _N
 
         # Per-owner state file so cache-pruning doesn't cross-delete other
         # users' entries (review C4). Legacy path kept as fallback so a
@@ -1478,10 +1478,10 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         import httpx
         from datetime import datetime as _dt, timedelta as _td
         from pathlib import Path as _P
-        from core.database import SessionLocal as _SL, EmailAccount as _EA
+        from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
         from routes.email_helpers import _imap_connect, _decode_header
-        from src.endpoint_resolver import resolve_endpoint, resolve_utility_fallback_candidates
-        from src.llm_core import llm_call_async_with_fallback
+        from src.infra.llm.endpoint_resolver import resolve_endpoint, resolve_utility_fallback_candidates
+        from src.infra.llm.llm_core import llm_call_async_with_fallback
 
         # Per-owner state file so multi-user runs don't clobber each other's
         # notified_uids / urgency counts. Empty owner falls back to a generic
@@ -2044,7 +2044,7 @@ async def action_cookbook_serve(
     import httpx
     from pathlib import Path
     from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
-    from core.atomic_io import atomic_write_json
+    from src.infra.storage.atomic_io import atomic_write_json
 
     headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
     try:

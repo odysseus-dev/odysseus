@@ -352,7 +352,7 @@ def _stub_core_database_for_route_imports(monkeypatch):
 
 
 def test_upload_resolver_rejects_cross_owner_upload_ids(tmp_path):
-    from src.upload_handler import UploadHandler
+    from src.infra.storage.upload_handler import UploadHandler
 
     upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
     handler = UploadHandler(str(tmp_path), str(upload_dir))
@@ -363,7 +363,7 @@ def test_upload_resolver_rejects_cross_owner_upload_ids(tmp_path):
 
 def test_build_user_content_skips_cross_owner_attachments(tmp_path):
     from src.document_processor import build_user_content
-    from src.upload_handler import UploadHandler
+    from src.infra.storage.upload_handler import UploadHandler
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
     handler = UploadHandler(str(tmp_path), str(upload_dir))
@@ -387,7 +387,7 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
         sys.modules.pop(mod_name, None)
     _stub_core_database_for_route_imports(monkeypatch)
     from src.chat_handler import ChatHandler
-    from src.upload_handler import UploadHandler
+    from src.infra.storage.upload_handler import UploadHandler
     from src import settings
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
@@ -417,7 +417,7 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
 
 
 def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch):
-    from src.upload_handler import UploadHandler
+    from src.infra.storage.upload_handler import UploadHandler
 
     sys.modules.pop("routes.document_helpers", None)
     _stub_core_database_for_route_imports(monkeypatch)
@@ -440,7 +440,7 @@ def test_find_source_upload_id_rejects_path_traversal_marker():
 
 def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
     """Saving a doc whose front-matter points at another user's upload must 400."""
-    from src.upload_handler import UploadHandler
+    from src.infra.storage.upload_handler import UploadHandler
 
     sys.modules.pop("routes.document_helpers", None)
     _stub_core_database_for_route_imports(monkeypatch)
@@ -480,7 +480,7 @@ def test_pdf_marker_write_rejects_cross_owner_upload(tmp_path, monkeypatch):
 
 def test_pdf_marker_render_lookup_denies_cross_owner_without_doc_leak(tmp_path):
     """Read path: cross-owner marker resolves to None (404 at route layer)."""
-    from src.upload_handler import UploadHandler
+    from src.infra.storage.upload_handler import UploadHandler
 
     upload_dir, alice_id, bob_id = _make_upload_store(tmp_path)
     handler = UploadHandler(str(tmp_path), str(upload_dir))
@@ -758,7 +758,7 @@ def test_auth_manager_migrates_legacy_admin_role(tmp_path):
     sys.modules.pop("core.auth", None)
     if "core" in sys.modules and hasattr(sys.modules["core"], "auth"):
         delattr(sys.modules["core"], "auth")
-    from core.auth import AuthManager
+    from src.infra.auth.auth import AuthManager
 
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(json.dumps({

@@ -20,7 +20,7 @@ def check_readiness() -> Dict[str, object]:
     it never fails readiness, it only reports whether storage stays on this host.
     """
     from core.constants import APP_VERSION, DATA_DIR
-    from core.database import DATABASE_URL, engine
+    from src.infra.database.database import DATABASE_URL, engine
     from sqlalchemy import text as sql_text
 
     checks: Dict[str, Dict[str, object]] = {}

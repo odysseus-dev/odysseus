@@ -22,7 +22,7 @@ def test_is_copilot_base(url, expected):
 
 
 def test_detect_provider_copilot():
-    from src.llm_core import _detect_provider
+    from src.infra.llm.llm_core import _detect_provider
     assert _detect_provider("https://api.githubcopilot.com") == "copilot"
     assert _detect_provider("https://copilot-api.acme.ghe.com") == "copilot"
     # lookalike must not be classified as copilot
@@ -60,7 +60,7 @@ def test_copilot_headers_no_token():
 
 
 def test_build_headers_dispatches_to_copilot():
-    from src.endpoint_resolver import build_headers
+    from src.infra.llm.endpoint_resolver import build_headers
     h = build_headers("TOK", "https://api.githubcopilot.com")
     assert h["Authorization"] == "Bearer TOK"
     assert h["X-GitHub-Api-Version"] == copilot.COPILOT_API_VERSION

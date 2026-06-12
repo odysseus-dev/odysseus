@@ -22,14 +22,14 @@ def _strip_list_prefix(text: str) -> str:
     return _LIST_PREFIX_RE.sub("", text, count=1).strip()
 
 from services.memory import MemoryManager
-from core.session_manager import SessionManager
+from src.infra.database.session_manager import SessionManager
 from src.request_models import MemoryAddRequest
-from core.database import SessionLocal
-from src.llm_core import llm_call_async
+from src.infra.database.database import SessionLocal
+from src.infra.llm.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
-from src.endpoint_resolver import resolve_endpoint
-from src.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
+from src.infra.llm.endpoint_resolver import resolve_endpoint
+from src.infra.storage.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         if memory_vector and memory_vector.healthy:
             memory_vector.add(new_entry["id"], text)
         try:
-            from src.event_bus import fire_event
+            from src.infra.scheduler.event_bus import fire_event
             fire_event("memory_added", user)
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
@@ -256,7 +256,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         Returns before and after memory counts.
         """
         from src.api.router.model_routes import _load_settings, _normalize_base, build_chat_url
-        from core.database import ModelEndpoint
+        from src.infra.database.database import ModelEndpoint
         import json as _json
 
         endpoint_url = model = None

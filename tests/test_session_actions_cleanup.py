@@ -21,7 +21,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
-from core.database import ChatMessage as DbMessage, Session as DbSession, utcnow_naive
+from src.infra.database.database import ChatMessage as DbMessage, Session as DbSession, utcnow_naive
 import src.session_actions as session_actions
 
 

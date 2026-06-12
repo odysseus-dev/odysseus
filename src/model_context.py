@@ -38,7 +38,7 @@ def _configured_endpoint_kind(url: str) -> Optional[str]:
     if "core.database" not in sys.modules:
         return None
     try:
-        from core.database import SessionLocal, ModelEndpoint
+        from src.infra.database.database import SessionLocal, ModelEndpoint
         db = SessionLocal()
         try:
             rows = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
@@ -291,13 +291,13 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     # aren't available here; an unauthenticated probe just 400s. All Copilot
     # picker models are major API models covered by the known-context table, so
     # rely on that instead of a doomed network call.
-    from src.copilot import is_copilot_base
+    from src.infra.integration.copilot import is_copilot_base
     if is_copilot_base(endpoint_url):
         if known:
             logger.info(f"Using known context window for {model}: {known}")
         return known or DEFAULT_CONTEXT
 
-    from src.endpoint_resolver import build_models_url
+    from src.infra.llm.endpoint_resolver import build_models_url
 
     models_url = build_models_url(endpoint_url)
     try:

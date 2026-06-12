@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 import logging
 
-from src.upload_limits import read_upload_limited, STT_MAX_AUDIO_BYTES
+from src.infra.storage.upload_limits import read_upload_limited, STT_MAX_AUDIO_BYTES
 
 logger = logging.getLogger(__name__)
 

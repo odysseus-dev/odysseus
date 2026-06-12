@@ -10,7 +10,7 @@ from datetime import datetime
 
 import pytest
 
-from src.task_scheduler import compute_next_run
+from src.infra.scheduler.task_scheduler import compute_next_run
 
 
 @pytest.mark.parametrize(

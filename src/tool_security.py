@@ -175,7 +175,7 @@ def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
     defense-in-depth for callers that bypass it (e.g. trusted loopback).
     """
     try:
-        from core.auth import AuthManager
+        from src.infra.auth.auth import AuthManager
 
         auth = AuthManager()
         if not auth.is_configured:

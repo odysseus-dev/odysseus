@@ -6,7 +6,7 @@ from tests.helpers.import_state import clear_fake_database_modules
 
 clear_fake_database_modules()
 
-from core.database import Base, Session, ChatMessage
+from src.infra.database.database import Base, Session, ChatMessage
 from datetime import datetime
 
 def test_sqlite_foreign_keys_cascade():

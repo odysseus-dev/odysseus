@@ -15,7 +15,7 @@ import uuid
 import pytest
 
 import core.database as cdb
-from core.models import ChatMessage
+from src.infra.database.models import ChatMessage
 from tests.helpers.sqlite_db import make_temp_sqlite
 
 _TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)

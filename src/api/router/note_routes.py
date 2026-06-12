@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, Note
+from src.infra.database.database import SessionLocal, Note
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR
 from sqlalchemy.orm.attributes import flag_modified
@@ -206,8 +206,8 @@ async def dispatch_reminder(
     _SYNTH_FAILED_TAG = "[utility model unavailable — no summary generated]"
     if llm_on:
         try:
-            from src.endpoint_resolver import resolve_endpoint
-            from src.llm_core import llm_call_async
+            from src.infra.llm.endpoint_resolver import resolve_endpoint
+            from src.infra.llm.llm_core import llm_call_async
             url, model, headers = resolve_endpoint("utility", owner=owner or None)
             if not url:
                 url, model, headers = resolve_endpoint("default", owner=owner or None)
@@ -308,7 +308,7 @@ async def dispatch_reminder(
             cfg = _get_email_config(account_id=_acc_id, owner=owner or "")
             if not (cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password")):
                 try:
-                    from core.database import SessionLocal as _SL, EmailAccount as _EA
+                    from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
                     from sqlalchemy import and_, or_
                     db = _SL()
                     try:
@@ -395,7 +395,7 @@ async def dispatch_reminder(
         try:
             import httpx
             import json as _wjson
-            from src.integrations import load_integrations
+            from src.infra.integration.integrations import load_integrations
             # Built-in payload defaults for known presets so users don't have
             # to configure a template just to use a standard service.
             _PRESET_TEMPLATE_DEFAULTS = {
@@ -463,7 +463,7 @@ async def dispatch_reminder(
     ntfy_error = ""
     if channel == "ntfy":
         try:
-            from src.integrations import load_integrations
+            from src.infra.integration.integrations import load_integrations
             import httpx
             intg = next(
                 (i for i in load_integrations()
@@ -578,7 +578,7 @@ def setup_note_routes(task_scheduler=None):
             # modes. There is no separate non-admin account boundary there.
             return True
         try:
-            from core.auth import AuthManager
+            from src.infra.auth.auth import AuthManager
             auth_mgr = getattr(request.app.state, "auth_manager", None) or AuthManager()
             if not getattr(auth_mgr, "is_configured", True):
                 return True
@@ -861,7 +861,7 @@ def setup_note_routes(task_scheduler=None):
         # because there's no second user to attack; we keep that branch
         # explicit and gated on AuthManager.is_configured.
         try:
-            from core.auth import AuthManager
+            from src.infra.auth.auth import AuthManager
             _allow_null = not AuthManager().is_configured
         except Exception:
             _allow_null = False

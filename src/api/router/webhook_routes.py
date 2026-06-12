@@ -9,7 +9,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Form
 from pydantic import BaseModel, Field
 
-from core.database import SessionLocal, Webhook, ModelEndpoint
+from src.infra.database.database import SessionLocal, Webhook, ModelEndpoint
 from src.auth_helpers import owner_filter
 from src.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
@@ -240,9 +240,9 @@ def setup_webhook_routes(
             raise HTTPException(403, "API token is not scoped for chat")
         token_owner = getattr(request.state, "api_token_owner", None)
 
-        from core.models import ChatMessage
-        from src.llm_core import llm_call_async
-        from src.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
+        from src.infra.database.models import ChatMessage
+        from src.infra.llm.llm_core import llm_call_async
+        from src.infra.llm.endpoint_resolver import build_chat_url, build_headers, build_models_url, normalize_base
 
         message = body.message.strip()
         if not message:
@@ -327,7 +327,7 @@ def setup_webhook_routes(
             api_key = ep.api_key
             if getattr(ep, "provider_auth_id", None):
                 try:
-                    from src.endpoint_resolver import resolve_endpoint_runtime
+                    from src.infra.llm.endpoint_resolver import resolve_endpoint_runtime
                     base_url, api_key = resolve_endpoint_runtime(ep, owner=token_owner)
                     endpoint_url = build_chat_url(base_url)
                 except Exception:

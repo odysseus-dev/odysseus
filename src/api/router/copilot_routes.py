@@ -27,7 +27,7 @@ from typing import Dict, Optional
 import httpx
 from fastapi import HTTPException, Request
 
-from core.database import SessionLocal, ModelEndpoint
+from src.infra.database.database import SessionLocal, ModelEndpoint
 from src.api.handler.device_flow import (
     DeviceFlowPoll,
     DeviceFlowStart,

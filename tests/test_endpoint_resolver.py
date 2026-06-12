@@ -1,7 +1,7 @@
 """Tests for endpoint_resolver — pure functions tested directly."""
 import json
 
-from src.endpoint_resolver import (
+from src.infra.llm.endpoint_resolver import (
     _first_chat_model,
     _endpoint_hidden_models,
     _endpoint_enabled_models,

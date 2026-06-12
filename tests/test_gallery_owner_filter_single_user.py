@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
-from core.database import GalleryImage
+from src.infra.database.database import GalleryImage
 from routes.gallery_helpers import _owner_filter
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)

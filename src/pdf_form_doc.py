@@ -174,7 +174,7 @@ def find_source_upload_id(content: str) -> Optional[str]:
     PDFs and the plain marker (`pdf_source`) used for any imported PDF.
     Rejects malformed ids (path traversal, wrong shape) before any lookup.
     """
-    from src.upload_handler import is_valid_upload_id
+    from src.infra.storage.upload_handler import is_valid_upload_id
 
     m = _FRONT_MATTER_RE.search(content or "") or _PLAIN_FRONT_MATTER_RE.search(content or "")
     if not m:

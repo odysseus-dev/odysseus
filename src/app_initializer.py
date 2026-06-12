@@ -11,16 +11,16 @@ from src.constants import (
 from src.memory import MemoryManager
 from src.memory_provider import MemoryProviderRegistry, NativeMemoryProvider
 from services.memory.skills import SkillsManager
-from core.session_manager import SessionManager
-from core.models import set_session_manager
+from src.infra.database.session_manager import SessionManager
+from src.infra.database.models import set_session_manager
 from src.personal_docs import PersonalDocsManager
 from src.api_key_manager import APIKeyManager
 from src.preset_manager import PresetManager
 from src.chat_processor import ChatProcessor
-from src.model_discovery import ModelDiscovery
+from src.infra.llm.model_discovery import ModelDiscovery
 from src.chat_handler import ChatHandler
 from src.research_handler import ResearchHandler
-from src.upload_handler import UploadHandler
+from src.infra.storage.upload_handler import UploadHandler
 from src.search import update_search_config
 
 logger = logging.getLogger(__name__)

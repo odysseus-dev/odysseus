@@ -1,6 +1,6 @@
 """Regression: merging consecutive user messages must not str() multimodal content."""
 
-from src.llm_core import _sanitize_llm_messages
+from src.infra.llm.llm_core import _sanitize_llm_messages
 
 
 def test_multimodal_user_message_keeps_image_block_when_merged():

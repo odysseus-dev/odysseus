@@ -10,9 +10,9 @@ from typing import Any, Iterable
 
 from sqlalchemy import text
 
-from core.database import ChatMessage as DBChatMessage
-from core.database import Session as DBSession
-from core.database import SessionLocal
+from src.infra.database.database import ChatMessage as DBChatMessage
+from src.infra.database.database import Session as DBSession
+from src.infra.database.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 

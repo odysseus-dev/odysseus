@@ -29,7 +29,7 @@ for mod in [
         sys.modules[mod] = MagicMock()
 
 from src.agent_loop import _append_tool_results
-from src.llm_core import _sanitize_llm_messages
+from src.infra.llm.llm_core import _sanitize_llm_messages
 
 
 def test_sanitize_keeps_no_prose_assistant_tool_call_message():
@@ -110,7 +110,7 @@ def test_sanitize_merges_search_results_and_user_query():
 
 
 def test_build_anthropic_payload_alternating_roles():
-    from src.llm_core import _build_anthropic_payload
+    from src.infra.llm.llm_core import _build_anthropic_payload
 
     # Standard messages list that has consecutive user messages (pre-merge)
     messages_with_consecutive = [

@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 import core.database as cdb
-from core.database import GalleryAlbum, GalleryImage
+from src.infra.database.database import GalleryAlbum, GalleryImage
 import routes.gallery_routes as gallery_routes
 
 

@@ -7,7 +7,7 @@ the _generation counter is included so any structural change invalidates it.
 """
 import asyncio
 
-from src.mcp_manager import McpManager
+from src.infra.mcp.mcp_manager import McpManager
 
 
 def _make_mgr():

@@ -9,7 +9,7 @@ This package contains only what's needed for:
 - Authentication
 """
 
-from src.llm_core import (
+from src.infra.llm.llm_core import (
     llm_call,
     llm_call_async,
     stream_llm,

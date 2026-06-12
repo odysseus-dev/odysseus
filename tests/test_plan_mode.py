@@ -59,7 +59,7 @@ def test_disabled_never_intersects_allowlist():
 
 
 def test_mcp_readonly_classification():
-    from src.mcp_manager import mcp_tool_is_readonly as ro
+    from src.infra.mcp.mcp_manager import mcp_tool_is_readonly as ro
     # Server-provided hints win over the name heuristic.
     assert ro({"name": "zap", "annotations": {"readOnlyHint": True}}) is True
     assert ro({"name": "list_things", "annotations": {"readOnlyHint": False}}) is False

@@ -59,7 +59,7 @@ def test_rename_owner_db_filter_is_case_insensitive():
     from sqlalchemy import create_engine, func
     from sqlalchemy.orm import sessionmaker
 
-    from core.database import Base, Session as DbSession
+    from src.infra.database.database import Base, Session as DbSession
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)

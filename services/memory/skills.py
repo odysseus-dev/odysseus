@@ -97,7 +97,7 @@ class SkillsManager:
 
     def _save_usage(self, usage: Dict[str, Dict]) -> None:
         try:
-            from core.atomic_io import atomic_write_json
+            from src.infra.storage.atomic_io import atomic_write_json
             atomic_write_json(self.usage_file, usage, indent=2)
         except Exception:
             tmp = self.usage_file + ".tmp"
@@ -175,7 +175,7 @@ class SkillsManager:
     def _write_skill(self, sk: Skill) -> str:
         path = self._skill_file(sk.category or "general", sk.name)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        from core.atomic_io import atomic_write_text
+        from src.infra.storage.atomic_io import atomic_write_text
         atomic_write_text(path, sk.to_markdown())
         sk.path = path
         return path
@@ -391,7 +391,7 @@ class SkillsManager:
     ) -> Dict:
         """Install a fetched skill bundle (relative path → text) under skills/."""
         from .skill_importer import SkillImportError, pick_skill_md, _safe_relpath
-        from core.atomic_io import atomic_write_text
+        from src.infra.storage.atomic_io import atomic_write_text
 
         if not files:
             raise SkillImportError("empty bundle")

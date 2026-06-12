@@ -9,7 +9,7 @@ edit/delete-by-id on the original conversation. The fork must copy the dict.
 import asyncio
 from types import SimpleNamespace
 
-from core.models import ChatMessage
+from src.infra.database.models import ChatMessage
 import routes.history_routes as mod
 
 

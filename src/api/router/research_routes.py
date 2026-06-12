@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from src.endpoint_resolver import resolve_endpoint
+from src.infra.llm.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
 from src.constants import DEEP_RESEARCH_DIR
 
@@ -82,7 +82,7 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
     panel-selected research endpoints. ChatGPT Subscription endpoints keep
     OAuth tokens in ProviderAuthSession, so ep.api_key is intentionally empty.
     """
-    from src.endpoint_resolver import (
+    from src.infra.llm.endpoint_resolver import (
         build_chat_url,
         build_headers,
         resolve_endpoint_runtime as resolve_model_endpoint_runtime,
@@ -596,7 +596,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         if not ep_url or not ep_model:
             # Last resort: this user's enabled endpoint, plus legacy shared rows.
             from src.database import SessionLocal
-            from src.endpoint_resolver import normalize_base, build_chat_url, build_headers
+            from src.infra.llm.endpoint_resolver import normalize_base, build_chat_url, build_headers
             db = SessionLocal()
             try:
                 ep = _owned_enabled_endpoint(db, user)
@@ -639,7 +639,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             new_sess.headers = ep_headers
             session_manager.save_sessions()
         try:
-            from src.event_bus import fire_event
+            from src.infra.scheduler.event_bus import fire_event
             fire_event("session_created", user)
         except Exception:
             logger.debug("session_created event dispatch failed", exc_info=True)
@@ -659,7 +659,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             f"=== REPORT ===\n{result}"
         )
 
-        from core.models import ChatMessage
+        from src.infra.database.models import ChatMessage
         new_sess.add_message(ChatMessage(
             role="system",
             content=primer,

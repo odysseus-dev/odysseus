@@ -8,7 +8,7 @@ Verifies two critical cases:
 """
 import pytest
 from src.agent_loop import _API_HOSTS, _endpoint_lookup_keys, _is_ollama_openai_compat_url
-from src.llm_core import _is_ollama_native_url
+from src.infra.llm.llm_core import _is_ollama_native_url
 
 
 def _compute_is_api_model(model: str, endpoint_url: str, endpoint_supports=None) -> bool:

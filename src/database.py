@@ -1,7 +1,7 @@
 # Re-export everything from the canonical core.database module
 # so that `from src.database import X` continues to work everywhere.
-from core.database import *  # noqa: F401,F403
-from core.database import (  # explicit re-exports for IDE/type-checker visibility
+from src.infra.database.database import *  # noqa: F401,F403
+from src.infra.database.database import (  # explicit re-exports for IDE/type-checker visibility
     Base,
     TimestampMixin,
     DATABASE_URL,

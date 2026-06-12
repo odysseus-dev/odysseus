@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from core.database import Base, ModelEndpoint, ProviderAuthSession
+from src.infra.database.database import Base, ModelEndpoint, ProviderAuthSession
 import routes.chatgpt_subscription_routes as csr
 
 

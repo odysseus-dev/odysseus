@@ -14,9 +14,9 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import SessionLocal, CrewMember, ScheduledTask
+from src.infra.database.database import SessionLocal, CrewMember, ScheduledTask
 from src.auth_helpers import get_current_user
-from src.task_scheduler import compute_next_run
+from src.infra.scheduler.task_scheduler import compute_next_run
 
 
 class CheckInUpdate(BaseModel):
@@ -290,7 +290,7 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
     @router.get("/run-status/{task_id}")
     async def run_status(task_id: str, request: Request):
         """Check whether the most recent run of a task has finished."""
-        from core.database import TaskRun, ScheduledTask
+        from src.infra.database.database import TaskRun, ScheduledTask
         user = _owner(request)
         db = SessionLocal()
         try:

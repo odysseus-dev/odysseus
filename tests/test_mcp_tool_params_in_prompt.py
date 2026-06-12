@@ -8,7 +8,7 @@ argument names from the description alone. ``get_all_tools()`` also dropped the
 surfaces.
 """
 
-from src.mcp_manager import McpManager
+from src.infra.mcp.mcp_manager import McpManager
 
 
 def _mgr_with_tool() -> McpManager:
@@ -46,7 +46,7 @@ def test_prompt_descriptions_surface_param_names_and_required():
 
 
 def test_format_mcp_params_handles_no_params():
-    from src.mcp_manager import _format_mcp_params
+    from src.infra.mcp.mcp_manager import _format_mcp_params
 
     assert _format_mcp_params({}) == ""
     assert _format_mcp_params(None) == ""
@@ -54,7 +54,7 @@ def test_format_mcp_params_handles_no_params():
 
 
 def test_format_mcp_params_marks_required_and_types():
-    from src.mcp_manager import _format_mcp_params
+    from src.infra.mcp.mcp_manager import _format_mcp_params
 
     out = _format_mcp_params(
         {

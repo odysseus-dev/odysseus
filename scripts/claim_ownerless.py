@@ -52,13 +52,13 @@ def main():
         print(f"  {label}: claimed {count} entries")
 
     # 2. Database tables (sessions, gallery, comparisons, documents)
-    from core.database import SessionLocal, Session, Document
+    from src.infra.database.database import SessionLocal, Session, Document
     try:
-        from core.database import GalleryImage
+        from src.infra.database.database import GalleryImage
     except ImportError:
         GalleryImage = None
     try:
-        from core.database import Comparison
+        from src.infra.database.database import Comparison
     except ImportError:
         Comparison = None
 

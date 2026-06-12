@@ -1,6 +1,6 @@
 """Tests for _parse_anthropic_response (src/llm_core.py)."""
 
-from src.llm_core import _parse_anthropic_response
+from src.infra.llm.llm_core import _parse_anthropic_response
 
 
 def test_concatenates_multiple_text_blocks():

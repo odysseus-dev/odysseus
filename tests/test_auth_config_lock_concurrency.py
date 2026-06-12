@@ -55,7 +55,7 @@ def _stub_api_token_purge(monkeypatch):
 
 def _fresh_auth_manager(tmp_path):
     clear_module("core.auth")
-    from core.auth import AuthManager
+    from src.infra.auth.auth import AuthManager
 
     return AuthManager(str(tmp_path / "auth.json"))
 

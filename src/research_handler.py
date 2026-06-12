@@ -145,7 +145,7 @@ class ResearchHandler:
         convo += f"\nUser: {latest_message}"
 
         try:
-            from src.llm_core import llm_call_async
+            from src.infra.llm.llm_core import llm_call_async
 
             response = await llm_call_async(
                 url=llm_endpoint,
@@ -176,7 +176,7 @@ class ResearchHandler:
         """Generate a research plan for user review before starting research."""
         try:
             from src.deep_research import RESEARCH_PLAN_PROMPT, current_date_context
-            from src.llm_core import llm_call_async
+            from src.infra.llm.llm_core import llm_call_async
 
             prompt = current_date_context() + RESEARCH_PLAN_PROMPT.format(question=query)
             response = await llm_call_async(
@@ -631,7 +631,7 @@ class ResearchHandler:
             path.write_text(json.dumps(data), encoding="utf-8")
             logger.info(f"Research result saved to {path}")
             try:
-                from src.event_bus import fire_event
+                from src.infra.scheduler.event_bus import fire_event
                 fire_event("research_completed", entry.get("owner") or None)
             except Exception:
                 logger.debug("research_completed event dispatch failed", exc_info=True)
@@ -719,7 +719,7 @@ class ResearchHandler:
     @staticmethod
     async def _probe_endpoint(endpoint: str, model: str, headers: dict = None):
         """Quick probe to verify the LLM endpoint/model responds before research."""
-        from src.llm_core import llm_call_async
+        from src.infra.llm.llm_core import llm_call_async
         try:
             logger.info(f"Probing {model} at {endpoint} (has_auth={bool(headers and 'Authorization' in (headers or {}))})")
             await llm_call_async(

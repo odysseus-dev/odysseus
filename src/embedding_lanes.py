@@ -102,7 +102,7 @@ def _load_custom_endpoint() -> Dict[str, str]:
     api_key = persisted.get("api_key") or os.environ.get("EMBEDDING_API_KEY", "")
     if persisted.get("api_key"):
         try:
-            from src.secret_storage import decrypt
+            from src.infra.storage.secret_storage import decrypt
             api_key = decrypt(api_key)
         except Exception:
             logger.warning("Could not decrypt saved embedding endpoint API key")
