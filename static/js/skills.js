@@ -514,6 +514,8 @@ function _buildBuiltinCards() {
 
     card.addEventListener('click', (e) => {
       if (e.target.closest('button, input, textarea')) return;
+      // Editing in progress → don't collapse on an outside-the-textarea click.
+      if (card.querySelector('.skill-md-editor')) return;
       _expandBuiltinCard(card, b.name);
     });
     return card;
@@ -786,6 +788,10 @@ function renderSkillsList() {
     card.addEventListener('click', (e) => {
       if (card._suppressNextClick) { card._suppressNextClick = false; return; }
       if (e.target.closest('button, input, textarea')) return;
+      // While editing, a click on the card body (outside the textarea) must
+      // NOT collapse the card — that silently discards unsaved edits. Only
+      // Save/Cancel exit edit mode.
+      if (card.querySelector('.skill-md-editor')) return;
       if (_selectMode) {
         const cb = card.querySelector('.skill-select-cb');
         if (cb) { cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); }
