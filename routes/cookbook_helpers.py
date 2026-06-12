@@ -1047,6 +1047,16 @@ def _diagnose_serve_output(text: str) -> dict | None:
             [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
         ),
         (
+            r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|"
+            r"(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|"
+            r"Please ensure sgl_kernel is properly installed",
+            "SGLang native dependencies are missing on this server.",
+            [
+                {"label": "install OS packages: libnuma-dev python3.12-dev build-essential", "op": "manual"},
+                {"label": "upgrade sglang-kernel after OS packages are installed", "op": "manual"},
+            ],
+        ),
+        (
             r"sglang.*command not found|No module named sglang|SGLang is not installed",
             "SGLang is not installed or not in PATH on this server.",
             [{"label": "install SGLang in Cookbook Dependencies", "op": "dependency", "package": "sglang[all]"}],
