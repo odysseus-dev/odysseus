@@ -112,6 +112,8 @@ AUDIT_SYSTEM_PROMPT = (
 AUDIT_INTERVAL = 5  # audit every N new memories added
 _extractions_since_audit = 0
 
+GLACIER_INTERVAL = 50  # prune least used items to prevent state/heap creep
+_extractions_since_glacier = 0
 
 def _message_text(message) -> str:
     content = getattr(message, "content", None)
@@ -477,6 +479,21 @@ async def extract_and_store(
                 await audit_memories(
                     memory_manager, memory_vector, endpoint_url, model, headers, owner=_owner
                 )
+
+
+            # offload to cold memory
+            global _extractions_since_glacier
+            _extractions_since_glacier += added
+            if _extractions_since_glacier >= GLACIER_INTERVAL:
+                _extractions_since_glacier = 0
+                logger.info("Glacier threshold reached, offloading cold memory")
+
+                try:
+                    from services.memory.service import MemoryService
+                    MemoryService().archive_cold_to_glacier()
+                except Exception as e:
+                    logger.warning(f"Glacier offload failed: {e}")
+
         else:
             logger.info("Auto memory extraction ran: 0 added")
 

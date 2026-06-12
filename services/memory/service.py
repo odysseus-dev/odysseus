@@ -5,6 +5,10 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 import os
 
+import heapq
+import json
+import time
+
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
 from src.memory_provider import MemoryRecord, NativeMemoryProvider
@@ -109,9 +113,62 @@ class MemoryService:
         return MemorySearchResult(memories=memories, query=query, total=len(memories))
 
     def get_all(self, limit: int = 100) -> List[Memory]:
-        """Get all memories."""
-        records = self.manager.load_all()[:limit]
-        return [self._to_memory(m) for m in records]
+        """Get frequently used/recent memories, keeping context window lean."""
+        records = self.manager.load_all()
+
+        # O(N log K) heap extraction to prioritize relevant context natively
+        top_records = heapq.nlargest(
+            limit,
+            records,
+            key=lambda x: (
+                x.get("pinned", False),
+                x.get("uses", 0),
+                x.get("timestamp", 0)
+            )
+        )
+        return [self._to_memory(m) for m in top_records]
+
+    def archive_cold_to_glacier(self, age_threshold_sec: int = 2592000) -> int:
+        """
+        move older stuff to data/memory_glacier.jsonl, freeing up hot
+        json and ram.
+        """
+
+        all_memories = self.manager.load_all()
+        if not all_memories:
+            return 0
+
+        current_time = int(time.time())
+        hot_memories, cold_memories = [], []
+
+        for m in all_memories:
+            age = current_time - m.get("timestamp", 0)
+            if not m.get("pinned", False) and m.get("uses", 0) == 0 and age > age_threshold_sec:
+                cold_memories.append(m)
+            else:
+                hot_memories.append(m)
+
+        if not cold_memories:
+            return 0
+
+        # append to colder O(1) memory storage
+        glacier_path = os.path.join(os.path.dirname(self.manager.memory_file), "memory_glacier.jsonl")
+        with open(glacier_path, "a", encoding="utf-8") as f:
+            for cold_mem in cold_memories:
+                f.write(json.dumps(cold_mem) + "\n")
+
+        # commit the truncated hot memory array back to disk
+        self.manager.save(hot_memories)
+
+        # evict dead weight from the vector store to keep semantic search fast
+        if self.vector_store and self.vector_store.healthy:
+            for cold_mem in cold_memories:
+                try:
+                    self.vector_store.remove(cold_mem["id"])
+                except Exception:
+                    pass
+
+        return len(cold_memories)
 
     def delete(self, memory_id: str) -> bool:
         """Delete a memory by ID."""
