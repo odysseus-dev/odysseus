@@ -92,6 +92,9 @@ def test_sanitize_service_redacts_sensitive_fields():
         'headers': {'X-Test': 'value', 'Authorization': 'Bearer 1234'},
         'auth': {'username': 'admin'},
         'secrets': ['a', 'b'],
+        'apiKey': 'camelCaseKey',
+        'accessToken': 'tokenValue',
+        'authHeader': 'Bearer xyz',
         'nested': [{'token': 'abc', 'public': 'yes'}],
         'public_list': ['one', 'two'],
         'author': 'Jane Doe',
@@ -106,6 +109,9 @@ def test_sanitize_service_redacts_sensitive_fields():
     assert clean['headers'] == '***REDACTED***'
     assert clean['auth'] == '***REDACTED***'
     assert clean['secrets'] == '***REDACTED***'
+    assert clean['apiKey'] == '***REDACTED***'
+    assert clean['accessToken'] == '***REDACTED***'
+    assert clean['authHeader'] == '***REDACTED***'
     assert clean['nested'][0]['token'] == '***REDACTED***'
     assert clean['nested'][0]['public'] == 'yes'
     assert clean['public_list'] == ['one', 'two']

@@ -7,6 +7,7 @@ and event lifecycle.  No restart actions, no shell execution.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -37,15 +38,14 @@ def _safe_actions(actions: list[str]) -> list[str]:
     """Filter to only allowed actions before returning to OpenClaw."""
     return [a for a in actions if a in _ALLOWED_ACTIONS]
 
-import re
-
 def _sanitize_dict(data: dict) -> dict:
     """Recursively redact sensitive keys from a dictionary."""
     redact_keys = {'token', 'secret', 'password', 'api_key', 'authorization', 'headers', 'auth'}
     clean = {}
     for k, v in data.items():
-        k_lower = k.lower()
-        if any(re.search(rf'(^|[-_]){re.escape(rk)}s?([-_]|$)', k_lower) for rk in redact_keys):
+        # Convert camelCase to snake_case before lowercasing and matching
+        k_norm = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', k).lower()
+        if any(re.search(rf'(^|[-_]){re.escape(rk)}s?([-_]|$)', k_norm) for rk in redact_keys):
             clean[k] = '***REDACTED***'
         elif isinstance(v, dict):
             clean[k] = _sanitize_dict(v)
