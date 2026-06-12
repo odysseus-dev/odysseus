@@ -234,6 +234,27 @@ def is_setting_overridden(key: str) -> bool:
         return False
 
 
+def is_setting_customized(key: str) -> bool:
+    """True if the saved file sets ``key`` to a value DIFFERENT from its default.
+
+    ``is_setting_overridden`` only checks presence, but the settings-save path
+    materializes every DEFAULT_SETTINGS key (``load_settings`` merges the
+    defaults and the save handlers persist the merged dict), so a persisted
+    default reads as "overridden" even though the user never chose it. Callers
+    that need "did the user deliberately change this away from the default"
+    (e.g. context-budget scaling, #1230) must compare against the default —
+    otherwise a materialized default silently defeats the adaptive path.
+    """
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            saved = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+    if not isinstance(saved, dict) or key not in saved:
+        return False
+    return saved.get(key) != DEFAULT_SETTINGS.get(key)
+
+
 # Per-user settings (user prefs override the global admin default). Used for
 # keys that a user is allowed to choose individually — currently the vision
 # model + image-generation model. The owner argument is the authed username

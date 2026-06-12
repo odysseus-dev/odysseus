@@ -1999,7 +1999,7 @@ async def stream_agent_loop(
     try:
         from src.context_compactor import trim_for_context
         from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
-        from src.settings import is_setting_overridden
+        from src.settings import is_setting_customized
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
         if soft_budget > 0:
@@ -2018,10 +2018,15 @@ async def stream_agent_loop(
             # Scale the default budget to the model's context window so long-context
             # models aren't silently capped at 6000; an explicit user setting is
             # still honoured (clamped to the window). (#1170)
+            #
+            # Use is_setting_customized (value != default), NOT is_setting_overridden
+            # (mere presence): the settings-save path materializes every default into
+            # settings.json, so a persisted default 6000 would otherwise read as an
+            # explicit choice and silently re-cap long-context models at 6000.
             effective_budget = compute_input_token_budget(
                 soft_budget,
                 context_length,
-                is_setting_overridden("agent_input_token_budget"),
+                is_setting_customized("agent_input_token_budget"),
                 hard_max=hard_max,
             )
             trimmed_messages = trim_for_context(
