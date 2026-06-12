@@ -131,26 +131,25 @@ def setup_homelab_routes() -> APIRouter:
             health_results.append(res)
             
             if record_events and res.get("status") in ("error", "degraded"):
-                dedupe_key = f"homelab:{srv['name']}:unreachable"
-                severity = "error"
-                if res.get("container_status") not in ("running", None, "ok"):
-                    dedupe_key = f"homelab:{srv['name']}:container:{res['container_status']}"
-                elif res.get("http_status"):
-                    dedupe_key = f"homelab:{srv['name']}:http:{res['http_status']}"
+                dedupe_key = f"homelab:{srv['name']}:health"
+                severity = "critical" if res.get("status") == "error" else "warning"
                     
                 title = f"{srv.get('display_name', srv['name'])} is {res['status']}"
                 summary = f"Container: {res.get('container_status', 'N/A')}, HTTP: {res.get('http_status', 'N/A')}"
                 
-                event_store.record_event(
-                    source="homelab_health",
-                    service=srv["name"],
-                    severity=severity,
-                    title=title,
-                    summary=summary,
-                    dedupe_key=dedupe_key,
-                    owner=owner,
-                    metadata=res
-                )
+                try:
+                    event_store.record_event(
+                        source="homelab_health",
+                        service=srv["name"],
+                        severity=severity,
+                        title=title,
+                        summary=summary,
+                        dedupe_key=dedupe_key,
+                        owner=owner,
+                        metadata=res
+                    )
+                except Exception as e:
+                    raise HTTPException(500, f"Failed to record event: {e}")
             
         overall_status = "ok"
         if any(r.get("status") == "error" for r in health_results):

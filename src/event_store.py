@@ -6,10 +6,14 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-EVENTS_FILE = os.path.join("config", "homelab_events.json")
+EVENTS_FILE = os.path.join("data", "homelab_events.json")
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+def _add_action_hints(event: dict) -> dict:
+    event["suggested_actions"] = ["ack", "investigate", "resolve", "ignore", "view_service"]
+    return event
 
 class EventStore:
     def __init__(self, file_path: str = EVENTS_FILE):
@@ -26,21 +30,40 @@ class EventStore:
             return []
 
     def _save(self, events: list):
+        # Atomic write
+        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
+        tmp_path = self.file_path + ".tmp"
         try:
-            os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
-            with open(self.file_path, "w", encoding="utf-8") as f:
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump({"events": events}, f, indent=2)
+            os.replace(tmp_path, self.file_path)
         except Exception as e:
             logger.error(f"Failed to save events: {e}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            raise IOError(f"Persistence failure: {e}")
 
-    def get_events(self) -> list:
-        return self._load()
+    def get_events(self, status: str = None, limit: int = None) -> list:
+        events = self._load()
+        
+        if status == "open":
+            events = [e for e in events if e.get("status") in ("new", "acknowledged", "investigating")]
+        elif status:
+            events = [e for e in events if e.get("status") == status]
+            
+        if limit is not None:
+            events = events[:limit]
+            
+        return [_add_action_hints(e) for e in events]
 
     def get_event(self, event_id: str) -> dict:
         events = self._load()
         for e in events:
             if e["id"] == event_id:
-                return e
+                return _add_action_hints(e)
         return None
 
     def record_event(self, source: str, service: str, severity: str, title: str, summary: str, dedupe_key: str, owner: str = None, metadata: dict = None) -> dict:
@@ -48,16 +71,18 @@ class EventStore:
         
         # Check for open event with same dedupe_key
         for e in events:
-            if e["dedupe_key"] == dedupe_key and e["status"] not in ("resolved", "ignored"):
-                e["count"] += 1
+            if e.get("dedupe_key") == dedupe_key and e.get("status") not in ("resolved", "ignored"):
+                e["count"] = e.get("count", 1) + 1
                 e["last_seen"] = now_iso()
-                e["timeline"].append({
+                
+                # Only add a timeline entry if it's been a while, or just add it.
+                e.setdefault("timeline", []).append({
                     "timestamp": now_iso(),
                     "action": "repeated",
                     "details": "Event deduplicated"
                 })
                 self._save(events)
-                return e
+                return _add_action_hints(e)
 
         # Create new
         new_event = {
@@ -82,18 +107,18 @@ class EventStore:
         }
         events.append(new_event)
         self._save(events)
-        return new_event
+        return _add_action_hints(new_event)
 
     def update_status(self, event_id: str, status: str, user: str = None) -> dict:
         events = self._load()
         for e in events:
             if e["id"] == event_id:
                 e["status"] = status
-                e["timeline"].append({
+                e.setdefault("timeline", []).append({
                     "timestamp": now_iso(),
                     "action": status,
                     "details": f"Status updated to {status} by {user or 'system'}"
                 })
                 self._save(events)
-                return e
+                return _add_action_hints(e)
         return None
