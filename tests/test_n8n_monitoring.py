@@ -162,7 +162,8 @@ def test_event_dedupe_key_by_workflow_id(client_with_scopes, mock_n8n_client, re
     assert events[0]["source"] == "n8n"
 
 def test_event_store_custom_suggested_actions(real_event_store):
-    # Test that custom suggested_actions are persisted correctly
+    # Test that safe custom suggested_actions are persisted correctly
+    # and unsafe actions are stripped
     event1 = real_event_store.record_event(
         source="n8n",
         service="n8n",
@@ -170,10 +171,12 @@ def test_event_store_custom_suggested_actions(real_event_store):
         title="test1",
         summary="test1",
         dedupe_key="key1",
-        suggested_actions=["custom1", "custom2"]
+        suggested_actions=["view_workflow", "restart", "delete", "ack"]
     )
-    assert "custom1" in event1["suggested_actions"]
-    assert "custom2" in event1["suggested_actions"]
+    assert "view_workflow" in event1["suggested_actions"]
+    assert "ack" in event1["suggested_actions"]
+    assert "restart" not in event1["suggested_actions"]
+    assert "delete" not in event1["suggested_actions"]
     
     # Test that default homelab events get standard actions
     event2 = real_event_store.record_event(
@@ -186,4 +189,4 @@ def test_event_store_custom_suggested_actions(real_event_store):
     )
     assert "ack" in event2["suggested_actions"]
     assert "view_service" in event2["suggested_actions"]
-    assert "custom1" not in event2["suggested_actions"]
+    assert "view_workflow" not in event2["suggested_actions"]

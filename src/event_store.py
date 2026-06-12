@@ -11,6 +11,11 @@ EVENTS_FILE = os.path.join("data", "homelab_events.json")
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+_SAFE_EVENT_ACTIONS = {
+    'ack', 'investigate', 'resolve', 'ignore', 'view_service',
+    'view_workflow', 'view_execution', 'record_event'
+}
+
 def _add_action_hints(event: dict) -> dict:
     if "suggested_actions" not in event:
         event["suggested_actions"] = ["ack", "investigate", "resolve", "ignore", "view_service"]
@@ -109,7 +114,7 @@ class EventStore:
             }]
         }
         if suggested_actions is not None:
-            new_event["suggested_actions"] = suggested_actions
+            new_event["suggested_actions"] = [a for a in suggested_actions if a in _SAFE_EVENT_ACTIONS]
             
         events.append(new_event)
         self._save(events)
