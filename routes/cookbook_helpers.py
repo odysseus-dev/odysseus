@@ -362,7 +362,12 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
-        'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        # Windows can expose python3 as a Microsoft Store App Execution Alias
+        # under WindowsApps. Git Bash sees that stub as present, but it exits
+        # before running Python. A Windows venv usually has python.exe, not
+        # python3.exe, so treat a missing or WindowsApps python3 as absent.
+        '_odys_py3="$(command -v python3 2>/dev/null || true)"',
+        'case "$_odys_py3" in ""|*[Ww]indows[Aa]pps*) python3() { python "$@"; } ;; esac',
         'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }',
     ]
 
