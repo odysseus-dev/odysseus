@@ -79,12 +79,18 @@ curl -H "Authorization: Bearer <token>" "http://localhost:7000/api/homelab/healt
 ## Usage by Clients (Slack / OpenClaw)
 Clients polling for homelab status should transition from simple `/api/homelab/health` read-only polling to triggering `/api/homelab/health?record_events=true`. Once an event is returned in the API, the client should query `/api/events` to build incident alerts.
 
-Events return an array of `suggested_actions` such as `ack`, `investigate`, `resolve`, `ignore`, and `view_service` to help UIs render quick-action buttons.
+Events return an array of `suggested_actions` such as `ack`, `investigate`, `resolve`, `ignore`, and `view_service` to help UIs render quick-action buttons. Destructive actions (`restart`, `shell`, `exec`, `delete`) are never included.
 
 ### Recommended OpenClaw Commands
-- `ops events` - Lists open events
-- `ops event <id>` - Views a specific event
-- `ops ack <id>` - Acknowledges an event
-- `ops resolve <id>` - Resolves an event
-- `ops ignore <id>` - Ignores an event
-- `ops homelab health --record` - Runs health checks and records events
+See [openclaw-bridge.md](openclaw-bridge.md) for full curl examples and the complete route reference.
+
+| Command | Description |
+|---|---|
+| `ops homelab health` | Show live health for all homelab services |
+| `ops homelab health --record` | Run checks and record failures as durable events |
+| `ops events` | List open events |
+| `ops event <id>` | View a specific event |
+| `ops ack <id>` | Acknowledge an event |
+| `ops investigate <id>` | Mark an event as being investigated |
+| `ops resolve <id>` | Resolve an event |
+| `ops ignore <id>` | Ignore a non-actionable event |
