@@ -342,17 +342,26 @@ class GlobTool:
                 depth = fixed_dirs + wildcard_dirs + 1  # +1 for the filename level
             try:
                 if has_recursive or depth is None:
-                    for p in base.rglob(pattern):
-                            if set(p.relative_to(base).parts) & _CODENAV_SKIP_DIRS:
-                                continue
-                            try:
-                                mtime = p.stat().st_mtime
-                            except OSError:
-                                mtime = 0
-                            matched.append((mtime, str(p)))
-                            if len(matched) > _CODENAV_MAX_HITS * 5:
-                                break
-                    else:
+                    # Recursive pattern (**): use os.walk with dir pruning.
+                    # rglob enters every subdirectory before filtering, which
+                    # hangs on large trees. os.walk with dirs[:] pruning skips
+                    # entire subtrees (node_modules, .git, etc.).
+                    from fnmatch import fnmatch as _fnmatch2
+                    file_pattern = pattern.split("/")[-1]
+                    for dirpath, dirnames, filenames in os.walk(str(base)):
+                        dirnames[:] = [d for d in dirnames if d not in _CODENAV_SKIP_DIRS]
+                        for fn in filenames:
+                            if _fnmatch2(fn, file_pattern):
+                                try:
+                                    mtime = os.path.getmtime(os.path.join(dirpath, fn))
+                                except OSError:
+                                    mtime = 0
+                                matched.append((mtime, os.path.join(dirpath, fn)))
+                                if len(matched) > _CODENAV_MAX_HITS * 5:
+                                    break
+                        if len(matched) > _CODENAV_MAX_HITS * 5:
+                            break
+                else:
                         # Bounded walk: use glob() at the right level plus
                         # targeted descent. Much faster than rglob for
                         # patterns like "apps/*/package.json" on large trees.
