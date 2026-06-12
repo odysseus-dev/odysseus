@@ -30,6 +30,7 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.cookbook_output import error_aware_output_tail
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
+    load_stored_hf_token,
+    _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
+    _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
@@ -233,14 +238,7 @@ def setup_cookbook_routes() -> APIRouter:
         return state
 
     def _load_stored_hf_token() -> str:
-        if not _cookbook_state_path.exists():
-            return ""
-        try:
-            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
-            env = state.get("env") if isinstance(state, dict) else {}
-            return _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
-        except Exception:
-            return ""
+        return load_stored_hf_token(state_path=_cookbook_state_path)
 
     def _cookbook_ssh_dir() -> Path:
         # The Docker image keeps cookbook keys under /app/.ssh; that path only
@@ -2873,6 +2871,7 @@ def setup_cookbook_routes() -> APIRouter:
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
             # when the PID is gone instead of blindly reporting "stopped".
             download_zero_files = False
+            exit_code = None
             status = "unknown"
             download_has_ok = task_type == "download" and "DOWNLOAD_OK" in full_snapshot
             download_has_failed = task_type == "download" and "DOWNLOAD_FAILED" in full_snapshot
@@ -2946,7 +2945,7 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
-            output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
+            output_tail = error_aware_output_tail(full_snapshot, status)
 
             results.append({
                 "session_id": session_id,
@@ -2957,6 +2956,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "phase": serve_phase,
                 "diagnosis": diagnosis,
                 "output_tail": output_tail,
+                "exit_code": exit_code,
                 "cmd": _payload.get("_cmd") or "",
                 "tps": phase_info.get("tps"),
                 "reqs": phase_info.get("reqs"),

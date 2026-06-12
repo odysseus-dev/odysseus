@@ -3547,6 +3547,7 @@ async function _pollBackgroundStatus() {
           updates.status = live.status === 'ready' ? 'ready' : 'running';
         }
         if (live.progress && live.progress !== task.progress) updates.progress = live.progress;
+        if (live.exit_code != null && live.exit_code !== task.exit_code) updates.exit_code = live.exit_code;
         if (live.output_tail) {
           const previous = String(task.output || '');
           const tail = String(live.output_tail || '');
