@@ -1753,24 +1753,31 @@ async function initAgentToolAccess() {
     if (adminAlwaysToggle) adminAlwaysToggle.checked = !!prefs.agent_admin_tools_always;
   } catch (e) {}
 
-  async function save(key, value) {
+  async function save(toggle, key) {
     try {
-      await fetch('/api/prefs/' + encodeURIComponent(key), {
+      var res = await fetch('/api/prefs/' + encodeURIComponent(key), {
         method: 'PUT', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value)
+        body: JSON.stringify({ value: toggle.checked })
       });
-    } catch (e) {}
+      if (!res.ok) {
+        toggle.checked = !toggle.checked;
+        if (uiModule && uiModule.showToast) uiModule.showToast('Failed to save preference');
+      }
+    } catch (e) {
+      toggle.checked = !toggle.checked;
+      if (uiModule && uiModule.showToast) uiModule.showToast('Failed to save preference');
+    }
   }
 
   if (allToolsToggle) {
     allToolsToggle.addEventListener('change', function() {
-      save('agent_all_tools_enabled', allToolsToggle.checked);
+      save(allToolsToggle, 'agent_all_tools_enabled');
     });
   }
   if (adminAlwaysToggle) {
     adminAlwaysToggle.addEventListener('change', function() {
-      save('agent_admin_tools_always', adminAlwaysToggle.checked);
+      save(adminAlwaysToggle, 'agent_admin_tools_always');
     });
   }
 }

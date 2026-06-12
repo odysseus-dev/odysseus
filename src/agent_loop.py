@@ -1974,7 +1974,7 @@ async def stream_agent_loop(
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
 
     # All-tools mode: bypass RAG, include every available tool
-    if not guide_only and not _relevant_tools and _all_tools_enabled:
+    if not guide_only and _all_tools_enabled:
         _relevant_tools = set(TOOL_SECTIONS.keys()) - disabled_tools
         logger.info(f"[tool-rag] All-tools mode enabled: {len(_relevant_tools)} tools included")
 
