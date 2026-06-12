@@ -138,7 +138,16 @@ regressions.
 - **R-1 — No shell/filesystem sandbox** (Known Gap #1). The single strongest residual risk:
   a successful injection that reaches `bash`/`python` has unfiltered egress and full FS
   write. Fences raise the bar but a determined injection that the model still obeys has no
-  second line of defense. Sandbox proposal: #1058.
+  second line of defense. **Scoped** in `bash-python-sandbox-scoping.md` (Tier A in-process
+  hardening → Tier B sidecar runner). Sandbox proposal upstream: #1058.
+
+- **F-7 — `bash`/`python` inherit the full container env** *(verified-in-code · open, Tier A)*.
+  `tool_execution.py:720` passes `**os.environ` to the subprocess, so an injected `bash`
+  running `env` exfiltrates every secret in the compose `environment:` block —
+  `OPENAI_API_KEY`, `HF_TOKEN`, `ODYSSEUS_ADMIN_PASSWORD`, the search-API keys, `SEARXNG_SECRET`.
+  `cwd=/app/data` also starts the shell on `sessions.json`, `app.db`, the ledger, and the
+  cookbook `.ssh/` identity. Fix = Tier A env-allowlist + scratch workdir + rlimits (see
+  scoping doc). High value-to-effort; independently shippable ahead of the Tier B sandbox.
 - **R-2 — SSRF via `/api/v1/chat` `base_url`** (Known Gap #2). Validate scheme/address;
   PR #1039.
 - **R-3 — Provenance threading (defense-in-depth).** Stamp `trusted:false` at memory/RAG
