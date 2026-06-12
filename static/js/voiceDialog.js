@@ -35,6 +35,13 @@ const ICON_DIALOG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"
 
 function _mgr() { return window.aiTTSManager || null; }
 
+function _micStream() {
+  if (!_engine) return null;
+  if (_engine._vad && _engine._vad.stream) return _engine._vad.stream;   // silero
+  if (_engine._stream) return _engine._stream;                          // rms
+  return null;
+}
+
 // ── UI ──
 
 function _injectStyles() {
@@ -130,9 +137,7 @@ function _onSpeechStart() {
       if (_state !== 'speaking') return;
       const mgr = _mgr();
       if (mgr) { try { mgr.stop(); } catch (_) {} }
-      _state = 'listening';
-      _engine.setThreshold(THRESHOLD_LISTEN);
-      _setUI('vd-listening', 'listening', 'Voice dialog: listening… (click to stop)');
+      _resumeListening();
     }, BARGE_SUSTAIN_MS);
   }
 }
@@ -175,6 +180,11 @@ function _resumeListening() {
   _state = 'listening';
   _engine.setThreshold(THRESHOLD_LISTEN);
   _engine.start();
+  if (_useStream && _stt && _stt.connected) {
+    _stt.abortUtterance();                       // drop any stale server-side audio
+    const mic = _micStream();
+    if (mic) { _stt.attach(mic).catch(() => { _useStream = false; }); }
+  }
   _setUI('vd-listening', 'listening', 'Voice dialog: listening… (click to stop)');
   _startWave();
 }
@@ -197,6 +207,7 @@ function _send(text) {
   // Keep the mic open at the raised threshold so barge-in works during the answer
   _engine.setThreshold(THRESHOLD_PLAYBACK);
   _engine.start();
+  if (_useStream && _stt) _stt.detach(); // stop streaming frames during the answer
   _startWave();
 
   if (typeof form.onsubmit === 'function') form.onsubmit(new Event('submit'));
@@ -275,8 +286,7 @@ async function start() {
         _useStream = false;
       },
     });
-    const micStream = _engine && _engine._vad ? _engine._vad.stream
-                    : (_engine && _engine._stream) ? _engine._stream : null;
+    const micStream = _micStream();
     if (micStream) { await _stt.attach(micStream); _useStream = true; }
   } catch (err) {
     console.warn('Voice dialog: stt stream unavailable → single-shot fallback', err);
