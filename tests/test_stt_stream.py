@@ -110,7 +110,7 @@ class _FakeDetector:
 def test_wake_mode_fires_and_switches_to_dictate(monkeypatch):
     import routes.stt_stream_routes as mod
     detector = _FakeDetector(fire_on_feed=2)
-    monkeypatch.setattr(mod, "get_wakeword_detector", lambda: detector)
+    monkeypatch.setattr(mod, "new_wakeword_detector", lambda: detector)
     client = _client()
     with client.websocket_connect("/api/stt/stream") as ws:
         ws.send_text(json.dumps({"mode": "wake"}))
@@ -127,7 +127,7 @@ def test_wake_mode_fires_and_switches_to_dictate(monkeypatch):
 
 def test_wake_mode_unavailable_detector(monkeypatch):
     import routes.stt_stream_routes as mod
-    monkeypatch.setattr(mod, "get_wakeword_detector", lambda: None)
+    monkeypatch.setattr(mod, "new_wakeword_detector", lambda: None)
     client = _client()
     with client.websocket_connect("/api/stt/stream") as ws:
         ws.send_text(json.dumps({"mode": "wake"}))

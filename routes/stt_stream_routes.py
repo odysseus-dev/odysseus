@@ -23,7 +23,7 @@ import time
 
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from services.stt.wakeword import get_wakeword_detector
+from services.stt.wakeword import new_wakeword_detector
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,8 @@ def setup_stt_stream_routes(stt_service, auth_check=None):
                     except (json.JSONDecodeError, AttributeError):
                         continue
                     if req_mode == "wake":
-                        detector = get_wakeword_detector()
+                        if detector is None:
+                            detector = await asyncio.to_thread(new_wakeword_detector)
                         if detector is None:
                             await ws.send_json({"error": "wake word unavailable"})
                         else:

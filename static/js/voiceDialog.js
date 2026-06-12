@@ -318,6 +318,7 @@ async function start() {
         if (_stt) { try { _stt.detach(); } catch (_) {} }
         if (_finalTimer) { clearTimeout(_finalTimer); _finalTimer = null; }
         if (_state === 'transcribing') _fallbackTranscribe(_pendingAudio);
+        if (_state === 'standby') _resumeListening(); // wake channel dead → open-mic dialog
       },
       onWake: () => {
         if (_state !== 'standby') return;

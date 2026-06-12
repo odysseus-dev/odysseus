@@ -59,7 +59,7 @@ _detector: Optional[WakeWordDetector] = None
 
 
 def get_wakeword_detector() -> Optional[WakeWordDetector]:
-    """Singleton; None when openwakeword or the model file is missing."""
+    """Singleton; prefer new_wakeword_detector() for per-connection use."""
     global _detector
     if _detector is None:
         try:
@@ -69,3 +69,16 @@ def get_wakeword_detector() -> Optional[WakeWordDetector]:
             logger.warning("Wake-word detector unavailable: %s", e)
             return None
     return _detector
+
+
+def new_wakeword_detector() -> Optional[WakeWordDetector]:
+    """Fresh detector instance — REQUIRED for per-connection use: the
+    detector holds a mutable frame buffer and openwakeword streaming
+    state, so sharing one across WebSocket connections cross-contaminates
+    detections. Returns None when openwakeword or the model is missing.
+    Model load is CPU-bound (~hundreds of ms); call from a worker thread."""
+    try:
+        return WakeWordDetector()
+    except Exception as e:
+        logger.warning("Wake-word detector unavailable: %s", e)
+        return None
