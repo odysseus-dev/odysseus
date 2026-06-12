@@ -634,7 +634,19 @@ stt_service = get_stt_service()
 from routes.stt_routes import setup_stt_routes
 app.include_router(setup_stt_routes(stt_service))
 from routes.stt_stream_routes import setup_stt_stream_routes
-app.include_router(setup_stt_stream_routes(stt_service))
+
+def _ws_auth_check(ws) -> bool:
+    """Mirror AuthMiddleware semantics for WebSocket scopes (the HTTP
+    middleware never sees them). Allow when auth is globally off or not
+    yet configured; otherwise require a valid session cookie."""
+    if not AUTH_ENABLED:
+        return True
+    if not auth_manager.is_configured:
+        return True
+    token = ws.cookies.get(SESSION_COOKIE)
+    return bool(auth_manager.validate_token(token))
+
+app.include_router(setup_stt_stream_routes(stt_service, auth_check=_ws_auth_check))
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)

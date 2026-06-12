@@ -132,3 +132,22 @@ def test_wake_mode_unavailable_detector(monkeypatch):
         ws.send_text(json.dumps({"mode": "wake"}))
         msg = ws.receive_json()
         assert "error" in msg
+
+
+def test_ws_rejects_when_auth_check_fails():
+    app = FastAPI()
+    app.include_router(setup_stt_stream_routes(_StubSTT(), auth_check=lambda ws: False))
+    client = TestClient(app)
+    with pytest.raises(Exception):
+        with client.websocket_connect("/api/stt/stream") as ws:
+            ws.receive_json()
+
+
+def test_ws_allows_when_auth_check_passes():
+    app = FastAPI()
+    app.include_router(setup_stt_stream_routes(_StubSTT(), auth_check=lambda ws: True))
+    client = TestClient(app)
+    with client.websocket_connect("/api/stt/stream") as ws:
+        ws.send_bytes(_pcm16(4000))
+        ws.send_text(json.dumps({"event": "end"}))
+        assert ws.receive_json()["final"] == "len=4000"

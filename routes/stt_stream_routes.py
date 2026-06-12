@@ -9,6 +9,12 @@ WS /api/stt/stream — dictation mode:
 
 The rolling buffer is re-transcribed in-process via
 STTService.transcribe_array — local (faster-whisper) provider only.
+
+Auth: HTTP auth middleware (BaseHTTPMiddleware) does not cover WebSocket
+scopes, so the route enforces auth itself via the injected `auth_check`
+callable (WebSocket -> bool). `None` means no auth (single-user mode /
+tests). On rejection the socket is closed with policy violation (1008)
+before any audio is processed.
 """
 import asyncio
 import json
@@ -26,11 +32,14 @@ PARTIAL_INTERVAL_S = 1.2
 MAX_UTTERANCE_S = 60
 
 
-def setup_stt_stream_routes(stt_service):
+def setup_stt_stream_routes(stt_service, auth_check=None):
     router = APIRouter(prefix="/api/stt", tags=["stt"])
 
     @router.websocket("/stream")
     async def stt_stream(ws: WebSocket):
+        if auth_check is not None and not auth_check(ws):
+            await ws.close(code=1008)
+            return
         await ws.accept()
         buf = bytearray()
         last_partial_at = time.monotonic()  # start clock now; first partial only after interval
