@@ -36,6 +36,7 @@ from dotenv import load_dotenv
 load_dotenv(encoding="utf-8-sig")
 
 import asyncio
+import json
 import logging
 import secrets
 from datetime import datetime
@@ -894,92 +895,199 @@ async def runtime_info() -> Dict[str, object]:
         "ollama_base_url": ollama_url,
     }
 
-# ========= MCP SERVICE STUBS (Phase 3b) =========
-# These endpoints provide the API surface for MCP server integration.
-# Actual MCP servers (Playwright, PyMCP-FS) will be deployed in Phase 3c.
+# ========= MCP ROUTING (Docker MCP Gateway) =========
+# All MCP servers route through a single Docker MCP Gateway on port 9090.
+# Start gateway: docker mcp gateway run --transport streaming --port 9090 --servers playwright,fetch --long-lived
+#
+# Server map:
+#   odys-browser-mcp → playwright server  (browser_* tools)
+#   odys-fetch-mcp   → fetch server       (fetch tool)
+#   odys-fs-mcp      → filesystem server  (read/write/list — needs volume config first)
+
+# Docker MCP Gateway — single gateway on port 9090 for all MCP servers.
+# Start: scripts\start-mcp-gateway.ps1  (sets MCP_GATEWAY_AUTH_TOKEN + starts gateway)
+# Auth: MCP_GATEWAY_AUTH_TOKEN env var must match what the gateway was started with.
+_MCP_GATEWAY_BASE = os.getenv("MCP_GATEWAY_URL", "http://localhost:9090")
+_MCP_GATEWAY_ENDPOINT = _MCP_GATEWAY_BASE.rstrip("/") + "/mcp"
+_MCP_GATEWAY_TOKEN = os.getenv("MCP_GATEWAY_AUTH_TOKEN", "***REDACTED***")
+
+_MCP_VALID_SERVERS = {
+    "odys-browser-mcp": "playwright",
+    "odys-fetch-mcp":   "fetch",
+    "odys-fs-mcp":      "filesystem",
+}
+
+# MCP Streamable HTTP protocol requires initialize → session ID → tool call,
+# and the gateway ties sessions to TCP connections. We use one httpx.AsyncClient
+# (keep-alive) per /mcp-call request, making both calls on the same connection.
+async def _mcp_call(tool: str, args: dict, timeout: float = 30.0) -> dict:
+    """Open one httpx session, initialize MCP, call tool, return JSON-RPC result."""
+    import httpx as _httpx
+
+    base_headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "Authorization": f"Bearer {_MCP_GATEWAY_TOKEN}",
+    }
+
+    async with _httpx.AsyncClient(timeout=_httpx.Timeout(timeout, connect=5.0)) as client:
+        # Step 1: initialize — required to establish session and get Mcp-Session-Id
+        init_resp = await client.post(
+            _MCP_GATEWAY_ENDPOINT,
+            json={"jsonrpc": "2.0", "method": "initialize",
+                  "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                             "clientInfo": {"name": "odysseus", "version": "1.0"}},
+                  "id": 0},
+            headers=base_headers,
+        )
+        if init_resp.status_code != 200:
+            return {"ok": False, "error": f"MCP init failed ({init_resp.status_code}): {init_resp.text[:200]}"}
+
+        session_id = init_resp.headers.get("mcp-session-id") or init_resp.headers.get("Mcp-Session-Id")
+        if not session_id:
+            return {"ok": False, "error": "Gateway did not return Mcp-Session-Id in initialize response"}
+
+        # Step 2: tool call — must use same connection (session is connection-bound)
+        call_headers = {**base_headers, "Mcp-Session-Id": session_id}
+        call_resp = await client.post(
+            _MCP_GATEWAY_ENDPOINT,
+            json={"jsonrpc": "2.0", "method": "tools/call",
+                  "params": {"name": tool, "arguments": args},
+                  "id": 1},
+            headers=call_headers,
+        )
+
+        if call_resp.status_code != 200:
+            return {"ok": False, "error": f"Tool call failed ({call_resp.status_code}): {call_resp.text[:300]}"}
+
+        # Gateway responds with SSE envelope: extract the data: line
+        result_payload = None
+        for line in call_resp.text.splitlines():
+            if line.startswith("data:"):
+                try:
+                    result_payload = json.loads(line[5:].strip())
+                except Exception:
+                    pass
+        if result_payload is None:
+            result_payload = call_resp.text  # fallback: raw text
+
+        return {"ok": True, "payload": result_payload}
+
 
 @app.get("/mcp/status")
 async def mcp_status_check() -> Dict[str, object]:
-    """
-    Health check for MCP servers (Model Context Protocol).
+    """Health check — probes the Docker MCP Gateway with an initialize handshake."""
+    import httpx as _httpx
 
-    Returns status of each configured MCP server.
-    Phase 3b: Returns "pending" for all servers (not deployed yet).
-    Phase 3c: Will check actual server sockets after deployment.
-    """
+    gateway_up = False
+    gateway_error = None
+    try:
+        async with _httpx.AsyncClient(timeout=4.0) as _c:
+            _r = await _c.post(
+                _MCP_GATEWAY_ENDPOINT,
+                json={"jsonrpc": "2.0", "method": "initialize",
+                      "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                                 "clientInfo": {"name": "odysseus-health", "version": "1.0"}},
+                      "id": 0},
+                headers={"Content-Type": "application/json",
+                         "Accept": "application/json, text/event-stream",
+                         "Authorization": f"Bearer {_MCP_GATEWAY_TOKEN}"},
+            )
+            gateway_up = _r.status_code == 200
+            if not gateway_up:
+                gateway_error = f"HTTP {_r.status_code}: {_r.text[:100]}"
+    except _httpx.ConnectError as e:
+        gateway_error = f"Not reachable: {e}"
+    except Exception as e:
+        gateway_error = str(e)
+
+    servers = {}
+    for odys_name, docker_name in _MCP_VALID_SERVERS.items():
+        servers[odys_name] = {
+            "status": "up" if gateway_up else "down",
+            "docker_server": docker_name,
+            "gateway": _MCP_GATEWAY_ENDPOINT,
+            **({"note": "filesystem needs volume config before use"} if odys_name == "odys-fs-mcp" else {}),
+        }
+
     return {
-        "mcp_servers": {
-            "odys-browser-mcp": {
-                "status": "pending",
-                "description": "Browser automation via Playwright MCP",
-                "version": "0.1.0",
-                "deployment_target": "systemd service",
-                "expected_port": None,
-                "notes": "Awaiting Phase 3c deployment"
-            },
-            "odys-fs-mcp": {
-                "status": "pending",
-                "description": "Filesystem operations (read/write/list/search)",
-                "version": "0.1.0",
-                "deployment_target": "systemd service",
-                "expected_port": None,
-                "notes": "Awaiting Phase 3c deployment"
-            }
-        },
-        "overall_status": "pending",
-        "phase": "3b (stubs)",
-        "notes": "MCP servers will be deployed as systemd services in Phase 3c"
+        "gateway": _MCP_GATEWAY_ENDPOINT,
+        "gateway_up": gateway_up,
+        "gateway_error": gateway_error,
+        "mcp_servers": servers,
+        "overall_status": "up" if gateway_up else "down",
+        "start_cmd": "pwsh -File scripts\\start-mcp-gateway.ps1",
     }
 
 
 @app.post("/mcp-call")
 async def mcp_call_proxy(request: Request) -> Dict[str, object]:
     """
-    Proxy tool calls to MCP servers (Model Context Protocol).
+    Proxy tool calls through the Docker MCP Gateway.
 
     Request body:
     {
-        "server": "odys-browser-mcp" | "odys-fs-mcp",
-        "tool": "open_page" | "take_screenshot" | "fill_form" | ...,
-        "args": { ...tool-specific arguments... }
+        "server": "odys-browser-mcp" | "odys-fetch-mcp" | "odys-fs-mcp",
+        "tool":   "<tool name — see: docker mcp tools ls>",
+        "args":   { ...tool-specific arguments... }
     }
 
-    Phase 3b: Returns "not ready" error (servers not deployed yet).
-    Phase 3c: Will forward to actual MCP server sockets.
+    Examples:
+        browser: {"server":"odys-browser-mcp","tool":"browser_navigate","args":{"url":"https://example.com"}}
+        fetch:   {"server":"odys-fetch-mcp","tool":"fetch","args":{"url":"https://example.com"}}
     """
+    import httpx as _httpx
+
     try:
         body = await request.json()
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid request body: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid request body: {e}")
 
     server = body.get("server")
     tool = body.get("tool")
     args = body.get("args", {})
 
-    # Validate server name
-    valid_servers = ["odys-browser-mcp", "odys-fs-mcp"]
-    if server not in valid_servers:
+    if server not in _MCP_VALID_SERVERS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown MCP server '{server}'. Valid: {valid_servers}"
+            detail=f"Unknown MCP server '{server}'. Valid: {list(_MCP_VALID_SERVERS)}",
         )
+    if not tool:
+        raise HTTPException(status_code=400, detail="'tool' is required")
 
-    # Phase 3b stub response
-    return {
-        "server": server,
-        "tool": tool,
-        "status": "error",
-        "error": "MCP servers not deployed yet (Phase 3b stub)",
-        "message": f"Server '{server}' will be available after Phase 3c deployment",
-        "phase": "3b",
-        "notes": {
-            "odys-browser-mcp": "Deploy as: systemd service (Playwright MCP binary)",
-            "odys-fs-mcp": "Deploy as: systemd service (PyMCP-FS Python module)"
+    logger.info("MCP call: server=%s tool=%s", server, tool)
+
+    try:
+        result = await _mcp_call(tool, args)
+    except _httpx.ConnectError:
+        return {
+            "server": server, "tool": tool, "status": "error", "result": None,
+            "error": f"MCP gateway not reachable at {_MCP_GATEWAY_ENDPOINT}",
+            "fix": "pwsh -File scripts\\start-mcp-gateway.ps1",
         }
-    }
+    except _httpx.TimeoutException:
+        return {
+            "server": server, "tool": tool, "status": "error", "result": None,
+            "error": f"Gateway timed out (server={server} tool={tool})",
+        }
+    except Exception as e:
+        logger.error("MCP call error: %s", e, exc_info=True)
+        return {"server": server, "tool": tool, "status": "error", "result": None, "error": str(e)}
+
+    if not result["ok"]:
+        logger.warning("MCP call failed: %s", result.get("error"))
+        return {"server": server, "tool": tool, "status": "error", "result": None,
+                "error": result["error"]}
+
+    payload = result["payload"]
+    rpc_result = payload.get("result") if isinstance(payload, dict) else payload
+    rpc_error = payload.get("error") if isinstance(payload, dict) else None
+
+    if rpc_error:
+        return {"server": server, "tool": tool, "status": "error", "result": None,
+                "error": rpc_error.get("message", str(rpc_error))}
+
+    return {"server": server, "tool": tool, "status": "success", "result": rpc_result, "error": None}
 
 # ========= LIFECYCLE =========
 
