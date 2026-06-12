@@ -304,7 +304,7 @@ export function showToast(msg, durationOrOpts) {
   toastEl.textContent = '';
   toastEl.classList.remove('error');
 
-  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
+  let duration = _getDefaultToastDuration(msg), actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
     duration = durationOrOpts.duration || 5000;
     actionLabel = durationOrOpts.action;
@@ -1285,4 +1285,12 @@ if (!window._odyEscExpandGuard) {
     if (closeBtn) { try { closeBtn.click(); } catch {} }
     else { try { topModal.classList.add('hidden'); } catch {} }
   }, true);
+}
+
+const TOAST_MIN_DURATION = 2000;
+const TOAST_MAX_DURATION = 6000;
+const TOAST_MS_PER_CHAR = 50;
+
+function _getDefaultToastDuration(msg) {
+  // Implementation here
 }
