@@ -138,16 +138,21 @@ regressions.
 - **R-1 — No shell/filesystem sandbox** (Known Gap #1). The single strongest residual risk:
   a successful injection that reaches `bash`/`python` has unfiltered egress and full FS
   write. Fences raise the bar but a determined injection that the model still obeys has no
-  second line of defense. **Scoped** in `bash-python-sandbox-scoping.md` (Tier A in-process
-  hardening → Tier B sidecar runner). Sandbox proposal upstream: #1058.
+  second line of defense. **Tier A landed** (env-scrub + scratch workdir + rlimits — see F-7);
+  **Tier B (network/FS isolation via a sidecar runner) is still pending** — egress, SSRF to
+  internal services, the bridge reach, and absolute-path FS access remain open until then.
+  Full plan in `bash-python-sandbox-scoping.md`. Sandbox proposal upstream: #1058.
 
-- **F-7 — `bash`/`python` inherit the full container env** *(verified-in-code · open, Tier A)*.
-  `tool_execution.py:720` passes `**os.environ` to the subprocess, so an injected `bash`
-  running `env` exfiltrates every secret in the compose `environment:` block —
+- **F-7 — `bash`/`python` inherited the full container env** *(verified-in-code · FIXED, Tier A)*.
+  `tool_execution.py` used to pass `**os.environ` to the subprocess, so an injected `bash`
+  running `env` exfiltrated every secret in the compose `environment:` block —
   `OPENAI_API_KEY`, `HF_TOKEN`, `ODYSSEUS_ADMIN_PASSWORD`, the search-API keys, `SEARXNG_SECRET`.
-  `cwd=/app/data` also starts the shell on `sessions.json`, `app.db`, the ledger, and the
-  cookbook `.ssh/` identity. Fix = Tier A env-allowlist + scratch workdir + rlimits (see
-  scoping doc). High value-to-effort; independently shippable ahead of the Tier B sandbox.
+  `cwd=/app/data` also started the shell on `sessions.json`, `app.db`, the ledger, and the
+  cookbook `.ssh/` identity. **Fixed** by Tier A: `_sandbox_env()` passes only a benign-var
+  allowlist (secrets dropped; opt specific vars back via `tool_env_passthrough`), cwd/HOME
+  moved to a dedicated `data/sandbox` scratch dir, and `setrlimit` caps CPU/file-size/process
+  count. Tests in `tests/test_bash_python_sandbox_tierA.py` spawn a real child and assert the
+  secret is absent. Network egress + absolute-path reads remain — that's Tier B.
 - **R-2 — SSRF via `/api/v1/chat` `base_url`** (Known Gap #2). Validate scheme/address;
   PR #1039.
 - **R-3 — Provenance threading (defense-in-depth).** Stamp `trusted:false` at memory/RAG

@@ -28,6 +28,105 @@ from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES
 # in ephemeral container layers that are lost on the next rebuild.
 _AGENT_WORKDIR = str(pathlib.Path(__file__).parent.parent / "data")
 
+# ---------------------------------------------------------------------------
+# Tier-A bash/python sandboxing.
+# See docs/security/bash-python-sandbox-scoping.md. bash/python run as
+# subprocesses inside the app container; three in-process controls shrink the
+# blast radius of a prompt-injection that reaches the shell, without the Tier-B
+# sidecar:
+#   1. Env allowlist  — the subprocess gets ONLY benign vars, never **os.environ,
+#      so an injected `env` can't exfiltrate API keys / the admin password (F-7).
+#   2. Scratch workdir — cwd/HOME is a dedicated data/sandbox dir, not the data
+#      root (which holds sessions.json, app.db, the ledger, .ssh).
+#   3. Resource limits — setrlimit caps CPU / file size / process count
+#      (anti fork-bomb / disk-fill / runaway-CPU).
+# These do NOT restrict network egress or absolute-path reads — that is Tier B.
+# ---------------------------------------------------------------------------
+
+# Dedicated scratch dir for agent subprocesses, under the persisted data volume.
+_AGENT_SCRATCH = str(pathlib.Path(_AGENT_WORKDIR) / "sandbox")
+try:
+    os.makedirs(_AGENT_SCRATCH, exist_ok=True)
+except OSError:
+    pass
+
+# Benign env vars the subprocess may see. Everything else (secrets) is dropped.
+_SANDBOX_ENV_ALLOW: tuple[str, ...] = (
+    "PATH", "TERM", "COLUMNS", "LINES",
+    "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "TZ",
+    "TMPDIR", "TEMP", "TMP",
+    "PYTHONIOENCODING", "PYTHONUNBUFFERED",
+    # Windows essentials — cmd/python won't start without these.
+    "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "NUMBER_OF_PROCESSORS", "OS",
+)
+
+
+def _sandbox_env(home: str) -> Dict[str, str]:
+    """Minimal env for agent subprocesses: an allowlist of benign vars only.
+
+    Secrets present in os.environ (OPENAI_API_KEY, HF_TOKEN, the admin password,
+    search-API keys, SEARXNG_SECRET, …) are NEVER passed. An admin can opt a
+    specific var back in via the `tool_env_passthrough` setting (mirrors
+    tool_path_extra_roots) when a workflow genuinely needs it.
+    """
+    env = {k: os.environ[k] for k in _SANDBOX_ENV_ALLOW if k in os.environ}
+    env.setdefault("PATH", os.defpath)
+    env["HOME"] = home
+    env["TERM"] = "xterm-256color"
+    env["COLUMNS"] = "120"
+    env["LINES"] = "40"
+    try:
+        from src.settings import get_setting
+        extra = get_setting("tool_env_passthrough")
+        if isinstance(extra, list):
+            for name in extra:
+                if isinstance(name, str) and name in os.environ:
+                    env[name] = os.environ[name]
+    except Exception:
+        pass
+    return env
+
+
+# Resource limits applied in the child before exec (POSIX only). 0 disables one.
+# Memory (RLIMIT_AS) is OFF by default — it counts virtual address space and can
+# spuriously OOM numpy/pandas; cap real memory at Tier B via the container cgroup.
+_SANDBOX_RLIMIT_CPU_SECONDS = int(os.getenv("SANDBOX_RLIMIT_CPU", "120"))
+_SANDBOX_RLIMIT_FSIZE_BYTES = int(os.getenv("SANDBOX_RLIMIT_FSIZE", str(512 * 1024 * 1024)))
+_SANDBOX_RLIMIT_NPROC = int(os.getenv("SANDBOX_RLIMIT_NPROC", "512"))
+_SANDBOX_RLIMIT_AS_BYTES = int(os.getenv("SANDBOX_RLIMIT_AS", "0"))
+
+
+def _sandbox_preexec() -> None:
+    """preexec_fn for agent subprocesses: apply resource limits (POSIX only).
+
+    Best-effort: a failed/unsupported setrlimit must never block execution. Only
+    lowers limits (never raises above the inherited hard cap)."""
+    try:
+        import resource
+    except ImportError:
+        return
+
+    def _cap(which: int, soft: int) -> None:
+        if not soft or soft <= 0:
+            return
+        try:
+            hard = resource.getrlimit(which)[1]
+            ceiling = soft if hard == resource.RLIM_INFINITY else min(soft, hard)
+            resource.setrlimit(which, (ceiling, hard))
+        except (ValueError, OSError):
+            pass
+
+    _cap(resource.RLIMIT_CPU, _SANDBOX_RLIMIT_CPU_SECONDS)
+    _cap(resource.RLIMIT_FSIZE, _SANDBOX_RLIMIT_FSIZE_BYTES)
+    if hasattr(resource, "RLIMIT_NPROC"):
+        _cap(resource.RLIMIT_NPROC, _SANDBOX_RLIMIT_NPROC)
+    if hasattr(resource, "RLIMIT_AS"):
+        _cap(resource.RLIMIT_AS, _SANDBOX_RLIMIT_AS_BYTES)
+
+
+# preexec_fn is POSIX-only; passing a non-None value on Windows raises ValueError.
+_SANDBOX_PREEXEC = _sandbox_preexec if os.name == "posix" else None
+
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     """Build a unified diff of a file write for display in the chat.
@@ -709,21 +808,15 @@ async def _direct_fallback(
     are still running, with `{elapsed_s, tail}` payloads. Other tools
     ignore it.
     """
-    # Inherit env + force a sane terminal so subprocesses that touch
-    # terminfo (anything calling `clear`, `tput`, `os.system("clear")`,
-    # or scripts that probe $TERM) don't spam "TERM environment variable
-    # not set" errors. The agent's bash/python tool calls run with PIPE
-    # stdin/stdout (no real TTY), so curses/termios still won't work —
-    # but at least non-interactive code with incidental TERM lookups
-    # stops failing. COLUMNS/LINES give terminal-width-aware tools (less,
-    # rich, etc.) reasonable defaults instead of 0×0.
-    _subproc_env = {
-        **os.environ,
-        "TERM": "xterm-256color",
-        "COLUMNS": "120",
-        "LINES": "40",
-        "HOME": _AGENT_WORKDIR,
-    }
+    # Tier-A sandbox: build a MINIMAL env (allowlist of benign vars only) instead
+    # of inheriting **os.environ — so a prompt-injected `env` can't exfiltrate API
+    # keys / the admin password (F-7). _sandbox_env still sets TERM/COLUMNS/LINES so
+    # subprocesses that touch terminfo (`clear`, `tput`, scripts probing $TERM)
+    # don't spam "TERM not set"; PIPE stdio means curses/termios still won't work.
+    # cwd/HOME are the dedicated scratch dir (not the data root, which holds
+    # sessions.json, app.db, the ledger, .ssh) unless an explicit workspace is set.
+    _subproc_cwd = workspace or _AGENT_SCRATCH
+    _subproc_env = _sandbox_env(_subproc_cwd)
 
     try:
         if tool == "bash":
@@ -732,7 +825,8 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
-                cwd=workspace or _AGENT_WORKDIR,
+                cwd=_subproc_cwd,
+                preexec_fn=_SANDBOX_PREEXEC,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,
@@ -759,7 +853,8 @@ async def _direct_fallback(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,
-                cwd=workspace or _AGENT_WORKDIR,
+                cwd=_subproc_cwd,
+                preexec_fn=_SANDBOX_PREEXEC,
             )
             stdout, stderr, rc, timed_out = await _run_subprocess_streaming(
                 proc,

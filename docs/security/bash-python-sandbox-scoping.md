@@ -38,8 +38,11 @@ close them in cheap-first order.
 
 ## 3. Options (increasing isolation / effort)
 
-### Tier A — In-process hardening *(hours, no architecture change)*
-Implemented entirely in `tool_execution.py`:
+### Tier A — In-process hardening  ✅ IMPLEMENTED *(no architecture change)*
+Done in `tool_execution.py` (`_sandbox_env`, `_AGENT_SCRATCH`, `_sandbox_preexec`); tests in
+`tests/test_bash_python_sandbox_tierA.py`. Tunable via env (`SANDBOX_RLIMIT_*`) and the
+`tool_env_passthrough` setting. Memory (`RLIMIT_AS`) is left OFF by default — virtual-address
+limits spuriously OOM numpy/pandas; real-memory capping belongs in Tier B's container cgroup.
 1. **Scrub the env** — stop passing `**os.environ`. Pass a minimal allowlist
    (`PATH`, `HOME`, `TERM`, `LANG`, `LC_*`, `COLUMNS`, `LINES`). Kills secret exfil via `env`
    instantly. *Highest value-to-effort in the whole doc.*
