@@ -658,15 +658,27 @@ def test_llama_cpp_linux_bootstrap_keeps_cpu_fallback_when_no_gpu_toolchain():
     assert 'Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA' in script
 
 
+def test_llama_cpp_linux_bootstrap_links_configured_persistent_binary():
+    runner_lines = []
+    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+    script = "\n".join(runner_lines)
+
+    assert 'cd "$ODYSSEUS_LLAMA_CPP_DIR" && rm -rf build' in script
+    assert 'ln -sf "$ODYSSEUS_LLAMA_CPP_DIR/build/bin/llama-server" "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server"' in script
+    assert "~/llama.cpp/build/bin/llama-server" not in script
+
+
 def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
     cmd = _llama_cpp_rebuild_cmd()
 
     # Must remove both the cached symlink and the build dir the serve bootstrap
     # links/creates, so the next serve recompiles from source.
-    assert 'rm -f "$HOME/bin/llama-server"' in cmd
-    assert 'rm -rf "$HOME/llama.cpp/build"' in cmd
-    # Recreates ~/bin so a never-served host does not error on a missing dir.
-    assert 'mkdir -p "$HOME/bin"' in cmd
+    assert 'ODYSSEUS_LLAMA_CPP_DIR="${ODYSSEUS_LLAMA_CPP_DIR:-$HOME/llama.cpp}"' in cmd
+    assert 'ODYSSEUS_LLAMA_CPP_BIN_DIR="${ODYSSEUS_LLAMA_CPP_BIN_DIR:-$HOME/bin}"' in cmd
+    assert 'rm -f "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server" "$HOME/bin/llama-server"' in cmd
+    assert 'rm -rf "$ODYSSEUS_LLAMA_CPP_DIR/build"' in cmd
+    # Recreates the configured bin dir so a never-served host does not error.
+    assert 'mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR"' in cmd
     # Diagnosis-only on the destructive side: it must not install or fetch.
     assert 'pip install' not in cmd
     assert 'git clone' not in cmd
@@ -689,6 +701,32 @@ def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "bin").is_dir()
     assert "Cleared the cached llama.cpp build" in result.stdout
+
+
+def test_llama_cpp_rebuild_cmd_honors_configured_persistent_paths(tmp_path):
+    import os
+    from core.platform_compat import find_bash, git_bash_path
+
+    source_dir = tmp_path / "data" / "llama.cpp"
+    bin_dir = tmp_path / "local" / "bin"
+    build_dir = source_dir / "build"
+    build_dir.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "llama-server").write_text("old", encoding="utf-8")
+
+    bash = find_bash() or "bash"
+    env = dict(os.environ)
+    env["HOME"] = git_bash_path(tmp_path / "home")
+    env["ODYSSEUS_LLAMA_CPP_DIR"] = git_bash_path(source_dir)
+    env["ODYSSEUS_LLAMA_CPP_BIN_DIR"] = git_bash_path(bin_dir)
+    result = subprocess.run(
+        [bash, "-c", _llama_cpp_rebuild_cmd()],
+        capture_output=True, text=True, env=env, timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not build_dir.exists()
+    assert not (bin_dir / "llama-server").exists()
 
 
 def test_cached_model_scan_reports_plain_dir_gguf(tmp_path):

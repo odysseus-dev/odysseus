@@ -100,6 +100,21 @@ def test_top_level_volumes_match_base(base, standalone_path):
     assert standalone.get("volumes") == base.get("volumes")
 
 
+@pytest.mark.parametrize("compose_path", [BASE, NVIDIA_STANDALONE, AMD_STANDALONE])
+def test_cookbook_llama_cpp_build_is_host_persisted(compose_path):
+    svc = _load(compose_path)["services"][SERVICE]
+
+    assert "./data/llama.cpp:/app/data/llama.cpp:z" in svc["volumes"]
+    assert (
+        "ODYSSEUS_LLAMA_CPP_DIR=${ODYSSEUS_LLAMA_CPP_DIR:-/app/data/llama.cpp}"
+        in svc["environment"]
+    )
+    assert (
+        "ODYSSEUS_LLAMA_CPP_BIN_DIR=${ODYSSEUS_LLAMA_CPP_BIN_DIR:-/app/.local/bin}"
+        in svc["environment"]
+    )
+
+
 # --- odysseus = base service + only the overlay additions ------------------
 
 

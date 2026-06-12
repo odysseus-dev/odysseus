@@ -722,7 +722,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('    done')
     # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
     # or HIP attempt) doesn't cause the next configure to reuse stale settings.
-    runner_lines.append('    cd ~/llama.cpp && rm -rf build')
+    runner_lines.append('    cd "$ODYSSEUS_LLAMA_CPP_DIR" && rm -rf build')
     runner_lines.append('    _odysseus_force_cuda="$(printf "%s" "${ODYSSEUS_LLAMA_CPP_CUDA:-}" | tr "[:lower:]" "[:upper:]")"')
     runner_lines.append('    _odysseus_cuda_requested=0')
     runner_lines.append('    case "$_odysseus_force_cuda" in ON|1|TRUE) _odysseus_cuda_requested=1 ;; esac')
@@ -732,7 +732,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('        export HIP_PATH="${HIP_PATH:-$(hipconfig -R)}"')
     runner_lines.append('      fi')
     runner_lines.append('      echo "[odysseus] ROCm/HIP detected — building llama-server with HIP support..."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf "$ODYSSEUS_LLAMA_CPP_DIR/build/bin/llama-server" "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server"')
     runner_lines.append('    elif command -v nvcc &>/dev/null; then')
     # nvcc alone is not sufficient — pip-installed CUDA wheels or incomplete
     # tooling can expose nvcc without shipping libcudart, causing cmake to fail
@@ -750,7 +750,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('      }')
     runner_lines.append('      if _odysseus_has_cudart; then')
     runner_lines.append('        echo "[odysseus] CUDA nvcc + cudart found — building llama-server with CUDA (GPU) support..."')
-    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON && cmake --build build -j"$NPROC" --target llama-server && ln -sf "$ODYSSEUS_LLAMA_CPP_DIR/build/bin/llama-server" "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server"')
     runner_lines.append('      else')
     runner_lines.append('        if [ "$_odysseus_cuda_requested" -eq 1 ]; then')
     runner_lines.append('          echo "[odysseus] ERROR: ODYSSEUS_LLAMA_CPP_CUDA=ON, but CUDA runtime (libcudart.so) is not visible."')
@@ -760,7 +760,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('          echo "[odysseus] WARNING: nvcc found but CUDA runtime (libcudart.so) is not visible — building llama-server for CPU only."')
     runner_lines.append('        echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
     runner_lines.append('        echo "[odysseus]   Ensure libcudart is installed (e.g. cuda-runtime package) and visible via ldconfig or CUDA_HOME."')
-    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('        cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf "$ODYSSEUS_LLAMA_CPP_DIR/build/bin/llama-server" "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server"')
     runner_lines.append('        fi')
     runner_lines.append('      fi')
     runner_lines.append('    else')
@@ -772,7 +772,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('        echo "[odysseus] WARNING: no HIP/CUDA toolchain found — building llama-server for CPU only."')
     runner_lines.append('      echo "[odysseus]   GPU inference will not be available for this llama.cpp build."')
     runner_lines.append('      echo "[odysseus]   Install ROCm for AMD GPUs or vLLM/CUDA tooling for NVIDIA, then re-launch this serve task."')
-    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+    runner_lines.append('      cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$NPROC" --target llama-server && ln -sf "$ODYSSEUS_LLAMA_CPP_DIR/build/bin/llama-server" "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server"')
     runner_lines.append('      fi')
     runner_lines.append('    fi')
 
@@ -780,17 +780,20 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
 def _llama_cpp_rebuild_cmd() -> str:
     """Shell command that clears the Cookbook-managed llama.cpp build.
 
-    Removes the cached ``llama-server`` symlink and the ``~/llama.cpp/build``
-    directory so the next llama.cpp serve recompiles from source, picking up a
+    Removes the cached ``llama-server`` symlink and the configured
+    ``llama.cpp/build`` directory (``$ODYSSEUS_LLAMA_CPP_DIR`` or
+    ``~/llama.cpp``) so the next llama.cpp serve recompiles from source, picking up a
     CUDA or HIP toolchain if one is now available. The serve bootstrap only
     builds when ``llama-server`` is missing from PATH, so without this an
     existing CPU-only build is reused forever. It deliberately installs and
     downloads nothing; the rebuild itself happens on the next serve.
     """
     return (
-        'mkdir -p "$HOME/bin" && '
-        'rm -f "$HOME/bin/llama-server" && '
-        'rm -rf "$HOME/llama.cpp/build" && '
+        'ODYSSEUS_LLAMA_CPP_DIR="${ODYSSEUS_LLAMA_CPP_DIR:-$HOME/llama.cpp}"; '
+        'ODYSSEUS_LLAMA_CPP_BIN_DIR="${ODYSSEUS_LLAMA_CPP_BIN_DIR:-$HOME/bin}"; '
+        'mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR" && '
+        'rm -f "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server" "$HOME/bin/llama-server" && '
+        'rm -rf "$ODYSSEUS_LLAMA_CPP_DIR/build" && '
         'echo "[odysseus] Cleared the cached llama.cpp build. '
         'Re-launch the serve task to rebuild llama-server from source '
         '(CUDA or HIP will be used if a toolchain is now available)."'
