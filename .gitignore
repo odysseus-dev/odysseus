@@ -11,6 +11,8 @@ build/
 venv/
 .venv/
 *.egg
+podman-compose.yml
+!podman-compose.yml.example
 
 # Environment
 .env
