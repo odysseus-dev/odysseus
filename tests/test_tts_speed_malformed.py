@@ -18,14 +18,14 @@ _BAD_SETTINGS = {
 
 def test_get_stats_does_not_crash_on_malformed_speed(monkeypatch, tmp_path):
     service = TTSService(cache_dir=str(tmp_path))
-    monkeypatch.setattr(service, "_load_settings", lambda: dict(_BAD_SETTINGS))
+    monkeypatch.setattr(service, "_load_settings", lambda owner="": dict(_BAD_SETTINGS))
     stats = service.get_stats()          # raised ValueError before the fix
     assert stats["speed"] == 1.0
 
 
 def test_synthesize_does_not_crash_on_malformed_speed(monkeypatch, tmp_path):
     service = TTSService(cache_dir=str(tmp_path))
-    monkeypatch.setattr(service, "_load_settings", lambda: dict(_BAD_SETTINGS))
+    monkeypatch.setattr(service, "_load_settings", lambda owner="": dict(_BAD_SETTINGS))
     # 'browser' provider returns None after the (now guarded) speed parse;
     # the point is that the malformed speed no longer raises ValueError first.
     assert service.synthesize("hello", use_cache=False) is None

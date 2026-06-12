@@ -815,6 +815,8 @@ async function initTtsSettings() {
   var modelInput = el('set-ttsModelInput');
   var voiceSelect = el('set-ttsVoiceSelect');
   var voiceInput = el('set-ttsVoiceInput');
+  var voicePiperSelect = el('set-ttsVoiceSelectPiper');
+  var voiceKokoroSelect = el('set-ttsVoiceSelectKokoro');
   var modelRow = el('set-ttsModelRow');
   var voiceRow = el('set-ttsVoiceRow');
   var speedSelect = el('set-ttsSpeedSelect');
@@ -822,23 +824,84 @@ async function initTtsSettings() {
   var ttsMsg = el('set-ttsSettingsMsg');
   var ttsEnabledToggle = el('set-ttsEnabledToggle');
   var ttsConfigWrap = provSel ? provSel.closest('div[style*="flex-direction"]') : null;
+  var voiceManager = el('set-ttsVoiceManager');
+  var addVoicesBtn = el('set-ttsAddVoicesBtn');
+  var voiceCatalogWrap = el('set-ttsVoiceCatalog');
+  var voiceCatalogList = el('set-ttsVoiceCatalogList');
+  var voiceSearch = el('set-ttsVoiceSearch');
 
   function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
+  function isPiper() { return provSel.value === 'piper'; }
+  function isKokoro() { return provSel.value === 'local'; }
   function getModel() { return isEndpoint() ? modelSelect.value : modelInput.value; }
-  function getVoice() { return isEndpoint() ? voiceSelect.value : voiceInput.value; }
+  function getVoice() {
+    if (isEndpoint()) return voiceSelect.value;
+    if (isPiper()) return voicePiperSelect ? voicePiperSelect.value : '';
+    if (isKokoro()) return voiceKokoroSelect ? voiceKokoroSelect.value : '';
+    return voiceInput.value;
+  }
 
   function updateVisibility() {
     var prov = provSel.value;
     modelRow.style.display = prov.startsWith('endpoint:') ? 'flex' : 'none';
     voiceRow.style.display = prov === 'disabled' ? 'none' : 'flex';
     speedRow.style.display = prov === 'disabled' ? 'none' : 'flex';
-    if (isEndpoint()) {
-      modelSelect.style.display = ''; modelInput.style.display = 'none';
-      voiceSelect.style.display = ''; voiceInput.style.display = 'none';
-    } else {
-      modelSelect.style.display = 'none'; modelInput.style.display = '';
-      voiceSelect.style.display = 'none'; voiceInput.style.display = prov === 'disabled' ? 'none' : '';
-    }
+    modelSelect.style.display = isEndpoint() ? '' : 'none';
+    modelInput.style.display = isEndpoint() ? 'none' : '';
+    voiceSelect.style.display = isEndpoint() ? '' : 'none';
+    if (voicePiperSelect) voicePiperSelect.style.display = isPiper() ? '' : 'none';
+    if (voiceKokoroSelect) voiceKokoroSelect.style.display = isKokoro() ? '' : 'none';
+    voiceInput.style.display = prov === 'browser' ? '' : 'none';
+    if (voiceManager) voiceManager.style.display = isPiper() ? 'flex' : 'none';
+  }
+
+  // Piper voices are scanned server-side from data/piper_voices/;
+  // the same endpoint also carries the static Kokoro voice list.
+  async function loadPiperVoices(selected) {
+    if (!voicePiperSelect) return;
+    try {
+      var res = await fetch('/api/tts/voices', { credentials: 'same-origin' });
+      var data = await res.json();
+      var voices = data.voices || [];
+      voicePiperSelect.innerHTML = '';
+      if (voices.length === 0) {
+        var none = document.createElement('option');
+        none.value = ''; none.textContent = 'No voices installed';
+        voicePiperSelect.appendChild(none);
+        ttsMsg.textContent = 'No Piper voices installed — use "Add voices" below.';
+        return;
+      }
+      voices.forEach(function(v) {
+        var opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.id + (v.language ? ' (' + v.language + ')' : '');
+        voicePiperSelect.appendChild(opt);
+      });
+      if (selected && voices.some(function(v) { return v.id === selected; })) {
+        voicePiperSelect.value = selected;
+      }
+    } catch (e) { console.warn('Failed to load Piper voices', e); }
+  }
+
+  async function loadKokoroVoices(selected) {
+    if (!voiceKokoroSelect) return;
+    try {
+      var res = await fetch('/api/tts/voices', { credentials: 'same-origin' });
+      var data = await res.json();
+      var voices = data.kokoro || [];
+      voiceKokoroSelect.innerHTML = '';
+      voices.forEach(function(v) {
+        var opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.id + (v.language ? ' (' + v.language + ')' : '');
+        voiceKokoroSelect.appendChild(opt);
+      });
+      if (selected && voices.some(function(v) { return v.id === selected; })) {
+        voiceKokoroSelect.value = selected;
+      } else if (voices.length) {
+        voiceKokoroSelect.value = voices[0].id;
+      }
+    } catch (e) { console.warn('Failed to load Kokoro voices', e); }
   }
 
   var ttsKeywords = ['tts', 'audio'];
@@ -853,15 +916,53 @@ async function initTtsSettings() {
     });
   } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
 
+  var globalSettings = {};
   try {
     var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
     var settings = await settingsRes.json();
+    globalSettings = settings || {};
     if (settings.tts_provider) provSel.value = settings.tts_provider;
     if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
     if (settings.tts_voice) { voiceSelect.value = settings.tts_voice; voiceInput.value = settings.tts_voice; }
     if (settings.tts_speed) { speedSelect.value = settings.tts_speed; }
     if (ttsEnabledToggle) ttsEnabledToggle.checked = settings.tts_enabled !== false;
   } catch (e) { console.warn('Failed to load TTS settings', e); }
+
+  // Voice is a per-user preference — it overrides the global tts_voice.
+  var userVoice = '';
+  try {
+    var prefRes = await fetch('/api/prefs/tts_voice', { credentials: 'same-origin' });
+    if (prefRes.ok) {
+      var prefData = await prefRes.json();
+      if (prefData.value) {
+        userVoice = String(prefData.value);
+        voiceSelect.value = userVoice;
+        voiceInput.value = userVoice;
+      }
+    }
+  } catch (e) { console.warn('Failed to load tts_voice pref', e); }
+
+  if (provSel.value === 'piper') {
+    await loadPiperVoices(userVoice || globalSettings.tts_piper_default_voice || '');
+  } else if (provSel.value === 'local') {
+    await loadKokoroVoices(userVoice || 'af_heart');
+  }
+
+  // Surface provider degradation (e.g. "No Piper voices installed yet —
+  // using browser voices") so the fallback is visible, not magic.
+  async function refreshTtsStatus() {
+    try {
+      var res = await fetch('/api/tts/stats', { credentials: 'same-origin' });
+      var stats = await res.json();
+      if (stats.fallback_reason) {
+        ttsMsg.textContent = stats.fallback_reason;
+        ttsMsg.style.color = 'var(--yellow, #cb8c2e)';
+      } else if (ttsMsg.textContent && ttsMsg.style.color === 'var(--yellow, #cb8c2e)') {
+        ttsMsg.textContent = '';
+      }
+    } catch {}
+  }
+  refreshTtsStatus();
 
   function syncTtsDisabled() {
     var off = ttsEnabledToggle && !ttsEnabledToggle.checked;
@@ -873,32 +974,163 @@ async function initTtsSettings() {
   updateVisibility();
 
   async function saveTTS() {
+    // Admin-global config (provider/model/speed/enabled). Voice is per-user
+    // and saved separately via saveVoice().
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' }) });
-      ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
+        body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_speed: speedSelect.value || '1' }) });
+      ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)';
+      setTimeout(() => { ttsMsg.textContent = ''; refreshTtsStatus(); }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
     } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
+  }
+
+  async function saveVoice() {
+    try {
+      var res = await fetch('/api/prefs/tts_voice', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: getVoice() || '' }) });
+      if (!res.ok) throw new Error('PUT tts_voice returned ' + res.status);
+      ttsMsg.textContent = 'Voice saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
+      // Client audio cache is keyed by text only — old voice's audio is stale.
+      if (window.aiTTSManager) { window.aiTTSManager.clearCache(); window.aiTTSManager.checkAvailability(); }
+    } catch (e) { ttsMsg.textContent = 'Failed to save voice'; ttsMsg.style.color = 'var(--red)'; }
   }
 
   async function saveAndClearCache() {
     await saveTTS();
     fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+    // Client audio cache is keyed by text only — model/speed changes make it stale.
+    if (window.aiTTSManager) window.aiTTSManager.clearCache();
   }
 
-  provSel.addEventListener('change', function() {
+  provSel.addEventListener('change', async function() {
     var prov = provSel.value;
-    if (prov === 'local') voiceInput.value = 'af_heart';
+    if (prov === 'local') await loadKokoroVoices(userVoice || 'af_heart');
     else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
     else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = 'OS default voice'; }
+    else if (prov === 'piper') await loadPiperVoices(userVoice || globalSettings.tts_piper_default_voice || '');
     updateVisibility();
     saveTTS();
+    // Cached client audio belongs to the previous provider
+    if (window.aiTTSManager) window.aiTTSManager.clearCache();
   });
   modelSelect.addEventListener('change', saveAndClearCache);
   modelInput.addEventListener('change', saveTTS);
-  voiceSelect.addEventListener('change', saveAndClearCache);
-  voiceInput.addEventListener('change', saveTTS);
+  voiceSelect.addEventListener('change', saveVoice);
+  voiceInput.addEventListener('change', saveVoice);
+  if (voicePiperSelect) voicePiperSelect.addEventListener('change', saveVoice);
+  if (voiceKokoroSelect) voiceKokoroSelect.addEventListener('change', saveVoice);
   speedSelect.addEventListener('change', saveAndClearCache);
+
+  // ── "Add voices" — Piper voice catalog with per-row download/remove ──
+  var catalogLoaded = false;
+  function renderCatalog(rows) {
+    var q = (voiceSearch && voiceSearch.value || '').toLowerCase();
+    voiceCatalogList.innerHTML = '';
+    var shown = 0;
+    rows.forEach(function(v) {
+      var label = v.id + ' ' + (v.language || '');
+      if (q && label.toLowerCase().indexOf(q) === -1) return;
+      if (shown >= 200) return; // keep DOM small; search narrows the rest
+      shown++;
+      var row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:3px 6px;font-size:12px;';
+      var name = document.createElement('span');
+      name.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      name.textContent = v.id + ' — ' + (v.language || '?') + ', ' + (v.quality || '?') + ', ' + (v.size_mb || '?') + ' MB';
+      row.appendChild(name);
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'admin-btn-sm';
+      btn.style.cssText = 'padding:2px 10px;font-size:11px;';
+      if (v.installed) {
+        btn.textContent = 'Remove';
+        btn.addEventListener('click', async function() {
+          btn.disabled = true;
+          try {
+            var res = await fetch('/api/tts/voices/' + encodeURIComponent(v.id), { method: 'DELETE', credentials: 'same-origin' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            v.installed = false;
+            renderCatalog(rows);
+            loadPiperVoices(getVoice());
+          } catch (e) {
+            btn.disabled = false;
+            ttsMsg.textContent = 'Remove failed: ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
+          }
+        });
+      } else {
+        btn.textContent = 'Download';
+        btn.addEventListener('click', function() { startVoiceDownload(v, btn, rows); });
+      }
+      row.appendChild(btn);
+      voiceCatalogList.appendChild(row);
+    });
+    if (shown === 0) {
+      var empty = document.createElement('div');
+      empty.style.cssText = 'padding:6px;font-size:12px;opacity:0.6;';
+      empty.textContent = 'No voices match.';
+      voiceCatalogList.appendChild(empty);
+    }
+  }
+
+  function startVoiceDownload(v, btn, rows) {
+    btn.disabled = true;
+    btn.textContent = 'Downloading…';
+    fetch('/api/tts/voices/download', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice_id: v.id })
+    }).then(function(res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var poll = setInterval(async function() {
+        try {
+          var sres = await fetch('/api/tts/voices/download/' + encodeURIComponent(v.id) + '/status', { credentials: 'same-origin' });
+          var s = await sres.json();
+          if (s.status === 'done') {
+            clearInterval(poll);
+            v.installed = true;
+            renderCatalog(rows);
+            await loadPiperVoices(getVoice() || v.id);
+            ttsMsg.textContent = v.id + ' installed'; ttsMsg.style.color = 'var(--fg)';
+            setTimeout(function() { ttsMsg.textContent = ''; }, 2500);
+            if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
+          } else if (s.status === 'error') {
+            clearInterval(poll);
+            btn.disabled = false; btn.textContent = 'Download';
+            ttsMsg.textContent = 'Download failed: ' + (s.error || 'unknown error'); ttsMsg.style.color = 'var(--red, #e55)';
+          }
+        } catch {}
+      }, 1500);
+    }).catch(function(e) {
+      btn.disabled = false; btn.textContent = 'Download';
+      ttsMsg.textContent = 'Download failed: ' + e.message; ttsMsg.style.color = 'var(--red, #e55)';
+    });
+  }
+
+  if (addVoicesBtn) {
+    var catalogRows = [];
+    addVoicesBtn.addEventListener('click', async function() {
+      var open = voiceCatalogWrap.style.display !== 'none';
+      if (open) { voiceCatalogWrap.style.display = 'none'; addVoicesBtn.textContent = 'Add voices…'; return; }
+      voiceCatalogWrap.style.display = 'flex';
+      addVoicesBtn.textContent = 'Hide voices';
+      if (!catalogLoaded) {
+        voiceCatalogList.innerHTML = '<div style="padding:6px;font-size:12px;opacity:0.6;">Loading catalog…</div>';
+        try {
+          var res = await fetch('/api/tts/voices/catalog', { credentials: 'same-origin' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          catalogRows = data.voices || [];
+          catalogLoaded = true;
+        } catch (e) {
+          voiceCatalogList.innerHTML = '<div style="padding:6px;font-size:12px;color:var(--red, #e55);">Could not load the voice catalog (offline?).</div>';
+          return;
+        }
+      }
+      renderCatalog(catalogRows);
+    });
+    if (voiceSearch) voiceSearch.addEventListener('input', function() { if (catalogLoaded) renderCatalog(catalogRows); });
+  }
   if (ttsEnabledToggle) ttsEnabledToggle.addEventListener('change', function() { syncTtsDisabled(); saveTTS(); });
 
   // Preview / test button
@@ -921,32 +1153,48 @@ async function initTtsSettings() {
       }
       var testText = 'Hello, this is a test of text to speech.';
       previewPlaying = true; previewBtn.textContent = 'Loading...';
+
+      async function browserPreview() {
+        if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
+        var utt = new SpeechSynthesisUtterance(testText);
+        var voiceVal = prov === 'browser' ? getVoice() : '';
+        if (voiceVal) {
+          var voices = window.speechSynthesis.getVoices();
+          var target = voiceVal.toLowerCase();
+          var match = voices.find(function(v) { return v.name.toLowerCase() === target; }) ||
+                      voices.find(function(v) { return v.name.toLowerCase().includes(target); });
+          if (match) utt.voice = match;
+        }
+        utt.rate = parseFloat(speedSelect.value) || 1;
+        previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
+        await new Promise(function(resolve, reject) {
+          utt.onend = resolve;
+          utt.onerror = function(e) { reject(new Error('Browser TTS: ' + e.error)); };
+          window.speechSynthesis.speak(utt);
+        });
+      }
+
       try {
         if (prov === 'browser') {
-          if (!('speechSynthesis' in window)) throw new Error('Browser TTS not supported');
-          var utt = new SpeechSynthesisUtterance(testText);
-          var voiceVal = getVoice();
-          if (voiceVal) {
-            var voices = window.speechSynthesis.getVoices();
-            var target = voiceVal.toLowerCase();
-            var match = voices.find(function(v) { return v.name.toLowerCase() === target; }) ||
-                        voices.find(function(v) { return v.name.toLowerCase().includes(target); });
-            if (match) utt.voice = match;
-          }
-          utt.rate = parseFloat(speedSelect.value) || 1;
-          previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
-          await new Promise(function(resolve, reject) {
-            utt.onend = resolve;
-            utt.onerror = function(e) { reject(new Error('Browser TTS: ' + e.error)); };
-            window.speechSynthesis.speak(utt);
-          });
+          await browserPreview();
         } else {
           var res = await fetch('/api/tts/synthesize', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: testText, format: 'audio' })
           });
-          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
+          if (!res.ok) {
+            var err = await res.json().catch(function() { return {}; });
+            // Server degraded to browser voices (e.g. Kokoro/Piper not usable
+            // on this machine) — preview what playback will actually use.
+            if (err.detail?.fallback === 'browser') {
+              ttsMsg.textContent = err.detail.message || 'Using browser voices';
+              ttsMsg.style.color = 'var(--yellow, #cb8c2e)';
+              await browserPreview();
+              return;
+            }
+            throw new Error(err.detail?.message || 'Synthesis failed');
+          }
           var blob = await res.blob();
           var url = URL.createObjectURL(blob);
           previewAudio = new Audio(url);

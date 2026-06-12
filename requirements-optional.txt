@@ -12,6 +12,14 @@
 # GPU-accelerated transcription — it's auto-detected, CPU is used otherwise.
 faster-whisper
 
+# Local neural text-to-speech via Kokoro-82M, for the "local" TTS provider.
+# Runs on CUDA when available, CPU otherwise. Heavy: pulls torch + transformers.
+# On NVIDIA GPUs install the matching CUDA build of torch first, e.g.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# Voice tensors are fetched from Hugging Face automatically on first use.
+kokoro
+soundfile
+
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.

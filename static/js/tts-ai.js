@@ -1,10 +1,19 @@
 // static/js/tts-ai.js
 // AI Text-to-Speech Module — supports server TTS and browser Web Speech API
 
+import { markdownToSpeech } from './ttsText.js';
+
+// Read-aloud button glyphs (ChatGPT/Gemini style speaker + pause/resume)
+const ICON_SPEAKER = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
+const ICON_PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="4" width="5" height="16" rx="1.5"/><rect x="14" y="4" width="5" height="16" rx="1.5"/></svg>';
+const ICON_RESUME = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
+const ICON_LOADING = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9" stroke-dasharray="42" stroke-dashoffset="12" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
+
 class AITTSManager {
     constructor() {
         this.currentAudio = null;
         this.isPlaying = false;
+        this.isPaused = false;
         this.available = false;
         this.useBrowserTTS = false;
         this.browserVoice = '';
@@ -12,6 +21,7 @@ class AITTSManager {
         this._provider = 'disabled';
         this.autoPlay = false;
         this.cache = new Map(); // Client-side audio cache
+        this._activeButton = null; // Speaker button of the message now playing/paused
 
         // Queue for sequential auto-play
         this._queue = [];       // Array of { text, button, resetFn }
@@ -24,8 +34,10 @@ class AITTSManager {
         this._streamResetFn = null;
         this._streamDebounceTimer = null;
 
-        // Check if TTS service is available
-        this.checkAvailability();
+        // Check if TTS service is available. Keep the promise so button
+        // creation on history reload can wait for the answer instead of
+        // racing it (page load renders messages before this resolves).
+        this.ready = this.checkAvailability();
     }
 
     async checkAvailability() {
@@ -66,44 +78,31 @@ class AITTSManager {
     }
 
     extractPlainText(content) {
-        // Strip <think>/<thinking> blocks (model reasoning)
-        let cleaned = content.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '');
-
-        // Create a temporary div to parse HTML/markdown
-        const temp = document.createElement('div');
-        temp.innerHTML = cleaned;
-
-        // Remove code blocks
-        temp.querySelectorAll('pre, code').forEach(el => el.remove());
-
-        // Get text content
-        let text = temp.textContent || temp.innerText || '';
-
-        // Clean up markdown syntax
-        text = text
-            .replace(/#{1,6}\s/g, '') // Remove headers
-            .replace(/\*\*(.+?)\*\*/g, '$1') // Remove bold
-            .replace(/\*(.+?)\*/g, '$1') // Remove italic
-            .replace(/\[(.+?)\]\(.+?\)/g, '$1') // Remove links
-            .replace(/`(.+?)`/g, '$1') // Remove inline code
-            .replace(/\n{3,}/g, '\n\n') // Normalize line breaks
-            .trim();
-
-        return text;
+        // Delegate to the shared markdown→speech cleaner (ttsText.js) so TTS
+        // never reads markdown syntax ("double star", URLs, LaTeX) aloud.
+        return markdownToSpeech(content);
     }
 
     getCacheKey(text) {
-        // Simple hash function for cache key
+        // Audio depends on provider + speed + text; voice changes clear the
+        // cache explicitly (settings.js) since the voice isn't tracked here.
+        const keySource = `${this._provider}|${this.playbackSpeed}|${text}`;
         let hash = 0;
-        for (let i = 0; i < text.length; i++) {
-            const char = text.charCodeAt(i);
+        for (let i = 0; i < keySource.length; i++) {
+            const char = keySource.charCodeAt(i);
             hash = ((hash << 5) - hash) + char;
             hash = hash & hash;
         }
         return hash.toString(36);
     }
 
-    async synthesize(text, onProgress = null) {
+    /**
+     * Synthesize `text` server-side and return an object URL for the audio.
+     * Results are cached client-side (keyed by provider/speed/text; the cache
+     * is cleared when the voice changes) so replaying a message never hits
+     * the synthesizer again.
+     */
+    async synthesize(text) {
         if (!this.available) {
             throw new Error('AI TTS service not available');
         }
@@ -114,51 +113,46 @@ class AITTSManager {
             throw new Error('No text to synthesize');
         }
 
-        // Browser TTS doesn't use synthesize — handled directly in play()
+        // Browser TTS doesn't synthesize — _playBrowser speaks directly
         if (this.useBrowserTTS) {
             return '__browser_tts__';
         }
 
         const cacheKey = this.getCacheKey(plainText);
 
-        // Check cache first
         if (this.cache.has(cacheKey)) {
             return this.cache.get(cacheKey);
         }
 
-        try {
-            if (onProgress) onProgress('synthesizing');
+        const response = await fetch('/api/tts/synthesize', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                text: plainText,
+                format: 'audio'
+            })
+        });
 
-            const response = await fetch('/api/tts/synthesize', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    text: plainText,
-                    format: 'audio'
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail?.message || 'Synthesis failed');
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            // The server degraded to browser voices mid-session (e.g. the
+            // last Piper voice was deleted) — switch over and retry locally.
+            if (error.detail?.fallback === 'browser' && 'speechSynthesis' in window) {
+                this.useBrowserTTS = true;
+                this._provider = 'browser';
+                return '__browser_tts__';
             }
-
-            const audioBlob = await response.blob();
-            const audioUrl = URL.createObjectURL(audioBlob);
-
-            // Cache the result
-            this.cache.set(cacheKey, audioUrl);
-
-            if (onProgress) onProgress('complete');
-
-            return audioUrl;
-
-        } catch (error) {
-            if (onProgress) onProgress('error');
-            throw error;
+            throw new Error(error.detail?.message || 'Synthesis failed');
         }
+
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+
+        this.cache.set(cacheKey, audioUrl);
+
+        return audioUrl;
     }
 
     _findBrowserVoice() {
@@ -169,32 +163,6 @@ class AITTSManager {
         return voices.find(v => v.name.toLowerCase() === target) ||
                voices.find(v => v.name.toLowerCase().includes(target)) ||
                null;
-    }
-
-    async play(text) {
-        // Stop current audio if playing
-        this.stop();
-
-        const plainText = this.extractPlainText(text);
-        if (!plainText) return;
-
-        if (this.useBrowserTTS) {
-            return this._playBrowser(plainText);
-        }
-
-        try {
-            const audioUrl = await this.synthesize(text);
-
-            this.currentAudio = new Audio(audioUrl);
-            await this.currentAudio.play();
-            this.isPlaying = true;
-            // Note: onended should be set by the caller (addAITTSButton)
-            // to reset button state when audio finishes
-
-        } catch (error) {
-            console.error('Failed to play audio:', error);
-            throw error;
-        }
     }
 
     _playBrowser(plainText) {
@@ -218,6 +186,51 @@ class AITTSManager {
         });
     }
 
+    /**
+     * Pause the active playback, keeping its position so resume() continues
+     * from the exact spot without re-synthesizing.
+     */
+    pause() {
+        if (!this.isPlaying || this.isPaused) return;
+        if (this.useBrowserTTS) {
+            window.speechSynthesis.pause();
+        } else if (this.currentAudio) {
+            this.currentAudio.pause();
+        } else {
+            return;
+        }
+        this.isPaused = true;
+        this._setActiveButtonState('paused');
+    }
+
+    resume() {
+        if (!this.isPaused) return;
+        if (this.useBrowserTTS) {
+            window.speechSynthesis.resume();
+        } else if (this.currentAudio) {
+            this.currentAudio.play().catch(() => {});
+        }
+        this.isPaused = false;
+        this._setActiveButtonState('playing');
+    }
+
+    /** True when `button` belongs to the message currently playing or paused. */
+    isActiveButton(button) {
+        return !!button && this._activeButton === button && (this.isPlaying || this._processing);
+    }
+
+    _setActiveButtonState(state) {
+        const button = this._activeButton;
+        if (!button) return;
+        if (state === 'paused') {
+            button.innerHTML = ICON_RESUME;
+            button.title = 'Resume';
+        } else {
+            button.innerHTML = ICON_PAUSE;
+            button.title = 'Pause';
+        }
+    }
+
     stop() {
         // Cancel streaming TTS
         this._streamActive = false;
@@ -233,6 +246,8 @@ class AITTSManager {
         }
         this._queue = [];
         this._processing = false;
+        this.isPaused = false;
+        this._activeButton = null;
 
         if (this.useBrowserTTS) {
             window.speechSynthesis.cancel();
@@ -279,8 +294,6 @@ class AITTSManager {
 
     async _playQueueItem(item) {
         const { text, button, resetFn } = item;
-        const ICON_LOADING = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9" stroke-dasharray="42" stroke-dashoffset="12" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
-        var ICON_STOP = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
 
         button.innerHTML = ICON_LOADING;
         button.classList.add('loading');
@@ -294,10 +307,12 @@ class AITTSManager {
 
             if (!this._processing) return;
 
-            button.innerHTML = ICON_STOP;
+            button.innerHTML = ICON_PAUSE;
             button.classList.remove('loading');
             button.classList.add('playing');
-            button.title = 'Stop';
+            button.title = 'Pause';
+            this._activeButton = button;
+            this.isPaused = false;
 
             if (this.useBrowserTTS) {
                 const plainText = this.extractPlainText(text);
@@ -310,21 +325,20 @@ class AITTSManager {
 
                 await new Promise((resolve, reject) => {
                     const audio = new Audio(audioUrl);
-                    if (this._provider === 'local' && this.playbackSpeed !== 1) {
-                        audio.playbackRate = this.playbackSpeed;
-                    }
                     this.currentAudio = audio;
                     audio.onended = () => {
                         this.isPlaying = false;
                         if (this.currentAudio === audio) this.currentAudio = null;
                         resolve();
                     };
-                    audio.onerror = (e) => {
+                    audio.onerror = () => {
                         this.isPlaying = false;
                         if (this.currentAudio === audio) this.currentAudio = null;
                         reject(new Error('Audio playback error'));
                     };
                     audio.onpause = () => {
+                        // A real pause() keeps currentAudio set — only resolve
+                        // when stop() detached the element (skip/cancel).
                         if (this.currentAudio !== audio) {
                             resolve();
                         }
@@ -335,6 +349,8 @@ class AITTSManager {
                 });
             }
         } finally {
+            if (this._activeButton === button) this._activeButton = null;
+            this.isPaused = false;
             if (resetFn) resetFn();
         }
     }
@@ -412,6 +428,10 @@ class AITTSManager {
     streamingAttachButton(button, resetFn) {
         this._streamButton = button;
         this._streamResetFn = resetFn;
+        if (this._activeButton && this._activeButton.classList.contains('streaming-placeholder')) {
+            this._activeButton = button;
+            this._setActiveButtonState(this.isPaused ? 'paused' : 'playing');
+        }
         for (var i = 0; i < this._queue.length; i++) {
             if (this._queue[i].button && this._queue[i].button.classList.contains('streaming-placeholder')) {
                 this._queue[i].button = button;
@@ -455,8 +475,18 @@ class AITTSManager {
 // Create global AI TTS manager instance
 window.aiTTSManager = new AITTSManager();
 
-// Function to add AI TTS button to a message element's action bar
+// Function to add AI TTS button to a message element's action bar.
+// Defers until the availability check has completed, so it is safe to call
+// during history rendering on page load.
 export function addAITTSButton(messageElement, text) {
+    const mgr = window.aiTTSManager;
+    if (!mgr) return;
+    Promise.resolve(mgr.ready).then(() => {
+        _addAITTSButtonNow(messageElement, text);
+    });
+}
+
+function _addAITTSButtonNow(messageElement, text) {
     if (!window.aiTTSManager.available || window.aiTTSManager._provider === 'disabled') {
         return;
     }
@@ -469,15 +499,11 @@ export function addAITTSButton(messageElement, text) {
     const actions = messageElement.querySelector('.msg-actions');
     if (!actions) return;
 
-    var ICON_PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
-    var ICON_STOP = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
-    var ICON_LOADING = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="9" stroke-dasharray="42" stroke-dashoffset="12" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg>';
-
     const playButton = document.createElement('button');
     playButton.className = 'ai-tts-button';
     playButton.type = 'button';
     playButton.title = 'Read aloud';
-    playButton.innerHTML = ICON_PLAY;
+    playButton.innerHTML = ICON_SPEAKER;
     playButton.style.cssText = 'background:none;border:none;color:#6b7280;cursor:pointer;padding:2px 6px;border-radius:4px;transition:color .15s;line-height:1;display:inline-flex;align-items:center;';
 
     playButton.addEventListener('mouseenter', () => { playButton.style.color = '#ccc'; });
@@ -486,7 +512,7 @@ export function addAITTSButton(messageElement, text) {
     });
 
     function resetButton() {
-        playButton.innerHTML = ICON_PLAY;
+        playButton.innerHTML = ICON_SPEAKER;
         playButton.classList.remove('playing', 'loading');
         playButton.style.color = '#6b7280';
         playButton.title = 'Read aloud';
@@ -496,13 +522,31 @@ export function addAITTSButton(messageElement, text) {
         e.stopPropagation();
         const mgr = window.aiTTSManager;
 
-        if (mgr.isPlaying || mgr._processing) {
+        // Clicking while this message is still synthesizing cancels it.
+        if (playButton.classList.contains('loading')) {
             mgr.stop();
             resetButton();
             return;
         }
 
-        mgr.enqueue(text, playButton, resetButton);
+        // This message is the one playing — toggle pause/resume in place.
+        // The audio element (and its position) is kept, so resuming never
+        // re-synthesizes.
+        if (mgr.isActiveButton(playButton)) {
+            if (mgr.isPaused) mgr.resume(); else mgr.pause();
+            return;
+        }
+
+        // Another message is playing — stop it, then start this one.
+        if (mgr.isPlaying || mgr._processing) {
+            mgr.stop();
+        }
+
+        // Prefer the message's raw markdown (kept fresh across edits/regens)
+        // over the text snapshot captured when the button was created.
+        const raw = messageElement.closest?.('.msg')?.dataset?.raw
+            || messageElement.dataset?.raw || text;
+        mgr.enqueue(raw, playButton, resetButton);
     });
 
     actions.appendChild(playButton);
@@ -514,6 +558,14 @@ window.addEventListener('beforeunload', () => {
         window.aiTTSManager.stop();
     }
 });
+
+// Shared glyphs so other modules (chat.js streaming auto-play) stay in sync
+export const TTS_ICONS = {
+    speaker: ICON_SPEAKER,
+    pause: ICON_PAUSE,
+    resume: ICON_RESUME,
+    loading: ICON_LOADING,
+};
 
 export { AITTSManager };
 
