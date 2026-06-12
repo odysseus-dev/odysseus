@@ -1058,6 +1058,13 @@ def setup_shell_routes() -> APIRouter:
                 "target": "remote",
             },
             {
+                "name": "transformers",
+                "pip": "transformers",
+                "desc": "Hugging Face model components used by SD/Flux pipelines and image tools",
+                "category": "Image",
+                "target": "remote",
+            },
+            {
                 "name": "rembg",
                 "pip": "rembg[gpu]",
                 "desc": "AI background removal for image editor",
@@ -1251,6 +1258,7 @@ def setup_shell_routes() -> APIRouter:
             "sglang[all]",
             "diffusers",
             "diffusers[torch]",
+            "transformers",
             "TTS",
             "bark",
             "faster-whisper",
