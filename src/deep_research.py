@@ -232,6 +232,7 @@ class DeepResearcher:
         self._start_time: float = 0
         self.queries_used: Set[str] = set()
         self.urls_fetched: Set[str] = set()
+        self.analyzed_urls: List[Dict[str, str]] = []
         self.round_count: int = 0
         # Track which search providers actually returned results during the
         # run, in arrival order — surfaced in the visual report so users can
@@ -525,6 +526,10 @@ class DeepResearcher:
                 if url and url not in self.urls_fetched:
                     urls_to_fetch.append(r)
                     self.urls_fetched.add(url)
+                    self.analyzed_urls.append({
+                        "url": url,
+                        "title": r.get("title", "") or url,
+                    })
                 if len(urls_to_fetch) >= self.max_urls_per_round * len(queries):
                     break
 

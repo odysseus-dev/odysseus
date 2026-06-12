@@ -9,6 +9,7 @@ Extracted from agent_tools.py.
 
 import asyncio
 import collections
+import contextvars
 import json
 import logging
 import os
@@ -146,7 +147,13 @@ def _resolve_tool_path(raw_path: str) -> str:
 
     Returns the realpath on success. Raises ValueError on rejection.
     Symlinks are resolved before comparison.
+
+    When a workspace is active for this turn, paths are confined to it instead
+    of the default allowlist (see _resolve_tool_path_in_workspace).
     """
+    ws = get_active_workspace()
+    if ws:
+        return _resolve_tool_path_in_workspace(ws, raw_path)
     if raw_path is None or not str(raw_path).strip():
         raise ValueError("path is required")
     expanded = os.path.expanduser(str(raw_path).strip())
@@ -207,6 +214,55 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 
 
 
+# ---------------------------------------------------------------------------
+# Active workspace (per-turn, context-local)
+# ---------------------------------------------------------------------------
+# Set ONCE in execute_tool_block from the request's `workspace`. The path
+# resolvers (_resolve_tool_path / _resolve_search_root) and the subprocess cwd
+# helper (agent_cwd) read it from here, so confinement is enforced in a single
+# place: any tool that resolves paths through these helpers is confined
+# automatically and cannot accidentally bypass the workspace. contextvars are
+# task-local, so concurrent turns don't leak into each other.
+_active_workspace: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_active_workspace", default=None
+)
+
+
+def get_active_workspace() -> Optional[str]:
+    """The folder the agent is confined to this turn, or None."""
+    return _active_workspace.get()
+
+
+def vet_workspace(raw: str) -> Optional[str]:
+    """Validate a requested workspace path at bind time.
+
+    Returns the canonical path, or None when it is unusable: not a real
+    directory, or itself a sensitive path (.ssh, .gnupg, ...). The in-workspace
+    resolver deny-lists sensitive paths *inside* the workspace, but the
+    empty-path search root is the workspace itself, so the root has to be
+    vetted before it is ever bound.
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    resolved = os.path.realpath(os.path.expanduser(raw))
+    if not os.path.isdir(resolved) or _is_sensitive_path(resolved):
+        return None
+    # Reject filesystem roots: binding / (or a Windows drive/UNC root) as the
+    # workspace would make every absolute path "inside" it, collapsing the
+    # confinement into host-wide file access. A root is its own dirname, which
+    # also covers C:\ and \\server\share without platform-specific lists.
+    if os.path.dirname(resolved) == resolved:
+        return None
+    return resolved
+
+
+def agent_cwd() -> str:
+    """Working directory for agent subprocesses (bash/python/background jobs):
+    the active workspace when set, else the persistent data dir."""
+    return get_active_workspace() or _AGENT_WORKDIR
+
+
 def get_mcp_manager():
     from src import agent_tools
     return agent_tools.get_mcp_manager()
@@ -217,10 +273,15 @@ def get_mcp_manager():
 def _resolve_search_root(raw_path: str) -> str:
     """Resolve + confine a code-nav path (grep/glob/ls).
 
-    An empty path defaults to the agent's primary root (project data dir) and a
-    supplied path is confined by the global allowlist + sensitive-file policy.
+    With a workspace active, the workspace folder is the root and a supplied
+    path is confined inside it. Otherwise an empty path defaults to the agent's
+    primary root (project data dir) and a supplied path is confined by the
+    global allowlist + sensitive-file policy.
     """
     raw = (raw_path or "").strip()
+    ws = get_active_workspace()
+    if ws:
+        return os.path.realpath(ws) if not raw else _resolve_tool_path_in_workspace(ws, raw)
     if not raw:
         roots = _tool_path_roots()
         return roots[0] if roots else os.path.realpath(".")
@@ -392,7 +453,6 @@ async def _direct_fallback(
     tool: str,
     content: str,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
-    workspace: Optional[str] = None,
 ) -> Optional[Dict]:
     _subproc_env = {
         **os.environ,
@@ -405,7 +465,6 @@ async def _direct_fallback(
     try:
         ctx = {
             "progress_cb": progress_cb,
-            "workspace": workspace,
             "subproc_env": _subproc_env,
         }
 
@@ -416,6 +475,20 @@ async def _direct_fallback(
     except Exception as e:
         return {"error": f"{tool}: {e}", "exit_code": 1}
 
+    return None
+
+
+async def _document_tool_dispatch(
+    tool: str,
+    content: str,
+    session_id: Optional[str] = None,
+    owner: Optional[str] = None,
+) -> Optional[Dict]:
+    """Route a document tool through TOOL_HANDLERS with the right ctx shape."""
+    from src.agent_tools import TOOL_HANDLERS
+    ctx = {"session_id": session_id, "owner": owner}
+    if tool in TOOL_HANDLERS:
+        return await TOOL_HANDLERS[tool](content, ctx)
     return None
 
 
@@ -434,16 +507,43 @@ async def execute_tool_block(
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
+    Thin wrapper: bind the per-turn workspace (so the path resolvers + subprocess
+    cwd confine to it) for the duration of this call, then delegate. Reset on the
+    way out so the binding never leaks to the next tool call.
+    """
+    token = _active_workspace.set(workspace or None)
+    try:
+        return await _execute_tool_block_impl(
+            block,
+            session_id=session_id,
+            disabled_tools=disabled_tools,
+            owner=owner,
+            progress_cb=progress_cb,
+            tool_policy=tool_policy,
+        )
+    finally:
+        _active_workspace.reset(token)
+
+
+async def _execute_tool_block_impl(
+    block: Any,
+    session_id: Optional[str] = None,
+    disabled_tools: Optional[set] = None,
+    owner: Optional[str] = None,
+    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    tool_policy: Optional[Any] = None,
+) -> Tuple[str, Dict]:
+    """Execute a single tool block. Returns (description, result_dict).
+
     `progress_cb` is forwarded to long-running subprocess tools
     (bash, python) so the agent loop can emit `tool_progress` SSE
     events while the command is in flight. Ignored by other tools.
     """
     from src.tool_implementations import (
-        do_create_document, do_update_document, do_edit_document,
-        do_suggest_document, do_search_chats, do_manage_tasks,
+        do_search_chats, do_manage_tasks,
         do_manage_skills, do_api_call, do_manage_endpoints,
         do_manage_mcp, do_manage_webhooks, do_manage_tokens,
-        do_manage_documents, do_manage_settings, do_manage_notes,
+        do_manage_settings, do_manage_notes,
         do_manage_calendar,
         do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
         do_tail_serve_output,
@@ -608,7 +708,7 @@ async def execute_tool_block(
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
             from src import bg_jobs
-            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=_AGENT_WORKDIR)
+            rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"
             result = {
@@ -631,25 +731,19 @@ async def execute_tool_block(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
-    elif tool in ("grep", "glob", "ls"):
+    elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
-    elif tool == "create_document":
-        title = content.split("\n")[0].strip()[:60]
-        desc = f"create_document: {title}"
-        result = await do_create_document(content, session_id=session_id, owner=owner)
-    elif tool == "update_document":
-        desc = f"update_document: {content.split(chr(10))[0][:60]}"
-        result = await do_update_document(content, owner=owner)
-    elif tool == "edit_document":
-        result = await do_edit_document(content, owner=owner)
-        desc = f"edit_document: {result.get('title', '')}"
-    elif tool == "suggest_document":
-        result = await do_suggest_document(content, owner=owner)
-        desc = f"suggest_document: {result.get('count', 0)} suggestions"
+    elif tool in ("create_document", "update_document", "edit_document",
+                  "suggest_document", "manage_documents"):
+        desc = f"{tool}: {content.split(chr(10))[0][:80]}"
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+        if tool in ("edit_document", "suggest_document") and "title" in (result or {}):
+            desc = f"{tool}: {result.get('title', '')}"
     elif tool == "search_chats":
         query = content.split("\n")[0].strip()
         desc = f"search_chats: {query[:80]}"
@@ -682,9 +776,6 @@ async def execute_tool_block(
     elif tool == "manage_tokens":
         desc = "manage_tokens"
         result = await do_manage_tokens(content, owner=owner)
-    elif tool == "manage_documents":
-        desc = "manage_documents"
-        result = await do_manage_documents(content, owner=owner)
     elif tool == "manage_settings":
         desc = "manage_settings"
         result = await do_manage_settings(content, owner=owner)
@@ -740,7 +831,7 @@ async def execute_tool_block(
         desc = "edit_image"
         result = await do_edit_image(content, owner=owner)
     elif tool == "edit_file":
-        result = await _direct_fallback(tool, content, workspace=workspace) or {"error": "edit failed", "exit_code": 1}
+        result = await _direct_fallback(tool, content) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"
     elif tool == "trigger_research":
         desc = "trigger_research"

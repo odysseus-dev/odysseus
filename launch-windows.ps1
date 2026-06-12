@@ -30,14 +30,26 @@ function Fail($msg) {
     exit 1
 }
 
+function Test-WindowsBashStub($path) {
+    if (-not $path) { return $false }
+    $lowered = $path.ToLowerInvariant()
+    foreach ($stub in @("system32\bash.exe", "sysnative\bash.exe", "windowsapps\bash.exe")) {
+        if ($lowered.Contains($stub)) { return $true }
+    }
+    return $false
+}
+
 function Find-GitBash {
     $cmd = Get-Command bash -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    if ($cmd -and -not (Test-WindowsBashStub $cmd.Source)) { return $cmd.Source }
 
     $roots = @()
     foreach ($name in @("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LocalAppData")) {
         $base = [Environment]::GetEnvironmentVariable($name)
-        if ($base) { $roots += (Join-Path $base "Git") }
+        if ($base) {
+            $roots += (Join-Path $base "Git")
+            if ($name -eq "LocalAppData") { $roots += (Join-Path $base "Programs\Git") }
+        }
     }
     $roots += @("C:\Program Files\Git", "C:\Program Files (x86)\Git")
 
