@@ -285,6 +285,9 @@ curl -X POST -H "Authorization: Bearer <token>" http://localhost:7000/api/opencl
 | `ops investigate <id>` | `POST /api/openclaw/homelab/events/{id}/investigate` | `events:ack` |
 | `ops resolve <id>` | `POST /api/openclaw/homelab/events/{id}/resolve` | `events:resolve` |
 | `ops ignore <id>` | `POST /api/openclaw/homelab/events/{id}/ignore` | `events:resolve` |
+| `ops n8n health` | `GET /api/openclaw/n8n/health` | `n8n:read` |
+| `ops n8n failures` | `GET /api/openclaw/n8n/failures` | `n8n:read` |
+| `ops n8n failures --record` | `POST /api/openclaw/n8n/failures/record` | `n8n:events` |
 
 ## Security Notes
 

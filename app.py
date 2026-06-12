@@ -681,6 +681,10 @@ from routes.openclaw_homelab_routes import setup_openclaw_homelab_routes
 app.include_router(setup_homelab_routes())
 app.include_router(setup_event_routes())
 app.include_router(setup_openclaw_homelab_routes())
+from routes.n8n_routes import setup_n8n_routes
+from routes.openclaw_n8n_routes import setup_openclaw_n8n_routes
+app.include_router(setup_n8n_routes())
+app.include_router(setup_openclaw_n8n_routes())
 
 
 # Calendar (CalDAV)

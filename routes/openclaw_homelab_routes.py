@@ -29,7 +29,10 @@ EVENTS_ACK_SCOPES = {'events:ack'}
 EVENTS_RESOLVE_SCOPES = {'events:resolve'}
 
 # Actions that may appear in OpenClaw responses.
-_ALLOWED_ACTIONS = {'ack', 'investigate', 'resolve', 'ignore', 'view_service'}
+_ALLOWED_ACTIONS = {
+    'ack', 'investigate', 'resolve', 'ignore', 'view_service',
+    'view_workflow', 'view_execution', 'record_event'
+}
 
 BASE_URL = '/api/openclaw/homelab'
 
