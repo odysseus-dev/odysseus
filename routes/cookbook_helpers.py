@@ -1,12 +1,14 @@
 """cookbook_helpers.py — validators + small helpers shared by the cookbook routes.
 Extracted from cookbook_routes.py; the routes module imports the symbols it needs."""
 
+import json
 import logging
 import ntpath
 import os
 import posixpath
 import re
 import shlex
+from pathlib import Path
 
 from fastapi import HTTPException
 from pydantic import BaseModel
@@ -88,6 +90,24 @@ def _validate_token(v: str | None) -> str | None:
     if not _TOKEN_RE.match(v):
         raise HTTPException(400, "Invalid token characters")
     return v
+
+
+def load_stored_hf_token(*, state_path: Path | str | None = None) -> str:
+    """Return the decrypted HF token from cookbook_state.json, else env fallback."""
+    path = Path(state_path) if state_path else Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+    token = ""
+    if path.exists():
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            env = state.get("env") if isinstance(state, dict) else {}
+            if isinstance(env, dict) and env.get("hfToken"):
+                from src.secret_storage import decrypt
+                token = decrypt(env.get("hfToken") or "")
+        except Exception:
+            token = ""
+    if not token:
+        token = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
+    return token
 
 
 def _validate_local_dir(v: str | None) -> str | None:
