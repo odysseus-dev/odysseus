@@ -12,7 +12,8 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 def _add_action_hints(event: dict) -> dict:
-    event["suggested_actions"] = ["ack", "investigate", "resolve", "ignore", "view_service"]
+    if "suggested_actions" not in event:
+        event["suggested_actions"] = ["ack", "investigate", "resolve", "ignore", "view_service"]
     return event
 
 class EventStore:
@@ -68,7 +69,7 @@ class EventStore:
                 return _add_action_hints(e)
         return None
 
-    def record_event(self, source: str, service: str, severity: str, title: str, summary: str, dedupe_key: str, owner: str = None, metadata: dict = None) -> dict:
+    def record_event(self, source: str, service: str, severity: str, title: str, summary: str, dedupe_key: str, owner: str = None, metadata: dict = None, suggested_actions: list[str] | None = None) -> dict:
         events = self._load()
         
         # Check for open event with same dedupe_key
@@ -107,6 +108,9 @@ class EventStore:
                 "details": "Event created"
             }]
         }
+        if suggested_actions is not None:
+            new_event["suggested_actions"] = suggested_actions
+            
         events.append(new_event)
         self._save(events)
         return _add_action_hints(new_event)

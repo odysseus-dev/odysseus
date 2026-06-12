@@ -54,10 +54,31 @@ def setup_openclaw_n8n_routes() -> APIRouter:
         count = summary.get('failed_count', 0)
         msg = f"{count} failed execution(s) found." if count else "No failed executions found."
         
-        # We don't compact executions here since they aren't events, 
-        # but we could extract key info if needed. We'll just return them.
+        # Compact executions to avoid dumping raw n8n payload
+        raw_executions = summary.get('executions', [])
+        compacted = []
+        for exec_item in raw_executions:
+            workflow_id = exec_item.get('workflowId')
+            exec_id = exec_item.get('id')
+            
+            err_msg = exec_item.get('error', 'Workflow execution failed')
+            if isinstance(err_msg, dict):
+                err_msg = err_msg.get('message', 'Workflow execution failed')
+                
+            workflow_name = exec_item.get('workflowData', {}).get('name', f"Workflow {workflow_id}")
+            
+            compacted.append({
+                'id': exec_id,
+                'workflow_id': workflow_id,
+                'workflow_name': workflow_name,
+                'error': err_msg,
+                'status': exec_item.get('status'),
+                'started_at': exec_item.get('startedAt'),
+                'stopped_at': exec_item.get('stoppedAt'),
+            })
+
         return _ok(message=msg) | {
-            'failures': summary.get('executions', []),
+            'failures': compacted,
             'links': {'health': f'{BASE_URL}/health', 'record': f'{BASE_URL}/failures/record'}
         }
 

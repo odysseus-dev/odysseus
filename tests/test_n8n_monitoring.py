@@ -36,18 +36,10 @@ def mock_n8n_client():
         yield client
 
 @pytest.fixture
-def mock_event_store(tmp_path):
-    with patch("routes.n8n_routes.EventStore") as mock_store, patch("routes.openclaw_n8n_routes.EventStore") as mock_openclaw_store:
-        store = MagicMock()
-        
-        def record_event_side_effect(**kwargs):
-            event = kwargs.copy()
-            event["id"] = "test-event-id"
-            return event
-            
-        store.record_event.side_effect = record_event_side_effect
-        mock_store.return_value = store
-        mock_openclaw_store.return_value = store
+def real_event_store(tmp_path):
+    events_file = str(tmp_path / "test_events.json")
+    store = EventStore(file_path=events_file)
+    with patch("routes.n8n_routes.EventStore", return_value=store), patch("routes.openclaw_n8n_routes.EventStore", return_value=store):
         yield store
 
 @pytest.fixture
@@ -110,7 +102,7 @@ def test_scope_enforcement_n8n_read(client_with_scopes, mock_n8n_client):
     assert resp.status_code == 200
     assert resp.json()["configured"] is True
 
-def test_scope_enforcement_n8n_events(client_with_scopes, mock_n8n_client, mock_event_store):
+def test_scope_enforcement_n8n_events(client_with_scopes, mock_n8n_client, real_event_store):
     c = client_with_scopes(["n8n:read"]) # missing n8n:events
     resp = c.post("/api/n8n/executions/record-events")
     assert resp.status_code == 403
@@ -137,7 +129,7 @@ def test_openclaw_n8n_failures(client_with_scopes, mock_n8n_client):
     assert len(data["failures"]) == 1
     assert data["failures"][0]["id"] == "exec-1"
 
-def test_openclaw_n8n_record_events(client_with_scopes, mock_n8n_client, mock_event_store):
+def test_openclaw_n8n_record_events(client_with_scopes, mock_n8n_client, real_event_store):
     c = client_with_scopes(["n8n:events"])
     resp = c.post("/api/openclaw/n8n/failures/record")
     assert resp.status_code == 200
@@ -159,12 +151,39 @@ def test_openclaw_n8n_record_events(client_with_scopes, mock_n8n_client, mock_ev
     assert "investigate" in actions
     assert "view_workflow" in actions
 
-def test_event_dedupe_key_by_workflow_id(client_with_scopes, mock_n8n_client, mock_event_store):
+def test_event_dedupe_key_by_workflow_id(client_with_scopes, mock_n8n_client, real_event_store):
     c = client_with_scopes(["n8n:events"])
     resp = c.post("/api/n8n/executions/record-events")
     assert resp.status_code == 200
     
-    mock_event_store.record_event.assert_called_once()
-    call_args = mock_event_store.record_event.call_args[1]
-    assert call_args["dedupe_key"] == "n8n:wf-1:failed"
-    assert call_args["source"] == "n8n"
+    events = real_event_store.get_events()
+    assert len(events) == 1
+    assert events[0]["dedupe_key"] == "n8n:wf-1:failed"
+    assert events[0]["source"] == "n8n"
+
+def test_event_store_custom_suggested_actions(real_event_store):
+    # Test that custom suggested_actions are persisted correctly
+    event1 = real_event_store.record_event(
+        source="n8n",
+        service="n8n",
+        severity="warning",
+        title="test1",
+        summary="test1",
+        dedupe_key="key1",
+        suggested_actions=["custom1", "custom2"]
+    )
+    assert "custom1" in event1["suggested_actions"]
+    assert "custom2" in event1["suggested_actions"]
+    
+    # Test that default homelab events get standard actions
+    event2 = real_event_store.record_event(
+        source="homelab",
+        service="pihole",
+        severity="warning",
+        title="test2",
+        summary="test2",
+        dedupe_key="key2",
+    )
+    assert "ack" in event2["suggested_actions"]
+    assert "view_service" in event2["suggested_actions"]
+    assert "custom1" not in event2["suggested_actions"]

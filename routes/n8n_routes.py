@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 
 from src.n8n_client import N8nClient
 from src.event_store import EventStore
@@ -46,7 +46,7 @@ def setup_n8n_routes() -> APIRouter:
         return {'status': 'ok', 'workflows': workflows}
 
     @router.get('/executions')
-    async def list_executions(request: Request, status: str | None = 'error', limit: int = 10):
+    async def list_executions(request: Request, status: str | None = Query('error'), limit: int = Query(10, ge=1, le=100)):
         _scope_owner(request, N8N_READ_SCOPES)
         client = N8nClient()
         if not client.configured:
