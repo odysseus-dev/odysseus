@@ -1,0 +1,2 @@
+# Ignore fake keys inside the trace export unit test
+test_trace_export.py
