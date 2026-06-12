@@ -187,6 +187,40 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         }
 
     # ------------------------------------------------------------------
+    # Service read routes
+    # ------------------------------------------------------------------
+
+    @router.get('/services')
+    async def openclaw_list_services(request: Request) -> dict[str, Any]:
+        """List homelab services in compact format.
+
+        Requires: homelab:read
+        """
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        services = _load_services()
+        msg = f"{len(services)} service(s) returned." if services else 'No services found.'
+        return _ok(message=msg, events=None) | {
+            'services': services,
+            'links': {'services': f'{BASE_URL}/services', 'health': f'{BASE_URL}/health'},
+        }
+
+    @router.get('/services/{name}')
+    async def openclaw_get_service(request: Request, name: str) -> dict[str, Any]:
+        """Get a specific homelab service by name.
+
+        Requires: homelab:read
+        """
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        services = _load_services()
+        for srv in services:
+            if srv.get('name') == name:
+                return _ok(message=f"Service {name}.", event=None) | {
+                    'service': srv,
+                    'links': {'services': f'{BASE_URL}/services', 'health': f'{BASE_URL}/health'},
+                }
+        raise HTTPException(404, 'Service not found')
+
+    # ------------------------------------------------------------------
     # Event read routes
     # ------------------------------------------------------------------
 

@@ -215,6 +215,20 @@ Run health checks and durably record failures as events.
 curl -X POST -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homelab/health/record
 ```
 
+### `GET /api/openclaw/homelab/services`
+List all homelab services.
+**Requires:** `homelab:read`
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homelab/services
+```
+
+### `GET /api/openclaw/homelab/services/{name}`
+Get a single homelab service by name.
+**Requires:** `homelab:read`
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homelab/services/<name>
+```
+
 ### `GET /api/openclaw/homelab/events`
 List homelab events. Supports `?status=open&limit=10`.
 **Requires:** `events:read`
@@ -263,6 +277,8 @@ curl -X POST -H "Authorization: Bearer <token>" http://localhost:7000/api/opencl
 |---|---|---|
 | `ops homelab health` | `GET /api/openclaw/homelab/health` | `homelab:read` |
 | `ops homelab health --record` | `POST /api/openclaw/homelab/health/record` | `homelab:read` + `events:write` |
+| `ops services` | `GET /api/openclaw/homelab/services` | `homelab:read` |
+| `ops service <name>` | `GET /api/openclaw/homelab/services/{name}` | `homelab:read` |
 | `ops events` | `GET /api/openclaw/homelab/events?status=open` | `events:read` |
 | `ops event <id>` | `GET /api/openclaw/homelab/events/{id}` | `events:read` |
 | `ops ack <id>` | `POST /api/openclaw/homelab/events/{id}/ack` | `events:ack` |

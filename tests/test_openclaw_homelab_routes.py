@@ -167,6 +167,28 @@ async def test_list_events_requires_events_read_scope(mock_event_store):
     assert exc.value.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_list_services_requires_homelab_read_scope(mock_event_store):
+    router = setup_openclaw_homelab_routes()
+    list_ep = _endpoint(router, '/api/openclaw/homelab/services', 'GET')
+
+    req = _request(scopes=['events:read'])  # wrong scope
+    with pytest.raises(HTTPException) as exc:
+        await list_ep(req)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_service_requires_homelab_read_scope(mock_event_store):
+    router = setup_openclaw_homelab_routes()
+    get_ep = _endpoint(router, '/api/openclaw/homelab/services/{name}', 'GET')
+
+    req = _request(scopes=['events:read'])  # wrong scope
+    with pytest.raises(HTTPException) as exc:
+        await get_ep(req, name='does-not-matter')
+    assert exc.value.status_code == 403
+
+
 # ---------------------------------------------------------------------------
 # Missing event → 404, not 500
 # ---------------------------------------------------------------------------
@@ -223,6 +245,17 @@ async def test_get_missing_event_returns_404(mock_event_store):
     assert exc.value.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_get_missing_service_returns_404(mock_event_store, monkeypatch):
+    router = setup_openclaw_homelab_routes()
+    get_ep = _endpoint(router, '/api/openclaw/homelab/services/{name}', 'GET')
+    monkeypatch.setattr('routes.openclaw_homelab_routes._load_services', lambda: [])
+    req = _request(scopes=['homelab:read'])
+    with pytest.raises(HTTPException) as exc:
+        await get_ep(req, name='no-such-name')
+    assert exc.value.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # Successful lifecycle flow — response envelope shape
 # ---------------------------------------------------------------------------
@@ -274,6 +307,37 @@ async def test_list_events_invalid_limit_returns_400(mock_event_store):
     with pytest.raises(HTTPException) as exc:
         await list_ep(req, limit=0)
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_list_services_envelope(mock_event_store, monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'pihole'}]
+    )
+    router = setup_openclaw_homelab_routes()
+    list_ep = _endpoint(router, '/api/openclaw/homelab/services', 'GET')
+    req = _request(scopes=['homelab:read'])
+    result = await list_ep(req)
+    assert result['status'] == 'ok'
+    assert isinstance(result['services'], list)
+    assert len(result['services']) == 1
+    assert 'links' in result
+
+
+@pytest.mark.asyncio
+async def test_get_service_envelope(mock_event_store, monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._load_services',
+        lambda: [{'name': 'pihole'}]
+    )
+    router = setup_openclaw_homelab_routes()
+    get_ep = _endpoint(router, '/api/openclaw/homelab/services/{name}', 'GET')
+    req = _request(scopes=['homelab:read'])
+    result = await get_ep(req, name='pihole')
+    assert result['status'] == 'ok'
+    assert result['service']['name'] == 'pihole'
+    assert 'links' in result
 
 
 # ---------------------------------------------------------------------------

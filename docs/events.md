@@ -88,6 +88,8 @@ See [openclaw-bridge.md](openclaw-bridge.md) for full curl examples and the comp
 |---|---|
 | `ops homelab health` | Show live health for all homelab services |
 | `ops homelab health --record` | Run checks and record failures as durable events |
+| `ops services` | List all homelab services |
+| `ops service <name>` | View a specific homelab service |
 | `ops events` | List open events |
 | `ops event <id>` | View a specific event |
 | `ops ack <id>` | Acknowledge an event |

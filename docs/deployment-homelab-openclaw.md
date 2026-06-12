@@ -297,6 +297,11 @@ curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/events/summary" | jq .
 #    Requires: events:read scope
 curl -sf -H "Authorization: Bearer $TOKEN" \
   "$BASE/api/events?status=open&limit=10" | jq .
+
+# 7. List homelab services via OpenClaw
+#    Requires: homelab:read scope
+curl -sf -H "Authorization: Bearer $TOKEN" \
+  "$BASE/api/openclaw/homelab/services" | jq .
 ```
 
 Expected response shapes (fields vary; do not assert exact values):
@@ -309,6 +314,7 @@ Expected response shapes (fields vary; do not assert exact values):
 | `GET /api/homelab/health?record_events=true` | Same shape; events written to `data/homelab_events.json` for unhealthy services |
 | `GET /api/events/summary` | `{"status":"ok","events":[…]}` (compact, max 10 open events) |
 | `GET /api/events?status=open&limit=10` | `{"status":"ok","events":[…]}` (full event objects) |
+| `GET /api/openclaw/homelab/services` | `{"status":"ok","services":[{"name":"…",…}], "links":{…}}` |
 
 ---
 
