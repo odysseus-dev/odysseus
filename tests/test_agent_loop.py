@@ -334,7 +334,7 @@ class TestAppendToolResultsNativeContent:
         # The text-block fallback path still wraps results in a user message.
         messages = []
         _append_tool_results(
-            messages, "thinking...", [], ["tool output"], [],
+            messages, "thinking...", [], [], ["tool output"],
             used_native=False, round_num=1,
         )
         assert messages[0]["role"] == "assistant"
