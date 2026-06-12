@@ -81,7 +81,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python setup.py
-python -m uvicorn app:app --host 127.0.0.1 --port 7000
+python -m uvicorn main:app --host 127.0.0.1 --port 7000
 ```
 Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
 downloads and serves. The app itself is lightweight; local model serving is the
@@ -281,7 +281,7 @@ py -3.11 -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python setup.py
-python -m uvicorn app:app --host 127.0.0.1 --port 7000
+python -m uvicorn main:app --host 127.0.0.1 --port 7000
 ```
 
 If `python` points at an older interpreter, use `py -3.12` (or another installed
@@ -319,7 +319,7 @@ To expose Odysseus on a local network or Tailscale with HTTPS:
    ```
 3. Run `uvicorn` with the generated certs:
    ```bash
-   python -m uvicorn app:app --host 0.0.0.0 --port 7000 --ssl-certfile=cert.pem --ssl-keyfile=key.pem
+   python -m uvicorn main:app --host 0.0.0.0 --port 7000 --ssl-certfile=cert.pem --ssl-keyfile=key.pem
    ```
 4. Install the `mkcert` CA on any other device you want to access Odysseus from (e.g., for iOS, email the `rootCA.pem` to yourself, install the profile, and trust it in Certificate Trust Settings).
 
@@ -427,7 +427,7 @@ That installs `@playwright/mcp` plus Playwright (~300MB total). Restart Odysseus
 
 ## Architecture
 ```
-app.py                   # FastAPI entry point
+main.py                   # FastAPI entry point
 core/      auth, database, middleware, constants
 src/       llm_core, agent_loop, agent_tools, chat_processor, search/
 routes/    chat, session, document, memory, model … endpoints

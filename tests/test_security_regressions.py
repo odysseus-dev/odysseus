@@ -122,7 +122,7 @@ def test_docker_compose_binds_web_ui_to_loopback_by_default():
 
 def test_readme_native_quickstart_uses_loopback():
     readme = Path("README.md").read_text(encoding="utf-8")
-    assert "python -m uvicorn app:app --host 127.0.0.1 --port 7000" in readme
+    assert "python -m uvicorn main:app --host 127.0.0.1 --port 7000" in readme
     assert "0.0.0.0` only when you intentionally want" in readme
 
 

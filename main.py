@@ -1,4 +1,4 @@
-# app.py — slim orchestrator
+# main.py — slim orchestrator
 import mimetypes
 import os
 
@@ -755,7 +755,7 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
-# ========= ROUTES (kept in app.py) =========
+# ========= ROUTES (kept in main.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     """Read an HTML file and inject the CSP nonce into inline <script> tags."""

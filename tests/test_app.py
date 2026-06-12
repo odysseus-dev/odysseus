@@ -13,9 +13,9 @@ class TestAppStructure:
     """Test that required modules and files exist"""
 
     def test_app_file_exists(self):
-        """Test that app.py exists"""
-        app_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "app.py")
-        assert os.path.exists(app_path), "app.py should exist"
+        """Test that main.py exists"""
+        app_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "main.py")
+        assert os.path.exists(app_path), "main.py should exist"
 
     def test_static_directory_exists(self):
         """Test that static directory exists"""

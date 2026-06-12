@@ -65,7 +65,7 @@ def test_generated_image_headers_include_nosniff():
 
 
 def test_generated_image_route_uses_confining_resolver():
-    source = Path("app.py").read_text(encoding="utf-8")
+    source = Path("main.py").read_text(encoding="utf-8")
 
     assert 'Path("data/generated_images") / filename' not in source
     assert "resolve_generated_image_path(filename)" in source

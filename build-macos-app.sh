@@ -120,9 +120,9 @@ fi
 notify "Starting…"
 cd "$INSTALL_DIR" || die_gui "Install folder not found: $INSTALL_DIR"
 if [ "$(uname -m)" = "arm64" ]; then
-  arch -arm64 "$UVICORN" app:app --host 127.0.0.1 --port "$PORT" >>"$LOG" 2>&1 &
+  arch -arm64 "$UVICORN" main:app --host 127.0.0.1 --port "$PORT" >>"$LOG" 2>&1 &
 else
-  "$UVICORN" app:app --host 127.0.0.1 --port "$PORT" >>"$LOG" 2>&1 &
+  "$UVICORN" main:app --host 127.0.0.1 --port "$PORT" >>"$LOG" 2>&1 &
 fi
 SERVER_PID=$!
 

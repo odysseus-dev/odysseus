@@ -27,7 +27,7 @@ Fixes #
 - [ ] I searched [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues) and [open PRs](https://github.com/pewdiepie-archdaemon/odysseus/pulls) — this is not a duplicate.
 - [ ] This PR targets `dev`
 - [ ] My changes are limited to the scope described above — no unrelated refactors or whitespace changes mixed in.
-- [ ] I actually ran the app (`docker compose up` or `uvicorn app:app`) and verified the change works end-to-end. Type-checks and unit tests are not enough.
+- [ ] I actually ran the app (`docker compose up` or `uvicorn main:app`) and verified the change works end-to-end. Type-checks and unit tests are not enough.
 
 ## How to Test
 

@@ -9,7 +9,7 @@ can't supply a session cookie.
 
 Without an entry in ``AUTH_EXEMPT_PATTERNS`` ``AuthMiddleware`` rejected
 every POST with 401 before the token was ever checked (issue #621).
-This test re-reads the exemption logic out of ``app.py`` and confirms a
+This test re-reads the exemption logic out of ``main.py`` and confirms a
 representative webhook path is treated as exempt, while neighbouring
 non-public task paths are NOT.
 """
@@ -21,7 +21,7 @@ import re
 def _read_app_source() -> str:
     app_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "app.py",
+        "main.py",
     )
     with open(app_path, encoding="utf-8") as fh:
         return fh.read()
@@ -37,7 +37,7 @@ def test_webhook_trigger_path_is_in_exempt_patterns():
     # matching closing bracket. A regex would have to count brackets,
     # which is more painful than just doing the count by hand.
     start = src.find("AUTH_EXEMPT_PATTERNS")
-    assert start != -1, "AUTH_EXEMPT_PATTERNS not declared in app.py"
+    assert start != -1, "AUTH_EXEMPT_PATTERNS not declared in main.py"
     lb = src.find("[", start)
     assert lb != -1
     depth = 0
@@ -79,14 +79,16 @@ def test_webhook_trigger_path_is_in_exempt_patterns():
 
 def test_webhook_trigger_handler_still_validates_token():
     """The exemption is only safe because the route handler in
-    routes/task_routes.py still checks the token against the row and
-    returns 404 on mismatch. Pin that behaviour so a refactor of the
+    src/api/router/task_routes.py still checks the token against the row
+    and returns 404 on mismatch. Pin that behaviour so a refactor of the
     handler doesn't quietly make the endpoint truly anonymous. Read the
     source directly — importing task_routes pulls in SQLAlchemy and
     fails under the conftest stubs."""
     routes_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "routes",
+        "src",
+        "api",
+        "router",
         "task_routes.py",
     )
     with open(routes_path, encoding="utf-8") as fh:

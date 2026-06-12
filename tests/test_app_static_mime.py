@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def _load_register_static_mime_types():
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    app_path = Path(__file__).resolve().parents[1] / "main.py"
     tree = ast.parse(app_path.read_text(encoding="utf-8"), filename=str(app_path))
     fn = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "register_static_mime_types")
     module = ast.Module(body=[fn], type_ignores=[])

@@ -37,7 +37,7 @@ Manual development uses Python 3.11+:
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-python -m uvicorn app:app --host 0.0.0.0 --port 7000
+python -m uvicorn main:app --host 0.0.0.0 --port 7000
 ```
 
 Windows is not actively tested. Docker on Linux or a Linux/macOS manual install is the safer path for now.
@@ -48,7 +48,7 @@ Run the smallest relevant checks for your change:
 
 ```bash
 python -m pytest
-python -m py_compile app.py routes/*.py src/*.py
+python -m py_compile main.py routes/*.py src/*.py
 node --check static/js/<file-you-changed>.js
 ```
 
