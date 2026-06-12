@@ -25,6 +25,7 @@ from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocument
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
+from .media_tools import ListMediaModelsTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -46,6 +47,7 @@ TOOL_HANDLERS = {
     "chat_with_model": ChatWithModelTool().execute,
     "ask_teacher": AskTeacherTool().execute,
     "list_models": ListModelsTool().execute,
+    "list_media_models": ListMediaModelsTool().execute,
     "manage_bg_jobs": ManageBgJobsTool().execute,
     "create_session": CreateSessionTool().execute,
     "list_sessions": ListSessionsTool().execute,
@@ -70,7 +72,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "send_to_session",
              "pipeline",
              "manage_session", "manage_memory", "list_models",
-             "ui_control", "generate_image", "ask_user", "update_plan",
+             "ui_control", "generate_image", "list_media_models", "ask_user", "update_plan",
              "manage_tasks", "api_call", "ask_teacher", "manage_skills",
              "suggest_document",
              "manage_endpoints", "manage_mcp", "manage_webhooks",

@@ -94,7 +94,7 @@ def test_dispatched_via_registry_not_dispatch_ai_tool():
     """The model tools route through the registry (_document_tool_dispatch), and
     are no longer in the dispatch_ai_tool elif tuple."""
     source = (Path(__file__).resolve().parent.parent / "src" / "tool_execution.py").read_text(encoding="utf-8")
-    assert 'elif tool in ("chat_with_model", "ask_teacher", "list_models"):' in source
+    assert 'elif tool in ("chat_with_model", "ask_teacher", "list_models", "list_media_models"):' in source
 
     marker = "from src.ai_interaction import dispatch_ai_tool"
     idx = source.index(marker)

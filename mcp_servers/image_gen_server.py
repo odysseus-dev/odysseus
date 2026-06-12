@@ -5,9 +5,8 @@ MCP server exposing image generation via OpenAI-compatible APIs.
 """
 
 import asyncio
-import base64
+import logging
 import sys
-import uuid
 from pathlib import Path
 
 from mcp.server import Server
@@ -16,9 +15,42 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.constants import GENERATED_IMAGES_DIR
+logger = logging.getLogger(__name__)
+
+_GENERIC_MCP_ERROR = "Image generation failed unexpectedly. Check local logs for details."
 
 server = Server("image_gen")
+
+
+def _build_image_content(prompt: str, model: str = "", size: str = "", quality: str = "") -> str:
+    """Build the line-oriented payload expected by do_generate_image."""
+    safe_prompt = " ".join((prompt or "").splitlines()).strip()
+    return "\n".join([safe_prompt, model or "", size or "", quality or ""])
+
+
+def _mcp_visible_error(err: str) -> str:
+    """Return err only when safe for MCP/agent output; otherwise generic."""
+    if not err or not isinstance(err, str):
+        return _GENERIC_MCP_ERROR
+    low = err.lower()
+    _LEAK_MARKERS = (
+        "://",
+        "/users/",
+        "\\users\\",
+        "/home/",
+        "api_key",
+        "token",
+        "secret",
+        "bearer ",
+        "sk-",
+    )
+    if any(m in low for m in _LEAK_MARKERS):
+        return _GENERIC_MCP_ERROR
+    if err.startswith("Image generation failed (") and "):" in err:
+        return _GENERIC_MCP_ERROR
+    if err.startswith("Image generation error:"):
+        return _GENERIC_MCP_ERROR
+    return err
 
 
 @server.list_tools()
@@ -55,118 +87,47 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text="Error: Image prompt is required")]
 
     try:
-        import httpx
-        from src.settings import load_settings, get_setting
-        from src.ai_interaction import _resolve_model
+        from src.settings import get_setting
+        from src.ai_interaction import do_generate_image
 
         if not get_setting("image_gen_enabled", True):
             return [TextContent(type="text", text="Error: Image generation is disabled by the administrator.")]
 
-        _settings = load_settings()
+        # Delegate to the canonical owner-aware path (OQ-5). This keeps the
+        # OpenAI-compatible behavior and adds media-registry / ComfyUI routing
+        # in one place rather than duplicating it here.
+        #
+        # OWNER/SESSION LIMITATION (Gatekeeper F3): this MCP server runs as a
+        # separate stdio subprocess and receives no auth/session context, so it
+        # cannot attribute generations to an owner. Images created via this path
+        # are therefore saved with owner/session unset (acceptable for the
+        # single-user local default; revisit before multi-user deployment). The
+        # direct chat path (routes/chat_routes.py) DOES pass the real owner and
+        # remains owner/session-scoped — do not weaken it.
+        content = _build_image_content(prompt, model_spec, size, quality)
+        result = await do_generate_image(content, owner=None)
 
-        if not model_spec:
-            model_spec = _settings.get("image_model", "")
-        if quality == "medium" and _settings.get("image_quality"):
-            quality = _settings["image_quality"]
+        if isinstance(result, dict) and result.get("error"):
+            safe = _mcp_visible_error(result["error"])
+            return [TextContent(type="text", text=f"Error: {safe}")]
 
-        # Auto-detect best available image model
-        if not model_spec:
-            for candidate in ("gpt-image-1.5", "gpt-image-1", "dall-e-3"):
-                try:
-                    _resolve_model(candidate)
-                    model_spec = candidate
-                    break
-                except ValueError:
-                    continue
-            if not model_spec:
-                return [TextContent(type="text", text="Error: No image model found. Configure one in Admin.")]
-
-        url, model_id, headers = _resolve_model(model_spec)
-
-        is_gpt_image = "gpt-image" in model_id.lower()
-        base_url = url.replace("/chat/completions", "").replace("/v1/messages", "").rstrip("/")
-        images_url = base_url + "/images/generations"
-
-        valid_gpt_sizes = {"1024x1024", "1024x1536", "1536x1024", "auto"}
-        valid_dalle3_sizes = {"1024x1024", "1024x1792", "1792x1024"}
-        if is_gpt_image and size not in valid_gpt_sizes:
-            size = "1024x1024"
-        elif not is_gpt_image and size not in valid_dalle3_sizes:
-            size = "1024x1024"
-
-        payload = {"model": model_id, "prompt": prompt, "n": 1, "size": size}
-        if is_gpt_image:
-            payload["quality"] = quality if quality in ("low", "medium", "high", "auto") else "medium"
-
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=30.0, read=300.0, write=30.0, pool=30.0)) as client:
-            resp = await client.post(images_url, json=payload, headers=headers)
-
-            if resp.status_code != 200:
-                error_text = resp.text[:500]
-                try:
-                    err_json = resp.json()
-                    error_text = err_json.get("error", {}).get("message", error_text) if isinstance(err_json.get("error"), dict) else str(err_json.get("error", error_text))
-                except Exception:
-                    pass
-                return [TextContent(type="text", text=f"Error: Image generation failed ({resp.status_code}): {error_text}")]
-
-            data = resp.json()
-            images = data.get("data", [])
-            if not images:
-                return [TextContent(type="text", text="Error: No images returned from API")]
-
-            img = images[0]
-            image_url = None
-            # Prefix the instance's public base URL (existing app_public_url setting) so the
-            # link is fully-qualified and clickable when the model echoes it. Empty = relative
-            # same-origin path (unchanged default).
-            _pub_base = (get_setting("app_public_url", "") or "").rstrip("/")
-
-            if img.get("b64_json"):
-                img_dir = Path(GENERATED_IMAGES_DIR)
-                img_dir.mkdir(parents=True, exist_ok=True)
-                filename = f"{uuid.uuid4().hex[:12]}.png"
-                img_path = img_dir / filename
-                img_path.write_bytes(base64.b64decode(img["b64_json"]))
-                image_url = f"{_pub_base}/api/generated-image/{filename}"
-
-                # Save to gallery
-                try:
-                    from src.database import SessionLocal, GalleryImage
-                    db = SessionLocal()
-                    db.add(GalleryImage(
-                        id=str(uuid.uuid4()),
-                        filename=filename,
-                        prompt=prompt,
-                        model=model_id,
-                        size=size,
-                        quality=payload.get("quality", "medium"),
-                    ))
-                    db.commit()
-                    db.close()
-                except Exception:
-                    pass
-
-            elif img.get("url"):
-                image_url = img["url"]
-            else:
-                return [TextContent(type="text", text="Error: Unexpected image API response format")]
-
-            # "Direct link:" rather than an "image_url:" label — small models copied the
-            # label token ("image_url") into the link href, producing a broken link.
-            result = (
+        image_url = result.get("image_url") if isinstance(result, dict) else None
+        if image_url:
+            text = (
                 f"Generated image for: {prompt[:100]}\n"
-                f"Direct link: {image_url}\n"
-                f"model: {model_id}\nsize: {size}"
+                f"image_url: {image_url}\n"
+                f"model: {result.get('image_model', model_spec)}\n"
+                f"size: {result.get('image_size', size)}"
             )
-            return [TextContent(type="text", text=result)]
+            return [TextContent(type="text", text=text)]
 
-    except httpx.TimeoutException:
-        return [TextContent(type="text", text="Error: Image generation timed out (300s)")]
-    except ValueError as e:
-        return [TextContent(type="text", text=f"Error: {e}")]
-    except Exception as e:
-        return [TextContent(type="text", text=f"Error: {e}")]
+        # No image_url and no error → degraded-state informational message.
+        msg = result.get("results") if isinstance(result, dict) else None
+        return [TextContent(type="text", text=msg or "Error: Unexpected image generation response")]
+
+    except Exception:
+        logger.exception("MCP generate_image failed")
+        return [TextContent(type="text", text=f"Error: {_GENERIC_MCP_ERROR}")]
 
 
 async def run():

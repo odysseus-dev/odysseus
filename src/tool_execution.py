@@ -778,11 +778,12 @@ async def _execute_tool_block_impl(
         query = content.split("\n")[0].strip()
         desc = f"search_chats: {query[:80]}"
         result = await do_search_chats(query, owner=owner)
-    elif tool in ("chat_with_model", "ask_teacher", "list_models"):
+    elif tool in ("chat_with_model", "ask_teacher", "list_models", "list_media_models"):
         # Migrated to the agent_tools registry (#3629): dispatched through
         # TOOL_HANDLERS with the owner/session ctx these tools need, instead
         # of the legacy dispatch_ai_tool elif. The impls live in
-        # src/agent_tools/model_interaction_tools.py.
+        # src/agent_tools/model_interaction_tools.py and
+        # src/agent_tools/media_tools.py.
         first_line = content.split(chr(10))[0].strip()[:60]
         desc = f"{tool}: {first_line}" if first_line else tool
         result = await _document_tool_dispatch(tool, content, session_id, owner) \

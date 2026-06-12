@@ -10,7 +10,7 @@ import logging
 import hashlib
 import re
 import time
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 from src.embedding_lanes import (
     LANE_CUSTOM,
@@ -82,7 +82,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
     "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
-    "generate_image": "Generate an AI image from a text prompt. Specify model, size, and quality. Art, illustrations, photos.",
+    "generate_image": "Generate an AI image from a text prompt. Specify model, size, and quality. Art, illustrations, photos. There is no separate 'draw' tool — use generate_image for creation after list_media_models confirms a model is configured.",
+    "list_media_models": "List configured and enabled media generation models (image models) and their capabilities, including which is the default. ALWAYS call this FIRST when the user asks whether you can make/draw/generate images or what image models are available — e.g. 'can you make images?', 'can you draw?', 'do you support image generation?'. Report the tool result; if no models are configured, relay the degraded-state message. Never invent tools — there is no draw, image_editing, or separate editing tool for capability questions. Never guess model names like Stable Diffusion.",
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
     "pipeline": "Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.",
@@ -137,6 +138,111 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
     "manage_bg_jobs": "Inspect and control detached background `bash` jobs (the ones started with a `#!bg` marker). action='list' shows this chat's jobs (id/status/age/command); action='output' returns a job's captured output so far (check on a long-running job, or re-read a finished one); action='kill' stops a runaway job by id. Use for 'is the background job done', 'check on that job', 'show the build output', 'kill the background job', 'stop the bg task'. output/kill need a job_id from list.",
 }
+
+# Image tool keyword hints (kept separate so capability questions take precedence
+# over broad creation keywords like bare "images").
+_IMAGE_CAPABILITY_HINTS = frozenset({
+    "can you make images", "can you make pictures",
+    "can you make an image", "can you create images",
+    "can you draw", "can you generate images",
+    "can you generate pictures", "do you support image",
+    "support image generation", "image generation available",
+    "what image models", "image models available",
+    "generate pictures", "generate images",
+})
+_IMAGE_CREATION_HINTS = frozenset({
+    "image", "images", "picture", "pictures", "photo", "art",
+    "illustration", "render", "make an image",
+    "generate an image", "create an image", "image model",
+    "image models", "media models", "draw a", "draw me",
+})
+# Concrete text-to-image requests (distinct from capability questions).
+_IMAGE_CREATION_PROMPT_HINTS = frozenset({
+    "generate an image of", "generate an image",
+    "create an image of", "create an image",
+    "make a picture of", "make a picture",
+    "make an image of", "make an image",
+    "draw a", "draw me", "draw an",
+    "paint a", "paint me",
+})
+
+# Tools that must NOT appear for image-capability questions. Includes names
+# models hallucinate (draw, image_editing) even though they are not registered.
+IMAGE_CAPABILITY_FORBIDDEN_TOOLS = frozenset({
+    "generate_image", "edit_image", "draw", "image_editing",
+})
+
+
+def is_image_capability_question(query: object) -> bool:
+    """True when the user asks WHETHER image generation is available."""
+    if not isinstance(query, str) or not query.strip():
+        return False
+    ql = query.lower()
+    return any(
+        re.search(rf"\b{re.escape(kw)}\b", ql) for kw in _IMAGE_CAPABILITY_HINTS
+    )
+
+
+def is_concrete_image_creation_prompt(query: object) -> bool:
+    """True for direct text-to-image requests (not capability questions)."""
+    if not isinstance(query, str) or not query.strip():
+        return False
+    if is_image_capability_question(query):
+        return False
+    ql = query.lower()
+    return any(
+        re.search(rf"\b{re.escape(kw)}\b", ql) for kw in _IMAGE_CREATION_PROMPT_HINTS
+    )
+
+
+def should_preroute_image_discovery(
+    query: object,
+    *,
+    owner: str = "",
+    settings: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return a pre-route kind for image discovery / generation, or ``None``.
+
+    * ``'capability'`` — list_media_models for availability questions
+    * ``'creation'`` — list_media_models + degraded state when unconfigured
+    * ``'configured_creation'`` — canonical ``do_generate_image`` when routable
+    """
+    if not isinstance(query, str) or not query.strip():
+        return None
+    if is_image_capability_question(query):
+        return "capability"
+    if is_concrete_image_creation_prompt(query):
+        from src import media_registry
+
+        if media_registry.image_generation_routable(owner=owner, settings=settings):
+            return "configured_creation"
+        return "creation"
+    return None
+
+
+def apply_image_capability_tool_selection(tools: Set[str], query: object) -> Set[str]:
+    """Narrow tool selection for image-capability questions."""
+    if not is_image_capability_question(query):
+        return tools
+    narrowed = set(tools) - IMAGE_CAPABILITY_FORBIDDEN_TOOLS
+    narrowed.add("list_media_models")
+    return narrowed
+
+
+def keyword_hint_tools(query: str) -> Set[str]:
+    """Return tool names force-included by keyword hints for *query*."""
+    ql = (query or "").lower()
+    matched: Set[str] = set()
+    # Capability discovery wins over creation so "can you make images?" does not
+    # also pull in generate_image via the bare "images" creation keyword.
+    if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in _IMAGE_CAPABILITY_HINTS):
+        matched.add("list_media_models")
+    elif any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in _IMAGE_CREATION_HINTS):
+        matched.update({"list_media_models", "generate_image"})
+    for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
+        if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
+            matched.update(tools)
+    return matched
 
 
 class ToolIndex:
@@ -514,21 +620,13 @@ class ToolIndex:
         base = set(always_include or ALWAYS_AVAILABLE)
         retrieved = self.retrieve(query, k=k)
         base.update(retrieved)
-        # Keyword-based force-include for common intents. Match on word
-        # boundaries, not raw substrings, so short hints like "fix", "line",
-        # "serve", "reply" or "unread" don't fire inside unrelated words
-        # ("prefix", "deadline"/"online", "observe"/"reserve", "replying",
-        # "unreadable"). Same word-boundary matching used in topic_analyzer.
-        ql = query.lower()
-        for keywords, tools in self._KEYWORD_HINTS.items():
-            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
-                base.update(tools)
+        base.update(keyword_hint_tools(query))
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",
         # daily/nightly/etc., or a clock time like "at 7:30 am" / "7am", which
         # all signal a recurring/scheduled task. Force-include manage_tasks so
         # the agent can actually create the cron job instead of fumbling.
-        if self._SCHEDULE_RE.search(ql):
+        if self._SCHEDULE_RE.search((query or "").lower()):
             base.add("manage_tasks")
         # URL/site requests need web tools even when embedding retrieval is
         # stubbed/unavailable. Keep this structural, not always-on, so trivial
@@ -544,6 +642,7 @@ class ToolIndex:
         # The "for/to <word>" check needs to allow lowercase names (users
         # don't always capitalize) but filter out timing/pronoun stopwords
         # so "save this for later" / "save for tomorrow" don't trigger.
+        ql = (query or "").lower()
         _CONTACT_STOPWORDS_AFTER_FOR = {
             "later", "tomorrow", "yesterday", "now", "then", "today",
             "tonight", "me", "us", "you", "him", "her", "them", "myself",
@@ -582,7 +681,7 @@ class ToolIndex:
             base.add("manage_contact")
         if contact_only_signal and "manage_contact" in base:
             base.discard("manage_memory")
-        return base
+        return apply_image_capability_tool_selection(base, query)
 
 
 # ── Singleton ──

@@ -12,7 +12,7 @@ import json
 import re
 import time
 import logging
-from typing import AsyncGenerator, List, Dict, Optional, Set
+from typing import Any, AsyncGenerator, List, Dict, Optional, Set
 from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
@@ -61,7 +61,9 @@ def _load_mcp_disabled_map() -> Dict[str, set]:
 # Always injected — the LLM decides whether to use them.
 _AGENT_PREAMBLE = """\
 You are an AI assistant with tool access. You can run shell commands, execute Python, search the web, \
-read/write files, create and edit documents, generate images, manage memories, and more. \
+read/write files, create and edit documents, manage memories, and more. \
+Image generation is only available when configured — call ```list_media_models``` to check; \
+there is no `draw` or `image_editing` tool. \
 To use a tool, write a fenced code block with the tool name as the language tag. \
 The block executes automatically and you see the output."""
 
@@ -86,6 +88,8 @@ _AGENT_RULES = """\
 - User identity facts/preferences ("my name is <name>", "I live in <place>", "I prefer concise replies", "call me <name>") → use `manage_memory` with action=add. NEVER use `manage_contact` for facts about the user unless the user explicitly says to create/update a contact and provides contact details such as an email or phone.
 - "Create/add/write a note" / "notes" / "todos" / "remind me to X at <time>" → use `manage_notes`. Do NOT store notes in `manage_memory`; memory is for persistent facts/preferences about the user, not note content. For reminders, include a `due_date`; for todos, use `note_type=checklist` when appropriate.
 - "Do X every morning / daily / on a schedule / automatically" (e.g. "summarize my inbox every morning") → this is a request to CREATE A SCHEDULED TASK, not to do X once right now. Call `manage_tasks` with action=create (prompt = what to do, schedule + cron/time). Do NOT just perform the action inline this turn — the user wants it to recur. After creating, return a clickable `[Task name](#task-<id>)` link and tell them it'll run on schedule and show in the Tasks panel. If you also want to show a sample of this run, do that AFTER creating the task, not instead of it.
+- "Can you make/draw/generate images?" / "Do you support image generation?" / "What image models are available?" → call ```list_media_models``` FIRST (it may already be pre-routed for you). There is no `draw`, `image_editing`, or invented image tool — never fabricate tool blocks. Answer only from the list_media_models result: if no models are configured, relay the degraded-state message; do not claim image generation works until the tool confirms models are available.
+- Concrete image requests ("generate/create an image of …", "draw a …", "make a picture of …") with no configured model → list_media_models may already be pre-routed. Image generation IS a tool here — do NOT say you cannot create images; relay the no-model degraded state and setup steps. Do not invent Stable Diffusion, sstablediff, draw, or image_editing.
 
 ## UI conventions
 - When you reference an entity by ID in your reply, render it as a STANDARD markdown link with a hash-prefixed anchor. The frontend converts these into clickable jump buttons:
@@ -128,6 +132,8 @@ _API_AGENT_RULES = """\
 - Calendar: call `manage_calendar` with `action=list_calendars` FIRST before create/update/delete operations.
 - "Create/add/write a note" / "notes" / "todos" / "remind me to X at <time>" → use `manage_notes`. Do NOT store notes in `manage_memory`; memory is for persistent facts/preferences about the user, not note content. For reminders, include a `due_date`; for todos, use `note_type=checklist` when appropriate. `manage_tasks` is for RECURRING background AI jobs, NOT for one-off user reminders.
 - "Disable/turn off/enable/turn on <tool>" (shell, search, research, browser, documents, incognito, etc.) → call `ui_control` with `toggle <name> <on|off>`. Aliases accepted: shell→bash, search→web, deepresearch→research, documents→document_editor. NEVER record this as a memory — the user wants the toggle flipped, not a note about preferring it.
+- "Can you make/draw/generate images?" / "Do you support image generation?" / "What image models are available?" → call `list_media_models` FIRST (it may already be pre-routed for you). There is no `draw`, `image_editing`, or invented image tool — never fabricate tool calls. Answer only from the list_media_models result: if no models are configured, relay the degraded-state message; do not claim image generation works until the tool confirms models are available.
+- Concrete image requests ("generate/create an image of …", "draw a …", "make a picture of …") with no configured model → list_media_models may already be pre-routed. Image generation IS a tool here — do NOT say you cannot create images; relay the no-model degraded state and setup steps. Do not invent Stable Diffusion, sstablediff, draw, or image_editing.
 - "Research X" / "do research on X" / "look into Y" / "deep dive on Z" → call `trigger_research` with `topic`. This starts a live job that appears in the Deep Research sidebar (streams progress + final report). **Do NOT use `web_search` for these** — saw the agent do a plain web_search for "do research on X" when the user wanted the deep-research job. "research X" is a deep-research request, not a quick lookup. (web_search is only for a single quick fact mid-task.) Do NOT POST /api/research/start via app_api either — blocked. After starting, tell the user it's running in the Deep Research sidebar. Only if the user explicitly wants it inline/quick should you fall back to web_search.
 - "Open/show <panel>" (documents, library, gallery, email, inbox, sessions, brain/memories, skills, settings, notes, cookbook) → call `ui_control` with `open_panel <name>`. Panel aliases: library/doc/docs/document→documents, images→gallery, mail/inbox/emails→email, chats/history→sessions, memory/memories→brain, preferences→settings, models/serve/serving→cookbook. CRITICAL: "open memory/memories/brain" / "open skills" / "open notes" / "open documents" / "open cookbook" means OPEN THE PANEL — call `ui_control`, NOT a manage/list tool. The "manage_*" tools list contents in chat; `ui_control open_panel` opens the visual modal the user is asking for.
 - "Open/start a reply", "open a reply to <sender>", "draft a reply window" for email → find/read the email if needed, then call `ui_control` with `open_email_reply <uid> <folder> reply`. This opens the same email document compose window as clicking Reply in the Email UI. Do NOT call `reply_to_email` unless the user explicitly gave body text and wants to SEND immediately.
@@ -409,6 +415,7 @@ Suggest changes with explanations (for review/feedback requests).""",
 ```
 Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g. 1024x1024), line 4 = quality.""",
 
+    "list_media_models": "- ```list_media_models``` — List configured, enabled image-generation models and which is the default. Optional line 1 = kind (image/video; default image). ALWAYS call this FIRST when the user asks whether you can make/draw/generate images or what image models are available. There is no `draw`, `image_editing`, or invented image tool. Report the tool result — if no models are configured, relay the degraded-state message instead of claiming support. Only call ```generate_image``` after models are confirmed.",
     "chat_with_model": "- ```chat_with_model``` — Ask a DIFFERENT AI model and relay its answer. Line 1 = model name (or 'model@endpoint'), rest = your message. Use when the user says 'ask <model>', 'what does <model> think', or wants to compare/their answer from another model.",
     "ask_teacher": "- ```ask_teacher``` — Escalate a hard question to a more capable model. Line 1 = model name or 'auto', rest = the question. Use when stuck or need expert knowledge.",
     "list_models": "- ```list_models``` — Show all available AI models across all endpoints. Use when user asks what models are available.",
@@ -843,6 +850,14 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         "domains": domains,
         "retrieval_query": retrieval_query,
     }
+
+
+def _index_of_last_user_message(messages: List[Dict]) -> int:
+    """Index of the most recent user message, or len(messages) if none."""
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            return i
+    return len(messages)
 
 
 def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
@@ -1404,7 +1419,7 @@ def _build_base_prompt(
         if not needs_admin:
             # At least strip the management section
             mgmt_tools = set(TOOL_SECTIONS.keys()) - set(ALWAYS_AVAILABLE) - {
-                "generate_image", "suggest_document",
+                "generate_image", "list_media_models", "suggest_document",
                 "chat_with_model", "ask_teacher", "list_models",
             }
             agent_prompt = _assemble_prompt(
@@ -1829,6 +1844,46 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+def _list_media_result_is_unavailable(result: object) -> bool:
+    """True when list_media_models reports no usable image model."""
+    if not isinstance(result, dict):
+        return False
+    if result.get("available") is False:
+        return True
+    return result.get("status") in ("no_models", "no_default")
+
+
+def _deterministic_image_creation_answer(tool_result: object) -> Optional[str]:
+    """Return the final assistant text for unconfigured creation pre-routes."""
+    if not _list_media_result_is_unavailable(tool_result):
+        return None
+    text = tool_result.get("results") if isinstance(tool_result, dict) else None
+    return text.strip() if isinstance(text, str) and text.strip() else None
+
+
+def _generate_image_tool_output_text(result: object) -> str:
+    """Build agent-visible tool_output text for a generate_image result."""
+    if not isinstance(result, dict):
+        return "Image generation did not return a result."
+    if result.get("error"):
+        return str(result["error"])[:2000]
+    if result.get("image_url"):
+        prompt = (result.get("image_prompt") or result.get("results") or "")[:100]
+        lines = [f"Generated image for: {prompt}", f"Direct link: {result['image_url']}"]
+        if result.get("image_model"):
+            lines.append(f"model: {result['image_model']}")
+        if result.get("image_size"):
+            lines.append(f"size: {result['image_size']}")
+        return "\n".join(lines)[:4000]
+    text = result.get("results")
+    return text[:4000] if isinstance(text, str) and text.strip() else "Image generation did not return a result."
+
+
+def _deterministic_configured_image_answer(result: object) -> str:
+    """Return the final assistant text for configured creation pre-routes."""
+    return _generate_image_tool_output_text(result)
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -1970,12 +2025,11 @@ async def stream_agent_loop(
     # Fallback: if RAG unavailable, use keyword-based tool selection
     # instead of sending ALL tools (which overwhelms the model).
     if not guide_only and not _relevant_tools and _retrieval_query:
-        from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
+        from src.tool_index import ALWAYS_AVAILABLE, keyword_hint_tools
         _relevant_tools = set(ALWAYS_AVAILABLE)
-        ql = _retrieval_query.lower()
-        for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
-                _relevant_tools.update(tools)
+        _relevant_tools.update(keyword_hint_tools(_retrieval_query))
+        # Always include core document/memory tools
+        _relevant_tools.update({"create_document", "manage_memory", "manage_notes"})
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
 
     # If deterministic domain detection fired, seed the corresponding domain
@@ -2045,6 +2099,10 @@ async def stream_agent_loop(
                         )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
+    if _relevant_tools is not None and _retrieval_query:
+        from src.tool_index import apply_image_capability_tool_selection
+        _relevant_tools = apply_image_capability_tool_selection(_relevant_tools, _retrieval_query)
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
@@ -2216,6 +2274,169 @@ async def stream_agent_loop(
 
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
 
+    # Deterministic pre-route: image-capability questions, unconfigured creation
+    # (list_media_models + degraded state), and configured creation (canonical
+    # do_generate_image) — so the model cannot invent model-specific pseudo-tools.
+    _image_discovery_prerouted = False
+    _image_creation_final_answer: Optional[str] = None
+    _image_creation_tool_event: Optional[Dict[str, Any]] = None
+    if (
+        not guide_only
+        and not plan_mode
+        and _last_user
+        and get_setting("image_gen_enabled", True)
+    ):
+        from src.tool_index import should_preroute_image_discovery
+        _preroute_kind = should_preroute_image_discovery(_last_user, owner=owner or "")
+        if _preroute_kind == "configured_creation":
+            try:
+                from src.ai_interaction import do_generate_image
+
+                _gen_cmd = _last_user.strip()[:80]
+                yield (
+                    f'data: {json.dumps({"type": "tool_start", "tool": "generate_image", "command": _gen_cmd, "round": 0})}\n\n'
+                )
+                _progress_q: asyncio.Queue = asyncio.Queue()
+
+                async def _gen_progress(payload):
+                    msg = payload.get("message", "") if isinstance(payload, dict) else str(payload)
+                    if msg:
+                        await _progress_q.put(msg)
+
+                async def _run_configured_generate():
+                    return await do_generate_image(
+                        _last_user.strip(),
+                        session_id=session_id,
+                        owner=owner,
+                        progress_cb=_gen_progress,
+                    )
+
+                _gen_task = asyncio.create_task(_run_configured_generate())
+                while not _gen_task.done():
+                    _get_task = asyncio.create_task(_progress_q.get())
+                    done, _pending = await asyncio.wait(
+                        {_gen_task, _get_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                        timeout=15.0,
+                    )
+                    if _get_task in done:
+                        _msg = _get_task.result()
+                        yield (
+                            f'data: {json.dumps({"type": "tool_progress", "tool": "generate_image", "round": 0, "message": _msg})}\n\n'
+                        )
+                    else:
+                        _get_task.cancel()
+                    if not done:
+                        yield (
+                            f'data: {json.dumps({"type": "tool_progress", "tool": "generate_image", "round": 0, "message": "Generating image…"})}\n\n'
+                        )
+                result = await _gen_task
+                while not _progress_q.empty():
+                    _tail_msg = _progress_q.get_nowait()
+                    if _tail_msg:
+                        yield (
+                            f'data: {json.dumps({"type": "tool_progress", "tool": "generate_image", "round": 0, "message": _tail_msg})}\n\n'
+                        )
+                output_text = _generate_image_tool_output_text(result)
+                tool_output_data = {
+                    "type": "tool_output",
+                    "tool": "generate_image",
+                    "command": _gen_cmd,
+                    "output": output_text,
+                    "exit_code": 0 if not (isinstance(result, dict) and result.get("error")) else 1,
+                }
+                if isinstance(result, dict):
+                    for k in (
+                        "image_url", "image_id", "image_prompt",
+                        "image_model", "image_size", "image_quality",
+                    ):
+                        if result.get(k):
+                            tool_output_data[k] = result[k]
+                yield f'data: {json.dumps(tool_output_data)}\n\n'
+                _image_discovery_prerouted = True
+                _image_creation_final_answer = _deterministic_configured_image_answer(result)
+                _image_creation_tool_event = {
+                    "round": 0,
+                    "tool": "generate_image",
+                    "command": _gen_cmd,
+                    "output": output_text,
+                    "exit_code": tool_output_data["exit_code"],
+                }
+                if isinstance(result, dict) and result.get("image_url"):
+                    for ik in (
+                        "image_url", "image_id", "image_prompt",
+                        "image_model", "image_size", "image_quality",
+                    ):
+                        if result.get(ik):
+                            _image_creation_tool_event[ik] = result[ik]
+                logger.info(
+                    "[image-discovery] terminating deterministically after generate_image "
+                    "(configured creation)",
+                )
+            except Exception as e:
+                logger.warning("[image-discovery] configured creation pre-route failed (non-fatal): %s", e)
+        elif _preroute_kind and (
+            "list_media_models" not in disabled_tools
+            and not (tool_policy and tool_policy.blocks("list_media_models"))
+        ):
+            try:
+                from src.agent_tools.media_tools import list_media_models
+
+                result = await list_media_models("", session_id=session_id, owner=owner)
+                desc = "list_media_models"
+                formatted = format_tool_result(desc, result)
+                output_text = result.get("results") or formatted
+                yield (
+                    f'data: {json.dumps({"type": "tool_start", "tool": "list_media_models", "command": "", "round": 0})}\n\n'
+                )
+                yield (
+                    f'data: {json.dumps({"type": "tool_output", "tool": "list_media_models", "command": "", "output": output_text, "exit_code": 0})}\n\n'
+                )
+                _image_discovery_prerouted = True
+                _deterministic_answer = (
+                    _deterministic_image_creation_answer(result)
+                    if _preroute_kind == "creation"
+                    else None
+                )
+                if _deterministic_answer:
+                    _image_creation_final_answer = _deterministic_answer
+                    logger.info(
+                        "[image-discovery] terminating deterministically after list_media_models "
+                        "(creation, no model configured)",
+                    )
+                else:
+                    if _preroute_kind == "capability":
+                        preroute_note = (
+                            "## list_media_models (pre-routed)\n"
+                            "The user asked whether image generation is available. "
+                            "This tool ran automatically before your response.\n\n"
+                            f"{formatted}\n\n"
+                            "Answer ONLY from this result. There is no `draw`, `image_editing`, "
+                            "`edit_image`, or other invented image tool — do not call or mention them. "
+                            "If no models are configured, relay the degraded-state message above."
+                        )
+                    else:
+                        preroute_note = (
+                            "## list_media_models (pre-routed)\n"
+                            "The user asked to generate an image. No image model is configured yet, "
+                            "so this tool ran automatically before your response.\n\n"
+                            f"{formatted}\n\n"
+                            "Image generation IS available as a tool in this app — do NOT say you "
+                            "cannot create images. Relay the degraded-state message and setup "
+                            "guidance above. There is no `draw`, `image_editing`, `edit_image`, "
+                            "Stable Diffusion, sstablediff, or other invented provider/tool — do not "
+                            "call or mention them."
+                        )
+                    inject = untrusted_context_message("tool_result", preroute_note)
+                    messages.insert(_index_of_last_user_message(messages), inject)
+                    disabled_tools.update({"generate_image", "edit_image"})
+                    logger.info(
+                        "[image-discovery] pre-routed list_media_models (%s) before model response",
+                        _preroute_kind,
+                    )
+            except Exception as e:
+                logger.warning("[image-discovery] pre-route failed (non-fatal): %s", e)
+
     full_response = ""
     total_start = time.time()
     time_to_first_token = None
@@ -2236,7 +2457,7 @@ async def stream_agent_loop(
     backend_prefill_tps = 0  # backend-reported prefill speed
     requested_model = model
     actual_model = model
-    total_tool_calls = 0  # for budget enforcement
+    total_tool_calls = 1 if _image_discovery_prerouted else 0  # budget enforcement
 
     # Loop-breaker state. Small models (e.g. deepseek-v4-flash) can get
     # stuck firing the same tool call over and over with no text — burns
@@ -2285,7 +2506,31 @@ async def stream_agent_loop(
     # so the user can resume instead of the turn silently stalling.
     _exhausted_rounds = False
 
+    round_reasoning = ""
+
+    if _image_creation_final_answer is not None:
+        time_to_first_token = time.time() - total_start
+        first_token_received = True
+        full_response = _image_creation_final_answer
+        round_texts.append(full_response)
+        if _image_creation_tool_event is not None:
+            tool_events.append(_image_creation_tool_event)
+        else:
+            tool_events.append({
+                "round": 0,
+                "tool": "list_media_models",
+                "command": "",
+                "output": _image_creation_final_answer,
+                "exit_code": 0,
+            })
+        # Frontend hides the initial bubble on tool_start when there is no prose
+        # yet; agent_step creates the visible round bubble before text deltas.
+        yield f'data: {json.dumps({"type": "agent_step", "round": 1})}\n\n'
+        yield f'data: {json.dumps({"delta": _image_creation_final_answer})}\n\n'
+
     for round_num in range(1, max_rounds + 1):
+        if _image_creation_final_answer is not None:
+            break
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
         native_tool_calls = []  # populated if model uses function calling

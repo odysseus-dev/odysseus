@@ -40,6 +40,29 @@ DEFAULT_SETTINGS = {
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
+    # Media generation provider layer (image MVP; video later). See
+    # src/media_registry.py. `media_models` is a list of MediaModel dicts
+    # (id, label, provider, kind, capabilities, endpointUrl, workflowPath,
+    # enabled, isDefault, notes). `default_image_media_model` names the
+    # preferred image model id; `comfyui_endpoint_url` is the default ComfyUI
+    # endpoint used when a model entry omits its own endpointUrl. Empty values
+    # mean "not configured" and drive the degraded-state response.
+    "media_models": [],
+    "default_image_media_model": "",
+    "comfyui_endpoint_url": "",
+    # Wall-clock poll budget for ComfyUI image generation (seconds). Clamped to
+    # 30–900 in services/media/comfyui.py. Per-model override:
+    # media_models[].generationTimeoutSeconds.
+    "comfyui_generation_timeout_seconds": 300,
+    # Default WxH for ComfyUI / local media generation when the request omits
+    # size. Per-model override: media_models[].defaultSize.
+    "comfyui_default_image_size": "512x512",
+    # Privacy / local-first guard: media providers are local-by-default.
+    # Loopback (local machine) and private-LAN (local network) endpoints are
+    # allowed; only PUBLIC/remote (internet-routable) media endpoints are
+    # refused unless an admin explicitly opts in here. See
+    # services/media/comfyui.py (classify_endpoint).
+    "allow_remote_media_providers": False,
     "vision_model": "",
     "vision_enabled": True,
     # Ordered fallback chain for the Vision model (image analysis, OCR, tagging).
