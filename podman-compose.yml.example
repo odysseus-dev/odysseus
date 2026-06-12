@@ -5,6 +5,8 @@
 #     via the pod network gateway instead (find with: ip route show | grep podman,
 #     typically 10.88.0.1). Set OLLAMA_BASE_URL=http://10.88.0.1:11434/v1 in .env.
 #   - Bind-mount volumes carry :z for SELinux relabeling (Fedora/RHEL/Arch).
+#   - userns_mode: keep-id for rootless Podman — maps container user to host user
+#     so bind-mounted data directories stay owned by the host user.
 #
 # Usage:
 #   cp .env.example.podman .env   # fill in your values
@@ -71,6 +73,9 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    # Rootless Podman: map container user to host user so bind-mounted
+    # files under /app/data stay owned by the host user.
+    userns_mode: keep-id
     depends_on:
       searxng:
         condition: service_healthy
