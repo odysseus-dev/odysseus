@@ -11,7 +11,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
-from src.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
+from src.auth_helpers import effective_user, _auth_disabled, owner_filter
 from src.session_actions import is_session_recently_active
 
 
@@ -328,7 +328,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_id: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
-        user = get_current_user(request)
+        user = effective_user(request)
         endpoint_api_key = ""
         endpoint_base_url = ""
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
@@ -477,7 +477,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
         # Switch model/endpoint mid-session
         if model is not None and endpoint_url is not None:
-            user = get_current_user(request)
+            user = effective_user(request)
             _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
             endpoint_api_key = ""
             endpoint_base_url = ""
