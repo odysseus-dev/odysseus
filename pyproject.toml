@@ -1,3 +1,49 @@
+[project]
+name = "odysseus"
+version = "1.0.0"
+description = "Self-hosted AI workspace with memory, research, and multi-modal capabilities"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "python-dotenv",
+    "httpx",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "SQLAlchemy",
+    "pypdf",
+    "beautifulsoup4",
+    "charset-normalizer",
+    "numpy",
+    "chromadb-client",
+    "fastembed",
+    "youtube-transcript-api",
+    "markdown",
+    "nh3",
+    "icalendar",
+    "python-dateutil",
+    "caldav",
+    "cryptography",
+    "bcrypt",
+    "mcp",
+    "pyotp",
+    "qrcode[pil]",
+    "croniter",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "core*", "routes*", "services*", "conf*", "companion*", "mcp_servers*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

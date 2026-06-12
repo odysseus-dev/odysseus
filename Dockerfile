@@ -25,8 +25,11 @@ WORKDIR /app
 # Install Python deps first (layer cache). Optional extras (PyMuPDF AGPL, etc.)
 # are opt-in so the default image stays MIT-core; see requirements-optional.txt.
 ARG INSTALL_OPTIONAL=false
-COPY requirements.txt requirements-optional.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
+# Install uv then use pyproject.toml for dependencies.
+# requirements-optional.txt is still opt-in (AGPL extras).
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY pyproject.toml requirements-optional.txt ./
+RUN uv pip install --system . \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
 # Copy app code

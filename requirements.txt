@@ -1,3 +1,7 @@
+# DEPRECATED: This file is superseded by pyproject.toml.
+# Dependencies are now managed with uv:  uv sync  /  uv pip install --system .
+# This file is retained temporarily for compatibility; it will be removed in a future cleanup.
+#
 fastapi
 uvicorn
 python-multipart
