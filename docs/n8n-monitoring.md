@@ -35,7 +35,7 @@ The integration provides the following standard JSON routes:
 
 - `GET /api/n8n/health` — Checks if n8n is reachable.
 - `GET /api/n8n/workflows` — Lists all configured workflows.
-- `GET /api/n8n/executions?status=failed&limit=10` — Lists recent executions.
+- `GET /api/n8n/executions?status=error&limit=10` — Lists recent executions (limit max 100).
 - `GET /api/n8n/executions/summary` — Returns a compact summary of failed executions.
 - `POST /api/n8n/executions/record-events` — Converts recent failed executions into durable Odysseus events. Deduplicated by `n8n:<workflow_id>:failed`.
 

@@ -79,7 +79,7 @@ curl -H "Authorization: Bearer <token>" "http://localhost:7000/api/homelab/healt
 ## Usage by Clients (Slack / OpenClaw)
 Clients polling for homelab status should transition from simple `/api/homelab/health` read-only polling to triggering `/api/homelab/health?record_events=true`. Once an event is returned in the API, the client should query `/api/events` to build incident alerts.
 
-Events return an array of `suggested_actions` such as `ack`, `investigate`, `resolve`, `ignore`, and `view_service` to help UIs render quick-action buttons. Destructive actions (`restart`, `shell`, `exec`, `delete`) are never included.
+Events return an array of `suggested_actions` (such as `ack`, `investigate`, `resolve`, `ignore`, `view_service`, `view_workflow`, `view_execution`, and `record_event`) to help UIs render quick-action buttons. Destructive actions (e.g., `restart`, `shell`, `exec`, `delete`, `retry`, `disable`) are strictly prohibited and never included.
 
 ### Recommended OpenClaw Commands
 See [openclaw-bridge.md](openclaw-bridge.md) for full curl examples and the complete route reference.
