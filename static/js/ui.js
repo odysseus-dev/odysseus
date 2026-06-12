@@ -296,6 +296,16 @@ function _wireToastSwipe(el) {
 /**
  * Show success toast message
  */
+
+const TOAST_MIN_DURATION = 2000;  
+const TOAST_MAX_DURATION = 6000;  
+const TOAST_MS_PER_CHAR = 50;
+
+function _getDefaultToastDuration(msg) {
+  const len = (msg || '').length;
+  return Math.min(TOAST_MAX_DURATION, Math.max(TOAST_MIN_DURATION, len * TOAST_MS_PER_CHAR));
+}
+
 export function showToast(msg, durationOrOpts) {
   if (!toastEl) {
     toastEl = document.getElementById('toast');
@@ -304,9 +314,9 @@ export function showToast(msg, durationOrOpts) {
   toastEl.textContent = '';
   toastEl.classList.remove('error');
 
-  let duration = 1200, actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
+  let duration = _getDefaultToastDuration(msg), actionLabel = null, onAction = null, actionHint = null, actionIcon = null, leadingIcon = null;
   if (typeof durationOrOpts === 'object' && durationOrOpts) {
-    duration = durationOrOpts.duration || 5000;
+    duration = durationOrOpts.duration || Math.max(_getDefaultToastDuration(msg), 5000);
     actionLabel = durationOrOpts.action;
     onAction = durationOrOpts.onAction;
     actionHint = durationOrOpts.actionHint || null;
