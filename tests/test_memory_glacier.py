@@ -28,7 +28,7 @@ def test_get_all_prioritizes_hot_memories_via_heap(tmp_path):
 
 def test_archive_cold_to_glacier_flushes_and_evicts(tmp_path):
     svc = MemoryService(str(tmp_path))
-    
+
     # Stub the vector store to track evictions without spinning up ChromaDB
     class _TrackingVectorStore:
         healthy = True
@@ -36,9 +36,9 @@ def test_archive_cold_to_glacier_flushes_and_evicts(tmp_path):
             self.removed = []
         def remove(self, mid):
             self.removed.append(mid)
-            
+
     svc.vector_store = _TrackingVectorStore()
-    
+
     now = int(time.time())
     thirty_days = 2592000
 
