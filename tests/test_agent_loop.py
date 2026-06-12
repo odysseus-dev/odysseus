@@ -38,6 +38,7 @@ try:
         _detect_admin_intent,
         _compute_final_metrics,
         _append_tool_results,
+        _MCP_KEYWORDS,
     )
     _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
 finally:
@@ -55,6 +56,10 @@ def test_import_stubs_do_not_leak_into_later_tests():
     assert leaked == []
     if _PREEXISTING_AGENT_LOOP is None:
         assert sys.modules.get("src.agent_loop") is not _IMPORTED_AGENT_LOOP
+
+
+def test_mcp_keyword_gate_matches_literal_mcp_requests():
+    assert "mcp" in _MCP_KEYWORDS
 
 
 # ---------------------------------------------------------------------------

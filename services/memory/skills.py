@@ -381,6 +381,54 @@ class SkillsManager:
 
         return sk.to_dict()
 
+    def import_bundle_from_files(
+        self,
+        files: Dict[str, str],
+        *,
+        owner: Optional[str] = None,
+        source_url: str = "",
+        category: str = "imported",
+    ) -> Dict:
+        """Install a fetched skill bundle (relative path → text) under skills/."""
+        from .skill_importer import SkillImportError, pick_skill_md, _safe_relpath
+        from core.atomic_io import atomic_write_text
+
+        if not files:
+            raise SkillImportError("empty bundle")
+        _rel, skill_md = pick_skill_md(files)
+        sk = Skill.from_markdown(skill_md)
+        nm = slugify(sk.name or _rel.split("/")[-2] or "skill")
+        cat = slugify(category or sk.category or "imported", fallback="imported")
+
+        existing = {s["name"] for s in self.load_all()}
+        base = nm
+        i = 2
+        while nm in existing:
+            nm = f"{base}-{i}"
+            i += 1
+
+        skill_dir = self._skill_dir(cat, nm)
+        os.makedirs(skill_dir, exist_ok=True)
+
+        # Preserve bundle layout (templates/, references/, etc.) under the skill dir.
+        for rel, content in files.items():
+            safe = _safe_relpath(rel)
+            dest = os.path.join(skill_dir, safe)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            atomic_write_text(dest, content)
+
+        sk.name = nm
+        sk.category = cat
+        sk.owner = owner
+        sk.source = "imported"
+        if source_url:
+            extra = (sk.body_extra or "").strip()
+            note = f"Imported from {source_url}"
+            sk.body_extra = f"{extra}\n\n{note}".strip() if extra else note
+        atomic_write_text(self._skill_file(cat, nm), sk.to_markdown())
+        sk.path = self._skill_file(cat, nm)
+        return sk.to_dict()
+
     def update_skill(self, skill_id: str, updates: Dict, owner: Optional[str] = None) -> bool:
         """`skill_id` is the slug name. Allows updating any field plus
         renames if `name` changes (file is moved on disk).
