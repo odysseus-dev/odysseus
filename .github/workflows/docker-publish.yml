@@ -1,7 +1,7 @@
 name: ci / docker publish
 
 # Build the Odysseus image and publish to GHCR.
-#   push to main -> :latest, :X.Y.Z            (curated release; main is fast-forwarded at releases)
+#   push to local -> :latest, :X.Y.Z            (curated release; local is fast-forwarded at releases)
 #   push to dev  -> :dev,    :X.Y.Z-dev.<sha>  (rolling dev + an immutable, traceable pin)
 # Multi-arch (linux/amd64 + linux/arm64): each arch builds on its own native
 # runner and pushes by digest, then a merge job stitches the digests into one
@@ -10,7 +10,7 @@ name: ci / docker publish
 
 on:
   push:
-    branches: [dev, main]
+    branches: [dev, local]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -116,8 +116,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/local' }}
+            type=raw,value=${{ steps.ver.outputs.version }},enable=${{ github.ref == 'refs/heads/local' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=raw,value=${{ steps.ver.outputs.version }}-dev.${{ steps.ver.outputs.short }},enable=${{ github.ref == 'refs/heads/dev' }}
       - name: Create manifest list + push tags
@@ -133,7 +133,7 @@ jobs:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
       - name: Inspect
         run: |
-          if [ "$GITHUB_REF" = "refs/heads/main" ]; then ref=latest; else ref=dev; fi
+          if [ "$GITHUB_REF" = "refs/heads/local" ]; then ref=latest; else ref=dev; fi
           docker buildx imagetools inspect "${REGISTRY}/${IMAGE_NAME}:${ref}"
         env:
           REGISTRY: ${{ env.REGISTRY }}
