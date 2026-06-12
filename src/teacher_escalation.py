@@ -233,7 +233,7 @@ async def _call_teacher(teacher_model_spec: str, prompt: str,
                         owner: Optional[str] = None) -> Optional[str]:
     """Call the configured teacher endpoint with the escalation prompt."""
     from src.infra.llm.llm_core import llm_call_async
-    from src.ai_interaction import _resolve_model, _TEACHER_SYSTEM_PROMPT
+    from src.domain.agent.ai_interaction import _resolve_model, _TEACHER_SYSTEM_PROMPT
     try:
         url, model, headers = _resolve_model(teacher_model_spec, owner=owner)
     except Exception as e:
@@ -414,7 +414,7 @@ async def escalate_and_learn(
     skill["action"] = "add"
 
     import json
-    from src.tool_implementations import do_manage_skills
+    from src.domain.agent.tools.tool_implementations import do_manage_skills
     try:
         result = await do_manage_skills(json.dumps(skill), owner=owner)
         if isinstance(result, dict) and not result.get("error"):
@@ -523,7 +523,7 @@ async def run_teacher_inline(
 
     # Resolve teacher endpoint
     try:
-        from src.ai_interaction import _resolve_model
+        from src.domain.agent.ai_interaction import _resolve_model
         teacher_url, teacher_model, teacher_headers = _resolve_model(teacher_spec, owner=owner)
     except Exception as e:
         logger.warning(f"teacher endpoint not resolvable ({teacher_spec!r}): {e}")
@@ -562,7 +562,7 @@ async def run_teacher_inline(
     # Recursively invoke the agent loop with the teacher's params.
     # The _is_teacher_run flag prevents infinite recursion (the teacher
     # run will skip its own escalation hook).
-    from src.agent_loop import stream_agent_loop
+    from src.domain.agent.agent_loop import stream_agent_loop
     captured_tool_events: List[Dict[str, Any]] = []
     captured_text_parts: List[str] = []
 
@@ -643,7 +643,7 @@ async def run_teacher_inline(
     skill.setdefault("teacher_model", teacher_spec)
 
     import json as _json
-    from src.tool_implementations import do_manage_skills
+    from src.domain.agent.tools.tool_implementations import do_manage_skills
     try:
         result = await do_manage_skills(_json.dumps(skill), owner=owner)
         if isinstance(result, dict) and not result.get("error"):

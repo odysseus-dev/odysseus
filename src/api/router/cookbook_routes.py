@@ -719,7 +719,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         # Log to assistant
         try:
-            from src.assistant_log import log_to_assistant
+            from src.domain.agent.assistant_log import log_to_assistant
             from src.auth_helpers import get_current_user
             owner = get_current_user(request)
             log_to_assistant(
@@ -1617,7 +1617,7 @@ def setup_cookbook_routes() -> APIRouter:
 
         # Log to assistant
         try:
-            from src.assistant_log import log_to_assistant
+            from src.domain.agent.assistant_log import log_to_assistant
             from src.auth_helpers import get_current_user
             owner = get_current_user(request)
             short = req.repo_id.split("/")[-1] if "/" in req.repo_id else req.repo_id

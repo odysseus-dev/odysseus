@@ -1807,7 +1807,7 @@ def setup_gallery_routes() -> APIRouter:
                     "webp": "image/webp", "gif": "image/gif"}.get(ext, "image/jpeg")
 
             # Resolve vision model via admin Vision setting (same resolver used for docs)
-            from src.document_processor import _load_vl_settings, _resolve_vl_model
+            from src.domain.document.document_processor import _load_vl_settings, _resolve_vl_model
             vl_settings = _load_vl_settings()
             if not vl_settings.get("vision_enabled", True):
                 return {"error": "Vision is disabled — enable it in Settings → Vision"}

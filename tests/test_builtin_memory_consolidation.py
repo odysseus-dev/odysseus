@@ -10,7 +10,7 @@ def _import_consolidate_action():
         sys.modules.pop("src.builtin_actions", None)
         if "src" in sys.modules and hasattr(sys.modules["src"], "builtin_actions"):
             delattr(sys.modules["src"], "builtin_actions")
-    from src.builtin_actions import action_consolidate_memory
+    from src.domain.agent.builtin_actions import action_consolidate_memory
 
     return action_consolidate_memory
 

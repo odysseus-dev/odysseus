@@ -1,4 +1,4 @@
-from src.research_handler import ResearchHandler
+from src.domain.research.research_handler import ResearchHandler
 
 
 def test_extract_raw_findings_skips_non_dict_without_losing_all():

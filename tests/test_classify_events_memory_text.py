@@ -6,7 +6,7 @@ first Memory row; the surrounding except swallowed it, so the personal-context
 block the LLM relies on was always empty. The logic now lives in
 `_memory_context_lines`, which reads `text`.
 """
-from src.builtin_actions import _memory_context_lines
+from src.domain.agent.builtin_actions import _memory_context_lines
 
 
 class _Mem:

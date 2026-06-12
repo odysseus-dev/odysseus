@@ -108,7 +108,7 @@ for _mod in [
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
 
-from src.agent_loop import _empty_response_fallback  # noqa: E402
+from src.domain.agent.agent_loop import _empty_response_fallback  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

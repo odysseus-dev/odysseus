@@ -1,4 +1,4 @@
-from src.document_processor import _is_text_file, _process_text_file
+from src.domain.document.document_processor import _is_text_file, _process_text_file
 from src.infra.storage.upload_handler import UploadHandler
 
 

@@ -32,11 +32,11 @@ def _ensure_init():
     _initialized = True
 
     from src.constants import DATA_DIR
-    from src.memory import MemoryManager
+    from src.domain.memory.memory import MemoryManager
     _memory_manager = MemoryManager(DATA_DIR)
 
     try:
-        from src.memory_vector import MemoryVectorStore
+        from src.domain.memory.memory_vector import MemoryVectorStore
         _memory_vector = MemoryVectorStore(DATA_DIR)
         if not _memory_vector.healthy:
             _memory_vector = None

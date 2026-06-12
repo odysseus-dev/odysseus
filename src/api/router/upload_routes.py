@@ -223,7 +223,7 @@ def setup_upload_routes(upload_handler):
                     return {"text": f.read(), "cached": True}
             except Exception as e:
                 logger.warning(f"Vision cache read failed for {file_id}: {e}")
-        from src.document_processor import analyze_image_with_vl
+        from src.domain.document.document_processor import analyze_image_with_vl
         try:
             text = analyze_image_with_vl(path, owner=current_user) or ""
         except Exception as e:

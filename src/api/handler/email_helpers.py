@@ -1036,7 +1036,7 @@ def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
                 try:
                     tmp.write(payload)
                     tmp.close()
-                    from src.personal_docs import extract_pdf_text
+                    from src.domain.rag.personal_docs import extract_pdf_text
                     text = extract_pdf_text(tmp.name) or ""
                 finally:
                     try:
@@ -1322,7 +1322,7 @@ def _pre_retrieve_context(
         # single-user owner. Non-admin owners still get their own (owner-scoped)
         # IMAP history below, just not the shared contacts.
         try:
-            from src.tool_security import owner_is_admin_or_single_user
+            from src.domain.agent.tools.tool_security import owner_is_admin_or_single_user
             contacts_allowed = owner_is_admin_or_single_user(owner or None)
         except Exception:
             contacts_allowed = not bool(owner)

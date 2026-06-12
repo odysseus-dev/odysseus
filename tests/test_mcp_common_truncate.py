@@ -4,7 +4,7 @@ Originally this tested mcp_servers/_common.py's copy, which was deleted
 since it had zero callers. Now it tests the canonical version.
 """
 
-from src.tool_utils import _truncate
+from src.domain.agent.tools.tool_utils import _truncate
 
 def test_truncate_handles_none_and_nonstring():
     assert _truncate(None) == ""       # pyright: ignore[reportArgumentType]

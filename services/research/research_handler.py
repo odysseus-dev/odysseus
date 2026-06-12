@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Optional, Dict
 
-from src.research_utils import is_low_quality
+from src.domain.research.research_utils import is_low_quality
 from src.constants import DEEP_RESEARCH_DIR
 
 logger = logging.getLogger(__name__)
@@ -257,7 +257,7 @@ class ResearchHandler:
         logger.info(f"Max time: {max_time}s")
 
         try:
-            from src.deep_research import DeepResearcher
+            from src.domain.research.deep_research import DeepResearcher
             from src.settings import get_setting
 
             researcher = DeepResearcher(

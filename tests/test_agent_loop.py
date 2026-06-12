@@ -34,7 +34,7 @@ for mod in _MOCKED_IMPORTS:
 
 _IMPORTED_AGENT_LOOP = None
 try:
-    from src.agent_loop import (
+    from src.domain.agent.agent_loop import (
         _detect_admin_intent,
         _compute_final_metrics,
         _append_tool_results,

@@ -1,6 +1,6 @@
 import pytest
 
-from src.embedding_lanes import (
+from src.domain.embedding.embedding_lanes import (
     EmbeddingLane,
     LANE_CUSTOM,
     LANE_FASTEMBED,
@@ -422,7 +422,7 @@ def test_memory_vector_store_writes_both_lanes_and_prefers_custom(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore("data")
     store.add("mem-1", "Nicholai likes direct memory systems")
@@ -481,7 +481,7 @@ def test_memory_search_merges_fallback_only_results_before_limit():
         fingerprint="fast",
     )
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore.__new__(MemoryVectorStore)
     store._lanes = [custom_lane, fast_lane]
@@ -501,7 +501,7 @@ def test_vector_rag_writes_both_lanes_and_falls_back_to_fastembed(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.rag_vector import VectorRAG
+    from src.domain.rag.rag_vector import VectorRAG
 
     rag = VectorRAG()
     assert rag.add_document("session search belongs in tools", {"source": "/tmp/a.md", "owner": "alice"})
@@ -522,7 +522,7 @@ def test_vector_rag_batch_index_continues_when_custom_lane_fails(monkeypatch, tm
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.rag_vector import VectorRAG
+    from src.domain.rag.rag_vector import VectorRAG
 
     rag = VectorRAG(persist_directory=str(tmp_path))
     result = rag.add_documents_batch([
@@ -544,7 +544,7 @@ def test_vector_rag_batch_index_reports_failure_when_all_lanes_fail(monkeypatch,
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FailingEmbedder(384, "mini", "local://fastembed"))
 
-    from src.rag_vector import VectorRAG
+    from src.domain.rag.rag_vector import VectorRAG
 
     rag = VectorRAG(persist_directory=str(tmp_path))
     result = rag.add_documents_batch([
@@ -565,7 +565,7 @@ def test_tool_index_indexes_and_retrieves_from_available_lanes(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.tool_index import ToolIndex
+    from src.domain.agent.tools.tool_index import ToolIndex
 
     index = ToolIndex()
     index.index_builtin_tools()
@@ -597,7 +597,7 @@ def test_tool_index_builtin_indexing_fails_when_all_lanes_fail():
         fingerprint="fast",
     )
 
-    from src.tool_index import ToolIndex
+    from src.domain.agent.tools.tool_index import ToolIndex
 
     index = ToolIndex.__new__(ToolIndex)
     index._lanes = [custom_lane, fast_lane]
@@ -650,7 +650,7 @@ def test_tool_index_retrieval_continues_when_custom_lane_query_fails():
         fingerprint="fast",
     )
 
-    from src.tool_index import ToolIndex
+    from src.domain.agent.tools.tool_index import ToolIndex
 
     index = ToolIndex.__new__(ToolIndex)
     index._lanes = [custom_lane, fast_lane]
@@ -712,7 +712,7 @@ def test_tool_index_merges_fallback_tool_results_before_limit():
         fingerprint="fast",
     )
 
-    from src.tool_index import ToolIndex
+    from src.domain.agent.tools.tool_index import ToolIndex
 
     index = ToolIndex.__new__(ToolIndex)
     index._lanes = [custom_lane, fast_lane]
@@ -736,7 +736,7 @@ def test_legacy_collection_backfills_fastembed_lane(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore("data")
 
@@ -765,7 +765,7 @@ def test_legacy_collection_backfills_custom_only_lane(monkeypatch):
 
     monkeypatch.setattr(lanes, "_build_fastembed_client", fail_fastembed)
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore("data")
 
@@ -791,7 +791,7 @@ def test_legacy_migration_continues_when_custom_backfill_fails(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore("data")
 
@@ -823,7 +823,7 @@ def test_legacy_migration_resumes_partial_lane_backfill(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore("data")
 
@@ -854,7 +854,7 @@ def test_memory_rebuild_does_not_reimport_legacy_collection(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore("data")
     assert fake.collections["odysseus_memories_fastembed"].count() == 1
@@ -896,7 +896,7 @@ def test_memory_remove_deletes_inactive_lane_collection(monkeypatch):
         fingerprint="fast",
     )
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore.__new__(MemoryVectorStore)
     store._lanes = [fast_lane]
@@ -917,7 +917,7 @@ def test_memory_rebuild_continues_when_custom_lane_fails(monkeypatch):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.memory_vector import MemoryVectorStore
+    from src.domain.memory.memory_vector import MemoryVectorStore
 
     store = MemoryVectorStore("data")
     store.rebuild([{"id": "current-memory", "text": "current rebuilt memory"}])
@@ -950,7 +950,7 @@ def test_rag_rebuild_does_not_reimport_legacy_collection(monkeypatch, tmp_path):
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
 
-    from src.rag_vector import VectorRAG
+    from src.domain.rag.rag_vector import VectorRAG
 
     rag = VectorRAG(persist_directory=str(tmp_path))
     assert fake.collections["odysseus_rag_fastembed"].count() == 1
@@ -1001,7 +1001,7 @@ def test_rag_remove_directory_deletes_inactive_lane_collection(monkeypatch, tmp_
         fingerprint="fast",
     )
 
-    from src.rag_vector import VectorRAG
+    from src.domain.rag.rag_vector import VectorRAG
 
     rag = VectorRAG.__new__(VectorRAG)
     rag._lanes = [fast_lane]
@@ -1054,7 +1054,7 @@ def test_rag_delete_by_source_deletes_inactive_lane_collection(monkeypatch, tmp_
         fingerprint="fast",
     )
 
-    from src.rag_vector import VectorRAG
+    from src.domain.rag.rag_vector import VectorRAG
 
     rag = VectorRAG.__new__(VectorRAG)
     rag._lanes = [fast_lane]
@@ -1091,7 +1091,7 @@ def test_vector_rag_uses_keyword_fallback_when_all_lanes_query_fail():
         fingerprint="fp",
     )
 
-    from src.rag_vector import VectorRAG
+    from src.domain.rag.rag_vector import VectorRAG
 
     rag = VectorRAG.__new__(VectorRAG)
     rag._lanes = [lane]

@@ -57,7 +57,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         import httpx
         from src.settings import load_settings, get_setting
-        from src.ai_interaction import _resolve_model
+        from src.domain.agent.ai_interaction import _resolve_model
 
         if not get_setting("image_gen_enabled", True):
             return [TextContent(type="text", text="Error: Image generation is disabled by the administrator.")]

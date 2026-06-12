@@ -4,7 +4,7 @@
 def test_services_memory_manager_is_canonical_src_class():
     from services.memory import MemoryManager as package_manager
     from services.memory.memory import MemoryManager as module_manager
-    from src.memory import MemoryManager as canonical_manager
+    from src.domain.memory.memory import MemoryManager as canonical_manager
 
     assert module_manager is canonical_manager
     assert package_manager is canonical_manager
@@ -15,7 +15,7 @@ def test_services_memory_manager_is_canonical_src_class():
 def test_services_memory_vector_is_canonical_src_class():
     from services.memory import MemoryVectorStore as package_vector_store
     from services.memory.memory_vector import MemoryVectorStore as module_vector_store
-    from src.memory_vector import MemoryVectorStore as canonical_vector_store
+    from src.domain.memory.memory_vector import MemoryVectorStore as canonical_vector_store
 
     assert module_vector_store is canonical_vector_store
     assert package_vector_store is canonical_vector_store
@@ -44,7 +44,7 @@ def test_memory_service_uses_canonical_manager_api(tmp_path):
 
 
 def test_canonical_manager_keeps_ownerless_claim_helper(tmp_path):
-    from src.memory import MemoryManager
+    from src.domain.memory.memory import MemoryManager
 
     manager = MemoryManager(str(tmp_path))
     entry = manager.add_entry("User likes compact code reviews")

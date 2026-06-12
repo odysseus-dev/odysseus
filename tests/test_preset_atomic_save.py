@@ -9,7 +9,7 @@ which the rest of the codebase already uses for JSON state files.
 import inspect
 import json
 
-from src.preset_manager import PresetManager
+from src.domain.chat.preset_manager import PresetManager
 
 
 class _Unserializable:

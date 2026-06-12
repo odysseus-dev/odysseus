@@ -306,24 +306,24 @@ def setup_embedding_routes():
         # Clear the HTTP-embedding "down" latch so the new endpoint is re-probed
         # instead of staying on the FastEmbed fallback for the process lifetime.
         try:
-            from src.embeddings import reset_http_embed_state
+            from src.domain.embedding.embeddings import reset_http_embed_state
             reset_http_embed_state()
         except Exception:
             pass
         try:
-            from src.embedding_lanes import reset_embedding_lane_state
+            from src.domain.embedding.embedding_lanes import reset_embedding_lane_state
             reset_embedding_lane_state()
         except Exception:
             pass
         try:
-            from src.tool_index import reset_tool_index
+            from src.domain.agent.tools.tool_index import reset_tool_index
             reset_tool_index()
         except Exception:
             pass
 
         # Reset ChromaDB client (collections will be recreated with new embeddings)
         try:
-            from src.chroma_client import reset_client
+            from src.domain.memory.chroma_client import reset_client
             reset_client()
         except Exception:
             pass
@@ -347,24 +347,24 @@ def setup_embedding_routes():
         _rs.rag_instance = None
         _rs._last_attempt = 0
         try:
-            from src.embeddings import reset_http_embed_state
+            from src.domain.embedding.embeddings import reset_http_embed_state
             reset_http_embed_state()
         except Exception:
             pass
         try:
-            from src.embedding_lanes import reset_embedding_lane_state
+            from src.domain.embedding.embedding_lanes import reset_embedding_lane_state
             reset_embedding_lane_state()
         except Exception:
             pass
         try:
-            from src.tool_index import reset_tool_index
+            from src.domain.agent.tools.tool_index import reset_tool_index
             reset_tool_index()
         except Exception:
             pass
 
         # Reset ChromaDB client
         try:
-            from src.chroma_client import reset_client
+            from src.domain.memory.chroma_client import reset_client
             reset_client()
         except Exception:
             pass

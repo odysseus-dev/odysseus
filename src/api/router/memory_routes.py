@@ -365,7 +365,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
         # Extract text based on file type
         if ext == ".pdf":
-            from src.document_processor import _process_pdf
+            from src.domain.document.document_processor import _process_pdf
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                 tmp.write(content)
                 tmp_path = tmp.name

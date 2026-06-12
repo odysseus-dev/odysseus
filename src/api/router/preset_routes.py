@@ -72,7 +72,7 @@ def setup_preset_routes(preset_manager) -> APIRouter:
     @router.post("/api/presets/expand")
     async def expand_character_prompt(request: Request) -> Dict[str, Any]:
         """Use AI to expand a rough character description into a full system prompt."""
-        from src.ai_interaction import _resolve_model
+        from src.domain.agent.ai_interaction import _resolve_model
         from src.infra.llm.llm_core import llm_call_async
 
         data = await request.json()

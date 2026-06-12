@@ -12,7 +12,7 @@ from src.infra.database.models import ChatMessage
 from src.request_models import SessionResponse
 from src.infra.database.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
 from src.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
-from src.session_actions import is_session_recently_active
+from src.domain.agent.session_actions import is_session_recently_active
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -935,7 +935,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if not older:
             raise HTTPException(400, "Nothing old enough to compact")
 
-        from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
+        from src.domain.context.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
         from src.infra.llm.endpoint_resolver import resolve_endpoint
         from src.infra.llm.llm_core import llm_call_async
 
@@ -1278,7 +1278,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if not session.endpoint_url or not session.model:
             return {"context_length": None}
         try:
-            from src.model_context import get_context_length
+            from src.domain.context.model_context import get_context_length
             ctx = get_context_length(session.endpoint_url, session.model)
             return {"context_length": ctx, "model": session.model}
         except Exception:

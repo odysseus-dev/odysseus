@@ -12,7 +12,7 @@ in test_embedding_lanes.py, but the preserved embeddings come back as ndarray.
 """
 import numpy as np
 
-from src.embedding_lanes import build_embedding_lanes
+from src.domain.embedding.embedding_lanes import build_embedding_lanes
 from tests.test_embedding_lanes import FakeChroma, FakeEmbedder, _patch_chroma
 
 

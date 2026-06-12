@@ -15,12 +15,12 @@ from pydantic import ValidationError
 from src.infra.database.models import ChatMessage
 from src.request_models import ChatRequest
 from src.infra.llm.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
-from src.agent_loop import stream_agent_loop
+from src.domain.agent.agent_loop import stream_agent_loop
 from src import agent_runs
-from src.model_context import estimate_tokens
-from src.chat_helpers import coerce_message_and_session
+from src.domain.context.model_context import estimate_tokens
+from src.domain.chat.chat_helpers import coerce_message_and_session
 from src.infra.llm.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
-from src.session_search import search_session_messages
+from src.domain.agent.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
@@ -39,8 +39,8 @@ from src.api.handler.chat_helpers import (
     clean_thinking_for_save,
     _enforce_chat_privileges,
 )
-from src.action_intents import classify_tool_intent as _classify_tool_intent
-from src.tool_policy import build_effective_tool_policy
+from src.domain.agent.action_intents import classify_tool_intent as _classify_tool_intent
+from src.domain.agent.tools.tool_policy import build_effective_tool_policy
 
 logger = logging.getLogger(__name__)
 
@@ -635,7 +635,7 @@ def setup_chat_routes(
             # leak a doc that belongs to a DIFFERENT session.
             if not active_doc:
                 try:
-                    from src.agent_tools.document_tools import get_active_document
+                    from src.domain.agent.tools.document_tools import get_active_document
                     _mem_id = get_active_document()
                     if _mem_id:
                         _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
@@ -730,7 +730,7 @@ def setup_chat_routes(
         # every tool not on the read-only allowlist. (stream_agent_loop enforces
         # this again + drops MCP, so this is belt-and-suspenders.)
         if plan_mode:
-            from src.tool_security import plan_mode_disabled_tools
+            from src.domain.agent.tools.tool_security import plan_mode_disabled_tools
             disabled_tools.update(plan_mode_disabled_tools())
 
         tool_policy = build_effective_tool_policy(
@@ -943,7 +943,7 @@ def setup_chat_routes(
                     yield "data: [DONE]\n\n"
                     _active_streams.pop(session, None)
                     return
-                from src.ai_interaction import do_generate_image
+                from src.domain.agent.ai_interaction import do_generate_image
                 _user_msg = message or ""
                 yield f'data: {json.dumps({"type": "tool_start", "tool": "generate_image", "command": _user_msg[:100]})}\n\n'
                 yield ": heartbeat\n\n"
@@ -1109,7 +1109,7 @@ def setup_chat_routes(
                 _actual_model = None
                 try:
                     from src.settings import get_setting
-                    from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
+                    from src.domain.agent.tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
                     # Per-message round cap from settings; clamp defensively in
                     # case settings.json was hand-edited to a bad value.
@@ -1432,7 +1432,7 @@ def setup_chat_routes(
                         # Update the last assistant message in session history.
                         # Strip reasoning-model <think> blocks so the persisted
                         # rewrite is just the rewritten text, not its scratchpad.
-                        from src.research_utils import strip_thinking
+                        from src.domain.research.research_utils import strip_thinking
                         full_response = strip_thinking(full_response).strip() or full_response
                         if full_response:
                             for msg in reversed(sess.history):

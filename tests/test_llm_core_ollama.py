@@ -163,7 +163,7 @@ def test_build_ollama_payload_omits_default_context_fallback():
     """get_context_length returns DEFAULT_CONTEXT (128000) when it can't
     discover the model's actual window. Emitting that as num_ctx would
     lie to Ollama for unknown models, so the builder filters it out."""
-    from src.model_context import DEFAULT_CONTEXT
+    from src.domain.context.model_context import DEFAULT_CONTEXT
     payload = llm_core._build_ollama_payload(
         "unknown-llm-9001", [{"role": "user", "content": "x"}],
         temperature=0.5, max_tokens=100, num_ctx=DEFAULT_CONTEXT,

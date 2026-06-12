@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from src.deep_research import DeepResearcher
+from src.domain.research.deep_research import DeepResearcher
 
 
 class _ControlledResearcher(DeepResearcher):

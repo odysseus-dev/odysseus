@@ -1,4 +1,4 @@
-from src.personal_docs import retrieve_personal_keyword
+from src.domain.rag.personal_docs import retrieve_personal_keyword
 
 
 def test_retrieve_personal_keyword_skips_non_dict_rows():

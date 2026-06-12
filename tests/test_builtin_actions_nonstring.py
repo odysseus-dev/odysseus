@@ -4,7 +4,7 @@ _result_has_work did `result.lower()` after a falsy-only guard, and
 _classify_event_heuristic did `(summary or "").lower()`; a truthy non-string
 (e.g. a dict) raised AttributeError. They now coerce/guard non-strings.
 """
-from src.builtin_actions import _result_has_work, _classify_event_heuristic
+from src.domain.agent.builtin_actions import _result_has_work, _classify_event_heuristic
 
 
 def test_result_has_work_non_string():

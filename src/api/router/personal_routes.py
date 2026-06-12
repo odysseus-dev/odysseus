@@ -7,7 +7,7 @@ from typing import List, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Depends
 from src.request_models import DirectoryRequest
 from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
-from src.rag_singleton import get_rag_manager
+from src.domain.rag.rag_singleton import get_rag_manager
 from src.auth_helpers import require_privilege, require_user
 from core.middleware import require_admin
 from src.infra.storage.upload_handler import secure_filename
@@ -216,7 +216,7 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
                 ext = os.path.splitext(safe_name)[1].lower()
                 if ext == ".pdf":
-                    from src.personal_docs import extract_pdf_text
+                    from src.domain.rag.personal_docs import extract_pdf_text
                     text = extract_pdf_text(file_path)
                 else:
                     text = content_bytes.decode("utf-8", errors="replace")

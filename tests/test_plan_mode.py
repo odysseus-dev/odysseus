@@ -13,7 +13,7 @@ contract:
 Pure-function tests — no FastAPI app boot, no DB.
 """
 
-from src.tool_security import (
+from src.domain.agent.tools.tool_security import (
     PLAN_MODE_READONLY_TOOLS,
     _PLAN_MODE_KNOWN_MUTATORS,
     plan_mode_disabled_tools,
@@ -93,7 +93,7 @@ def test_fail_closed_fallback_blocks_mutations(monkeypatch):
 def test_active_plan_note_pins_checklist():
     """The approved-plan note re-grounds execution so a long plan survives
     history truncation (the agent can always re-read it)."""
-    from src.agent_loop import build_active_plan_note
+    from src.domain.agent.agent_loop import build_active_plan_note
     plan = "- [ ] step one\n- [ ] step two"
     note = build_active_plan_note(plan)
     assert "ACTIVE PLAN" in note

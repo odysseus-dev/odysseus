@@ -537,7 +537,7 @@ def setup_history_routes(session_manager) -> APIRouter:
         _reject_compact_during_active_run(session_id)
 
         try:
-            from src.model_context import estimate_tokens, get_context_length
+            from src.domain.context.model_context import estimate_tokens, get_context_length
             from src.infra.llm.llm_core import llm_call_async
             from src.infra.llm.endpoint_resolver import resolve_endpoint
 
@@ -568,7 +568,7 @@ def setup_history_routes(session_manager) -> APIRouter:
             compact_model = util_model or session.model
             compact_headers = util_headers if util_url else session.headers
 
-            from src.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
+            from src.domain.context.context_compactor import SELF_SUMMARY_SYSTEM_PROMPT
             compaction_count = sum(1 for m in session.history if isinstance(m, ChatMessage) and "[Conversation summary" in (m.content or ""))
             sys_prompt = SELF_SUMMARY_SYSTEM_PROMPT.replace("{count}", str(len(older))).replace("{n}", str(compaction_count + 1))
             summary = await llm_call_async(

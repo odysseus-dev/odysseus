@@ -31,7 +31,7 @@ def _bind_temp_db(monkeypatch):
 
 async def test_batch_events_with_datetime_objects():
     """Model emits {"events": [{"summary": ..., "start": {"dateTime": ...}, "end": {"dateTime": ...}}]}."""
-    from src.tool_implementations import do_manage_calendar
+    from src.domain.agent.tools.tool_implementations import do_manage_calendar
 
     owner = "tester-" + uuid.uuid4().hex[:6]
     payload = {
@@ -61,7 +61,7 @@ async def test_batch_events_with_datetime_objects():
 
 async def test_batch_events_with_flat_strings():
     """Model emits {"events": [{"summary": ..., "start": "ISO", "end": "ISO"}]}."""
-    from src.tool_implementations import do_manage_calendar
+    from src.domain.agent.tools.tool_implementations import do_manage_calendar
 
     owner = "tester-" + uuid.uuid4().hex[:6]
     payload = {
@@ -80,7 +80,7 @@ async def test_batch_events_with_flat_strings():
 
 async def test_batch_events_partial_failure():
     """Batch with some valid and some invalid events — should surface both counts and first error."""
-    from src.tool_implementations import do_manage_calendar
+    from src.domain.agent.tools.tool_implementations import do_manage_calendar
 
     owner = "tester-" + uuid.uuid4().hex[:6]
     payload = {

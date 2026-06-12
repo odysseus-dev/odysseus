@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.preset_manager import PresetManager
+from src.domain.chat.preset_manager import PresetManager
 
 
 class _FakeColumn:
@@ -420,7 +420,7 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
 @pytest.mark.asyncio
 async def test_admin_agent_tools_require_admin(monkeypatch):
     auth_mod = _install_core_auth_stub(monkeypatch)
-    from src.tool_execution import execute_tool_block
+    from src.domain.agent.tools.tool_execution import execute_tool_block
 
     class FakeAuth:
         is_configured = True
@@ -444,7 +444,7 @@ async def test_admin_agent_tools_require_admin(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.domain.agent.tools.tool_implementations import do_app_api
 
     class UnexpectedAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -473,7 +473,7 @@ async def test_app_api_blocks_shell_routes_before_loopback(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monkeypatch):
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.domain.agent.tools.tool_implementations import do_app_api
 
     class UnexpectedAsyncClient:
         def __init__(self, *args, **kwargs):
@@ -520,7 +520,7 @@ async def test_app_api_blocks_cookbook_host_control_routes_before_loopback(monke
 async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
     _install_core_middleware_stub(monkeypatch)
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.domain.agent.tools.tool_implementations import do_app_api
 
     class FakeResponse:
         def json(self):
@@ -563,7 +563,7 @@ async def test_app_api_endpoint_discovery_hides_shell_routes(monkeypatch):
 async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(monkeypatch):
     _install_core_middleware_stub(monkeypatch)
     import httpx
-    from src.tool_implementations import do_app_api
+    from src.domain.agent.tools.tool_implementations import do_app_api
 
     class FakeResponse:
         def json(self):
@@ -606,7 +606,7 @@ async def test_app_api_endpoint_discovery_hides_cookbook_host_control_routes(mon
 @pytest.mark.asyncio
 async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
     auth_mod = _install_core_auth_stub(monkeypatch)
-    from src.tool_execution import execute_tool_block
+    from src.domain.agent.tools.tool_execution import execute_tool_block
 
     class FakeAuth:
         is_configured = True
@@ -628,7 +628,7 @@ async def test_public_agent_policy_blocks_sensitive_tools(monkeypatch):
 
 def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     auth_mod = _install_core_auth_stub(monkeypatch)
-    from src.tool_security import blocked_tools_for_owner
+    from src.domain.agent.tools.tool_security import blocked_tools_for_owner
 
     class FakeAuth:
         is_configured = True
@@ -666,7 +666,7 @@ def test_presetup_does_not_grant_admin_tools_when_auth_enabled(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    from src.tool_security import (
+    from src.domain.agent.tools.tool_security import (
         blocked_tools_for_owner,
         owner_is_admin_or_single_user,
     )
@@ -692,7 +692,7 @@ def test_single_user_mode_keeps_full_tool_access_when_auth_disabled(monkeypatch)
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
 
-    from src.tool_security import (
+    from src.domain.agent.tools.tool_security import (
         blocked_tools_for_owner,
         owner_is_admin_or_single_user,
     )
@@ -736,7 +736,7 @@ async def test_webhook_tool_reuses_private_url_validation():
     monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
     monkeypatch.setitem(sys.modules, "src.database", fake_src_db)
 
-    from src.tool_implementations import do_manage_webhooks
+    from src.domain.agent.tools.tool_implementations import do_manage_webhooks
 
     try:
         result = await do_manage_webhooks(

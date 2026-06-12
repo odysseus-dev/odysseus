@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from src.chat_handler import ChatHandler
+from src.domain.chat.chat_handler import ChatHandler
 
 
 class _UploadHandler:

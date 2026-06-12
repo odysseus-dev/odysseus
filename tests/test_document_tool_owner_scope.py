@@ -2,8 +2,8 @@ import asyncio
 import sys
 import types
 
-from src.agent_tools import TOOL_HANDLERS
-from src.agent_tools.document_tools import (
+from src.domain.agent.tools import TOOL_HANDLERS
+from src.domain.agent.tools.document_tools import (
     _owned_document_query,
     set_active_document,
 )

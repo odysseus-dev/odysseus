@@ -503,7 +503,7 @@ class TaskScheduler:
         cross-delete other users' entries (review C4).
         """
         await asyncio.sleep(30)
-        from src.builtin_actions import action_ping_notes, TaskNoop
+        from src.domain.agent.builtin_actions import action_ping_notes, TaskNoop
         while self._running:
             owners = self._known_task_owners()
             for ow in (owners or [""]):
@@ -523,7 +523,7 @@ class TaskScheduler:
         configured SMTP "from" address — see review C3).
         """
         await asyncio.sleep(90)
-        from src.builtin_actions import action_ping_events, TaskNoop
+        from src.domain.agent.builtin_actions import action_ping_events, TaskNoop
         while self._running:
             owners = self._known_task_owners()
             for ow in (owners or [""]):
@@ -704,7 +704,7 @@ class TaskScheduler:
 
             task_type = task.task_type or "llm"
 
-            from src.builtin_actions import TaskDeferred, TaskNoop
+            from src.domain.agent.builtin_actions import TaskDeferred, TaskNoop
 
             # Cleared each run so an action task (no model) doesn't inherit a
             # previous llm/research run's model. The executors set it once the
@@ -1000,7 +1000,7 @@ class TaskScheduler:
         # Built-in housekeeping noise stays out of the chat.
         if (getattr(task, "action", "") or "") in self._SILENT_ACTIONS:
             return
-        from src.assistant_log import log_to_assistant
+        from src.domain.agent.assistant_log import log_to_assistant
         log_to_assistant(
             task.owner,
             result_text[:1000],
@@ -1009,13 +1009,13 @@ class TaskScheduler:
 
     async def _execute_action(self, task, run_id: str | None = None) -> tuple:
         """Execute a built-in action (no LLM needed)."""
-        from src.builtin_actions import BUILTIN_ACTIONS
+        from src.domain.agent.builtin_actions import BUILTIN_ACTIONS
 
         action_fn = BUILTIN_ACTIONS.get(task.action)
         if not action_fn:
             return f"Unknown action: {task.action}", False
 
-        from src.builtin_actions import TaskNoop
+        from src.domain.agent.builtin_actions import TaskNoop
         try:
             # Pass task prompt as script/command for ssh_command/run_script actions.
             def _progress(message: str):
@@ -1097,8 +1097,8 @@ class TaskScheduler:
     async def _execute_checkin(self, task, crew, db, session_id: str,
                                endpoint_url: str, model: str) -> str:
         """Gather raw data from all integrations, hand it to the LLM to write the check-in."""
-        from src.tool_implementations import do_manage_notes
-        from src.tool_utils import get_mcp_manager
+        from src.domain.agent.tools.tool_implementations import do_manage_notes
+        from src.domain.agent.tools.tool_utils import get_mcp_manager
 
         tz_name = _resolve_task_timezone(db, task)
         try:
@@ -1363,7 +1363,7 @@ class TaskScheduler:
             try:
                 enabled = json.loads(crew.enabled_tools)
                 if isinstance(enabled, list) and enabled:
-                    from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
+                    from src.domain.agent.tools.tool_index import BUILTIN_TOOL_DESCRIPTIONS
                     all_tools = set(BUILTIN_TOOL_DESCRIPTIONS.keys())
                     disabled_tools = all_tools - set(enabled)
             except Exception:
@@ -1373,7 +1373,7 @@ class TaskScheduler:
         # Without this, all 40+ tools get sent and models hit their tool limit.
         relevant_tools = None
         try:
-            from src.tool_index import get_tool_index, ASSISTANT_ALWAYS_AVAILABLE
+            from src.domain.agent.tools.tool_index import get_tool_index, ASSISTANT_ALWAYS_AVAILABLE
             tool_idx = get_tool_index()
             if tool_idx:
                 rag_tools = tool_idx.get_tools_for_query(task.prompt or "", k=8)
@@ -1589,7 +1589,7 @@ class TaskScheduler:
                               relevant_tools: set | None = None,
                               override_user_message: str | None = None) -> str:
         """Run the full agent loop with tool access, collecting the final text."""
-        from src.agent_loop import stream_agent_loop
+        from src.domain.agent.agent_loop import stream_agent_loop
 
         system_content = system_prompt or "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         user_content = override_user_message or task.prompt
@@ -1692,9 +1692,9 @@ class TaskScheduler:
     async def _execute_research_task(self, task, db) -> str:
         """Execute a deep research task using DeepResearcher."""
         from src.infra.database.database import Session as DbSession, ChatMessage
-        from src.deep_research import DeepResearcher
-        from src.research_handler import RESEARCH_DATA_DIR, ResearchHandler
-        from src.research_utils import strip_thinking
+        from src.domain.research.deep_research import DeepResearcher
+        from src.domain.research.research_handler import RESEARCH_DATA_DIR, ResearchHandler
+        from src.domain.research.research_utils import strip_thinking
         from src.settings import get_setting
 
         # Resolve endpoint/model: research settings > task settings > session defaults
@@ -1875,7 +1875,7 @@ class TaskScheduler:
         have to special-case each tool's schema; the MCP tool ignores keys it
         doesn't recognise.
         """
-        from src.tool_utils import get_mcp_manager
+        from src.domain.agent.tools.tool_utils import get_mcp_manager
         mcp = get_mcp_manager()
         if not mcp:
             logger.warning(f"Task {task.id}: MCP manager not available for delivery")

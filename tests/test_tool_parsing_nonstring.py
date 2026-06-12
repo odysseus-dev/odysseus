@@ -5,7 +5,7 @@
 non-string to "" in `_normalize_dsml` makes the whole chain safe.
 """
 import src.agent_tools  # noqa: F401  (break agent_tools<->tool_parsing import cycle)
-from src.tool_parsing import _normalize_dsml, parse_tool_blocks, strip_tool_blocks
+from src.domain.agent.tools.tool_parsing import _normalize_dsml, parse_tool_blocks, strip_tool_blocks
 
 
 def test_non_string_does_not_crash():

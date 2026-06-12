@@ -207,7 +207,7 @@ def test_resolve_tool_blocks_native_path_untouched_when_native_calls_present():
 # back to DSML when it can't emit structured tool_calls. The fix gates ONLY
 # the fenced-code pattern (via `skip_fenced=`) so Patterns 2-5 stay active.
 # ---------------------------------------------------------------------------
-from src.tool_parsing import parse_tool_blocks, strip_tool_blocks  # noqa: E402
+from src.domain.agent.tools.tool_parsing import parse_tool_blocks, strip_tool_blocks  # noqa: E402
 
 
 def test_skip_fenced_still_recovers_xml_invoke_markup():

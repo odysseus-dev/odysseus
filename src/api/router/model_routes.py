@@ -2164,7 +2164,7 @@ def setup_model_routes(model_discovery):
 
     def _clear_loaded_sessions_for_endpoint(base_url: str) -> int:
         try:
-            from src.ai_interaction import get_session_manager
+            from src.domain.agent.ai_interaction import get_session_manager
             manager = get_session_manager()
         except Exception:
             manager = None
@@ -2221,7 +2221,7 @@ def setup_model_routes(model_discovery):
     @router.get("/tools")
     def list_tools():
         """List all available tools with their enabled/disabled status."""
-        from src.agent_tools import TOOL_TAGS
+        from src.domain.agent.tools import TOOL_TAGS
         settings = _load_settings()
         disabled = set(settings.get("disabled_tools", []))
         tools = []

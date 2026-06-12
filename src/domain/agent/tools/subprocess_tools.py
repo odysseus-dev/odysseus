@@ -102,7 +102,7 @@ async def _run_subprocess_streaming(
 
 class BashTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _AGENT_WORKDIR, _truncate
+        from src.domain.agent.tools.tool_execution import _AGENT_WORKDIR, _truncate
         progress_cb = ctx.get("progress_cb")
         workspace = ctx.get("workspace")
         _subproc_env = ctx.get("subproc_env")
@@ -129,7 +129,7 @@ class BashTool:
 
 class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import _AGENT_WORKDIR, _truncate
+        from src.domain.agent.tools.tool_execution import _AGENT_WORKDIR, _truncate
         progress_cb = ctx.get("progress_cb")
         workspace = ctx.get("workspace")
         _subproc_env = ctx.get("subproc_env")

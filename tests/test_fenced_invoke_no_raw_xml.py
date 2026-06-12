@@ -17,7 +17,7 @@ for mod in [
         sys.modules[mod] = MagicMock()
 
 import src.agent_tools  # noqa: E402, F401
-from src.tool_parsing import parse_tool_blocks  # noqa: E402
+from src.domain.agent.tools.tool_parsing import parse_tool_blocks  # noqa: E402
 
 
 def test_unconvertible_invoke_in_fence_is_not_executed_as_code():

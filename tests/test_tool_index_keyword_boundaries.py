@@ -11,7 +11,7 @@ pitfall already fixed in topic_analyzer.py.
 `retrieve` (which needs a chroma collection) is stubbed out so these tests
 exercise only the keyword-hint loop.
 """
-from src.tool_index import ToolIndex
+from src.domain.agent.tools.tool_index import ToolIndex
 
 
 def _index():

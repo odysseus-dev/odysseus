@@ -9,7 +9,7 @@ missing/empty owner fell through the guard and was returned to whichever user
 issued the query — a cross-user leak whenever the primary path errored and fell
 back to keyword search.
 """
-from src.rag_vector import VectorRAG
+from src.domain.rag.rag_vector import VectorRAG
 
 
 class _FakeCollection:

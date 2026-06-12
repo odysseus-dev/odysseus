@@ -26,8 +26,8 @@ def run(coro):
 
 
 def test_native_provider_remember_writes_native_memory_and_vector(tmp_path):
-    from src.memory import MemoryManager
-    from src.memory_provider import NativeMemoryProvider
+    from src.domain.memory.memory import MemoryManager
+    from src.domain.memory.memory_provider import NativeMemoryProvider
 
     manager = MemoryManager(str(tmp_path))
     vector = FakeVectorStore()
@@ -52,8 +52,8 @@ def test_native_provider_remember_writes_native_memory_and_vector(tmp_path):
 
 
 def test_native_provider_recall_filters_vector_hits_by_owner(tmp_path):
-    from src.memory import MemoryManager
-    from src.memory_provider import NativeMemoryProvider
+    from src.domain.memory.memory import MemoryManager
+    from src.domain.memory.memory_provider import NativeMemoryProvider
 
     manager = MemoryManager(str(tmp_path))
     vector = FakeVectorStore()
@@ -74,8 +74,8 @@ def test_native_provider_recall_filters_vector_hits_by_owner(tmp_path):
 
 
 def test_native_provider_recall_accepts_legacy_vector_rows(tmp_path):
-    from src.memory import MemoryManager
-    from src.memory_provider import NativeMemoryProvider
+    from src.domain.memory.memory import MemoryManager
+    from src.domain.memory.memory_provider import NativeMemoryProvider
 
     manager = MemoryManager(str(tmp_path))
     vector = FakeVectorStore()
@@ -94,8 +94,8 @@ def test_native_provider_recall_accepts_legacy_vector_rows(tmp_path):
 
 
 def test_native_provider_recall_falls_back_to_keyword_search(tmp_path):
-    from src.memory import MemoryManager
-    from src.memory_provider import NativeMemoryProvider
+    from src.domain.memory.memory import MemoryManager
+    from src.domain.memory.memory_provider import NativeMemoryProvider
 
     manager = MemoryManager(str(tmp_path))
     provider = NativeMemoryProvider(manager)
@@ -112,7 +112,7 @@ def test_native_provider_recall_falls_back_to_keyword_search(tmp_path):
 
 
 def test_memory_provider_registry_exposes_only_active_provider_tools():
-    from src.memory_provider import MemoryProvider, MemoryProviderRegistry
+    from src.domain.memory.memory_provider import MemoryProvider, MemoryProviderRegistry
 
     class DummyProvider(MemoryProvider):
         def __init__(self, provider_id, enabled=True):
@@ -146,7 +146,7 @@ def test_memory_provider_registry_exposes_only_active_provider_tools():
 
 
 def test_memory_provider_registry_rejects_tool_name_conflicts():
-    from src.memory_provider import MemoryProvider, MemoryProviderRegistry
+    from src.domain.memory.memory_provider import MemoryProvider, MemoryProviderRegistry
 
     class ConflictingProvider(MemoryProvider):
         def __init__(self, provider_id):

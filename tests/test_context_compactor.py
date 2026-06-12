@@ -18,7 +18,7 @@ for mod in [
         sys.modules[mod] = MagicMock()
 
 import src.context_compactor as cc
-from src.context_compactor import (
+from src.domain.context.context_compactor import (
     COMPACT_THRESHOLD,
     SELF_SUMMARY_SYSTEM_PROMPT,
     SUMMARY_MAX_TOKENS,

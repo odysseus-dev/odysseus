@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from src.chat_processor import ChatProcessor
+from src.domain.chat.chat_processor import ChatProcessor
 from src.user_time import (
     clear_user_time_context,
     current_datetime_prompt,

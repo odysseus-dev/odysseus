@@ -50,7 +50,7 @@ def _bind_temp_db(monkeypatch):
     ],
 )
 async def test_list_events_honors_range_aliases(start_key, end_key):
-    from src.tool_implementations import do_manage_calendar
+    from src.domain.agent.tools.tool_implementations import do_manage_calendar
 
     owner = "calendar-alias-" + uuid.uuid4().hex[:8]
 

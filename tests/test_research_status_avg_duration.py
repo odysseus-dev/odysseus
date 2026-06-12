@@ -5,7 +5,7 @@ get_status() called it unconditionally on each poll, including for sessions that
 are not active (the common case while a client polls a finished report). It is
 now computed only for active sessions and memoized on the entry.
 """
-from src.research_handler import ResearchHandler
+from src.domain.research.research_handler import ResearchHandler
 
 
 def _handler():

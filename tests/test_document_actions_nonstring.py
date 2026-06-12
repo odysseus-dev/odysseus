@@ -4,7 +4,7 @@ _norm_title/_content_fingerprint/_real_len used `(x or "")`, which only guards
 falsy; a non-string (e.g. an int) is truthy, so `.strip()`/`re.sub(..., x)`
 raised. They now coerce non-strings to "".
 """
-from src.document_actions import _norm_title, _content_fingerprint, _real_len
+from src.domain.document.document_actions import _norm_title, _content_fingerprint, _real_len
 
 
 def test_non_string_inputs_do_not_crash():

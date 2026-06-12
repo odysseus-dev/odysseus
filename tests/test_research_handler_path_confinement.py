@@ -3,7 +3,7 @@ import json
 import pytest
 
 from src import research_handler
-from src.research_handler import ResearchHandler
+from src.domain.research.research_handler import ResearchHandler
 
 
 def _handler():

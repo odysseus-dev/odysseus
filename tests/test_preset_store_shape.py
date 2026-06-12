@@ -1,6 +1,6 @@
 import json
 
-from src.preset_manager import PresetManager
+from src.domain.chat.preset_manager import PresetManager
 
 
 def test_non_object_preset_store_falls_back_to_defaults(tmp_path):

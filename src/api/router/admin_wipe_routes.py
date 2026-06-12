@@ -95,7 +95,7 @@ def setup_admin_wipe_routes(session_manager):
                 # return ghosts. Lazy import — chromadb may not be
                 # initialised in every deployment.
                 try:
-                    from src.memory_vector import get_memory_vector_store
+                    from src.domain.memory.memory_vector import get_memory_vector_store
                     mv = get_memory_vector_store()
                     if mv and hasattr(mv, "clear"):
                         mv.clear()

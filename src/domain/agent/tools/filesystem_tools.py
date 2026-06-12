@@ -46,7 +46,7 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
 
 class EditFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
+        from src.domain.agent.tools.tool_execution import (
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,
@@ -113,7 +113,7 @@ class EditFileTool:
 
 class ReadFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
+        from src.domain.agent.tools.tool_execution import (
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,
@@ -170,7 +170,7 @@ class ReadFileTool:
 
 class WriteFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
+        from src.domain.agent.tools.tool_execution import (
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,
@@ -212,7 +212,7 @@ class WriteFileTool:
 
 class LsTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
+        from src.domain.agent.tools.tool_execution import (
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,
@@ -267,7 +267,7 @@ class LsTool:
 
 class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
+        from src.domain.agent.tools.tool_execution import (
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,
@@ -325,7 +325,7 @@ class GlobTool:
 
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
+        from src.domain.agent.tools.tool_execution import (
                     _resolve_tool_path,
                     _resolve_tool_path_in_workspace,
                     _resolve_search_root,

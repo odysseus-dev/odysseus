@@ -2,7 +2,7 @@ import builtins
 
 import pytest
 
-from src.pdf_runtime import PDF_VIEWER_PYMUPDF_MISSING, load_pymupdf_for_pdf_viewer
+from src.domain.document.pdf_runtime import PDF_VIEWER_PYMUPDF_MISSING, load_pymupdf_for_pdf_viewer
 
 
 def test_pdf_viewer_dependency_error_is_user_actionable(monkeypatch):

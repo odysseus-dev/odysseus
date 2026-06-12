@@ -29,7 +29,7 @@ async def _drain_agent(sess, messages):
     """Run the agent loop headless against a session. Returns
     (final_prose, tool_events) — tool_events in the same shape the live chat
     saves, so the frontend rebuilds them as standard agent-thread tool cards."""
-    from src.agent_loop import stream_agent_loop
+    from src.domain.agent.agent_loop import stream_agent_loop
     full = ""
     tool_events = []
     round_num = 1
@@ -74,7 +74,7 @@ async def _run_followup(rec: dict) -> bool:
     """Re-invoke the agent in the job's session with the result. Returns True
     if the follow-up completed (or there's nothing to do) — i.e. it's safe to
     mark followed_up. Returns False to retry on the next tick."""
-    from src.ai_interaction import get_session_manager
+    from src.domain.agent.ai_interaction import get_session_manager
     from src.infra.database.models import ChatMessage
 
     sm = get_session_manager()

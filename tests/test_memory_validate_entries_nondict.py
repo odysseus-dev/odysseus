@@ -1,4 +1,4 @@
-from src.memory import MemoryManager
+from src.domain.memory.memory import MemoryManager
 
 
 def test_validate_entries_skips_non_dict_rows(tmp_path):

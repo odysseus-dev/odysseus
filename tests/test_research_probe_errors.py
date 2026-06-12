@@ -7,7 +7,7 @@ upstream returned a concrete model/API error, the probe used to collapse it into
 import pytest
 from fastapi import HTTPException
 
-from src.research_handler import ResearchHandler, _format_probe_failure
+from src.domain.research.research_handler import ResearchHandler, _format_probe_failure
 
 
 def test_probe_failure_preserves_upstream_model_errors():

@@ -65,7 +65,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
-from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
+from src.domain.document.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -469,7 +469,7 @@ init_youtube()
 # 2.12 were mutually incompatible at the time. With the current pins
 # (chromadb 1.5.x + pydantic 2.13.x) the init works and Personal Docs
 # (POST /api/personal/add_directory etc.) is functional again.
-from src.rag_singleton import get_rag_manager
+from src.domain.rag.rag_singleton import get_rag_manager
 rag_manager = get_rag_manager()
 rag_available = rag_manager is not None
 if rag_available:
@@ -489,7 +489,7 @@ from src.app_initializer import initialize_managers
 components = initialize_managers(BASE_DIR, rag_manager)
 
 session_manager   = components["session_manager"]
-from src.assistant_log import set_session_manager as _set_asst_sm
+from src.domain.agent.assistant_log import set_session_manager as _set_asst_sm
 _set_asst_sm(session_manager)
 # Set the global session manager singleton (used by core.models.Session.add_message)
 from src.infra.database.models import set_session_manager_instance
@@ -697,7 +697,7 @@ app.include_router(setup_font_routes())
 
 # MCP (Model Context Protocol)
 from src.infra.mcp.mcp_manager import McpManager
-from src.agent_tools import set_mcp_manager
+from src.domain.agent.tools import set_mcp_manager
 from src.api.router.mcp_routes import setup_mcp_routes
 
 mcp_manager = McpManager()
@@ -706,7 +706,7 @@ app.include_router(setup_mcp_routes(mcp_manager))
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
-from src.ai_interaction import set_session_manager as set_ai_session_manager, set_memory_manager as set_ai_memory_manager, set_rag_manager as set_ai_rag_manager
+from src.domain.agent.ai_interaction import set_session_manager as set_ai_session_manager, set_memory_manager as set_ai_memory_manager, set_rag_manager as set_ai_rag_manager
 set_ai_session_manager(session_manager)
 set_ai_memory_manager(memory_manager, memory_vector)
 set_ai_rag_manager(rag_manager, personal_docs_mgr)
@@ -934,7 +934,7 @@ async def _startup_event():
     # first turn as fast as subsequent ones (warm embed ≈ a few ms).
     async def _warmup_tool_index():
         try:
-            from src.tool_index import get_tool_index
+            from src.domain.agent.tools.tool_index import get_tool_index
             idx = await asyncio.to_thread(get_tool_index)
             if idx:
                 await asyncio.to_thread(idx.get_tools_for_query, "warmup", 8)

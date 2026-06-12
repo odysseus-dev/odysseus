@@ -8,7 +8,7 @@ label with `[^*]+`, so they could not match a label like "Email *" / "State *"
 stayed empty and the exported PDF (and signed-reply attachment) came out blank
 for that field, with no error.
 """
-from src.pdf_form_doc import render_form_as_markdown, parse_markdown_to_values
+from src.domain.document.pdf_form_doc import render_form_as_markdown, parse_markdown_to_values
 
 
 def test_asterisk_label_value_survives_export_roundtrip():

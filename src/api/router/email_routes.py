@@ -1258,7 +1258,7 @@ def setup_email_routes():
                     cached_boundaries = {"sig_start": _row3[0], "quote_start": _row3[1]}
                     if _row3[2]:
                         try:
-                            from src.email_thread_parser import THREAD_PARSER_VERSION
+                            from src.domain.email.email_thread_parser import THREAD_PARSER_VERSION
                             _parsed = json.loads(_row3[2])
                             # Versioned envelope: {"v": N, "turns": [...]}.
                             # Anything else (bare list from older code, wrong
@@ -1282,7 +1282,7 @@ def setup_email_routes():
             # ones. The background task warms the cache for next reads.
             if cached_turns is None:
                 try:
-                    from src.email_thread_parser import parse_thread
+                    from src.domain.email.email_thread_parser import parse_thread
                     cached_turns = parse_thread(body_html, body)
                 except Exception as _pe:
                     logger.debug(f"thread parse on read failed: {_pe}")
@@ -1525,8 +1525,8 @@ def setup_email_routes():
             if ext == ".pdf":
                 import shutil as _shutil
                 from src.constants import UPLOAD_DIR
-                from src.pdf_forms import has_form_fields, extract_fields
-                from src.pdf_form_doc import (
+                from src.domain.document.pdf_forms import has_form_fields, extract_fields
+                from src.domain.document.pdf_form_doc import (
                     save_field_sidecar,
                     create_form_markdown_document,
                     create_plain_pdf_document,

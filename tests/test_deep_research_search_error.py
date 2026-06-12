@@ -19,7 +19,7 @@ import types
 def _make_researcher():
     # Build the object without running the heavy __init__ (which wires up an
     # LLM caller etc.); _search only touches the attributes set below.
-    from src.deep_research import DeepResearcher
+    from src.domain.research.deep_research import DeepResearcher
     r = DeepResearcher.__new__(DeepResearcher)
     r.search_provider_override = None
     r.providers_used = []

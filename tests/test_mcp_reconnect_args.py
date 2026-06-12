@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 def test_reconnect_passes_full_server_config():
     """do_manage_mcp reconnect must pass name/transport/command/args/env/url."""
-    from src.tool_implementations import do_manage_mcp
+    from src.domain.agent.tools.tool_implementations import do_manage_mcp
 
     fake_mcp = MagicMock()
     fake_mcp.disconnect_server = AsyncMock()

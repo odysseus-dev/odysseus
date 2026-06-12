@@ -593,7 +593,7 @@ def setup_calendar_routes() -> APIRouter:
     # ── CalDAV multi-account helpers ─────────────────────────────────────────
 
     def _get_caldav_accounts(owner: str) -> list:
-        from src.caldav_sync import _load_caldav_accounts
+        from src.domain.calendar.caldav_sync import _load_caldav_accounts
         return _load_caldav_accounts(owner)
 
     def _save_caldav_accounts(owner: str, accounts: list) -> None:
@@ -641,7 +641,7 @@ def setup_calendar_routes() -> APIRouter:
         if not (body.get("url") or "").strip():
             _save_caldav_accounts(owner, [])
             return {"ok": True, "cleared": True}
-        from src.caldav_sync import validate_caldav_url
+        from src.domain.calendar.caldav_sync import validate_caldav_url
         try:
             validated_url = validate_caldav_url(body.get("url", ""))
         except ValueError as e:
@@ -695,7 +695,7 @@ def setup_calendar_routes() -> APIRouter:
             body = await request.json()
         except Exception:
             body = {}
-        from src.caldav_sync import validate_caldav_url
+        from src.domain.calendar.caldav_sync import validate_caldav_url
         try:
             url = validate_caldav_url(body.get("url", ""))
         except ValueError as e:
@@ -729,7 +729,7 @@ def setup_calendar_routes() -> APIRouter:
             raise HTTPException(404, "Account not found")
         acc = dict(accounts[idx])
         if body.get("url"):
-            from src.caldav_sync import validate_caldav_url
+            from src.domain.calendar.caldav_sync import validate_caldav_url
             try:
                 acc["url"] = validate_caldav_url(body["url"])
             except ValueError as e:
@@ -791,7 +791,7 @@ def setup_calendar_routes() -> APIRouter:
                             pass
         if not (url and user and pw):
             return {"ok": False, "error": "Missing URL, username, or password"}
-        from src.caldav_sync import validate_caldav_url
+        from src.domain.calendar.caldav_sync import validate_caldav_url
         try:
             url = validate_caldav_url(url)
         except ValueError as e:
@@ -848,7 +848,7 @@ def setup_calendar_routes() -> APIRouter:
         Returns counts + any per-calendar errors. Called by the frontend
         on calendar open and by the periodic scheduler loop."""
         owner = _require_user(request)
-        from src.caldav_sync import sync_caldav
+        from src.domain.calendar.caldav_sync import sync_caldav
         return await sync_caldav(owner)
 
 
@@ -1008,7 +1008,7 @@ def setup_calendar_routes() -> APIRouter:
             if cal.source == "caldav":
                 # Push the new event to the remote so it appears on the user's
                 # other devices — the sync is otherwise pull-only (#800).
-                from src.caldav_writeback import writeback_event
+                from src.domain.calendar.caldav_writeback import writeback_event
                 await writeback_event(owner, cal.source, cal.id, {
                     "uid": uid, "summary": data.summary, "description": data.description,
                     "location": data.location, "dtstart": dtstart, "dtend": dtend,
@@ -1063,7 +1063,7 @@ def setup_calendar_routes() -> APIRouter:
             db.commit()
             cal = db.query(CalendarCal).filter(CalendarCal.id == ev.calendar_id).first()
             if cal and cal.source == "caldav":
-                from src.caldav_writeback import writeback_event
+                from src.domain.calendar.caldav_writeback import writeback_event
                 await writeback_event(owner, cal.source, cal.id, {
                     "uid": ev.uid, "summary": ev.summary, "description": ev.description,
                     "location": ev.location, "dtstart": ev.dtstart, "dtend": ev.dtend,
@@ -1096,7 +1096,7 @@ def setup_calendar_routes() -> APIRouter:
             db.delete(ev)
             db.commit()
             if _is_caldav:
-                from src.caldav_writeback import writeback_event
+                from src.domain.calendar.caldav_writeback import writeback_event
                 await writeback_event(owner, "caldav", _cal_id, {"uid": _ev_uid}, delete=True)
             return {"ok": True}
         except HTTPException:

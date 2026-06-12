@@ -12,7 +12,7 @@ import json
 import os
 import tempfile
 
-from src.preset_manager import PresetManager
+from src.domain.chat.preset_manager import PresetManager
 
 
 def _write_presets(data: dict) -> str:

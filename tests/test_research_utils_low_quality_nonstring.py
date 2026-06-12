@@ -1,4 +1,4 @@
-from src.research_utils import is_low_quality
+from src.domain.research.research_utils import is_low_quality
 
 
 def test_is_low_quality_treats_non_string_as_low_quality():

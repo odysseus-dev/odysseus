@@ -119,7 +119,7 @@ def test_skill_index_does_not_leak_to_system_role(tmp_path, monkeypatch):
     data_dir = _seed_index_skill(tmp_path)
     _patch_prefs(monkeypatch, data_dir)
 
-    from src.agent_loop import _build_system_prompt  # noqa: WPS433
+    from src.domain.agent.agent_loop import _build_system_prompt  # noqa: WPS433
 
     messages = [{"role": "user", "content": "please clean up my inbox"}]
     out, _ = _build_system_prompt(
@@ -148,7 +148,7 @@ def test_skill_index_lands_in_untrusted_user_message(tmp_path, monkeypatch):
     data_dir = _seed_index_skill(tmp_path)
     _patch_prefs(monkeypatch, data_dir)
 
-    from src.agent_loop import _build_system_prompt  # noqa: WPS433
+    from src.domain.agent.agent_loop import _build_system_prompt  # noqa: WPS433
 
     messages = [{"role": "user", "content": "please clean up my inbox"}]
     out, _ = _build_system_prompt(
@@ -182,7 +182,7 @@ def test_skill_index_is_owner_scoped_across_prompt_cache_hits(tmp_path, monkeypa
     _write_index_skill(data_dir, "bob-only", "Bob private procedure", "bob")
     _patch_prefs(monkeypatch, data_dir)
 
-    from src.agent_loop import _build_system_prompt  # noqa: WPS433
+    from src.domain.agent.agent_loop import _build_system_prompt  # noqa: WPS433
 
     messages = [{"role": "user", "content": "use my workflow"}]
     alice_out, _ = _build_system_prompt(

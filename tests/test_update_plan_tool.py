@@ -7,10 +7,10 @@ plan and refreshes the docked plan window. No I/O, does not end the turn.
 import asyncio
 import json
 
-from src.agent_tools import ToolBlock, TOOL_TAGS  # import first to avoid circular
-from src.tool_execution import execute_tool_block
-from src.tool_index import ALWAYS_AVAILABLE, BUILTIN_TOOL_DESCRIPTIONS
-from src.tool_security import is_public_blocked_tool
+from src.domain.agent.tools import ToolBlock, TOOL_TAGS  # import first to avoid circular
+from src.domain.agent.tools.tool_execution import execute_tool_block
+from src.domain.agent.tools.tool_index import ALWAYS_AVAILABLE, BUILTIN_TOOL_DESCRIPTIONS
+from src.domain.agent.tools.tool_security import is_public_blocked_tool
 
 
 def _run(content):
@@ -40,7 +40,7 @@ def test_registered_everywhere():
     assert "update_plan" in TOOL_TAGS
     assert "update_plan" in ALWAYS_AVAILABLE
     assert "update_plan" in BUILTIN_TOOL_DESCRIPTIONS
-    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+    from src.domain.agent.tools.tool_schemas import FUNCTION_TOOL_SCHEMAS
     assert "update_plan" in {s["function"]["name"] for s in FUNCTION_TOOL_SCHEMAS}
     # Not admin/public-gated — any user can drive their own plan.
     assert is_public_blocked_tool("update_plan") is False

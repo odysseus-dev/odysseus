@@ -6,7 +6,7 @@ import types
 import pytest
 
 import src.model_context as model_context
-from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+from src.domain.context.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
 
 
 class _Column:

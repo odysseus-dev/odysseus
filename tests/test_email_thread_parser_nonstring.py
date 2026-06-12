@@ -1,4 +1,4 @@
-from src.email_thread_parser import parse_thread
+from src.domain.email.email_thread_parser import parse_thread
 
 
 def test_parse_thread_ignores_non_string_bodies():

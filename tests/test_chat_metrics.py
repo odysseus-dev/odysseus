@@ -17,7 +17,7 @@ import json
 import asyncio
 
 from src import llm_core
-from src.agent_loop import _compute_final_metrics
+from src.domain.agent.agent_loop import _compute_final_metrics
 
 
 # --- captured-stream harness (mirrors test_llm_core_streaming.py) -----------

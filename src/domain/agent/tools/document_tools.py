@@ -631,7 +631,7 @@ class ManageDocumentTool:
                 return {"response": f"Deleted document '{title}'", "exit_code": 0}
 
             elif action == "tidy":
-                from src.document_actions import run_document_tidy
+                from src.domain.document.document_actions import run_document_tidy
                 result = await run_document_tidy(owner or "")
                 return {"response": result, "exit_code": 0}
 

@@ -362,7 +362,7 @@ def test_upload_resolver_rejects_cross_owner_upload_ids(tmp_path):
 
 
 def test_build_user_content_skips_cross_owner_attachments(tmp_path):
-    from src.document_processor import build_user_content
+    from src.domain.document.document_processor import build_user_content
     from src.infra.storage.upload_handler import UploadHandler
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
@@ -386,7 +386,7 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
     for mod_name in ("src.chat_handler", "routes.chat_helpers"):
         sys.modules.pop(mod_name, None)
     _stub_core_database_for_route_imports(monkeypatch)
-    from src.chat_handler import ChatHandler
+    from src.domain.chat.chat_handler import ChatHandler
     from src.infra.storage.upload_handler import UploadHandler
     from src import settings
 
@@ -432,7 +432,7 @@ def test_document_upload_lookup_rejects_cross_owner_marker(tmp_path, monkeypatch
 
 
 def test_find_source_upload_id_rejects_path_traversal_marker():
-    from src.pdf_form_doc import find_source_upload_id
+    from src.domain.document.pdf_form_doc import find_source_upload_id
 
     content = '<!-- pdf_source upload_id="../../etc/passwd" -->\n\n# x\n'
     assert find_source_upload_id(content) is None
@@ -1151,7 +1151,7 @@ def test_chat_active_document_lookup_is_owner_scoped():
     '<a href="javascript:alert(1)">x</a>',
 ])
 def test_md_to_html_strips_active_content(payload):
-    from src.visual_report import _md_to_html
+    from src.domain.research.visual_report import _md_to_html
 
     out = _md_to_html(f"Report body.\n\n{payload}").lower()
 
@@ -1162,7 +1162,7 @@ def test_md_to_html_strips_active_content(payload):
 
 
 def test_md_to_html_preserves_normal_report_formatting():
-    from src.visual_report import _md_to_html
+    from src.domain.research.visual_report import _md_to_html
 
     md = (
         "## Findings\n\n"
@@ -1186,7 +1186,7 @@ def test_visual_report_escapes_request_category():
     # no enum validation and lands in <body class="category-{category}"> on a
     # report page served under `script-src 'unsafe-inline'`, so it must be escaped
     # or it's an attribute-injection XSS independent of the markdown body.
-    from src.visual_report import generate_visual_report
+    from src.domain.research.visual_report import generate_visual_report
 
     html = generate_visual_report(
         question="q",

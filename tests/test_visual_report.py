@@ -1,6 +1,6 @@
 from bs4 import BeautifulSoup
 
-from src.visual_report import generate_visual_report
+from src.domain.research.visual_report import generate_visual_report
 
 
 def test_visual_report_toc_links_match_rendered_heading_ids():

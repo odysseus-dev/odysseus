@@ -30,7 +30,7 @@ import routes.document_routes as droutes
 from src.infra.database.database import Document
 from src.infra.database.database import Session as DbSession
 from routes.document_helpers import DocumentPatch
-from src.agent_tools.document_tools import set_active_document, get_active_document
+from src.domain.agent.tools.document_tools import set_active_document, get_active_document
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(

@@ -8,7 +8,7 @@ toggle" error - the advertised capability was dead.
 """
 import asyncio
 
-from src.ai_interaction import do_ui_control
+from src.domain.agent.ai_interaction import do_ui_control
 
 
 def test_toggle_rag_on_is_accepted():

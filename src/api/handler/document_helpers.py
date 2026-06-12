@@ -187,7 +187,7 @@ def _assert_pdf_marker_upload_owned(
     """Reject document content whose pdf_source marker points at another user's upload."""
     if upload_handler is None:
         return
-    from src.pdf_form_doc import find_source_upload_id
+    from src.domain.document.pdf_form_doc import find_source_upload_id
 
     upload_id = find_source_upload_id(content or "")
     if not upload_id:

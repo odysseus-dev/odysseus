@@ -242,7 +242,7 @@ def test_rename_updates_active_research_task_owner(rename_endpoint):
     endpoint, _am, tmp_path = rename_endpoint
 
     from routes.research_routes import setup_research_routes
-    from src.research_handler import ResearchHandler
+    from src.domain.research.research_handler import ResearchHandler
 
     rh = ResearchHandler.__new__(ResearchHandler)
     rh._active_tasks = {
@@ -289,7 +289,7 @@ def test_rename_updates_active_research_task_owner(rename_endpoint):
 
 
 def test_research_handler_rename_owner_canonicalizes_new_owner():
-    from src.research_handler import ResearchHandler
+    from src.domain.research.research_handler import ResearchHandler
 
     rh = ResearchHandler.__new__(ResearchHandler)
     rh._active_tasks = {
@@ -302,7 +302,7 @@ def test_research_handler_rename_owner_canonicalizes_new_owner():
 
 
 def test_research_handler_rename_owner_uses_auth_lower_contract_not_casefold():
-    from src.research_handler import ResearchHandler
+    from src.domain.research.research_handler import ResearchHandler
 
     rh = ResearchHandler.__new__(ResearchHandler)
     rh._active_tasks = {

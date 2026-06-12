@@ -6,8 +6,8 @@ from the canonical implementations in src/.
 """
 
 from .service import DocsService, DocChunk, IndexResult
-from src.rag_manager import RAGManager
-from src.rag_vector import VectorRAG
+from src.domain.rag.rag_manager import RAGManager
+from src.domain.rag.rag_vector import VectorRAG
 
 __all__ = [
     "DocsService",

@@ -39,7 +39,7 @@ def tokyo_offset():
 
 
 async def test_update_event_dtstart_anchored_to_user_tz(tokyo_offset):
-    from src.tool_implementations import do_manage_calendar
+    from src.domain.agent.tools.tool_implementations import do_manage_calendar
 
     owner = "tz-" + uuid.uuid4().hex[:6]
     naive = "2026-06-10T14:00:00"  # 14:00 Tokyo == 05:00 UTC

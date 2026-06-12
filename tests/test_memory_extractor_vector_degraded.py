@@ -19,7 +19,7 @@ import tempfile
 
 import src.llm_core
 import src.event_bus
-from src.memory import MemoryManager
+from src.domain.memory.memory import MemoryManager
 from services.memory.memory_extractor import extract_and_store
 
 

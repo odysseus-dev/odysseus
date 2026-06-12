@@ -2,7 +2,7 @@ import builtins
 
 import pytest
 
-from src.markitdown_runtime import (
+from src.domain.document.markitdown_runtime import (
     MARKITDOWN_MISSING,
     MARKITDOWN_EXTS,
     is_markitdown_format,

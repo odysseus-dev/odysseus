@@ -8,7 +8,7 @@ the image renders deterministically, without relying on the model echoing the UR
 into prose. These cases cover the absolute-URL, relative-URL, no-URL, and
 non-success-exit paths.
 """
-from src.tool_execution import _promote_image_fields
+from src.domain.agent.tools.tool_execution import _promote_image_fields
 
 
 def _result(stdout, exit_code=0):

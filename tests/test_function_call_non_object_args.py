@@ -25,7 +25,7 @@ for _mod in _STUBBED:
 
 import pytest  # noqa: E402
 import src.agent_tools  # noqa: E402,F401
-from src.tool_schemas import function_call_to_tool_block  # noqa: E402
+from src.domain.agent.tools.tool_schemas import function_call_to_tool_block  # noqa: E402
 
 # Drop the stubs we installed so they do not leak into later tests.
 for _name, _original in _saved_stubs.items():

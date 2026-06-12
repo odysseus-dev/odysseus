@@ -26,7 +26,7 @@ for mod in [
 import json  # noqa: E402
 
 import src.agent_tools  # noqa: E402, F401
-from src.tool_schemas import function_call_to_tool_block  # noqa: E402
+from src.domain.agent.tools.tool_schemas import function_call_to_tool_block  # noqa: E402
 
 
 def test_time_filter_is_preserved_as_json():

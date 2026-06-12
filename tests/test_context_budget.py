@@ -5,7 +5,7 @@ Pins the pure budget computation and the explicit-override detection.
 
 import json
 
-from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
+from src.domain.context.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
 
 
 def test_default_scales_to_context_window():

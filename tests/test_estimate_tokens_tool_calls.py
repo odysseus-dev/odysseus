@@ -7,7 +7,7 @@ compaction/trim gates that rely on estimate_tokens silently missed real context
 overflow, letting the upstream call 400 with 'context length exceeded'.
 """
 
-from src.model_context import estimate_tokens
+from src.domain.context.model_context import estimate_tokens
 
 
 def test_tool_call_arguments_are_counted():

@@ -14,7 +14,7 @@ Sub-modules:
 import logging
 from collections import namedtuple
 
-from src.tool_utils import _truncate, get_mcp_manager, set_mcp_manager
+from src.domain.agent.tools.tool_utils import _truncate, get_mcp_manager, set_mcp_manager
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 # ---------------------------------------------------------------------------
 
 # Parsing
-from src.tool_parsing import (  # noqa: E402, F401
+from src.domain.agent.tools.tool_parsing import (  # noqa: E402, F401
     parse_tool_blocks,
     strip_tool_blocks,
     _TOOL_NAME_MAP,
@@ -104,13 +104,13 @@ from src.tool_parsing import (  # noqa: E402, F401
 )
 
 # Schemas
-from src.tool_schemas import (  # noqa: E402, F401
+from src.domain.agent.tools.tool_schemas import (  # noqa: E402, F401
     FUNCTION_TOOL_SCHEMAS,
     function_call_to_tool_block,
 )
 
 # Execution
-from src.tool_execution import (  # noqa: E402, F401
+from src.domain.agent.tools.tool_execution import (  # noqa: E402, F401
     execute_tool_block,
     format_tool_result,
 )
@@ -122,7 +122,7 @@ from .document_tools import (
 )
 
 # Implementations
-from src.tool_implementations import (  # noqa: E402, F401
+from src.domain.agent.tools.tool_implementations import (  # noqa: E402, F401
     do_search_chats,
     do_manage_skills,
     do_manage_tasks,

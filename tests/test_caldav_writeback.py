@@ -10,7 +10,7 @@ import sys
 import types
 from datetime import datetime
 
-from src.caldav_writeback import (
+from src.domain.calendar.caldav_writeback import (
     build_event_ical,
     find_remote_calendar,
     push_event,

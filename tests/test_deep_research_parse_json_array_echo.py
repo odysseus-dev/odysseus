@@ -7,7 +7,7 @@ harvested EVERY quoted string from the reply, so the engine ran literal
 searches for "query one" / "query two" / "query three".
 """
 
-from src.deep_research import DeepResearcher
+from src.domain.research.deep_research import DeepResearcher
 
 
 def _dr():

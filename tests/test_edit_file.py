@@ -6,13 +6,13 @@ import tempfile
 import pytest
 
 from src import tool_security
-from src.tool_security import (
+from src.domain.agent.tools.tool_security import (
     NON_ADMIN_BLOCKED_TOOLS,
     is_public_blocked_tool,
     blocked_tools_for_owner,
 )
-from src.agent_tools.filesystem_tools import EditFileTool
-from src.agent_tools import ToolBlock
+from src.domain.agent.tools.filesystem_tools import EditFileTool
+from src.domain.agent.tools import ToolBlock
 
 
 # ── Permission policy ─────────────────────────────────────────────────────

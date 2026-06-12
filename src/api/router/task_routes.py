@@ -483,7 +483,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         name = req.name
         if not name:
             if req.task_type == "action":
-                from src.builtin_actions import BUILTIN_ACTION_INFO
+                from src.domain.agent.builtin_actions import BUILTIN_ACTION_INFO
                 name = BUILTIN_ACTION_INFO.get(req.action, req.action or "Action Task")
             elif req.prompt:
                 name = await _generate_task_name(req.prompt, owner=user)
@@ -983,7 +983,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "tag", "label", "move", "archive", "delete", "mark", "schedule",
         )
         try:
-            from src.tool_utils import get_mcp_manager
+            from src.domain.agent.tools.tool_utils import get_mcp_manager
             mcp = get_mcp_manager()
             if mcp:
                 for tool in mcp.get_all_tools():
@@ -1005,7 +1005,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     async def list_actions(request: Request):
         """List available built-in actions."""
         user = _owner(request)
-        from src.builtin_actions import BUILTIN_ACTION_INFO
+        from src.domain.agent.builtin_actions import BUILTIN_ACTION_INFO
         return {"actions": [
             {"name": name, "description": desc}
             for name, desc in BUILTIN_ACTION_INFO.items()

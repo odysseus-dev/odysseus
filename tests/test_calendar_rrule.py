@@ -36,7 +36,7 @@ def _bind_temp_db(monkeypatch):
 
 
 async def test_create_event_with_rrule_persists_recurrence():
-    from src.tool_implementations import do_manage_calendar
+    from src.domain.agent.tools.tool_implementations import do_manage_calendar
 
     owner = "tester-" + uuid.uuid4().hex[:6]
     rrule = "FREQ=WEEKLY;BYDAY=MO"
@@ -61,7 +61,7 @@ async def test_create_event_with_rrule_persists_recurrence():
 
 
 async def test_create_event_without_rrule_is_single():
-    from src.tool_implementations import do_manage_calendar
+    from src.domain.agent.tools.tool_implementations import do_manage_calendar
 
     owner = "tester-" + uuid.uuid4().hex[:6]
     res = await do_manage_calendar(json.dumps({

@@ -17,7 +17,7 @@ from sqlalchemy.pool import NullPool
 
 import core.database as cdb
 from src.infra.database.database import CalendarEvent, CalendarCal
-from src.caldav_sync import _find_existing_event
+from src.domain.calendar.caldav_sync import _find_existing_event
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(f"sqlite:///{_TMPDB.name}", connect_args={"check_same_thread": False}, poolclass=NullPool)

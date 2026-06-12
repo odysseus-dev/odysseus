@@ -5,7 +5,7 @@ names. If one isn't recognized as vision-capable, the image attachment is
 stripped from the request before it reaches the model, so it silently never
 sees the picture.
 """
-from src.chat_helpers import is_vision_model
+from src.domain.chat.chat_helpers import is_vision_model
 
 
 def test_recognizes_local_and_hosted_vision_models():

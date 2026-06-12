@@ -8,18 +8,18 @@ from src.constants import (
     DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
     SESSIONS_FILE, DEFAULT_HOST, OPENAI_API_KEY
 )
-from src.memory import MemoryManager
-from src.memory_provider import MemoryProviderRegistry, NativeMemoryProvider
+from src.domain.memory.memory import MemoryManager
+from src.domain.memory.memory_provider import MemoryProviderRegistry, NativeMemoryProvider
 from services.memory.skills import SkillsManager
 from src.infra.database.session_manager import SessionManager
 from src.infra.database.models import set_session_manager
-from src.personal_docs import PersonalDocsManager
+from src.domain.rag.personal_docs import PersonalDocsManager
 from src.api_key_manager import APIKeyManager
-from src.preset_manager import PresetManager
-from src.chat_processor import ChatProcessor
+from src.domain.chat.preset_manager import PresetManager
+from src.domain.chat.chat_processor import ChatProcessor
 from src.infra.llm.model_discovery import ModelDiscovery
-from src.chat_handler import ChatHandler
-from src.research_handler import ResearchHandler
+from src.domain.chat.chat_handler import ChatHandler
+from src.domain.research.research_handler import ResearchHandler
 from src.infra.storage.upload_handler import UploadHandler
 from src.search import update_search_config
 
@@ -56,7 +56,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     # Initialize memory vector store (share embedding model with RAG if available)
     memory_vector = None
     try:
-        from src.memory_vector import MemoryVectorStore
+        from src.domain.memory.memory_vector import MemoryVectorStore
         embedding_model = getattr(rag_manager, '_model', None) if rag_manager else None
         memory_vector = MemoryVectorStore(DATA_DIR, embedding_model=embedding_model)
         if memory_vector.healthy:

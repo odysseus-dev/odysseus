@@ -9,7 +9,7 @@ not when the user asks how a feature works"). The pattern is now anchored to
 imperative position (start of message, optionally after "please") or to a
 "can/could/would/will you ..." request.
 """
-from src.action_intents import message_needs_tools
+from src.domain.agent.action_intents import message_needs_tools
 
 
 def test_informational_shell_questions_stay_plain_chat():

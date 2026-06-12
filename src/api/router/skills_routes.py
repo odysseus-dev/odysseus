@@ -405,7 +405,7 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
     """Background coroutine: run the skill in an agent loop, capture a condensed
     log + transcript, then have the judge grade it. Writes into _skill_test_jobs."""
     import json as _json
-    from src.agent_loop import stream_agent_loop
+    from src.domain.agent.agent_loop import stream_agent_loop
 
     job = _skill_test_jobs.get(key)
     if job is None:
@@ -682,7 +682,7 @@ def _apply_skill_md(skills_manager, name: str, md: str, owner) -> bool:
 async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -> tuple:
     """Run the skill once in the agent loop; return (transcript, verdict)."""
     import json as _json
-    from src.agent_loop import stream_agent_loop
+    from src.domain.agent.agent_loop import stream_agent_loop
     transcript = []
     messages = [
         {"role": "system", "content":
@@ -1019,7 +1019,7 @@ def _resolve_audit_models(owner=None):
         if get_setting("teacher_enabled", False):
             spec = (get_setting("teacher_model", "") or "").strip()
             if spec:
-                from src.ai_interaction import _resolve_model
+                from src.domain.agent.ai_interaction import _resolve_model
                 t_url, t_model, t_headers = _resolve_model(spec, owner=owner)
                 if t_url and t_model:
                     teacher = (t_url, t_model, t_headers)
@@ -1155,7 +1155,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             return s[:240]
 
         try:
-            from src.agent_loop import TOOL_SECTIONS, get_builtin_overrides
+            from src.domain.agent.agent_loop import TOOL_SECTIONS, get_builtin_overrides
         except Exception as e:
             return {"builtin": [], "count": 0, "error": str(e)}
 
@@ -1180,7 +1180,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         """Full text of a built-in tool's instruction block — the override
         if one is set, plus the shipped default (for the revert button)."""
         try:
-            from src.agent_loop import TOOL_SECTIONS, get_builtin_overrides
+            from src.domain.agent.agent_loop import TOOL_SECTIONS, get_builtin_overrides
         except Exception as e:
             raise HTTPException(500, str(e))
         default = None
@@ -1205,7 +1205,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         WARNING surfaced in the UI — this changes how the assistant is
         told to use a native tool."""
         require_admin(request)
-        from src.agent_loop import TOOL_SECTIONS
+        from src.domain.agent.agent_loop import TOOL_SECTIONS
         valid = set()
         for key in TOOL_SECTIONS:
             valid.update(key if isinstance(key, tuple) else (key,))

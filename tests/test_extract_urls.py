@@ -5,7 +5,7 @@ The old cleanup stripped any trailing ')' unconditionally, which corrupted URLs
 that legitimately end in one (Wikipedia disambiguation links being the common
 case). The fix only drops an *unbalanced* ')'.
 """
-from src.chat_helpers import extract_urls
+from src.domain.chat.chat_helpers import extract_urls
 
 
 def test_keeps_balanced_trailing_paren():

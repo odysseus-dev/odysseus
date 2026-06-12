@@ -4,7 +4,7 @@ It did `len(text)` directly, so `_truncate(None)` raised TypeError. Returning
 the raw non-string just moves the crash downstream (callers treat it as text),
 so non-strings are now coerced to a string and still truncated.
 """
-from src.agent_tools import _truncate
+from src.domain.agent.tools import _truncate
 
 
 def test_non_string_coerced_to_string():

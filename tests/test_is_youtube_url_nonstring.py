@@ -1,4 +1,4 @@
-from src.youtube_handler import is_youtube_url
+from src.domain.document.youtube_handler import is_youtube_url
 
 
 def test_is_youtube_url_handles_non_string():

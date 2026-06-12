@@ -7,7 +7,7 @@ import os
 
 from .memory import MemoryManager
 from .memory_vector import MemoryVectorStore
-from src.memory_provider import MemoryRecord, NativeMemoryProvider
+from src.domain.memory.memory_provider import MemoryRecord, NativeMemoryProvider
 from src.constants import DATA_DIR
 
 

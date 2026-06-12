@@ -56,5 +56,5 @@ def test_tidy_survives_duplicate_with_null_timestamps(db_factory):
 
 
 async def run_tidy():
-    from src.document_actions import run_document_tidy
+    from src.domain.document.document_actions import run_document_tidy
     return await run_document_tidy("alice")

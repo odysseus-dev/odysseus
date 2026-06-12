@@ -23,8 +23,8 @@ for mod in [
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-from src.context_compactor import _truncate_message_to_token_budget  # noqa: E402
-from src.model_context import estimate_tokens  # noqa: E402
+from src.domain.context.context_compactor import _truncate_message_to_token_budget  # noqa: E402
+from src.domain.context.model_context import estimate_tokens  # noqa: E402
 
 
 def _tool_msg(arg_len):
