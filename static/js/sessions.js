@@ -24,6 +24,7 @@ let _expandedFolders = {};  // folderName -> true if "show more" clicked
 let _sortMode = Storage.get('odysseus-session-sort') || 'active'; // default to last active
 let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
+const GROUP_PARTICIPANTS_EXPANDED_KEY = 'odysseus-group-participants-expanded';
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 const _mod = _isMac ? '⌘' : 'Ctrl';
 
@@ -112,6 +113,72 @@ function _normalizeSessionsList(fetched) {
     unique.push(session);
   }
   return unique;
+}
+
+function _groupParticipantsForSession(session) {
+  if (!session || !Array.isArray(session.group_participants)) return [];
+  return session.group_participants.filter(participant => participant && participant.id);
+}
+
+function _loadGroupParticipantsExpanded() {
+  const state = Storage.getJSON(GROUP_PARTICIPANTS_EXPANDED_KEY, {});
+  return state && typeof state === 'object' && !Array.isArray(state) ? state : {};
+}
+
+function _groupParticipantsExpanded(sessionId) {
+  const state = _loadGroupParticipantsExpanded();
+  return state[String(sessionId)] === true;
+}
+
+function _setGroupParticipantsExpanded(sessionId, expanded) {
+  const state = _loadGroupParticipantsExpanded();
+  state[String(sessionId)] = !!expanded;
+  Storage.setJSON(GROUP_PARTICIPANTS_EXPANDED_KEY, state);
+}
+
+function _groupParticipantChevron() {
+  return '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+}
+
+function _createGroupParticipantsList(session, participants) {
+  const list = document.createElement('div');
+  list.className = 'group-participants-list';
+  list.hidden = !_groupParticipantsExpanded(session.id);
+  list.addEventListener('click', (e) => e.stopPropagation());
+  list.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+
+  participants.forEach(participant => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'group-participant-row';
+    row.title = 'Open the parent group chat';
+    row.setAttribute('aria-label', `Open group chat for ${participant.name || participant.model || 'participant'}`);
+
+    const dot = document.createElement('span');
+    dot.className = 'group-participant-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    row.appendChild(dot);
+
+    const name = document.createElement('span');
+    name.className = 'group-participant-name text-ellipsis';
+    name.textContent = participant.name || participant.model || `Participant ${(participant.index || 0) + 1}`;
+    row.appendChild(name);
+
+    if (participant.model && participant.model !== participant.name) {
+      const model = document.createElement('span');
+      model.className = 'group-participant-model text-ellipsis';
+      model.textContent = participant.model;
+      row.appendChild(model);
+    }
+
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (currentSessionId !== session.id) selectSession(session.id);
+    });
+    list.appendChild(row);
+  });
+
+  return list;
 }
 
 // Initialize dependencies from app.js (no-op: dependencies now imported directly)
@@ -292,6 +359,9 @@ function createSessionItem(s) {
   // leaving the references in place, causing ReferenceError on every
   // session list re-render.
   const isOpenClaw = s.is_openclaw || s.id === 'openclaw';
+  const groupParticipants = _groupParticipantsForSession(s);
+  const hasGroupParticipants = groupParticipants.length > 0;
+  if (hasGroupParticipants) div.classList.add('has-group-participants');
 
   // Drag handle
   const handle = document.createElement('span');
@@ -351,6 +421,23 @@ function createSessionItem(s) {
     });
   }
   div.appendChild(icon);
+
+  if (hasGroupParticipants) {
+    const toggle = document.createElement('button');
+    const expanded = _groupParticipantsExpanded(s.id);
+    toggle.type = 'button';
+    toggle.className = 'group-participant-toggle';
+    toggle.title = expanded ? 'Hide participant chats' : 'Show participant chats';
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggle.setAttribute('aria-label', expanded ? 'Hide participant chats' : 'Show participant chats');
+    toggle.innerHTML = _groupParticipantChevron();
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _setGroupParticipantsExpanded(s.id, !expanded);
+      renderSessionList();
+    });
+    div.appendChild(toggle);
+  }
 
   const span = document.createElement('span');
   span.className = 'grow';
@@ -444,7 +531,7 @@ function createSessionItem(s) {
     if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
   }, { passive: true });
   div.addEventListener('click', (e) => {
-    if (e.target.closest('.item-drag-handle') || e.target.closest('.session-fav') || e.target.closest('.hamburger') || e.target.closest('.session-dropdown') || e.target.closest('.session-rename-input') || e.target.closest('.session-select-cb')) return;
+    if (e.target.closest('.item-drag-handle') || e.target.closest('.session-fav') || e.target.closest('.hamburger') || e.target.closest('.session-dropdown') || e.target.closest('.session-rename-input') || e.target.closest('.session-select-cb') || e.target.closest('.group-participant-toggle') || e.target.closest('.group-participants-list')) return;
     if (_touchMoved || _longPressed) { _touchMoved = false; _longPressed = false; return; }
     // In select mode, toggle dot instead of navigating
     if (_selectMode) {
@@ -752,6 +839,10 @@ function createSessionItem(s) {
   dropdown.addEventListener('click', (e) => e.stopPropagation());
   document.body.appendChild(dropdown);
   div._sessionDropdown = dropdown;
+
+  if (hasGroupParticipants) {
+    div.appendChild(_createGroupParticipantsList(s, groupParticipants));
+  }
 
   return div;
 }

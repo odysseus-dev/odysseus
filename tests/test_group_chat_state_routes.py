@@ -186,11 +186,21 @@ def test_list_sessions_hides_group_participants(monkeypatch):
     router = _routes(monkeypatch, sm)
     list_sessions = _endpoint(router, "/api/sessions", "GET")
 
-    returned_ids = {session["id"] for session in list_sessions(request=MagicMock())}
+    returned_sessions = list_sessions(request=MagicMock())
+    returned_ids = {session["id"] for session in returned_sessions}
+    parent = next(session for session in returned_sessions if session["id"] == parent_id)
+    normal = next(session for session in returned_sessions if session["id"] == normal_id)
 
     assert parent_id in returned_ids
     assert normal_id in returned_ids
     assert not set(child_ids) & returned_ids
+    assert parent["is_group_parent"] is True
+    assert parent["group_participants"] == [
+        {"id": child_ids[0], "index": 0, "name": "Athena", "model": "Llama 3"},
+        {"id": child_ids[1], "index": 1, "name": "Mistral", "model": "Mistral"},
+    ]
+    assert normal["is_group_parent"] is False
+    assert normal["group_participants"] == []
 
 
 def test_group_parent_folder_move_cascades_and_child_move_is_blocked(monkeypatch):
@@ -246,6 +256,37 @@ def test_group_parent_folder_move_cascades_and_child_move_is_blocked(monkeypatch
         assert child.folder == "Research"
     finally:
         db.close()
+
+
+def test_group_participant_lifecycle_actions_are_blocked(monkeypatch):
+    _reset_db()
+    parent_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    _add_session(parent_id, name="[GRP] Athena, Mistral")
+    for session_id in child_ids:
+        _add_session(session_id, name="[GRP] participant")
+    _add_group_state(parent_id, child_ids)
+
+    sm = MagicMock()
+    sm.get_session.return_value = _session_stub(child_ids[0], "[GRP] Athena")
+    sm.delete_session.return_value = True
+    router = _routes(monkeypatch, sm)
+    delete_session = _endpoint(router, "/api/session/{sid}", "DELETE")
+    archive_session = _endpoint(router, "/api/session/{sid}/archive", "POST")
+    unarchive_session = _endpoint(router, "/api/session/{sid}/unarchive", "POST")
+
+    with pytest.raises(HTTPException) as delete_exc:
+        delete_session(request=MagicMock(), sid=child_ids[0])
+    assert delete_exc.value.status_code == 403
+    sm.delete_session.assert_not_called()
+
+    with pytest.raises(HTTPException) as archive_exc:
+        archive_session(request=MagicMock(), sid=child_ids[0])
+    assert archive_exc.value.status_code == 403
+
+    with pytest.raises(HTTPException) as unarchive_exc:
+        unarchive_session(request=MagicMock(), sid=child_ids[0])
+    assert unarchive_exc.value.status_code == 403
 
 
 def test_group_chat_state_rejects_participants_from_other_users(monkeypatch):

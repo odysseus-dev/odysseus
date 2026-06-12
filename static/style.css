@@ -7538,12 +7538,86 @@ a.chat-link:hover {
 
 /* Session items */
 .session-item { position: relative; }
+.session-item.has-group-participants {
+  flex-wrap: wrap;
+}
 .text-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-menu-btn { padding: 0 2px !important; min-width: 20px; height: 20px; display: inline-flex !important; align-items: center; justify-content: center; background: none !important; border-color: transparent !important; }
 .session-menu-btn:hover { background: none !important; border-color: transparent !important; }
+.group-participant-toggle {
+  width: 16px;
+  min-width: 16px;
+  height: 18px;
+  padding: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--fg);
+  opacity: 0.42;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.group-participant-toggle:hover { opacity: 0.8; }
+.group-participant-toggle svg {
+  transition: transform 0.12s ease;
+}
+.group-participant-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.group-participants-list {
+  flex: 0 0 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0 1px 34px;
+  cursor: default;
+}
+.group-participants-list[hidden] {
+  display: none;
+}
+.group-participant-row {
+  width: 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 2px 6px !important;
+  border: none !important;
+  border-radius: 4px;
+  background: transparent !important;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  opacity: 0.72;
+}
+.group-participant-row:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent) !important;
+  opacity: 0.92;
+}
+.group-participant-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--fg) 28%, transparent);
+  flex-shrink: 0;
+}
+.group-participant-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 10px !important;
+}
+.group-participant-model {
+  max-width: 45%;
+  min-width: 0;
+  font-size: 9px !important;
+  opacity: 0.48;
+}
 @media (max-width: 768px) {
   .session-menu-btn { display: none !important; }
   .item-drag-handle { display: none !important; }
+  .group-participants-list { padding-left: 28px; }
 }
 .session-menu-btn svg { transition: transform 0.2s ease; }
 

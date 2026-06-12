@@ -295,11 +295,62 @@ def _group_session_links_for_user(db, user) -> tuple[set[str], set[str]]:
     return parent_ids, participant_ids
 
 
+def _group_participant_label(model: dict | None, idx: int) -> str:
+    if not isinstance(model, dict):
+        return f"Participant {idx + 1}"
+    character = model.get("character")
+    if not isinstance(character, dict):
+        character = {}
+    for value in (
+        model.get("_groupName"),
+        character.get("characterName"),
+        model.get("display"),
+        model.get("mid"),
+    ):
+        text = _group_state_str(value, 1024)
+        if text:
+            return text
+    return f"Participant {idx + 1}"
+
+
+def _group_participants_for_user(db, user) -> dict[str, list[dict]]:
+    participants_by_parent: dict[str, list[dict]] = {}
+    for parent_id, state in _group_state_query_for_user(db, user).all():
+        if not parent_id or not isinstance(state, dict):
+            continue
+        raw_participants = state.get("participantSessions")
+        if not isinstance(raw_participants, list):
+            continue
+        models = state.get("models")
+        if not isinstance(models, list):
+            models = []
+
+        participants = []
+        for idx, session_id in enumerate(raw_participants):
+            if not session_id:
+                continue
+            model = models[idx] if idx < len(models) and isinstance(models[idx], dict) else {}
+            participants.append({
+                "id": str(session_id),
+                "index": idx,
+                "name": _group_participant_label(model, idx),
+                "model": _group_state_str(model.get("display") or model.get("mid"), 1024),
+            })
+        if participants:
+            participants_by_parent[str(parent_id)] = participants
+    return participants_by_parent
+
+
 def _group_parent_for_participant(db, session_id: str, user) -> str | None:
     for parent_id, state in _group_state_query_for_user(db, user).all():
         if session_id in _group_participant_ids_from_state(state):
             return parent_id
     return None
+
+
+def _reject_group_participant_direct_action(db, session_id: str, user, action: str) -> None:
+    if _group_parent_for_participant(db, session_id, user):
+        raise HTTPException(403, f"{action} the parent group chat instead")
 
 
 def _set_group_participant_folders(db, participant_ids: set[str], folder: str | None, user) -> None:
@@ -408,7 +459,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
-            _, group_participant_ids = _group_session_links_for_user(db, user)
+            group_parent_ids, group_participant_ids = _group_session_links_for_user(db, user)
+            group_participants_map = _group_participants_for_user(db, user)
             q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
             q = owner_filter(q, DbSession, user)
             rows = q.all()
@@ -459,7 +511,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "has_documents": s.id in doc_session_ids,
                      "has_images": s.id in img_session_ids,
                      "mode": mode_map.get(s.id),
-                     "message_count": msg_count_map.get(s.id, 0)}
+                     "message_count": msg_count_map.get(s.id, 0),
+                     "is_group_parent": s.id in group_parent_ids,
+                     "group_participants": group_participants_map.get(s.id, [])}
                     for s in user_sessions.values()
                     if not s.archived
                     and s.id not in group_participant_ids
@@ -791,10 +845,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
+                user = effective_user(request)
                 
                 # Enforce "starred" protection consistent with single-session delete
                 db = SessionLocal()
                 try:
+                    _reject_group_participant_direct_action(db, sid, user, "Delete")
                     db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
                     if db_sess and db_sess.is_important:
                         continue
@@ -812,9 +868,11 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         """Permanently delete a session and all its messages."""
         _verify_session_owner(request, sid, session_manager)
         try:
+            user = effective_user(request)
             # Block deletion of starred/favorited sessions
             db = SessionLocal()
             try:
+                _reject_group_participant_direct_action(db, sid, user, "Delete")
                 db_sess = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_sess and db_sess.is_important:
                     raise HTTPException(
@@ -873,8 +931,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             session_manager.get_session(sid)
             
             # Archive the session
+            user = effective_user(request)
             db = SessionLocal()
             try:
+                _reject_group_participant_direct_action(db, sid, user, "Archive")
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
                     db_session.archived = True
@@ -906,8 +966,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     def unarchive_session(request: Request, sid: str):
         """Restore an archived session back to the active session list."""
         _verify_session_owner(request, sid)
+        user = effective_user(request)
         db = SessionLocal()
         try:
+            _reject_group_participant_direct_action(db, sid, user, "Restore")
             db_session = db.query(DbSession).filter(DbSession.id == sid).first()
             if not db_session:
                 raise HTTPException(404, f"Session {sid} not found")
