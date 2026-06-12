@@ -29147,9 +29147,9 @@ body.doc-find-active mark.doc-find-mark.current {
 
 /* Email reader icon buttons — vertical icon + label stack. */
 .memory-toolbar-btn.reader-icon-btn {
-  width: 48px;
+  width: auto;
   height: 44px;
-  padding: 4px 2px;
+  /* padding: 4px 2px; */
   position: relative;
   top: 1px;
   display: inline-flex;
