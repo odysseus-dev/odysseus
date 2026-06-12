@@ -272,6 +272,19 @@ function _watchAnswer() {
 async function start() {
   const mgr = _mgr();
   if (!window.isSecureContext) { _toast('Voice dialog requires HTTPS'); return; }
+  if (mgr && !mgr.available) {
+    // The manager probes /api/tts/stats once at page load; a server restart
+    // under an open tab leaves it stale. Re-probe live before refusing.
+    try {
+      const res = await fetch('/api/tts/stats', { credentials: 'same-origin' });
+      const stats = await res.json();
+      if (stats.available && stats.ready) {
+        mgr.available = true;
+        mgr._provider = stats.provider || mgr._provider;
+        mgr.playbackSpeed = stats.speed || mgr.playbackSpeed;
+      }
+    } catch (_) { /* fall through to the refusal below */ }
+  }
   if (!mgr || !mgr.available) { _toast('Enable TTS first (Settings → TTS)'); return; }
 
   _state = 'listening';
