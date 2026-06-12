@@ -30,6 +30,14 @@ flowchart TD
 - Slack thread ↔ Odysseus session mapping
 - Read-only by default
 
+## Environment Variables
+
+Configure the following environment variables in your `.env` file to enable Converge and Workflow integrations:
+
+- `CONVERGE_BASE_URL`: The base URL of the Converge/Redmine Dashboard instance (e.g., `http://redmine-dashboard:3000`).
+- `CONVERGE_API_KEY`: The API key for Converge. **This key should be read-only in Converge** (configured in Converge's `EXTERNAL_API_KEYS`).
+- `OPENCLAW_ALLOWED_WORKFLOWS`: Controls which scheduled workflows can be triggered. See the Workflow Allowlist section below.
+
 ## Session Mapping
 
 Slack conversations are mapped into deterministic Odysseus sessions.
@@ -68,7 +76,7 @@ Without this scope, `no_memory=True` is enforced.
 ### `memory:write`
 Allows memory commands.
 Examples: `/remember`, `/forget`
-*Note: `memory:write` implies `memory:read`.*
+*Note: `memory:write` implicitly grants `memory:read`.*
 
 ### `web:read`
 Allows web retrieval during chat requests.
@@ -95,83 +103,91 @@ Without this scope, `allow_tool_preprocessing=False`.
 ### `converge:read`
 Allows access to Converge ticket data.
 Required for:
-- `GET /api/openclaw/tickets/*`
 - `GET /api/openclaw/converge/health`
+- `POST /api/openclaw/tickets/search`
+- `POST /api/openclaw/tickets/{ticket_id}/summary`
 
 ### `workflows:trigger`
 Allows execution of scheduled workflows.
 Required for:
-- `POST /api/openclaw/workflows/*`
+- `POST /api/openclaw/workflows/{name}/trigger`
 
 ## Workflow Allowlist
 
-Workflow execution can be restricted using:
-```env
-OPENCLAW_ALLOWED_WORKFLOWS=daily-summary,redmine-triage
-```
+Workflow execution can be restricted using the `OPENCLAW_ALLOWED_WORKFLOWS` environment variable:
 
-**Examples:**
-- `OPENCLAW_ALLOWED_WORKFLOWS=*` : Allow all workflows.
-- `OPENCLAW_ALLOWED_WORKFLOWS=` : Disable allowlist enforcement and rely on scope checks only.
+- **Comma-separated values**: Restricts execution to specific workflow names or IDs. (e.g., `OPENCLAW_ALLOWED_WORKFLOWS=daily-summary,redmine-triage`)
+- `*`: Allows all workflows. (e.g., `OPENCLAW_ALLOWED_WORKFLOWS=*`)
+- **Empty**: Disables allowlist enforcement completely, relying solely on scope checks. (e.g., `OPENCLAW_ALLOWED_WORKFLOWS=`)
 
-## Routes
+*Recommendation: Use explicit allowlists for OpenClaw usage to prevent unintended workflow executions.*
+
+## Routes & Examples
 
 ### `GET /api/openclaw/health`
-Basic bridge health.
+Basic bridge health. Does not perform Converge smoke checks.
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/health
+```
 
 ### `GET /api/openclaw/converge/health`
 Converge integration health.
 **Requires:** `converge:read`
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/converge/health
+```
 
 ### `POST /api/openclaw/ask`
-Chat entry point.
-Features:
-- Slack thread session mapping
-- Memory integration
-- Optional web search
-- Optional research
-- Tool execution gating
+Chat entry point. Features: Slack thread session mapping, Memory integration, Optional web search, Optional research, Tool execution gating.
+**Requires:** `chat` (and additional scopes for specific features)
+```bash
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"message": "What is the status of the API?", "channel": "C123", "thread": "170000.100"}' \
+  http://localhost:7000/api/openclaw/ask
+```
 
 ### `POST /api/openclaw/tickets/search`
 Search Converge tickets.
 **Requires:** `converge:read`
+```bash
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"query": "vpn down", "limit": 5}' \
+  http://localhost:7000/api/openclaw/tickets/search
+```
 
-### `POST /api/openclaw/tickets/{id}/summary`
-Generate a Slack-oriented ticket summary.
-*Note: Ticket payloads are sanitized before being sent to the model.*
+### `POST /api/openclaw/tickets/{ticket_id}/summary`
+Generate a Slack-oriented ticket summary. Ticket payloads are sanitized before being sent to the model.
+**Requires:** `converge:read`
+```bash
+curl -X POST -H "Authorization: Bearer <token>" \
+  http://localhost:7000/api/openclaw/tickets/12345/summary
+```
 
 ### `POST /api/openclaw/workflows/{name}/trigger`
 Trigger an allowed scheduled workflow.
 **Requires:** `workflows:trigger`
+```bash
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"force": true}' \
+  http://localhost:7000/api/openclaw/workflows/daily-summary/trigger
+```
 
 ## Security Notes
 
-The bridge intentionally separates permissions:
-- `chat`
-- `memory`
-- `web`
-- `research`
-- `tools`
-- `converge`
-- `workflows`
-
-A token only receives the capabilities explicitly granted to it.
+The bridge intentionally separates permissions. A token only receives the capabilities explicitly granted to it.
 
 **Recommended OpenClaw token:**
 - `chat`
 - `converge:read`
 
-**Recommended future Ops token:**
-- `chat`
-- `converge:read`
+**Avoid granting unless explicitly required:**
+- `workflows:trigger`
+- `memory:write`
+
+**Grant only when explicitly needed:**
 - `web:read`
 - `research:run`
 - `tools:use`
-
-**Avoid granting:**
-- `workflows:trigger`
-- `memory:write`
-*(unless explicitly required)*
 
 ## Testing
 
@@ -184,3 +200,8 @@ Current bridge tests validate:
 - Workflow allowlists
 - Ticket sanitization
 - User message persistence
+
+Run the targeted tests using:
+```bash
+pytest tests/test_openclaw_bridge_routes.py
+```
