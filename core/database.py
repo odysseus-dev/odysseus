@@ -159,6 +159,16 @@ class Session(TimestampMixin, Base):
             'crew_member_id': self.crew_member_id,
         }
 
+
+class GroupChatState(TimestampMixin, Base):
+    __tablename__ = "group_chat_states"
+
+    parent_session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    mode = Column(String, nullable=False, default="parallel")
+    state = Column(JSON, nullable=False, default=dict)
+
+
 class ChatMessage(Base):
     """
     SQLAlchemy model for ChatMessage table.

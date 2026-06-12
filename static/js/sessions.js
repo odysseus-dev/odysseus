@@ -1694,7 +1694,12 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       window.chatModule.checkPendingResearch(id);
     }
     // Restore group chat state if this is a group session
-    if (window.groupModule && window.groupModule.restoreState && window.groupModule.restoreState(id)) {
+    let restoredGroupState = false;
+    if (window.groupModule && window.groupModule.restoreState) {
+      restoredGroupState = await window.groupModule.restoreState(id);
+      if (navToken !== _sessionNavToken || currentSessionId !== id) return;
+    }
+    if (restoredGroupState) {
       if (window._syncGroupIndicator) window._syncGroupIndicator(true);
       // Hide model picker for group sessions
       const _mpw = document.getElementById('model-picker-wrap');

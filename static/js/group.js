@@ -616,6 +616,7 @@ export async function startGroup(models, parentSessionId) {
   }
 
   _saveState();
+  await _saveStateToServer();
 
   // Now select the session so the UI switches to it.
   if (_parentSessionId && window.sessionModule) {
@@ -752,6 +753,7 @@ async function _sendRoundRobin(msg, box) {
   // Order is randomized per-message now, so _roundRobinIdx no longer drives
   // turn order; left in state for backward compat only.
   _saveState();
+  _saveStateToServer().catch(() => {});
 }
 
 /** After parallel responses, inject each model's response into all other sessions. */
@@ -916,32 +918,75 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
 
 // ── State Persistence ────────────────────────────────
 
+function _buildState() {
+  return {
+    active: _active,
+    mode: _mode,
+    models: _models,
+    participantSessions: _participantSessions,
+    parentSessionId: _parentSessionId,
+    roundRobinIdx: _roundRobinIdx,
+  };
+}
+
+function _applyState(s, sessionId) {
+  if (!s || !s.active || s.parentSessionId !== sessionId) return false;
+  const models = Array.isArray(s.models) ? s.models : [];
+  if (models.length < 2) return false;
+  _active = true;
+  _mode = s.mode || 'parallel';
+  _models = models;
+  _participantSessions = Array.isArray(s.participantSessions) ? s.participantSessions : [];
+  while (_participantSessions.length < _models.length) _participantSessions.push(null);
+  _parentSessionId = s.parentSessionId;
+  _roundRobinIdx = s.roundRobinIdx || 0;
+  return true;
+}
+
 function _saveState() {
   try {
-    localStorage.setItem(GROUP_STATE_KEY, JSON.stringify({
-      active: _active,
-      mode: _mode,
-      models: _models,
-      participantSessions: _participantSessions,
-      parentSessionId: _parentSessionId,
-      roundRobinIdx: _roundRobinIdx,
-    }));
+    localStorage.setItem(GROUP_STATE_KEY, JSON.stringify(_buildState()));
   } catch (e) {}
 }
 
-export function restoreState(sessionId) {
+async function _saveStateToServer() {
+  if (!_parentSessionId || !_active || _models.length < 2) return;
   try {
-    const s = JSON.parse(localStorage.getItem(GROUP_STATE_KEY) || 'null');
-    if (s && s.active && s.parentSessionId === sessionId) {
-      _active = true;
-      _mode = s.mode || 'parallel';
-      _models = s.models || [];
-      _participantSessions = s.participantSessions || [];
-      _parentSessionId = s.parentSessionId;
-      _roundRobinIdx = s.roundRobinIdx || 0;
+    const res = await fetch(`${API_BASE}/api/session/${_parentSessionId}/group_state`, {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(_buildState()),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.warn('[group] Failed to persist group state:', e);
+  }
+}
+
+export async function restoreState(sessionId) {
+  try {
+    const s = Storage.getJSON(GROUP_STATE_KEY, null);
+    if (_applyState(s, sessionId)) {
+      _saveState();
       return true;
     }
   } catch (e) {}
+
+  try {
+    const res = await fetch(`${API_BASE}/api/session/${sessionId}/group_state`, {
+      credentials: 'same-origin',
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    const s = data.group_state || data.groupState;
+    if (data.ok && _applyState(s, sessionId)) {
+      _saveState();
+      return true;
+    }
+  } catch (e) {
+    console.warn('[group] Failed to restore group state:', e);
+  }
   return false;
 }
 

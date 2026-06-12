@@ -9,8 +9,7 @@ import logging
 
 from core.session_manager import SessionManager
 from core.models import ChatMessage
-from src.request_models import SessionResponse
-from core.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
+from core.database import Session as DbSession, GroupChatState, SessionLocal, Document, GalleryImage, utcnow_naive
 from src.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
 from src.session_actions import is_session_recently_active
 
@@ -169,6 +168,105 @@ def _persist_session_headers(session_id: str, headers: dict | None) -> None:
         raise
     finally:
         db.close()
+
+
+_GROUP_CHAT_MODES = {"parallel", "round-robin"}
+_GROUP_CHAT_MAX_PARTICIPANTS = 8
+
+
+def _group_state_str(value, max_len: int = 4096) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text[:max_len]
+
+
+def _normalize_group_character(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    normalized = {}
+    character_id = _group_state_str(value.get("characterId"), 256)
+    character_name = _group_state_str(value.get("characterName"), 1024)
+    character_prompt = _group_state_str(value.get("characterPrompt"), 50000)
+    if character_id:
+        normalized["characterId"] = character_id
+    if character_name:
+        normalized["characterName"] = character_name
+    if character_prompt:
+        normalized["characterPrompt"] = character_prompt
+    return normalized or None
+
+
+def _normalize_group_model(value) -> dict:
+    if not isinstance(value, dict):
+        raise HTTPException(400, "Invalid group model")
+    mid = _group_state_str(value.get("mid"), 1024)
+    url = _group_state_str(value.get("url"), 2048)
+    if not mid or not url:
+        raise HTTPException(400, "Group model is missing its model id or endpoint URL")
+
+    normalized = {
+        "mid": mid,
+        "url": url,
+        "display": _group_state_str(value.get("display") or mid, 1024),
+    }
+    endpoint_id = _group_state_str(value.get("endpointId"), 256)
+    endpoint_name = _group_state_str(value.get("epName"), 1024)
+    group_name = _group_state_str(value.get("_groupName"), 1024)
+    character = _normalize_group_character(value.get("character"))
+    if endpoint_id:
+        normalized["endpointId"] = endpoint_id
+    if endpoint_name:
+        normalized["epName"] = endpoint_name
+    if group_name:
+        normalized["_groupName"] = group_name
+    if character:
+        normalized["character"] = character
+    return normalized
+
+
+def _normalize_group_state(raw_state, parent_session_id: str) -> dict:
+    if isinstance(raw_state, dict) and isinstance(raw_state.get("group_state"), dict):
+        raw_state = raw_state["group_state"]
+    if not isinstance(raw_state, dict):
+        raise HTTPException(400, "Invalid group chat state")
+
+    mode = raw_state.get("mode")
+    if mode not in _GROUP_CHAT_MODES:
+        mode = "parallel"
+
+    raw_models = raw_state.get("models")
+    if not isinstance(raw_models, list):
+        raise HTTPException(400, "Group chat state is missing models")
+    models = [
+        _normalize_group_model(model)
+        for model in raw_models[:_GROUP_CHAT_MAX_PARTICIPANTS]
+    ]
+    if len(models) < 2:
+        raise HTTPException(400, "Group chat state must include at least two models")
+
+    raw_participants = raw_state.get("participantSessions", [])
+    if not isinstance(raw_participants, list):
+        raise HTTPException(400, "Invalid group participant session list")
+    participant_sessions = []
+    for value in raw_participants[:len(models)]:
+        participant_sessions.append(_group_state_str(value, 256) if value else None)
+    while len(participant_sessions) < len(models):
+        participant_sessions.append(None)
+
+    try:
+        round_robin_idx = max(0, int(raw_state.get("roundRobinIdx", 0)))
+    except (TypeError, ValueError):
+        round_robin_idx = 0
+
+    return {
+        "active": True,
+        "mode": mode,
+        "models": models,
+        "participantSessions": participant_sessions,
+        "parentSessionId": parent_session_id,
+        "roundRobinIdx": round_robin_idx,
+    }
 
 
 _HIDDEN_SYSTEM_SESSION_NAMES = {
@@ -540,6 +638,67 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             sess.add_message(ChatMessage(m["role"], m["content"], metadata=m.get("metadata")))
         session_manager.save_sessions()
         return {"ok": True, "count": len(messages)}
+
+    @router.put("/session/{sid}/group_state")
+    async def save_group_state(request: Request, sid: str):
+        """Persist the group-chat participant/model state for the parent session."""
+        _verify_session_owner(request, sid)
+        state = _normalize_group_state(await request.json(), sid)
+        user = effective_user(request)
+        participant_ids = {
+            participant_id
+            for participant_id in state["participantSessions"]
+            if participant_id
+        }
+
+        db = SessionLocal()
+        try:
+            if participant_ids:
+                rows = db.query(DbSession.id, DbSession.owner).filter(DbSession.id.in_(participant_ids)).all()
+                owner_by_id = {row.id: row.owner for row in rows}
+                if set(owner_by_id) != participant_ids:
+                    raise HTTPException(400, "Group participant session not found")
+                if user and any(owner != user for owner in owner_by_id.values()):
+                    raise HTTPException(404, "Group participant session not found")
+
+            group_state = db.query(GroupChatState).filter(GroupChatState.parent_session_id == sid).first()
+            if group_state is None:
+                group_state = GroupChatState(parent_session_id=sid)
+                db.add(group_state)
+            group_state.owner = user
+            group_state.mode = state["mode"]
+            group_state.state = state
+            group_state.updated_at = utcnow_naive()
+            db.commit()
+            return {"ok": True, "group_state": state}
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @router.get("/session/{sid}/group_state")
+    def get_group_state(request: Request, sid: str):
+        """Return persisted group-chat state for a parent session, if one exists."""
+        _verify_session_owner(request, sid)
+        user = effective_user(request)
+        db = SessionLocal()
+        try:
+            group_state = db.query(GroupChatState).filter(GroupChatState.parent_session_id == sid).first()
+            if group_state is None:
+                return {"ok": False, "group_state": None}
+            if user and group_state.owner and group_state.owner != user:
+                raise HTTPException(404, "Group chat state not found")
+            try:
+                state = _normalize_group_state(group_state.state, sid)
+            except HTTPException:
+                return {"ok": False, "group_state": None}
+            return {"ok": True, "group_state": state}
+        finally:
+            db.close()
 
     @router.post("/session/{sid}/delete")
     def delete_session_beacon(request: Request, sid: str):
