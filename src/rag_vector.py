@@ -12,7 +12,20 @@ import re
 import logging
 import numpy as np
 from typing import List, Dict, Any, Optional, Set
+
+from src.constants import CHROMA_DIR
 from pathlib import Path
+
+from src.embedding_lanes import (
+    LANE_CUSTOM,
+    LANE_FASTEMBED,
+    build_embedding_lanes,
+    collection_name,
+    dedupe_results,
+    lane_count,
+    migrate_legacy_collection,
+    query_lanes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +53,11 @@ def _generate_doc_id(text: str, owner: str = "") -> str:
 class VectorRAG:
     """RAG system using ChromaDB vector storage with hybrid search."""
 
-    def __init__(self, persist_directory: str = "data/chroma"):
+    def __init__(self, persist_directory: str = CHROMA_DIR):
         self.persist_directory = persist_directory
         self._collection = None
         self._model = None
+        self._lanes = []
         self._healthy = False
 
         Path(self.persist_directory).mkdir(parents=True, exist_ok=True)
@@ -55,22 +69,20 @@ class VectorRAG:
 
     def _initialize_system(self) -> bool:
         try:
-            from src.chroma_client import get_chroma_client
-            from src.embeddings import get_embedding_client
-
-            self._model = get_embedding_client()
-            if self._model is None:
-                raise RuntimeError("No embedding backend available")
-            logger.info(f"Embedding: {self._model.url} model={self._model.model}")
-
-            client = get_chroma_client()
-            self._collection = client.get_or_create_collection(
-                name=COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
+            self._lanes = build_embedding_lanes(COLLECTION_NAME)
+            if not self._lanes:
+                raise RuntimeError("No embedding lanes available")
+            self._collection = next(
+                (lane.collection for lane in self._lanes if lane.name == LANE_FASTEMBED),
+                self._lanes[0].collection,
             )
-
-            count = self._collection.count()
-            logger.info(f"VectorRAG ready ({count} docs)")
+            self._model = self._lanes[0].client
+            migrate_legacy_collection(COLLECTION_NAME, self._lanes)
+            logger.info(
+                "VectorRAG ready (lanes=%s docs=%s)",
+                [lane.name for lane in self._lanes],
+                lane_count(self._lanes),
+            )
             self._healthy = True
             return True
 
@@ -80,8 +92,9 @@ class VectorRAG:
             return False
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
-        vecs = self._model.encode(texts, normalize_embeddings=True)
-        return np.array(vecs, dtype=np.float32).tolist()
+        if not self._lanes:
+            return []
+        return np.array(self._lanes[0].encode(texts), dtype=np.float32).tolist()
 
     # ------------------------------------------------------------------
     # Properties
@@ -89,12 +102,56 @@ class VectorRAG:
 
     @property
     def healthy(self) -> bool:
-        return self._healthy and self._collection is not None
+        if getattr(self, "_lanes", None):
+            return self._healthy and bool(self._lanes)
+        return self._healthy and getattr(self, "_collection", None) is not None
 
     @property
     def collection(self):
         """Expose the ChromaDB collection for direct access by personal_routes etc."""
         return self._collection
+
+    def _active_collections(self):
+        lanes = getattr(self, "_lanes", None)
+        if lanes:
+            return [(lane.name, lane.collection) for lane in lanes]
+        collection = getattr(self, "_collection", None)
+        return [("legacy", collection)] if collection is not None else []
+
+    def _collections_for_delete(self):
+        collections = []
+        seen = set()
+
+        def add(lane_name: str, collection) -> None:
+            if collection is None:
+                return
+            key = getattr(collection, "name", None) or id(collection)
+            if key in seen:
+                return
+            seen.add(key)
+            collections.append((lane_name, collection))
+
+        for lane_name, collection in self._active_collections():
+            add(lane_name, collection)
+
+        if getattr(self, "_lanes", None):
+            try:
+                from src.chroma_client import get_chroma_client
+
+                client = get_chroma_client()
+                try:
+                    add("legacy", client.get_collection(COLLECTION_NAME))
+                except Exception:
+                    pass
+                for lane_name in (LANE_CUSTOM, LANE_FASTEMBED):
+                    try:
+                        add(lane_name, client.get_collection(collection_name(COLLECTION_NAME, lane_name)))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        return collections
 
     # ------------------------------------------------------------------
     # Document operations
@@ -109,23 +166,24 @@ class VectorRAG:
         if not metadata or not isinstance(metadata, dict):
             return False
 
-        try:
-            doc_id = _generate_doc_id(text, metadata.get("owner") or "")
-            # Check if already exists
-            existing = self._collection.get(ids=[doc_id])
-            if existing["ids"]:
-                return True  # already exists
-            embeddings = self._embed([text])
-            self._collection.add(
-                ids=[doc_id],
-                embeddings=embeddings,
-                documents=[text],
-                metadatas=[metadata],
-            )
-            return True
-        except Exception as e:
-            logger.error(f"add_document failed: {e}")
-            return False
+        doc_id = _generate_doc_id(text, metadata.get("owner") or "")
+        wrote = False
+        for lane in self._lanes:
+            try:
+                existing = lane.collection.get(ids=[doc_id])
+                if existing["ids"]:
+                    wrote = True
+                    continue
+                lane.collection.add(
+                    ids=[doc_id],
+                    embeddings=lane.encode([text]),
+                    documents=[text],
+                    metadatas=[metadata],
+                )
+                wrote = True
+            except Exception as e:
+                logger.warning("add_document failed in %s lane: %s", lane.name, e)
+        return wrote
 
     def add_documents_batch(self, docs: List[tuple]) -> Dict[str, Any]:
         if not self.healthy:
@@ -140,42 +198,57 @@ class VectorRAG:
         if not valid:
             return {"success": False, "message": "No valid documents"}
 
-        try:
-            # Get existing IDs to avoid duplicates
+        added_ids = set()
+        attempted_new = False
+        write_failed = False
+        for lane in self._lanes:
+            all_ids = [_generate_doc_id(t, m.get("owner") or "") for t, m in valid]
+            try:
+                existing = lane.collection.get(ids=all_ids)
+                existing_ids = set(existing.get("ids") or [])
+            except Exception:
+                existing_ids = set()
+
             new_texts = []
             new_metas = []
             new_ids = []
-            for t, m in valid:
-                doc_id = _generate_doc_id(t, m.get("owner") or "")
-                existing = self._collection.get(ids=[doc_id])
-                if not existing["ids"]:
-                    new_texts.append(t)
-                    new_metas.append(m)
+            for (text, meta), doc_id in zip(valid, all_ids):
+                if doc_id not in existing_ids:
+                    new_texts.append(text)
+                    new_metas.append(meta)
                     new_ids.append(doc_id)
 
             if new_texts:
-                # Batch in chunks of 100
+                attempted_new = True
+                lane_failed = False
                 for i in range(0, len(new_texts), 100):
                     batch_texts = new_texts[i:i + 100]
                     batch_ids = new_ids[i:i + 100]
                     batch_metas = new_metas[i:i + 100]
-                    embeddings = self._embed(batch_texts)
-                    self._collection.add(
-                        ids=batch_ids,
-                        embeddings=embeddings,
-                        documents=batch_texts,
-                        metadatas=batch_metas,
-                    )
+                    try:
+                        lane.collection.add(
+                            ids=batch_ids,
+                            embeddings=lane.encode(batch_texts),
+                            documents=batch_texts,
+                            metadatas=batch_metas,
+                        )
+                    except Exception as e:
+                        lane_failed = True
+                        write_failed = True
+                        logger.warning("add_documents_batch failed in %s lane: %s", lane.name, e)
+                        break
+                if not lane_failed:
+                    added_ids.update(new_ids)
 
-            return {
-                "success": True,
-                "added_count": len(new_texts),
-                "total_count": len(docs),
-                "failed_count": len(docs) - len(valid),
-            }
-        except Exception as e:
-            logger.error(f"add_documents_batch failed: {e}")
-            return {"success": False, "message": str(e)}
+        if attempted_new and write_failed and not added_ids:
+            return {"success": False, "message": "No embedding lane accepted the batch"}
+
+        return {
+            "success": True,
+            "added_count": len(added_ids),
+            "total_count": len(docs),
+            "failed_count": len(docs) - len(valid),
+        }
 
     # ------------------------------------------------------------------
     # Search — hybrid: vector similarity + keyword overlap
@@ -186,58 +259,51 @@ class VectorRAG:
             return []
         if not query or not isinstance(query, str):
             return []
-        if self._collection.count() == 0:
+        if lane_count(self._lanes) == 0:
             return []
 
         try:
-            # Fetch extra candidates when owner-filtering
-            fetch_k = min(k * 3, max(k, 20), self._collection.count())
-            if owner:
-                fetch_k = min(fetch_k * 2, self._collection.count())
-
-            query_embeddings = self._embed([query])
-
-            # Use ChromaDB where filter for owner if specified
             where_filter = {"owner": owner} if owner else None
-
-            results = self._collection.query(
-                query_embeddings=query_embeddings,
-                n_results=fetch_k,
-                where=where_filter,
-                include=["documents", "metadatas", "distances"],
-            )
-
             query_words = set(query.lower().split())
             candidates = []
 
-            for idx in range(len(results["ids"][0])):
-                doc_id = results["ids"][0][idx]
-                distance = results["distances"][0][idx]
-                doc_text = results["documents"][0][idx]
-                meta = results["metadatas"][0][idx]
+            for lane, results in query_lanes(
+                self._lanes,
+                query,
+                n_results=lambda lane: min(
+                    (k * 6 if owner else k * 3),
+                    max(k, 20),
+                    lane.count(),
+                ),
+                where=where_filter,
+                include=["documents", "metadatas", "distances"],
+                raise_if_all_failed=True,
+            ):
+                for idx in range(len(results["ids"][0])):
+                    doc_id = results["ids"][0][idx]
+                    distance = results["distances"][0][idx]
+                    doc_text = results["documents"][0][idx]
+                    meta = results["metadatas"][0][idx]
 
-                # ChromaDB cosine distance = 1 - cosine_similarity
-                vector_sim = 1.0 - distance
+                    vector_sim = 1.0 - distance
+                    doc_words = set(doc_text.lower().split())
+                    overlap = len(query_words & doc_words)
+                    keyword_score = overlap / len(query_words) if query_words else 0.0
+                    hybrid_score = (VECTOR_WEIGHT * vector_sim) + (KEYWORD_WEIGHT * keyword_score)
 
-                # Keyword overlap score
-                doc_words = set(doc_text.lower().split())
-                overlap = len(query_words & doc_words)
-                keyword_score = overlap / len(query_words) if query_words else 0.0
-
-                hybrid_score = (VECTOR_WEIGHT * vector_sim) + (KEYWORD_WEIGHT * keyword_score)
-
-                candidates.append({
-                    "id": doc_id,
-                    "document": doc_text,
-                    "metadata": meta,
-                    "distance": round(distance, 4),
-                    "similarity": round(hybrid_score, 4),
-                    "vector_similarity": round(vector_sim, 4),
-                    "keyword_score": round(keyword_score, 4),
-                })
+                    candidates.append({
+                        "id": doc_id,
+                        "document": doc_text,
+                        "metadata": meta,
+                        "distance": round(distance, 4),
+                        "similarity": round(hybrid_score, 4),
+                        "vector_similarity": round(vector_sim, 4),
+                        "keyword_score": round(keyword_score, 4),
+                        "embedding_lane": lane.name,
+                    })
 
             candidates.sort(key=lambda c: c["similarity"], reverse=True)
-            top = candidates[:k]
+            top = dedupe_results(candidates, limit=k)
             logger.info(f"Hybrid search for '{query[:60]}': {len(top)} results")
             return top
 
@@ -247,39 +313,36 @@ class VectorRAG:
 
     def _keyword_search_fallback(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
-            if self._collection.count() == 0:
-                return []
-
-            # Fetch all documents for keyword search fallback
-            all_docs = self._collection.get(include=["documents", "metadatas"])
-            if not all_docs["ids"]:
+            if not self._active_collections():
                 return []
 
             query_words = query.lower().split()
             scored = []
-            for i, doc in enumerate(all_docs["documents"]):
-                meta = all_docs["metadatas"][i]
-                if owner:
-                    # Match the primary path's strict where={"owner": owner}
-                    # filter. The old `if doc_owner and doc_owner != owner`
-                    # let docs with a missing/empty owner fall through, leaking
-                    # owner-less documents into another user's results.
-                    if meta.get("owner") != owner:
+            for lane_name, collection in self._active_collections():
+                if collection.count() == 0:
+                    continue
+                all_docs = collection.get(include=["documents", "metadatas"])
+                if not all_docs["ids"]:
+                    continue
+                for i, doc in enumerate(all_docs["documents"]):
+                    meta = all_docs["metadatas"][i]
+                    if owner and meta.get("owner") != owner:
                         continue
-                doc_lower = doc.lower()
-                score = sum(1 for w in query_words if w in doc_lower)
-                if score > 0:
-                    scored.append({
-                        "id": all_docs["ids"][i],
-                        "document": doc,
-                        "metadata": meta,
-                        "distance": 0,
-                        "similarity": score,
-                        "search_type": "keyword_fallback",
-                    })
+                    doc_lower = doc.lower()
+                    score = sum(1 for w in query_words if w in doc_lower)
+                    if score > 0:
+                        scored.append({
+                            "id": all_docs["ids"][i],
+                            "document": doc,
+                            "metadata": meta,
+                            "distance": 0,
+                            "similarity": score,
+                            "search_type": "keyword_fallback",
+                            "embedding_lane": lane_name,
+                        })
 
             scored.sort(key=lambda x: x["similarity"], reverse=True)
-            return scored[:k]
+            return dedupe_results(scored, limit=k)
         except Exception as e:
             logger.error(f"keyword fallback failed: {e}")
             return []
@@ -296,9 +359,20 @@ class VectorRAG:
                 client.delete_collection(COLLECTION_NAME)
             except Exception:
                 pass
-            self._collection = client.get_or_create_collection(
-                name=COLLECTION_NAME,
-                metadata={"hnsw:space": "cosine"},
+            for name in (
+                collection_name(COLLECTION_NAME, LANE_CUSTOM),
+                collection_name(COLLECTION_NAME, LANE_FASTEMBED),
+            ):
+                try:
+                    client.delete_collection(name)
+                except Exception:
+                    pass
+            # Rebuild means empty current lanes. Clear the legacy unsuffixed
+            # collection too so startup migration cannot resurrect stale docs.
+            self._lanes = build_embedding_lanes(COLLECTION_NAME)
+            self._collection = next(
+                (lane.collection for lane in self._lanes if lane.name == LANE_FASTEMBED),
+                self._lanes[0].collection if self._lanes else None,
             )
             self._healthy = True
             return True
@@ -312,10 +386,11 @@ class VectorRAG:
             return {"error": "Collection not initialized"}
         try:
             return {
-                "document_count": self._collection.count(),
-                "embedding_model": f"{self._model.model} @ {self._model.url}" if self._model else "N/A",
+                "document_count": lane_count(self._lanes),
+                "embedding_model": f"{self._lanes[0].model} @ {self._lanes[0].url}" if self._lanes else "N/A",
                 "persist_directory": self.persist_directory,
                 "collection_name": COLLECTION_NAME,
+                "embedding_lanes": [lane.stats() for lane in self._lanes],
                 "healthy": True,
             }
         except Exception as e:
@@ -400,19 +475,23 @@ class VectorRAG:
             return {"success": False, "message": "Collection not initialized"}
         directory = os.path.abspath(directory)
         try:
-            results = self._collection.get(include=["metadatas"])
-            ids = [
-                results["ids"][i]
-                for i, m in enumerate(results["metadatas"])
-                if isinstance(m, dict)
-                and isinstance(m.get("source"), str)
-                and (m["source"] == directory or m["source"].startswith(directory + os.sep))
-            ]
-            if not ids:
+            removed_ids = set()
+            for _lane_name, collection in self._collections_for_delete():
+                results = collection.get(include=["metadatas"])
+                ids = [
+                    results["ids"][i]
+                    for i, m in enumerate(results["metadatas"])
+                    if isinstance(m, dict)
+                    and isinstance(m.get("source"), str)
+                    and (m["source"] == directory or m["source"].startswith(directory + os.sep))
+                ]
+                if ids:
+                    collection.delete(ids=ids)
+                    removed_ids.update(ids)
+            if not removed_ids:
                 return {"success": True, "removed_count": 0, "message": "No docs found"}
 
-            self._collection.delete(ids=ids)
-            n = len(ids)
+            n = len(removed_ids)
             logger.info(f"Removed {n} chunks from {directory}")
             return {"success": True, "removed_count": n, "message": f"Removed {n} chunks"}
         except Exception as e:
@@ -504,16 +583,18 @@ class VectorRAG:
         if not self.healthy:
             return 0
         try:
-            results = self._collection.get(
-                where={"source": source},
-                include=[],
-            )
-            ids = results.get("ids", [])
-            if not ids:
-                return 0
-            self._collection.delete(ids=ids)
-            logger.info(f"Deleted {len(ids)} chunks for source={source}")
-            return len(ids)
+            removed_ids = set()
+            for _lane_name, collection in self._collections_for_delete():
+                results = collection.get(
+                    where={"source": source},
+                    include=[],
+                )
+                ids = results.get("ids", [])
+                if ids:
+                    collection.delete(ids=ids)
+                    removed_ids.update(ids)
+            logger.info(f"Deleted {len(removed_ids)} chunks for source={source}")
+            return len(removed_ids)
         except Exception as e:
             logger.error(f"delete_by_source failed: {e}")
             return 0

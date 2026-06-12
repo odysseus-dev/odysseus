@@ -33,3 +33,19 @@ def test_api_key_manager_load_resilience(tmp_path):
     assert loaded["good_provider"] == "good_value"
     assert "bad_provider" not in loaded
     assert "garbage_provider" not in loaded
+
+
+def test_load_ignores_non_string_raw_values(tmp_path):
+    mgr = APIKeyManager(str(tmp_path))
+
+    mgr.save("openai", "sk-openai")
+    with open(mgr.api_keys_file, "r", encoding="utf-8") as f:
+        keys = json.load(f)
+
+    keys["missing_provider"] = None
+    keys["numeric_provider"] = 42
+    keys["object_provider"] = {"encrypted": keys["openai"]}
+    with open(mgr.api_keys_file, "w", encoding="utf-8") as f:
+        json.dump(keys, f)
+
+    assert mgr.load() == {"openai": "sk-openai"}

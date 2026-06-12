@@ -12,6 +12,10 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
+
+from src.upload_limits import format_byte_limit, get_chat_upload_max_bytes
+
+
 def secure_filename(filename: str) -> str:
     """Sanitize a filename (replaces werkzeug.utils.secure_filename)."""
     import unicodedata
@@ -73,7 +77,7 @@ class UploadHandler:
     def __init__(self, base_dir: str, upload_dir: str):
         self.base_dir = base_dir
         self.upload_dir = upload_dir
-        self.max_upload_size = 10 * 1024 * 1024  # 10MB
+        self.max_upload_size = get_chat_upload_max_bytes()
         self.max_concurrent_uploads = 3
         self.cleanup_days = 30
         # Per-IP per-minute cap. save_upload() counts EACH file, and the chat
@@ -348,6 +352,86 @@ class UploadHandler:
                 return dict(info)
         return None
 
+    def _renamed_upload_index_key(self, key: str, info: Dict[str, Any], old_owner: str, new_owner: str) -> str:
+        """Return the storage key to use after renaming an owned upload row."""
+        if isinstance(key, str) and ":" in key:
+            owner_part, rest = key.split(":", 1)
+            if owner_part.strip().lower() == old_owner:
+                return f"{new_owner}:{rest}"
+        file_hash = info.get("hash")
+        if file_hash:
+            return f"{new_owner}:{file_hash}"
+        return key
+
+    def _unique_upload_index_key(self, base_key: str, used_keys: set, reserved_keys: set, info: Dict[str, Any]) -> str:
+        """Choose a deterministic collision key without overwriting an existing row."""
+        if base_key not in used_keys and base_key not in reserved_keys:
+            return base_key
+
+        upload_id = str(info.get("id") or "renamed").strip() or "renamed"
+        candidate = f"{base_key}:{upload_id}"
+        if candidate not in used_keys and candidate not in reserved_keys:
+            return candidate
+
+        index = 2
+        while True:
+            candidate = f"{base_key}:{upload_id}:{index}"
+            if candidate not in used_keys and candidate not in reserved_keys:
+                return candidate
+            index += 1
+
+    def rename_owner(self, old_owner: str, new_owner: str) -> int:
+        """Rename upload metadata ownership from old_owner to new_owner.
+
+        Upload rows are keyed by owner-qualified hashes for dedupe and also
+        carry an `owner` field for access checks. Both must move together when
+        usernames change.
+        """
+        old_owner_normalized = str(old_owner or "").strip().lower()
+        new_owner = str(new_owner or "").strip()
+        if not old_owner_normalized or not new_owner:
+            return 0
+        if old_owner_normalized == new_owner.lower():
+            return 0
+
+        uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
+        with self._index_lock:
+            current = self._load_upload_index()
+            if not current:
+                return 0
+
+            updated = {}
+            renamed = 0
+            original_keys = set(current.keys())
+
+            for key, info in current.items():
+                new_key = key
+                new_info = info
+                if isinstance(info, dict) and str(info.get("owner", "")).strip().lower() == old_owner_normalized:
+                    new_info = dict(info)
+                    new_info["owner"] = new_owner
+                    base_key = self._renamed_upload_index_key(key, new_info, old_owner_normalized, new_owner)
+                    new_key = self._unique_upload_index_key(
+                        base_key,
+                        set(updated.keys()),
+                        original_keys - {key},
+                        new_info,
+                    )
+                    if new_key != base_key:
+                        logger.warning(
+                            "Upload owner rename key collision for %s -> %s at %s; preserving row as %s",
+                            old_owner_normalized,
+                            new_owner,
+                            base_key,
+                            new_key,
+                        )
+                    renamed += 1
+                updated[new_key] = new_info
+
+            if renamed:
+                self._atomic_write_json(uploads_db_path, updated)
+            return renamed
+
     def _find_upload_path(self, upload_id: str) -> Optional[str]:
         """Find an upload file by ID while staying inside upload_dir."""
         if not self.validate_upload_id(upload_id):
@@ -518,7 +602,7 @@ class UploadHandler:
         if file_size > self.max_upload_size:
             raise HTTPException(
                 status_code=400,
-                detail=f"File size exceeds {self.max_upload_size/1024/1024}MB limit"
+                detail=f"File size exceeds {format_byte_limit(self.max_upload_size)} limit"
             )
         
         # Get original filename and sanitize it
