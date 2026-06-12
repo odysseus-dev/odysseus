@@ -42,12 +42,12 @@ def _sanitize_dict(data: dict) -> dict:
     redact_keys = {'token', 'secret', 'password', 'api_key', 'authorization', 'headers', 'auth'}
     clean = {}
     for k, v in data.items():
-        if isinstance(v, dict):
+        if any(rk in k.lower() for rk in redact_keys):
+            clean[k] = '***REDACTED***'
+        elif isinstance(v, dict):
             clean[k] = _sanitize_dict(v)
         elif isinstance(v, list):
             clean[k] = [_sanitize_dict(i) if isinstance(i, dict) else i for i in v]
-        elif any(rk in k.lower() for rk in redact_keys):
-            clean[k] = '***REDACTED***'
         else:
             clean[k] = v
     return clean

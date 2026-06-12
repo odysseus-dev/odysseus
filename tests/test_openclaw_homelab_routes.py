@@ -88,18 +88,27 @@ def test_sanitize_service_redacts_sensitive_fields():
         'name': 'pihole',
         'url': 'http://pihole.local',
         'api_key': 'secret123',
-        'headers': {'Authorization': 'Bearer 1234'},
+        'headers': {'X-Test': 'value', 'Authorization': 'Bearer 1234'},
+        'auth': {'username': 'admin'},
+        'secrets': ['a', 'b'],
         'nested': [{'token': 'abc', 'public': 'yes'}],
-        'auth': 'basic admin:password',
+        'public_list': ['one', 'two'],
     }
+    # Original dict should not be mutated
+    raw_copy = dict(raw)
+    
     clean = _sanitize_service(raw)
     assert clean['name'] == 'pihole'
     assert clean['url'] == 'http://pihole.local'
     assert clean['api_key'] == '***REDACTED***'
-    assert clean['headers']['Authorization'] == '***REDACTED***'
+    assert clean['headers'] == '***REDACTED***'
+    assert clean['auth'] == '***REDACTED***'
+    assert clean['secrets'] == '***REDACTED***'
     assert clean['nested'][0]['token'] == '***REDACTED***'
     assert clean['nested'][0]['public'] == 'yes'
-    assert clean['auth'] == '***REDACTED***'
+    assert clean['public_list'] == ['one', 'two']
+    
+    assert raw == raw_copy
 
 
 
