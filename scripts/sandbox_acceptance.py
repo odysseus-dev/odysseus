@@ -56,6 +56,10 @@ async def main() -> None:
     r = await run_in_sandbox("python", "import os; print(os.environ.get('FAKE_SECRET_TOKEN', 'ABSENT'))")
     _check("env secret not leaked to child", r.get("stdout", "").strip() == "ABSENT", repr(r.get("stdout")))
 
+    # The runner must execute as a non-root user (defense-in-depth).
+    r = await run_in_sandbox("bash", "id -u")
+    _check("runner is non-root", r.get("stdout", "").strip() not in ("0", ""), repr(r.get("stdout")))
+
 
 if __name__ == "__main__":
     asyncio.run(main())

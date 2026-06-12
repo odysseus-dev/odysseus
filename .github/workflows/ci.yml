@@ -63,11 +63,12 @@ jobs:
 
       # 2. Tier-B runner unit/e2e tests (spawn the runner over a local Unix
       #    socket — no Docker, fast).
-      - name: Sandbox runner tests
+      - name: Sandbox runner + egress-proxy tests
         run: |
           mkdir -p data
           PYTHONPATH=. python -m pytest -q \
-            tests/test_sandbox_runner.py tests/test_bash_python_sandbox_tierA.py
+            tests/test_sandbox_runner.py tests/test_bash_python_sandbox_tierA.py \
+            tests/test_sandbox_egress_proxy.py
 
       # 3. Runtime acceptance: run the sandbox image with the same hardened flags
       #    as compose, then drive it from a SIBLING container sharing the IPC

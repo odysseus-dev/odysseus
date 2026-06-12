@@ -35,10 +35,13 @@ DEFAULT_TIMEOUT = int(os.environ.get("RUNNER_DEFAULT_TIMEOUT", "120"))
 MAX_TIMEOUT = int(os.environ.get("RUNNER_MAX_TIMEOUT", "600"))
 
 # Benign env allowlist — the child never sees secrets (the container has none
-# mounted anyway; this is belt-and-suspenders).
+# mounted anyway; this is belt-and-suspenders). Proxy vars are included so that,
+# when Tier-C egress is enabled, sandboxed code routes through the allowlist proxy.
 _ENV_ALLOW = (
     "PATH", "TERM", "COLUMNS", "LINES", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE",
     "TZ", "TMPDIR", "PYTHONIOENCODING", "PYTHONUNBUFFERED",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "no_proxy",
 )
 
 _RLIMIT_CPU = int(os.environ.get("RUNNER_RLIMIT_CPU", "120"))

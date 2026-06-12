@@ -1,0 +1,50 @@
+# Tier-C egress overlay — OPT-IN. Use ONLY when sandboxed code genuinely needs
+# the internet (e.g. `pip install`):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.sandbox-egress.yml up -d
+#
+# Requires Docker Compose v2.24+ (the !reset tag). Without this file the sandbox
+# keeps network_mode:none = NO egress, which is the secure default.
+#
+# How it stays safe: this overlay swaps network_mode:none for an INTERNAL network
+# (internal: true → no route to the internet) shared with the allowlist proxy. The
+# sandbox therefore has no direct way out; the proxy is the only door, and it opens
+# only for hosts in SANDBOX_EGRESS_ALLOWLIST (default-deny). All other Tier-B
+# controls (read-only rootfs, tmpfs, cap_drop ALL, no-new-privileges, no
+# data/secret mounts, non-root) are inherited from the base service unchanged.
+services:
+  sandbox:
+    # Drop network_mode:none so the service can join a network instead.
+    network_mode: !reset null
+    networks:
+      - sbx-internal
+    environment:
+      - HTTP_PROXY=http://sandbox-proxy:8888
+      - HTTPS_PROXY=http://sandbox-proxy:8888
+      - http_proxy=http://sandbox-proxy:8888
+      - https_proxy=http://sandbox-proxy:8888
+      - NO_PROXY=localhost,127.0.0.1
+      - no_proxy=localhost,127.0.0.1
+
+  sandbox-proxy:
+    build: ./docker/sandbox/proxy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 256m
+    environment:
+      # Default-deny. Override the allowlist via .env:
+      #   SANDBOX_EGRESS_ALLOWLIST=pypi.org,files.pythonhosted.org,github.com
+      - PROXY_ALLOWLIST=${SANDBOX_EGRESS_ALLOWLIST:-pypi.org,files.pythonhosted.org,github.com,objects.githubusercontent.com}
+    networks:
+      - sbx-internal   # reachable by the sandbox (no internet here)
+      - sbx-egress     # the proxy's own route OUT to the internet
+    restart: unless-stopped
+
+networks:
+  sbx-internal:
+    internal: true
+  sbx-egress: {}

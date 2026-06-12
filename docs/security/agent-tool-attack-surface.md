@@ -143,10 +143,13 @@ regressions.
   isolated `sandbox` container (`network_mode:none`, read-only rootfs, tmpfs scratch,
   `cap_drop:ALL`, no data/secret/.ssh mounts) over a Unix socket, fail-closed. This closes
   egress, SSRF to internal services, the ToufHealth-bridge reach, and data-volume FS access
-  for the shell tools — when `SANDBOX_RUNNER_SOCK` is set (default in compose). Residual:
-  the runner runs as root-in-empty-container (non-root is a future hardening), and Tier C
-  (egress allowlist) is only needed if a workflow requires internet from sandboxed code.
-  Sandbox proposal upstream: #1058.
+  for the shell tools — when `SANDBOX_RUNNER_SOCK` is set (default in compose). The runner now
+  runs **non-root** (uid 65532, via the named-volume ownership-init trick; asserted in CI).
+  **Tier C** (default-deny egress allowlist proxy) is also built — opt-in via
+  `docker-compose.sandbox-egress.yml`, so the secure default stays no-network while a workflow
+  that needs `pip`/https can route through an allowlisted proxy. With Tier A+B+C and the
+  non-root runner, R-1 is closed; the only remaining frontier is OS-level isolation (gVisor),
+  which isn't clean on Docker Desktop/macOS — revisit on native Linux. Upstream: #1058.
 
 - **F-7 — `bash`/`python` inherited the full container env** *(verified-in-code · FIXED, Tier A)*.
   `tool_execution.py` used to pass `**os.environ` to the subprocess, so an injected `bash`

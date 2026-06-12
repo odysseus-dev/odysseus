@@ -75,10 +75,12 @@ to in-container Tier-A-hardened local execution. Key implementation decisions:
   app's `data/`, workspace, or network. So `python` can't read `/app/data/...` directly; the
   agent uses the (path-confined) `read_file` tool to fetch content and passes it inline. This
   is the FS isolation working as intended.
-- **Runner runs as root inside an otherwise-empty, capability-stripped, network-less,
-  read-only container** (so it can create the socket in the root-owned shared volume). With
-  `cap_drop:ALL` + `no-new-privileges` + no mounts + no network, root here has no reach. A
-  later hardening can move to non-root with pre-chowned volume ownership.
+- **Runner runs as a non-root user (uid 65532).** The shared `sandbox-ipc` volume's `/ipc`
+  and `/work` mount points are created and chowned to that uid at *build* time, so when the
+  volume is first mounted (empty) Docker initialises it with that ownership — the non-root
+  runner can create the socket with no runtime chown (which `cap_drop:ALL` would forbid). The
+  app container's user connects to the 0666 socket. A runtime acceptance check asserts
+  `id -u != 0`.
 
 Original design (as built):
 
@@ -108,12 +110,26 @@ named scratch file/dir the user is actively working on gets bind-mounted into `/
 table. **Cost:** the agent's `bash`/`python` lose the app's data + network by default; you
 opt specific paths in.
 
-### Tier C — Egress allowlist *(only if code genuinely needs the internet)*
-If the agent must `pip install` or call approved APIs from code, replace `network_mode:none`
-with an `internal`-flagged network + a forward proxy (e.g. tinyproxy/squid) that allows only
-an explicit host allowlist (pypi.org, files.pythonhosted.org, github.com). Block direct
-sockets so all egress is funneled through the proxy. Adds a proxy service + `NET_ADMIN` on
-the sandbox. Skip unless a real workflow needs it — default-deny is the better posture.
+### Tier C — Egress allowlist  ✅ IMPLEMENTED (opt-in) *(only if code needs the internet)*
+Built but **off by default** — the secure default stays `network_mode:none`. Components:
+`docker/sandbox/proxy/` (a self-contained default-deny CONNECT proxy, `proxy.py` + Dockerfile)
+and the `docker-compose.sandbox-egress.yml` overlay. Enable per session:
+
+```bash
+SANDBOX_EGRESS_ALLOWLIST=pypi.org,files.pythonhosted.org,github.com \
+  docker compose -f docker-compose.yml -f docker-compose.sandbox-egress.yml up -d
+```
+
+How it stays safe (no `NET_ADMIN`, no iptables needed): the overlay uses Compose `!reset`
+(needs v2.24+) to drop `network_mode:none` and put the sandbox on an **`internal: true`**
+network — which has no route to the internet. The proxy is the only container on both that
+internal network and an egress network, so it is the **only door out**, and it opens only for
+`PROXY_ALLOWLIST` hosts (suffix match; everything else → 403; non-CONNECT → 405). The runner
+forwards `HTTP(S)_PROXY` to the child, so sandboxed `pip`/https flows through it. Allowlist
+logic is unit-tested (`tests/test_sandbox_egress_proxy.py`: allow tunnels, deny=403,
+subdomain suffix match, method reject). The proxy keeps read-only rootfs + `cap_drop:ALL` +
+non-root too. **Manual acceptance** (egress profile up): from the sandbox, `pip download` of an
+allowlisted package succeeds; a curl/urlopen to a non-allowlisted host fails.
 
 ### Not recommended for this host
 - **gVisor (`runsc`)** — strong, but the `runsc` runtime isn't cleanly available under Docker
@@ -121,17 +137,18 @@ the sandbox. Skip unless a real workflow needs it — default-deny is the better
 - **Mounting the Docker socket** to spawn per-call containers — gives the agent host-root.
   Never do this from an agent-reachable process.
 
-## 4. Recommendation
+## 4. Status
 
-**Do Tier A now, then Tier B.** Tier A is a contained `tool_execution.py` change that kills
-the worst single primitive (secret exfil via `env`) today and is independently shippable.
-Tier B is the structural fix that actually earns the word "sandbox" — schedule it as a
-follow-up once Tier A lands. Default the sandbox to **no network**; only add Tier C if a
-concrete workflow proves it's needed.
+**All three tiers are implemented; A + B are on by default, C is opt-in.**
 
-Sequencing rationale: Tier A removes the highest-severity, lowest-effort exposure
-immediately and doesn't conflict with Tier B (the env-scrub + rlimits carry into the sandbox
-image). Tier B is a day of Compose + a tiny RPC, not a rewrite.
+- **Tier A** (env-scrub + scratch workdir + rlimits) — `tool_execution.py`, always on.
+- **Tier B** (isolated non-root sidecar runner: network none, read-only, cap_drop ALL,
+  no data/secret mounts) — on whenever `SANDBOX_RUNNER_SOCK` is set (default in compose).
+- **Tier C** (egress allowlist proxy) — off by default; enable with the egress overlay only
+  when a workflow needs the internet. The secure default remains **no network**.
+
+CI (`sandbox-isolation` job) keeps A/B from regressing: a static compose guard plus a runtime
+acceptance run, and the Tier-C proxy allowlist is unit-tested.
 
 ## 5. Acceptance checks (how we'll know it works)
 
