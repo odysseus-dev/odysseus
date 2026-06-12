@@ -77,6 +77,9 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
         try:
             with open(self.presets_file, 'r', encoding="utf-8") as f:
                 presets = json.load(f)
+            if not isinstance(presets, dict):
+                logger.error("Error loading presets: expected an object")
+                return self.DEFAULT_PRESETS.copy()
             custom = presets.get("custom") if isinstance(presets, dict) else None
             if isinstance(custom, dict) and "enabled" not in custom:
                 legacy_prompt = "You are a helpful, balanced assistant. Match your response style to the user's needs."
@@ -92,6 +95,18 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
                     custom.setdefault("inject_prefix", "")
                     custom.setdefault("inject_suffix", "")
                     self.save(presets)
+            # Heal a forward-incompatible file the same way the legacy `custom`
+            # migration above does: fill in any built-in presets an older or
+            # partial presets.json is missing, so they reach existing installs
+            # (a missing built-in is otherwise silently absent from the picker
+            # served by GET /api/presets). There is no delete path for the
+            # built-in keys, so this never clobbers an intentional removal.
+            # Defaults first, loaded values win — user edits are preserved.
+            if isinstance(presets, dict) and any(
+                k not in presets for k in self.DEFAULT_PRESETS
+            ):
+                presets = {**self.DEFAULT_PRESETS, **presets}
+                self.save(presets)
             return presets
         except Exception as e:
             logger.error(f"Error loading presets: {e}")
@@ -100,9 +115,12 @@ Use precise language. Show causal relationships explicitly. Quantify uncertainty
     def save(self, presets: Dict[str, Any]) -> bool:
         """Save presets to file"""
         try:
-            os.makedirs(os.path.dirname(self.presets_file), exist_ok=True)
-            with open(self.presets_file, 'w', encoding="utf-8") as f:
-                json.dump(presets, f, indent=2)
+            # Atomic write (tmp file + os.replace) so a crash or serialization
+            # error mid-write can't truncate presets.json and lose every saved
+            # preset. Lazy import keeps this module free of the heavy core
+            # package import graph at load time.
+            from core.atomic_io import atomic_write_json
+            atomic_write_json(self.presets_file, presets, indent=2)
             self.presets = presets
             return True
         except Exception as e:

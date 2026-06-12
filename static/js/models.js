@@ -16,6 +16,7 @@ import { sortModelIds } from './modelSort.js';
 let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
+let _fetchInflight = null;
 const _FETCH_CACHE_TTL = 30000; // 30s client-side cache for /api/models
 const COLLAPSE_KEY = 'odysseus-models-collapsed';
 const FAVORITES_KEY = 'odysseus-model-favorites';
@@ -176,8 +177,22 @@ export async function refreshModels(force = false) {
     box.appendChild(_loadingSpinner.createElement());
     _loadingSpinner.start();
     try {
-      const res = await fetch(`${API_BASE}/api/models`);
-      const data = await res.json();
+      if (!_fetchInflight) {
+        // Pass ?refresh=true on forced refreshes so the BACKEND's 30s
+        // per-user cache also gets bypassed. Without this, `force=true`
+        // only clears the frontend cache and the same stale list comes
+        // back — newly-served endpoints don't appear until the cache
+        // ages out. (Bug repro: serve a model, picker is empty for ~30s
+        // even though the endpoint is in the DB and online.)
+        const _url = `${API_BASE}/api/models` + (force ? '?refresh=true' : '');
+        _fetchInflight = fetch(_url, { credentials: 'same-origin' })
+          .then(async (res) => {
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          })
+          .finally(() => { _fetchInflight = null; });
+      }
+      const data = await _fetchInflight;
       _lastFetchTime = Date.now();
       _cachedItems = data.items || [];
     } catch (e) {

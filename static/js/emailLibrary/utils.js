@@ -15,7 +15,7 @@ export const _TALON_FROM = '(?:From|Från|Von|De|Da|От|Od|Van|差出人|发件
 export const _TALON_SENT = '(?:Sent|Skickat|Gesendet|Envoy[ée]|Inviato|Enviado|Verzonden|Отправлено|Wysłane|Date|送信日時|发送时间|寄件日期|Sendt|Lähetetty|Tarih|Datum|Data|Datum)';
 export const _TALON_SUBJ = '(?:Subject|Ämne|Betreff|Objet|Oggetto|Asunto|Onderwerp|Тема|Temat|件名|主题|主旨|Emne|Aihe|Onderwerp|Konu)';
 export const _TALON_TO   = '(?:To|Till|An|À|A|Voor|Para|Naar|Кому|Do|宛先|收件人|Emri|Komu)';
-export const _TALON_ORIG_RE = /(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Ursprüngliche\s+Nachricht|Mensaje\s+original|Messaggio\s+originale|Message\s+d['’]origine|Oorspronkelijk\s+bericht|Original\s+meddelande|Vor[ ]asal[a]\s+meddelande|原文|原始邮件|転送)\s*[-_=]{3,}/i;
+export const _TALON_ORIG_RE = /(?:^|\n)[\s>]*[-_=]{3,}\s*(?:Original\s+Message|Forwarded\s+message|Ursprüngliche\s+Nachricht|Mensaje\s+original|Messaggio\s+originale|Message\s+d['’]origine|Oorspronkelijk\s+bericht|Original\s+meddelande|Vor[ ]asal[a]\s+meddelande|原文|原始邮件|転送)\s*[-_=]{3,}/i;
 
 // Minimum plain-text length of a "signature" before we bother folding it.
 // Short closings ("Cheers, John") stay inline — folding them would add
@@ -30,6 +30,28 @@ export function _esc(text) {
   return div.innerHTML;
 }
 
+function _attrEsc(text) {
+  return String(text ?? '')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/`/g, '&#96;');
+}
+
+function _compactUrlSchemeValue(value) {
+  return String(value || '').replace(/[\u0000-\u0020\u007f-\u009f]+/g, '').toLowerCase();
+}
+
+function _isDangerousUrl(value) {
+  const compact = _compactUrlSchemeValue(value);
+  return compact.startsWith('javascript:') || compact.startsWith('vbscript:') || compact.startsWith('data:');
+}
+
+function _isDangerousSrcset(value) {
+  return String(value || '').split(',').some(candidate => _isDangerousUrl(candidate));
+}
+
 // Escape + linkify URLs and email addresses. Returns innerHTML-safe markup.
 export function _escLinkify(text) {
   const escaped = _esc(text);
@@ -39,9 +61,9 @@ export function _escLinkify(text) {
   return escaped
     .replace(urlRe, (m) => {
       const href = m.startsWith('www.') ? `https://${m}` : m;
-      return `<a href="${href}" target="_blank" rel="noopener noreferrer">${m}</a>`;
+      return `<a href="${_attrEsc(href)}" target="_blank" rel="noopener noreferrer">${m}</a>`;
     })
-    .replace(mailRe, (m) => `<a href="mailto:${m}">${m}</a>`);
+    .replace(mailRe, (m) => `<a href="${_attrEsc(`mailto:${m}`)}">${m}</a>`);
 }
 
 // Pull display name out of "Name <email@x>"; fallback to local-part of
@@ -133,19 +155,14 @@ export function _initials(s) {
 // `data:` URLs on every known URL attribute, scrubs inline colour/font/
 // position styles so the theme can take over, and wraps highlight-bearing
 // inline tags in <mark> so they render legibly across themes.
-export function _sanitizeHtml(html) {
+function _sanitizeHtmlOnce(html) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   doc.querySelectorAll(
     'script, iframe, object, embed, form, style, link, ' +
     'svg, math, base, meta, noscript, frame, frameset, applet, portal'
   ).forEach(el => el.remove());
 
-  const URL_ATTRS = ['href', 'src', 'srcset', 'action', 'formaction', 'background', 'poster', 'data'];
-  const isDangerousUrl = (val) => {
-    if (!val) return false;
-    const v = val.trim().toLowerCase();
-    return v.startsWith('javascript:') || v.startsWith('vbscript:') || v.startsWith('data:');
-  };
+  const URL_ATTRS = ['href', 'src', 'xlink:href', 'srcset', 'action', 'formaction', 'background', 'poster', 'data'];
 
   const STRIP_CSS_PROPS = ['color', 'background', 'background-color',
                            'font-family', 'font', '-webkit-text-fill-color',
@@ -160,7 +177,7 @@ export function _sanitizeHtml(html) {
       const name = attr.name.toLowerCase();
       if (name.startsWith('on')) { el.removeAttribute(attr.name); continue; }
       if (name === 'srcdoc') { el.removeAttribute(attr.name); continue; }
-      if (URL_ATTRS.includes(name) && isDangerousUrl(attr.value)) {
+      if (URL_ATTRS.includes(name) && (name === 'srcset' ? _isDangerousSrcset(attr.value) : _isDangerousUrl(attr.value))) {
         el.removeAttribute(attr.name);
         continue;
       }
@@ -177,8 +194,8 @@ export function _sanitizeHtml(html) {
     if (style) {
       const kept = style.split(';').map(s => s.trim()).filter(decl => {
         if (!decl) return false;
-        const lower = decl.toLowerCase();
-        if (lower.includes('javascript:') || lower.includes('expression(')) return false;
+        const lower = _compactUrlSchemeValue(decl);
+        if (lower.includes('javascript:') || lower.includes('vbscript:') || lower.includes('data:') || lower.includes('expression(')) return false;
         const prop = decl.split(':', 1)[0].trim().toLowerCase();
         return !STRIP_CSS_PROPS.includes(prop);
       });
@@ -199,4 +216,14 @@ export function _sanitizeHtml(html) {
   });
 
   return doc.body.innerHTML;
+}
+
+export function _sanitizeHtml(html) {
+  let out = String(html ?? '');
+  for (let i = 0; i < 4; i++) {
+    const next = _sanitizeHtmlOnce(out);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
 }

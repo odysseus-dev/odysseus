@@ -175,6 +175,19 @@ class ChatProcessor:
 
         Returns:
             Tuple of (preface messages, rag_sources list)
+
+        Note on KV-cache friendliness: the ``system``-role messages assembled
+        here are later concatenated into a single system message and sent as
+        the very first thing in the payload (see ``llm_core``'s "consolidate
+        system messages" step). Local OpenAI-compatible backends (llama.cpp /
+        LM Studio) key their KV cache off the byte-identical token prefix, so
+        *anything* that changes turn-to-turn — timestamps, retrieved snippets,
+        per-turn counts — must NOT be folded into a system message here. Such
+        content belongs in a separate ``user``/context message appended near
+        the end of the array (see ``current_datetime_context_message`` and
+        ``untrusted_context_message`` callers in ``build_chat_context``),
+        which keeps the static system prefix byte-identical across turns of
+        the same session and lets the backend reuse its cached prefix.
         """
         preface = []
         rag_sources = []

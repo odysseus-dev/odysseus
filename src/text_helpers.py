@@ -15,18 +15,33 @@ from __future__ import annotations
 
 import re
 
+_THINK_TAG_NAME = r"(?:think(?:ing)?|thought)"
+
 # Closed reasoning blocks. Multi-pass loop in `strip_think` handles nested
 # `<think><think>...</think></think>` patterns some models emit.
-_THINK_CLOSED_RE = re.compile(r"<think(?:ing)?>[\s\S]*?</think(?:ing)?>\s*", re.IGNORECASE)
+_THINK_CLOSED_RE = re.compile(rf"<{_THINK_TAG_NAME}(?:\s+[^>]*)?>[\s\S]*?</{_THINK_TAG_NAME}>\s*", re.IGNORECASE)
 # Orphan opening or closing tags that survive after the closed-pass.
-_THINK_TAG_RE = re.compile(r"</?think(?:ing)?[^>]*>\s*", re.IGNORECASE)
-# Dangling opener at the top of the response with no closer — strip everything
-# from `<think>` up to either `</think>` (if it ever shows) or end of string.
-_THINK_OPEN_RE = re.compile(r"^\s*<think(?:ing)?>.*?(?:</think(?:ing)?>|$)", re.DOTALL | re.IGNORECASE)
+_THINK_TAG_RE = re.compile(rf"</?{_THINK_TAG_NAME}[^>]*>\s*", re.IGNORECASE)
+# Dangling opener anywhere in the response with no closer — strip everything
+# from `<think>` to the end of string.
+_THINK_OPEN_RE = re.compile(rf"<{_THINK_TAG_NAME}(?:\s+[^>]*)?>[\s\S]*$", re.IGNORECASE)
 # Streaming models occasionally emit `<thinking time="0.42">`-style attributes.
 # Normalize to a plain `<think>` so the regexes above catch them.
-_THINK_ATTR_RE = re.compile(r"<think(?:ing)?\s+[^>]*>", re.IGNORECASE)
-_THINK_ATTR_CLOSE_RE = re.compile(r"</think(?:ing)?\s+[^>]*>", re.IGNORECASE)
+_THINK_ATTR_RE = re.compile(rf"<{_THINK_TAG_NAME}\s+[^>]*>", re.IGNORECASE)
+_THINK_ATTR_CLOSE_RE = re.compile(rf"</{_THINK_TAG_NAME}\s+[^>]*>", re.IGNORECASE)
+_GEMMA_THOUGHT_OPEN_RE = re.compile(r"<\|channel>thought\s*\n?[\s\S]*$", re.IGNORECASE)
+_GEMMA_RESPONSE_CHANNEL_RE = re.compile(
+    r"<\|channel>response\s*\n?([\s\S]*?)<channel\|>",
+    re.IGNORECASE,
+)
+_GEMMA_RESPONSE_OPEN_RE = re.compile(r"<\|channel>response\s*\n?", re.IGNORECASE)
+_GEMMA_CHANNEL_CLOSE_RE = re.compile(r"<channel\|>", re.IGNORECASE)
+_THOUGHT_TAG_OPEN_RE = re.compile(r"<thought(\s+[^>]*)?>", re.IGNORECASE)
+_THOUGHT_TAG_CLOSE_RE = re.compile(r"</thought>", re.IGNORECASE)
+_GEMMA_THOUGHT_CHANNEL_CAPTURE_RE = re.compile(
+    r"<\|channel>thought\s*\n?([\s\S]*?)<channel\|>\s*",
+    re.IGNORECASE,
+)
 # Qwen and a few other models prefix the response with a "Thinking Process:"
 # block before the real answer.
 _QWEN_THINKING_RE = re.compile(
@@ -62,16 +77,44 @@ def _strip_reasoning_prose(text: str) -> str:
     paragraphs = re.split(r"\n\s*\n", text.strip())
     if len(paragraphs) <= 1:
         return text
-    last_reasoning_idx = -1
+    # Strip only a LEADING contiguous run of reasoning paragraphs. Keeping the
+    # text after the *last* reasoning paragraph destroyed the real answer when a
+    # reasoning-style sentence trailed it: keep became empty and the function
+    # returned that trailing sentence instead of the answer above it.
+    first_keep = 0
     for i, p in enumerate(paragraphs):
         if _REASONING_PREFIX_RE.match(p):
-            last_reasoning_idx = i
-    if last_reasoning_idx < 0:
+            first_keep = i + 1
+        else:
+            break
+    if first_keep == 0:
         return text
-    keep = paragraphs[last_reasoning_idx + 1:]
-    if not keep:
-        return paragraphs[-1].strip()
-    return "\n\n".join(keep).strip()
+    keep = paragraphs[first_keep:]
+    return "\n\n".join(keep).strip() if keep else text
+
+
+def normalize_thinking_markup(text: str) -> str:
+    """Canonicalize supported thinking wrappers to `<think>` markup.
+
+    The chat UI and persistence layer already understand `<think>...</think>`.
+    Gemma 4 may instead emit `<|channel>thought\n...<channel|>`, and some
+    gateways/models emit `<thought>...</thought>`. Normalize those shapes into
+    the existing representation and strip empty thought channels.
+    """
+    if not text:
+        return text
+    out = _THOUGHT_TAG_OPEN_RE.sub(lambda m: "<think" + (m.group(1) or "") + ">", text)
+    out = _THOUGHT_TAG_CLOSE_RE.sub("</think>", out)
+
+    def _replace_gemma_thought(match: re.Match) -> str:
+        thought = match.group(1).strip()
+        return f"<think>{thought}</think>\n" if thought else ""
+
+    out = _GEMMA_THOUGHT_CHANNEL_CAPTURE_RE.sub(_replace_gemma_thought, out)
+    out = _GEMMA_RESPONSE_CHANNEL_RE.sub(lambda m: m.group(1), out)
+    out = _GEMMA_RESPONSE_OPEN_RE.sub("", out)
+    out = _GEMMA_CHANNEL_CLOSE_RE.sub("", out)
+    return out
 
 
 def strip_think(text: str, *, prose: bool = False, prompt_echo: bool = True) -> str:
@@ -88,13 +131,21 @@ def strip_think(text: str, *, prose: bool = False, prompt_echo: bool = True) -> 
         "The user asks:" / "We need to" leaked prompt echoes.
 
     Robust to:
-      * closed `<think>...</think>` (any depth, both `<think>` and `<thinking>`)
-      * dangling unclosed `<think>...`
+      * closed `<think>...</think>` (any depth, plus `<thinking>`/`<thought>`)
+      * dangling unclosed `<think>...` / `<thought>...`
       * stray opener/closer tags
       * `<think time="0.42">`-style attributes
+      * Gemma 4 `<|channel>thought...<channel|>` wrappers
     """
     if not text:
         return ""
+    # Gemma 4 thinking-capable models use channel control tokens rather than
+    # XML tags when the runtime does not split reasoning into a separate field.
+    # The thought channel can be empty in non-thinking mode; either way it is
+    # not user-facing content. A response channel, when present, is only a
+    # wrapper around the final answer.
+    text = normalize_thinking_markup(text)
+    text = _GEMMA_THOUGHT_OPEN_RE.sub("", text)
     # Normalize attributes so the closed/open regexes can catch them.
     text = _THINK_ATTR_RE.sub("<think>", text)
     text = _THINK_ATTR_CLOSE_RE.sub("</think>", text)

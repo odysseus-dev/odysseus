@@ -1,0 +1,109 @@
+name: ci / PR checks
+
+on:
+  # pull_request_target runs in the base-repo context (has secrets) so the check
+  # works on fork PRs. Safe here: the checkout pins to the base branch (no fork
+  # code runs) and the scripts only read context.payload and call the GitHub API.
+  pull_request_target:  # zizmor: ignore[dangerous-triggers]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+# Default-deny at the workflow level; each job opts into only the scopes it needs.
+# Note: modifying a PR's labels/comments needs pull-requests:write even though the
+# REST path is under /issues/{n}/...; issues:write alone returns 403 on PRs.
+permissions: {}
+
+jobs:
+  check-description:
+    name: Check PR description
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    # Skip bots: they open PRs programmatically and have their own process.
+    if: github.event.pull_request.user.type != 'Bot'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          ref: ${{ github.base_ref }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: return require('./.github/scripts/check-pr-description.js')({github, context, core})
+
+  check-title:
+    name: Check PR title (Conventional Commits)
+    runs-on: ubuntu-latest
+    permissions: {}
+    # Skip bots: they open PRs programmatically and have their own process.
+    if: github.event.pull_request.user.type != 'Bot'
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const title = context.payload.pull_request.title || "";
+            // Conventional Commits: type(optional-scope)(optional !): summary
+            const re = /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([\w .\/-]+\))?!?: .+/;
+            if (!re.test(title)) {
+              core.setFailed(
+                `PR title is not in Conventional Commits format:\n  "${title}"\n\n` +
+                `Expected: type(scope): summary\n` +
+                `Example:  fix(search): handle empty query\n` +
+                `Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.`
+              );
+            } else {
+              core.info(`PR title OK: ${title}`);
+            }
+
+  check-mergeable:
+    name: Flag unmergeable PRs
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    # Skip bots: they open PRs programmatically and have their own process.
+    if: github.event.pull_request.user.type != 'Bot'
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: |
+            const repo = { owner: context.repo.owner, repo: context.repo.repo };
+            const number = context.payload.pull_request.number;
+            const READY = "ready for review";
+            const CONFLICT = "merge conflict";
+
+            // Ensure the conflict label exists (red). Ignore if already present.
+            try {
+              await github.rest.issues.getLabel({ ...repo, name: CONFLICT });
+            } catch {
+              await github.rest.issues.createLabel({
+                ...repo, name: CONFLICT, color: "B60205",
+                description: "Conflicts with the base branch; needs a rebase before review.",
+              }).catch(() => {});
+            }
+
+            // mergeable is computed asynchronously and is often null right after
+            // an event, so poll a few times until GitHub has resolved it.
+            let pr = null;
+            for (let i = 0; i < 5; i++) {
+              const { data } = await github.rest.pulls.get({ ...repo, pull_number: number });
+              if (data.mergeable !== null) { pr = data; break; }
+              await new Promise(r => setTimeout(r, 3000));
+            }
+            if (!pr || pr.draft) return;
+            const labels = pr.labels.map(l => l.name);
+
+            if (pr.mergeable === false) {
+              if (labels.includes(READY)) {
+                await github.rest.issues.removeLabel({ ...repo, issue_number: number, name: READY }).catch(() => {});
+              }
+              if (!labels.includes(CONFLICT)) {
+                await github.rest.issues.addLabels({ ...repo, issue_number: number, labels: [CONFLICT] });
+              }
+            } else if (pr.mergeable === true) {
+              if (labels.includes(CONFLICT)) {
+                await github.rest.issues.removeLabel({ ...repo, issue_number: number, name: CONFLICT }).catch(() => {});
+              }
+            }

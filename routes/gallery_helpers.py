@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 from core.database import GalleryImage
+from src.auth_helpers import _auth_disabled
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,21 @@ def _extract_exif(content: bytes) -> dict:
         from PIL import Image
         from io import BytesIO
         img = Image.open(BytesIO(content))
+        # Read the raw EXIF before any transpose: exif_transpose strips the
+        # orientation tag and with it the parsed EXIF view.
+        exif = img._getexif() if hasattr(img, '_getexif') else None
+
+        # Record DISPLAY dimensions (EXIF-rotated), matching upload_handler.
+        # A phone photo with Orientation 6/8 is stored landscape but shown
+        # portrait, so the raw width/height swap the aspect ratio.
+        try:
+            from PIL import ImageOps
+            img = ImageOps.exif_transpose(img) or img
+        except Exception:
+            pass
         result["width"] = img.width
         result["height"] = img.height
 
-        exif = img._getexif() if hasattr(img, '_getexif') else None
         if not exif:
             return result
 
@@ -109,11 +121,18 @@ def _image_to_dict(img: GalleryImage, session_name: str = None) -> Dict[str, Any
     }
 
 
-def _owner_filter(q, user):
-    """Apply owner filtering to a gallery query."""
-    if user is None:
-        return q.filter(False)
-    return q.filter(GalleryImage.owner == user)
+def _owner_filter(q, user, model_cls=GalleryImage):
+    """Apply owner filtering to a gallery query.
+
+    ``get_current_user`` returns None both in auth-disabled single-user mode
+    and when auth is enabled but no current user was resolved. Preserve the
+    single-user behavior, but fail closed for auth-enabled null-user states.
+    """
+    if user is not None:
+        return q.filter(model_cls.owner == user)
+    if _auth_disabled():
+        return q
+    return q.filter(False)
 
 
 

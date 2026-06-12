@@ -18,7 +18,7 @@ GPU_BANDWIDTH = {
     "7900 xtx": 960, "7900 xt": 800, "7900 gre": 576, "7800 xt": 624, "7700 xt": 432, "7600": 288,
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
-    "9070 xt": 624, "9070": 488,
+    "9070 xt": 624, "9070": 488, "9060 xt": 322, "9060": 322,
     # Apple Silicon unified-memory bandwidth (GB/s). Keyed off the chip name
     # reported by sysctl machdep.cpu.brand_string (e.g. "Apple M4 Max"). Listed
     # before the bare "m_" keys matters less than length-sorting (done below),
@@ -61,7 +61,7 @@ CONTEXT_TARGET = {
 
 
 def _lookup_bandwidth(gpu_name):
-    if not gpu_name:
+    if not isinstance(gpu_name, str) or not gpu_name:
         return None
     gn = gpu_name.lower()
     for key in _BW_KEYS_SORTED:
@@ -70,8 +70,18 @@ def _lookup_bandwidth(gpu_name):
     return None
 
 
-def _estimate_speed(model, quant, run_mode, system):
-    """Estimate tok/s. Uses active params for MoE (only active experts run per token)."""
+def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
+    """Estimate tok/s. Uses active params for MoE (only active experts run per token).
+
+    offload_frac (0..1): fraction of the model's weights that spill to system RAM
+    (CPU) because they don't fit VRAM. Generation reads every active weight per
+    token, so when part lives in CPU RAM the per-token time is dominated by the
+    slow path. We model effective bandwidth as a blend of GPU VRAM bandwidth and
+    system-RAM bandwidth weighted by what's where — far more accurate than a flat
+    "halve it" for partial offload, which under/over-shoots depending on amount.
+    Calibrated against a measured RX 9060 XT: DeepSeek-Coder-V2-Lite Q4_K_M with
+    light offload → ~59 t/s est vs 59.8 measured.
+    """
     pb = _active_params_b(model)
     is_moe = model.get("is_moe", False)
     bw = _lookup_bandwidth(system.get("gpu_name"))
@@ -83,14 +93,24 @@ def _estimate_speed(model, quant, run_mode, system):
         if model_gb <= 0:
             return 0.0
         efficiency = 0.55
-        raw_tps = (bw / model_gb) * efficiency
         if run_mode == "cpu_offload":
-            mode_factor = 0.5
-        elif is_moe:
-            mode_factor = 0.8
-        else:
-            mode_factor = 1.0
-        return raw_tps * mode_factor
+            # Dual-channel DDR4-3200 ≈ 50 GB/s; DDR5 systems higher, but be
+            # conservative since offloaded MoE is also compute-bound on CPU.
+            cpu_bw = 55.0
+            frac = min(max(offload_frac, 0.0), 1.0)
+            # If we don't know the fraction (legacy callers pass 0 with
+            # cpu_offload), assume a meaningful spill so we don't overestimate.
+            if frac <= 0.0:
+                frac = 0.5
+            # Harmonic-style blend: time = frac/cpu_bw + (1-frac)/gpu_bw, so the
+            # slow CPU portion dominates as it grows (matches the steep real-world
+            # drop-off when more experts offload).
+            eff_bw = 1.0 / (frac / cpu_bw + (1.0 - frac) / bw)
+            raw_tps = (eff_bw / model_gb) * efficiency
+            return raw_tps * (0.8 if is_moe else 1.0)
+        # Fully on GPU.
+        raw_tps = (bw / model_gb) * efficiency
+        return raw_tps * (0.8 if is_moe else 1.0)
 
     k = FALLBACK_K.get(backend, 70)
     if pb <= 0:
@@ -155,8 +175,15 @@ def _quality_score(model, quant, use_case):
     model_uc = infer_use_case(model)
     if model_uc == "coding" and use_case == "coding":
         base += 6
+    elif model_uc == "coding" and use_case in ("general", "chat"):
+        # Coder-specialized models are still useful generally, but they should
+        # not dominate the default scan. If the user wants code, the Coding
+        # filter gives them the boost above.
+        base -= 10
     if model_uc == "reasoning" and use_case == "reasoning" and pb >= 13:
         base += 5
+    elif model_uc == "reasoning" and use_case == "chat":
+        base -= 4
     if model_uc == "multimodal" and use_case == "multimodal":
         base += 6
 
@@ -242,7 +269,34 @@ def _quant_bits(q):
     return 0
 
 
-def analyze_model(model, system, target_quant=None, scoring_use_case=None):
+def _native_quant(model):
+    native_quant = model.get("quantization", "Q4_K_M")
+    name = (model.get("name") or "").lower()
+    fmt = (model.get("format") or "").lower()
+    text = f"{name} {fmt}"
+    if "nvfp4" in text:
+        return "NVFP4"
+    if re.search(r"(^|[-_/])fp8($|[-_/\s])", text):
+        return "FP8"
+    if "gptq" in text:
+        m = re.search(r"(?:gptq|int|w)(?:[-_]?)(\d{1,2})(?:bit)?", text)
+        # Canonical catalog label is "GPTQ-Int4"/"GPTQ-Int8" (see models.py
+        # QUANT_BPP / QUANT_QUALITY_PENALTY keys); "GPTQ-4bit" misses both
+        # maps, so BPP and the quality penalty silently fall to defaults.
+        return f"GPTQ-Int{m.group(1)}" if m else "GPTQ-Int4"
+    if "awq" in text:
+        m = re.search(r"(?:awq|int|w)(?:[-_]?)(\d{1,2})(?:bit)?", text)
+        # Catalog keys are "AWQ-4bit"/"AWQ-8bit"; bare "AWQ" misses the maps.
+        return f"AWQ-{m.group(1)}bit" if m else "AWQ-4bit"
+    if "mlx" in text:
+        m = re.search(r"mlx[-_]?(\d{1,2})bit", text)
+        return f"mlx-{m.group(1)}bit" if m else native_quant
+    if not (model.get("is_gguf") or model.get("gguf_sources")) and re.search(r"(^|[-_/])(?:int)?8bit($|[-_/\s])", text):
+        return "INT8"
+    return native_quant
+
+
+def analyze_model(model, system, target_quant=None, scoring_use_case=None, target_context=None):
     pb = params_b(model)
     if pb <= 0:
         return None
@@ -262,11 +316,14 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
     gpu_only = bool(system.get("gpu_only")) and has_gpu and gpu_vram > 0
     eff_ram = 0 if gpu_only else available_ram
     is_moe = model.get("is_moe", False)
-    ctx = model.get("context_length", 4096) or 4096
+    model_ctx = model.get("context_length", 4096) or 4096
+    try:
+        target_context = int(target_context or 0)
+    except (TypeError, ValueError):
+        target_context = 0
+    ctx = min(model_ctx, target_context) if target_context > 0 else model_ctx
 
-    native_quant = model.get("quantization", "Q4_K_M")
-    if "nvfp4" in (model.get("name") or "").lower():
-        native_quant = "NVFP4"
+    native_quant = _native_quant(model)
     preq = is_prequantized(model)
 
     # GGUF models can't be sharded across GPUs — use single GPU VRAM
@@ -305,9 +362,23 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
     elif target_quant:
         # User picked a specific quant
         quant_to_try = target_quant
+    elif gpu_count >= 2:
+        # Multi-GPU box: vLLM/SGLang can't serve GGUF Q* quants (those are
+        # llama.cpp-only). Default non-prequantized models to BF16 so the row
+        # is meaningful on a multi-GPU rig. If BF16 doesn't fit, the model
+        # surfaces as too_tight — better than showing a Q4 row the user
+        # can't actually serve with vLLM on >1 GPU.
+        quant_to_try = "BF16"
     else:
-        # Default: Q4_K_M (user's stated preference)
+        # Default: Q4_K_M (user's stated preference) — kept for single-GPU
+        # and RAM modes where llama.cpp serving is the natural path.
         quant_to_try = "Q4_K_M"
+
+    # Multi-GPU filter: skip the row if the resolved quant is a GGUF tier
+    # (Q*/IQ-prefixed) — vLLM/SGLang can't serve those, so showing them on
+    # a 2+ GPU rig just clutters the list with unservable candidates.
+    if gpu_count >= 2 and quant_to_try and not target_quant and quant_to_try.upper().startswith(("Q2", "Q3", "Q4", "Q5", "Q6", "Q8", "IQ")):
+        return None
 
     result = _try_quant_at(model, quant_to_try, ctx, effective_vram, 0 if native_gpu_only else eff_ram)
 
@@ -335,7 +406,8 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
             "score": 0,
             "scores": {"quality": 0, "speed": 0, "fit": 0, "context": 0},
             "gguf_sources": model.get("gguf_sources", []),
-            "context_length": model.get("context_length", 4096),
+            "context_length": model_ctx,
+            "target_context": target_context or None,
         }
 
     run_mode, quant, fit_ctx, required_gb = result
@@ -357,7 +429,12 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
     else:
         fit_level = "marginal"
 
-    tps = _estimate_speed(model, quant, run_mode, system)
+    # Fraction of the model that spills to CPU RAM (drives the offload speed
+    # model). When offloading, anything beyond the GPU's VRAM lives in system RAM.
+    offload_frac = 0.0
+    if run_mode == "cpu_offload" and required_gb > 0 and effective_vram > 0:
+        offload_frac = max(0.0, (required_gb - effective_vram) / required_gb)
+    tps = _estimate_speed(model, quant, run_mode, system, offload_frac=offload_frac)
 
     q_score = _quality_score(model, quant, score_use_case)
     s_score = _speed_score(tps, score_use_case)
@@ -388,21 +465,67 @@ def analyze_model(model, system, target_quant=None, scoring_use_case=None):
             "context": round(c_score, 1),
         },
         "gguf_sources": model.get("gguf_sources", []),
-        "context_length": model.get("context_length", 4096),
+        "context_length": model_ctx,
+        "release_date": model.get("release_date", ""),
+        "target_context": target_context or None,
     }
 
 
+def _version_key(name):
+    """Parse the model's version number from its display name so equal-score
+    rows can break ties in favor of the newer release (e.g. M2.7 > M2.5).
+    Returns a float; 0.0 for names with no recognizable version. The regex
+    grabs the FIRST 'word-with-digits' pattern after a hyphen/underscore,
+    so e.g. 'MiniMax-M2.7' -> 2.7, 'Qwen3.6-35B' -> 3.6, 'M2' -> 2.0."""
+    import re as _re
+    if not name:
+        return 0.0
+    # Match the version-marker word: a letter followed by a number with
+    # optional decimal, e.g. M2.7, V4, Pro3. Take the first hit; ignore
+    # "B" param-count suffixes (Qwen3-235B should yield 3, not 235).
+    for m in _re.finditer(r"[A-Za-z](\d+(?:\.\d+)?)(?![A-Za-z])", name):
+        val = m.group(1)
+        # Skip param-count tokens (e.g. "235B" gives "235" but the next
+        # char would be "B" — already excluded by the negative lookahead).
+        try:
+            f = float(val)
+        except ValueError:
+            continue
+        # Heuristic: bare integers >= 100 are almost certainly param counts
+        # (1B/3B/8B/70B/235B…), not version numbers. Skip them.
+        if "." not in val and f >= 100:
+            continue
+        return f
+    return 0.0
+
+
 SORT_KEYS = {
-    "score": lambda r: r["score"],
+    # Score sort with version-aware tiebreaker — when two rows tie on
+    # composite score (a common case for the SAME base model in different
+    # versions, e.g. MiniMax-M2.5 vs M2.7 both at the same FP8 budget),
+    # prefer the newer version. Without this, ties resolved to whatever
+    # order they came out of the registry, which let older releases land
+    # above newer ones in user-facing lists.
+    "score": lambda r: (r["score"], _version_key(r.get("name") or "")),
     "speed": lambda r: r["speed_tps"],
     "vram": lambda r: r["required_gb"],
     "params": lambda r: r["params_b"],
     "context": lambda r: r["context"],
+    # Newest first. release_date is an ISO-ish string ("2026-05-30"); plain
+    # string sort is chronological. Missing dates sort last (empty < any date,
+    # and we sort reverse=True for newest, so "" lands at the bottom).
+    "newest": lambda r: r.get("release_date") or "",
 }
 
 
-def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None):
-    """Rank all models against detected hardware. Returns sorted list of fit results."""
+def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None, fit_only=False):
+    """Rank all models against detected hardware. Returns sorted list of fit results.
+
+    fit_only: when True, drop rows whose fit_level is "too_tight" (model doesn't
+    actually fit on the chosen budget). When False (default), every model is
+    shown — sorting by Param means highest-param PERIOD, even ones that won't
+    run, so the user can see the truth.
+    """
     models = get_models()
     results = []
 
@@ -441,7 +564,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             })
         if use_case == "image_gen":
             sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
-            results.sort(key=sort_fn, reverse=(sort != "vram"))
+            results.sort(key=sort_fn, reverse=True)  # see main path below
             return results[:limit]
 
     # If user picked a native prequantized format, filter to only those models.
@@ -453,11 +576,20 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     system_backend = (system.get("backend") or "").lower()
     apple_silicon = system_backend in ("mps", "metal", "apple")
     rocm = system_backend == "rocm"
+    is_windows = system.get("platform") == "windows"
+
+    # Consumer AMD Radeon (RDNA, gfx10/11/12): the practical local serving path
+    # is GGUF via llama.cpp. vLLM/SGLang on ROCm are validated for datacenter
+    # Instinct (CDNA, gfx9xx) but are unreliable on consumer RDNA — AWQ kernels
+    # are largely unsupported there and FP8 needs out-of-tree patches. So treat
+    # consumer RDNA like Apple Silicon (GGUF-only) and leave CDNA untouched.
+    # Unknown family (no rocminfo) is left untouched to avoid hiding models from
+    # a possibly-capable Instinct box on a misdetect.
+    gpu_family = (system.get("gpu_family") or "").lower()
+    consumer_amd = system_backend == "rocm" and gpu_family == "rdna"
 
     for m in models:
-        native_q = m.get("quantization", "")
-        if "nvfp4" in (m.get("name") or "").lower():
-            native_q = "NVFP4"
+        native_q = _native_quant(m)
 
         # MLX needs the mlx_lm runtime, which Odysseus does not generate serve
         # commands for. Hide it on every backend, including Metal.
@@ -479,7 +611,16 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # default GGUF quant) and vLLM-only AWQ/GPTQ/FP8 builds alike. Without
         # this the Cookbook recommends models the Mac can't run; on CUDA these
         # stay visible because vLLM serves safetensors directly.
-        if apple_silicon and not (m.get("is_gguf") or m.get("gguf_sources")):
+        #
+        # Consumer AMD (RDNA) is the same story: GGUF via llama.cpp is the
+        # servable path, so a model needs a real GGUF to be recommended.
+        # Otherwise the Cookbook rates vLLM-only AWQ/GPTQ builds "GOOD" on a
+        # Radeon that can't actually serve them.
+        #
+        # Windows is the same: Odysseus only supports llama.cpp on Windows,
+        # which requires GGUF. vLLM/SGLang are explicitly blocked, so AWQ/GPTQ
+        # models without a GGUF source are unservable there.
+        if (apple_silicon or consumer_amd or is_windows) and not (m.get("is_gguf") or m.get("gguf_sources")):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.
@@ -503,7 +644,7 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
             if search.lower() not in name and search.lower() not in provider:
                 continue
 
-        result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"))
+        result = analyze_model(m, system, target_quant=quant, scoring_use_case=(use_case or "general"), target_context=target_context)
         if result is None:
             continue
 
@@ -514,14 +655,21 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
 
         results.append(result)
 
-    # Pick the visible SET by best fit (score) first, so it stays the same no
-    # matter which column the user sorts by — otherwise sorting by params would
-    # truncate to the N biggest models (huge ones that don't even fit) while
-    # sorting by vram showed the N smallest. Only AFTER choosing the set do we
-    # order it by the requested column.
-    results.sort(key=SORT_KEYS["score"], reverse=True)
-    results = results[:limit]
+    # Pick the visible SET by the REQUESTED column. Per-user feedback: sorting
+    # by Param should show the highest-param models PERIOD, not just those that
+    # already fit. Same for every other column. Models that don't fit are still
+    # in the list with their fit_level marking the constraint, so the user can
+    # see the truth instead of a quietly-truncated view. Score sort is unchanged
+    # (it's the default ranking and naturally pushes non-fits to the bottom).
+    if fit_only:
+        # Hide rows that definitely don't fit (the "too_tight" badge) — user
+        # explicitly asked for a Fit-only view.
+        results = [r for r in results if r.get("fit_level") != "too_tight"]
     sort_fn = SORT_KEYS.get(sort, SORT_KEYS["score"])
-    # vram ascending (smallest first), everything else descending (biggest first)
-    results.sort(key=sort_fn, reverse=(sort != "vram"))
+    # Always sort descending then truncate top-N so each column shows the
+    # global highest by that metric. Before, vram was special-cased
+    # ascending → truncate kept the 50 SMALLEST models and "highest VRAM"
+    # could never appear, breaking the column-click toggle.
+    results.sort(key=sort_fn, reverse=True)
+    results = results[:limit]
     return results

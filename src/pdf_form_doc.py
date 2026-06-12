@@ -126,8 +126,13 @@ def _decode_name(enc: str) -> str:
     """Inverse of _encode_name."""
     import urllib.parse
     return urllib.parse.unquote(enc or "")
-_TEXT_VALUE_RE = re.compile(r'\*\*[^*]+:\*\*\s*(?P<value>.*)$')
-_CHOICE_VALUE_RE = re.compile(r'\*\*[^*]+\*\*\s*\[[^\]]*\]\s*:\s*(?P<value>.*)$')
+# Label segment is non-greedy (.+?) so labels containing '*' — the near-universal
+# required-field marker, e.g. "Email *" — are tolerated, while still splitting at
+# the FIRST ':**' / '**[' so a value that itself contains ':**' is preserved.
+# (The old [^*]+ refused to match any label with an asterisk and silently
+# dropped that field's value on export.)
+_TEXT_VALUE_RE = re.compile(r'\*\*.+?:\*\*\s*(?P<value>.*)$')
+_CHOICE_VALUE_RE = re.compile(r'\*\*.+?\*\*\s*\[[^\]]*\]\s*:\s*(?P<value>.*)$')
 _CHECKBOX_VALUE_RE = re.compile(r'^\s*\[(?P<state>[xX ])\]')
 
 _PLACEHOLDERS = {"_(empty)_", "_(not selected)_", "_(empty)_.", "_(unsigned)_"}
@@ -214,7 +219,7 @@ def create_plain_pdf_document(
     pages without form-field overlays.
     """
     from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
-    from src.tool_implementations import set_active_document
+    from src.agent_tools.document_tools import set_active_document
 
     content = render_plain_pdf_markdown(upload_id, title, body_text)
     db = SessionLocal()
@@ -397,7 +402,7 @@ def create_form_markdown_document(
     inside the content, which the export route looks for.
     """
     from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
-    from src.tool_implementations import set_active_document
+    from src.agent_tools.document_tools import set_active_document
 
     content = render_form_as_markdown(fields, upload_id, title, intro_text=intro_text)
     db = SessionLocal()
