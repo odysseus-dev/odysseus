@@ -54,6 +54,7 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         _endpoint_settings_using_endpoint,
         _clear_endpoint_settings_for_endpoint,
         _clear_user_pref_endpoint_refs,
+        _default_endpoint_needs_assignment,
         _PROVIDER_CURATED,
     )
     from src.llm_core import ANTHROPIC_MODELS
@@ -152,6 +153,26 @@ def test_endpoint_cleanup_updates_scoped_and_legacy_user_prefs():
     }
     assert _clear_user_pref_endpoint_refs(legacy, "dead") == 1
     assert legacy["default_model_fallbacks"] == []
+
+
+# ── _default_endpoint_needs_assignment (add-endpoint auto-default) ──
+
+def test_default_assignment_when_none_configured():
+    # Nothing configured yet → first added endpoint should become the default.
+    assert _default_endpoint_needs_assignment("", {"a", "b"}) is True
+
+
+def test_default_assignment_when_current_default_disabled():
+    # #3586: the configured default points at an endpoint that is no longer
+    # enabled (the user disabled it). Adding a new endpoint must reassign the
+    # default — otherwise Memory → Tidy keeps failing with "No default model
+    # configured" even though an enabled endpoint exists.
+    assert _default_endpoint_needs_assignment("disabled-ep", {"new-ep"}) is True
+
+
+def test_default_preserved_when_current_default_enabled():
+    # Normal case: the configured default is still enabled → leave it alone.
+    assert _default_endpoint_needs_assignment("live-ep", {"live-ep", "new-ep"}) is False
 
 
 # ── _match_provider_curated ──
@@ -966,16 +987,21 @@ def _create_form_kwargs(**overrides):
     return kwargs
 
 
-def _patch_create_deps(monkeypatch, db):
+def _patch_create_deps(monkeypatch, db, settings=None):
     import src.auth_helpers as auth_helpers
+    # Shared, in-memory settings so the auto-default write path stays hermetic
+    # (no real settings.json). Returned so tests can assert what was persisted.
+    settings = {"default_endpoint_id": "exists"} if settings is None else settings
     monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(model_routes, "ModelEndpoint", _RecordingEndpoint)
     monkeypatch.setattr(model_routes, "_normalize_base", lambda b: b)
     monkeypatch.setattr(model_routes, "_rewrite_loopback_for_docker", lambda b, **k: b)
-    monkeypatch.setattr(model_routes, "_load_settings", lambda: {"default_endpoint_id": "exists"})
+    monkeypatch.setattr(model_routes, "_load_settings", lambda: settings)
+    monkeypatch.setattr(model_routes, "_save_settings", lambda s: settings.update(s))
     monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda u: u)
     monkeypatch.setattr(auth_helpers, "get_current_user", lambda req: None)
+    return settings
 
 
 def test_list_model_endpoints_returns_key_fingerprint(monkeypatch):
@@ -1089,6 +1115,48 @@ def test_post_same_base_url_different_api_key_creates_distinct_endpoint(monkeypa
     assert len(db.added) == 1
     assert db.added[0].base_url == "https://api.example.test/v1"
     assert db.added[0].api_key == "key-two"
+
+
+def test_post_reassigns_default_when_current_default_disabled(monkeypatch):
+    # #3586: the configured default points at a now-disabled endpoint. Adding a
+    # new endpoint must promote it to the default, otherwise raw-setting readers
+    # (Memory → Tidy) keep failing with "No default model configured".
+    disabled = _make_endpoint(id="dead", base_url="http://old-host/v1", is_enabled=False)
+    db = _PinnedFakeDb([disabled])
+    settings = _patch_create_deps(
+        monkeypatch, db, settings={"default_endpoint_id": "dead", "default_model": "stale"}
+    )
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://new-host:1234/v1",
+        **_create_form_kwargs(),
+    )
+
+    new_id = db.added[0].id
+    assert settings["default_endpoint_id"] == new_id
+    assert settings["default_endpoint_id"] != "dead"
+
+
+def test_post_keeps_default_when_current_default_enabled(monkeypatch):
+    # Counter-case: an enabled default must be left untouched when another
+    # endpoint is added.
+    live = _make_endpoint(id="live", base_url="http://live-host/v1", is_enabled=True)
+    db = _PinnedFakeDb([live])
+    settings = _patch_create_deps(
+        monkeypatch, db, settings={"default_endpoint_id": "live", "default_model": "live-model"}
+    )
+    create = _get_route("/api/model-endpoints", "POST")
+
+    create(
+        _PinnedFakeRequest(),
+        base_url="http://another-host:1234/v1",
+        **_create_form_kwargs(),
+    )
+
+    assert settings["default_endpoint_id"] == "live"
+    assert settings["default_model"] == "live-model"
 
 
 def test_post_same_base_url_same_api_key_still_dedupes(monkeypatch):

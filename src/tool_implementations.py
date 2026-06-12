@@ -2054,13 +2054,14 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
         else:
             env_prefix = f'eval "$(conda shell.bash hook)" && conda activate {env_path}'
 
+    from routes.cookbook_helpers import load_stored_hf_token
     return {
         "env_prefix": env_prefix,
         "env_type": env_kind,
         "env_path": env_path,
         "gpus": env_root.get("gpus") or "",
         "platform": platform,
-        "hf_token": env_root.get("hfToken") or "",
+        "hf_token": load_stored_hf_token(),
         "ssh_port": ssh_port,
     }
 
