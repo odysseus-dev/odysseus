@@ -1,12 +1,13 @@
 # Testing And Devops
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
 This spec covers development and validation surfaces in:
 
 - `tests/`, `tests/conftest.py`, `tests/*.mjs`, and `tests/bombadil-spec.ts`;
+- `tests/run_focus.py`, `tests/_taxonomy.py`, `tests/TESTING_STANDARD.md`, and `tests/LAYOUT_INVENTORY.md`;
 - `pyproject.toml`;
 - `requirements.txt` and `requirements-optional.txt`;
 - `package.json` and `package-lock.json`;
@@ -23,7 +24,8 @@ This spec covers development and validation surfaces in:
 Pytest is configured in `pyproject.toml` with:
 
 - `testpaths = ["tests"]`;
-- `asyncio_mode = "auto"`.
+- `asyncio_mode = "auto"`;
+- marker and fast-lane/duration-reporting settings used by focused test runs.
 
 The expected local command uses the project venv:
 
@@ -36,6 +38,8 @@ Activated-venv `python -m pytest <test path>` is equivalent. System/global `pyte
 `tests/conftest.py` inserts the repo root on `sys.path` and conditionally stubs missing heavy/runtime dependencies such as SQLAlchemy, FastAPI, Starlette, Pydantic, httpx, bcrypt, and pyotp. Tests that need real dependencies use explicit imports/skips. Tests that stub `sys.modules`, environment variables, globals, or parent packages must restore them with `monkeypatch` or an equivalent cleanup pattern.
 
 Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
+
+`tests/run_focus.py` and `tests/_taxonomy.py` provide a local focused-run helper and category map. `tests/TESTING_STANDARD.md` documents expectations for targeted validation, and `tests/LAYOUT_INVENTORY.md` records the test-suite layout. CLI tests live under `tests/cli/`.
 
 ## JS And UI Tests
 
@@ -56,11 +60,11 @@ Use `node --check static/js/<changed-file>.js` for syntax checks on changed JS f
 `requirements-optional.txt` owns optional feature dependencies:
 
 - `faster-whisper` for local STT;
-- `duckduckgo-search` for DDG library support, while provider code can fall back to HTML scraping;
+- `ddgs` for DDG library support, while provider code can fall back to HTML scraping;
 - `PyMuPDF` for PDF forms/rendering with AGPL implications for a network-served app;
 - `markitdown[docx,pptx,xlsx,xls]` for Office/EPUB extraction, pinned to a release older than 30 days.
 
-Optional dependencies should produce clear degraded behavior when absent unless intentionally promoted to core. MarkItDown and PyMuPDF already have focused degraded-path coverage; local STT missing-`faster-whisper` behavior is a remaining coverage gap.
+Optional dependencies should produce clear degraded behavior when absent unless intentionally promoted to core. MarkItDown and PyMuPDF already have focused degraded-path coverage; local STT missing-`faster-whisper` behavior is a remaining coverage gap. Core runtime requirements include `httpx2` where compatibility tests depend on it.
 
 Chroma has two compatibility modes:
 
@@ -106,8 +110,8 @@ AMD helper behavior:
 
 Native platform launchers:
 
-- `launch-windows.ps1` requires Python 3.11+, creates `venv`, installs `requirements.txt`, runs `setup.py`, warns when Git Bash is missing, and starts uvicorn on port 7000 by default.
-- `start-macos.sh` reads `.env`, defaults to port 7860 to avoid AirPlay conflicts, prefers Homebrew arm64 Python, installs/tolerates Homebrew Cookbook deps, handles Chroma package conflicts, runs `setup.py`, and starts uvicorn.
+- `launch-windows.ps1` requires Python 3.11+, creates `venv`, installs `requirements.txt`, runs `setup.py`, discovers per-user Git Bash installs where possible, warns when Git Bash is missing, and starts uvicorn on port 7000 by default.
+- `start-macos.sh` reads `.env`, defaults to port 7860 to avoid AirPlay conflicts, prefers Homebrew arm64 Python, installs/tolerates Homebrew Cookbook deps, handles Chroma package conflicts, starts ChromaDB for native runs, runs `setup.py`, and starts uvicorn.
 - `build-macos-app.sh` builds a launcher app around the existing repo venv and logs to `logs/odysseus-app.log`.
 - `update_windows.bat` owns the tested Windows Docker update flow.
 
@@ -132,7 +136,7 @@ When route/API behavior changes, check whether a matching CLI script depends on 
 
 ## GitHub Metadata
 
-`.github/` owns issue/PR templates, description-check workflows, and a lightweight CI workflow. Current CI compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, and runs `python -m pytest -q` as an informational/non-blocking job; the pytest job skips documentation-only changes.
+`.github/` owns issue/PR templates, description-check workflows, security/governance workflows, Docker publishing, and a lightweight CI workflow. Current CI compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, and runs `python -m pytest -q` as an informational/non-blocking job; the pytest job skips documentation-only changes.
 
 `CONTRIBUTING.md` owns the branch model: PRs target `dev`; `main` is the curated user-running branch fast-forwarded from stable `dev` commits. Contributors who accidentally target `main` should retarget the PR base without rebasing.
 
@@ -150,6 +154,8 @@ Issue description checks:
 - flag unfilled dropdown placeholders such as `-- Please Select --`;
 - route public vulnerability reports toward GitHub Security Advisories;
 - update a bot comment and swap status labels.
+
+Security metadata includes CodeQL/container/secret/workflow scanning and hardened PR/issue description checks that avoid unsafe head-branch execution.
 
 `scripts/pr_blocker_audit.py` is a read-only maintainer/contributor triage helper documented in `docs/pr-blocker-audit.md`. It can fetch or ingest open PR metadata, estimate hot files and possible duplicate groups, and emit Markdown, JSON, or terminal reports. Its duplicate/blocker output is advisory, not an authority that a PR is blocked.
 

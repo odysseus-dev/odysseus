@@ -1,6 +1,6 @@
 # Memory And Skills
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -37,13 +37,15 @@ Chat memory behavior:
 
 `services/memory/memory_extractor.py` owns LLM-assisted extraction, audit, and validation flows. It requests model behavior and writes through the memory manager; it does not own chat session persistence.
 
+Extraction handles reasoning-model response shapes and records explicit dislike/drop preferences as `dislikes` rather than losing them to generic fact handling.
+
 ## Skills Runtime
 
 `services/memory/skills.py` owns disk-backed skill storage under `data/skills/<category>/<name>/SKILL.md`, plus `_usage.json` usage/audit sidecars. Legacy `data/skills.json` is a read-only fallback/import source, not the current write shape.
 
 `services/memory/skill_format.py` owns frontmatter/body parsing and emission. `services/memory/skill_importer.py` resolves public GitHub/skills URLs, fetches bundle files with outbound URL safety, and chooses/imports `SKILL.md`. `routes/skills_routes.py` owns HTTP skill CRUD/search/index/markdown/import behavior, owner filtering, tag/search handling, skill test jobs, audit-all jobs, scheduled audit entry points, and admin-gated built-in tool instruction overrides.
 
-Skill extraction is owned by `services/memory/skill_extractor.py`. It can suggest or save skills from conversations, but saved skills remain user-editable data.
+Skill extraction is owned by `services/memory/skill_extractor.py`. It can suggest or save skills from conversations, tries all valid brace-delimited JSON candidates before giving up on malformed model output, and saved skills remain user-editable data.
 
 Agent skill behavior:
 
@@ -54,7 +56,7 @@ Agent skill behavior:
 
 ## Tools, MCP, And Backup
 
-Native `manage_memory` and `manage_skills` tool paths pass owner context and use in-process policy gates. Manual memory add can choose a memory category instead of always defaulting to `fact`. `mcp_servers/memory_server.py` lazy-initializes `src` managers and currently performs list/add/edit/delete/search without owner scope.
+Native `manage_memory` and `manage_skills` tool paths pass owner context and use in-process policy gates. Manual memory add can choose a memory category instead of always defaulting to `fact`, and route-side manual add validates the source session owner before attaching session-derived memories. `mcp_servers/memory_server.py` lazy-initializes `src` managers and currently performs list/add/edit/delete/search without owner scope.
 
 `/api/export` owner-filters memories and skills. `/api/import` imports skills through current disk-backed `SkillsManager` APIs, stamping missing owners to the importer and preserving supported skill metadata. Full data snapshots through `scripts/odysseus-backup` preserve on-disk skill trees, memory JSON, and caches differently from JSON import/export.
 
@@ -90,9 +92,11 @@ Owner isolation is surface-specific:
 
 Skill test/audit flows intentionally run user-editable `SKILL.md` content as instructions inside controlled jobs. Those jobs rely on route owner checks, admin gates where applicable, and tool execution policy.
 
+User rename flows update skill frontmatter owner fields and `_usage.json` owner keys alongside memory/upload/research ownership migrations.
+
 ## Testing Coverage
 
-Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, skill owner update/delete, skill prompt-injection wrapping, skill save no-rename behavior, CLI row handling, and selected route owner checks.
+Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, skill owner update/delete, skill prompt-injection wrapping, skill save no-rename behavior, CLI row handling, and selected route owner checks.
 
 Route-level memory CRUD/security, skills route security, MCP memory behavior, vector degraded writes, compatibility facade owner behavior, backup skill import, admin vector cleanup, and frontend endpoint wiring need broader coverage.
 

@@ -1,6 +1,6 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -25,7 +25,9 @@ This spec covers file/document context, document storage, and vector retrieval i
 
 ## Uploads And Attachments
 
-`src.upload_handler.UploadHandler` owns upload IDs, safe filenames, upload metadata, atomic `uploads.json` writes, and file storage under `data/uploads`.
+`src.upload_handler.UploadHandler` owns upload IDs, safe filenames, upload metadata, owner rename rewrites, atomic `uploads.json` writes, and file storage under `data/uploads`. Upload IDs accept extensionless values or one sanitized alphanumeric extension.
+
+`src.upload_limits` owns central upload-size caps and environment overrides for chat attachments, gallery, transforms, memory import, personal uploads, email compose, STT audio, and ICS imports. Invalid configured limits fail fast at import so routes do not silently accept unsafe sizes.
 
 `routes/upload_routes.py` owns:
 
@@ -42,7 +44,7 @@ Readable/code-like upload handling includes common text/code extensions plus `.n
 Chat does not own attachment extraction. Runtime flow:
 
 - the frontend uploads files and submits attachment IDs;
-- `ChatHandler.preprocess_message()` resolves IDs with the session owner through `UploadHandler.resolve_upload()`;
+- `ChatHandler.preprocess_message()` resolves IDs with the session owner through `UploadHandler.resolve_upload()`, which enforces owner/admin access and no longer treats missing owner context as permission to read owned uploads;
 - vision/OCR cache and attachment metadata are prepared before model calls;
 - text-only models receive stripped multimodal blocks;
 - `src.document_processor.build_user_content()` produces model-ready text, PDF text, Office/EPUB text when MarkItDown is available, image/multimodal blocks, truncation, and PDF auto-document updates;
@@ -54,7 +56,7 @@ Chat does not own attachment extraction. Runtime flow:
 
 `static/js/documentLibrary.js` owns local library state after archive/delete actions, including total counts and language chips. Server route truth still owns durable document state.
 
-`static/js/document.js` owns the browser document editor and markdown preview. Preview rendering applies code highlighting when highlight.js is present and renders Mermaid diagrams when the Mermaid runtime is available.
+`static/js/document.js` owns the browser document editor and markdown preview. Preview rendering applies code highlighting when highlight.js is present, renders Mermaid diagrams when the Mermaid runtime is available, refreshes after AI edits, and discards pending AI diffs before switching the active document.
 
 Document mutations also happen through agent tools, Codex document routes, email attachment import, and scripts. Those callers must preserve document owner and version semantics.
 
@@ -63,6 +65,7 @@ Document mutations also happen through agent tools, Codex document routes, email
 PDF runtime behavior:
 
 - direct PDF import stores the upload through `UploadHandler`;
+- PDF library entries preserve metadata/preview behavior for source PDFs;
 - pypdf text extraction remains core;
 - PyMuPDF enables form detection, page rendering, page PNGs, annotation fill, render/export PDF, and form filling;
 - imported PDFs become either plain `pdf_source` markdown or `pdf_form_source` markdown with sidecar field data;
@@ -75,7 +78,7 @@ PDF runtime behavior:
 
 `src.rag_vector.VectorRAG` owns Chroma/embedding-backed indexing and owner-filtered retrieval. Chunk ids are owner-scoped so byte-identical chunks from different owners do not suppress each other. `src.rag_singleton` owns lazy initialization, retry throttling, and reset behavior.
 
-`routes/personal_routes.py` owns personal-doc and direct RAG-upload routes. Directory list/index/delete routes are admin-gated. Direct RAG upload is currently user-authenticated but not admin-gated, writes to `data/personal_uploads`, and has looser file-type validation than normal uploads.
+`routes/personal_routes.py` owns personal-doc and direct RAG-upload routes. Directory list/index/delete routes are admin-gated. Direct RAG upload is user-authenticated, requires document privilege, forwards owner into the manager wrapper, writes to `data/personal_uploads`, and has looser file-type validation than normal uploads.
 
 Current call sites include:
 
@@ -134,7 +137,7 @@ Route-level coverage is thinner for document CRUD, PDF import/render/export/fill
 
 ## Current Gaps
 
-- Direct RAG upload needs clear auth, file-type validation, and MarkItDown/PDF extraction parity decisions.
+- Direct RAG upload still needs clearer file-type validation and MarkItDown/PDF extraction parity decisions.
 - Document `session_id` relinking and session document listing need owner-scope regressions.
 - `services/docs/service.py` return-shape mapping is stale relative to `VectorRAG`.
 - Chat RAG can remain degraded after startup even if personal routes later initialize the RAG singleton.

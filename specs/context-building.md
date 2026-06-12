@@ -1,6 +1,6 @@
 # Context Building
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -54,7 +54,7 @@ Current untrusted context sources include:
 
 Chat URL prefetch and agent `web_fetch` are different paths. Chat prefetch happens before the model call; `web_fetch` is a tool the model may choose later. Both should converge on the same intent: enrich context when content is available, represent unavailable content when it is not, and let the model interpret the user request.
 
-Search results and fetched pages are evidence. `web_search` should not force a page fetch unless its explicit contract says it does. Failed fetches should not crash chat or silently imply content was read.
+Search results and fetched pages are evidence. `web_search` should not force a page fetch unless its explicit contract says it does. Failed fetches should not crash chat or silently imply content was read. Canonical search content fetchers can extract readable text from HTML, `text/*`, Markdown, `.txt`, `.json`, and `.jsonl` responses and should return shaped error results for HTTP status failures.
 
 Current behavior is not yet unified:
 
@@ -67,7 +67,7 @@ Current behavior is not yet unified:
 
 ## Tool Result Envelope
 
-`src.tool_execution` executes and formats tools. Tool output caps live in `src.constants` and are re-exported through older facades. `src.agent_loop._append_tool_results()` owns model re-entry: native tool calls return as provider-style `role: "tool"` messages, while fenced-tool results can become a bracketed user message. These results are untrusted, but they do not all currently use `untrusted_context_message()` or `metadata.trusted = False`.
+`src.tool_execution` executes and formats tools. Tool output caps live in `src.constants` and are re-exported through older facades; shared native-tool truncation lives in `src.tool_utils`. `src.agent_loop._append_tool_results()` owns model re-entry: native tool calls return as provider-style `role: "tool"` messages, while fenced-tool results can become a bracketed user message. These results are untrusted, but they do not all currently use `untrusted_context_message()` or `metadata.trusted = False`.
 
 Side-effect enforcement lives outside context building. Chat route disabled-tool policy, `src.tool_security`, `src.tool_execution`, and `do_app_api()` block unsafe tool execution; prompt wording alone is not the authority.
 
@@ -87,7 +87,7 @@ Guide-only/no-tools policy can suppress context acquisition before the model cal
 - `routes/chat_routes.py` research context injection;
 - `src.agent_loop` for active editor document, skill context, and tool-result reinsertion;
 - `src.tool_execution` for `web_search`, `web_fetch`, file, shell, MCP, and other tool outputs;
-- `src.deep_research` and research handlers for search/fetch/extract flows used by research jobs, with fetched webpage text wrapped before extraction.
+- `src.deep_research` and research handlers for search/fetch/extract flows used by research jobs, with fetched webpage text wrapped before extraction and analyzed URLs tracked separately from source snippets.
 
 ## Current Gaps
 

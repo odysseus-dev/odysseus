@@ -1,6 +1,6 @@
 # Frontend
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -44,7 +44,7 @@ The frontend is a raw static SPA served by FastAPI. There is no Vite, React, Typ
 - nonce-injected SPA/login HTML serving;
 - SPA deep-link routes.
 
-`static/index.html` owns the DOM shell and script loading order. It loads browser ES modules directly. Current boot order includes nonce-bearing inline boot scripts, self-hosted highlight.js, async CDN KaTeX/Mermaid, modulepreloads, ordered module script tags, `static/app.js`, `static/js/init.js`, `static/js/a11y.js`, workspace/plan/chat helpers, and service-worker registration.
+`static/index.html` owns the DOM shell and script loading order. It loads browser ES modules directly. Current boot order includes nonce-bearing inline boot scripts, self-hosted highlight.js, async CDN KaTeX/Mermaid, modulepreloads, ordered module script tags, `static/app.js`, `static/js/init.js`, `static/js/a11y.js`, workspace/chat helpers, provider device-flow helpers, and service-worker registration.
 
 Exact script URL identity matters. Versioned script tags, unversioned imports, and service-worker precache entries must stay aligned. Current service-worker precache coverage is not a full mirror of the `index.html` module graph, so changes there need direct verification.
 
@@ -91,7 +91,7 @@ Current major frontend areas include:
 - compare modules under `static/js/compare/`, including sanitized popup/search/image handling;
 - document editor/library in `static/js/document.js` and `static/js/documentLibrary.js`;
 - image editor integration in `static/js/galleryEditor.js` plus leaves under `static/js/editor/`;
-- gallery, email inbox/library, calendar, research panel/jobs/synapse, notes/tasks, assistant, memory/skills, Cookbook/HW Fit, workspace picker, plan window, theme, modal/window utilities, storage, and accessibility helpers.
+- gallery, email inbox/library, calendar, research panel/jobs/synapse, notes/tasks, assistant, memory/skills, Cookbook/HW Fit, workspace picker, provider device flow, composer ArrowUp recall, theme, modal/window utilities, storage, and accessibility helpers.
 
 Coordinator ownership:
 
@@ -102,7 +102,7 @@ Coordinator ownership:
 
 `static/js/MODULE_SUMMARY.md` is historical and explicitly not authoritative. Use the current `static/js/` tree and script tags as truth.
 
-Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, and `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete.
+Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, and `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete.
 
 ## UI Policy
 

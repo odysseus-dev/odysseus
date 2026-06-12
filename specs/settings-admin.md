@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -28,7 +28,7 @@ Generic API integrations are cross-referenced in `integrations.md`. Model endpoi
 
 ## Data Stores
 
-`src.settings` owns `data/settings.json` and `data/features.json`. Settings and features are merged over defaults and cached briefly. Missing, corrupt, or non-object stores fall back to defaults; settings also handles unreadable-store fallback more defensively than features.
+`src.settings` owns `data/settings.json` and `data/features.json`. Settings and features are merged over defaults and cached briefly. Missing, corrupt, unreadable, or non-object stores fall back to defaults.
 
 `routes.prefs_routes` owns `data/user_prefs.json`. It supports:
 
@@ -58,7 +58,7 @@ Settings runtime:
 - non-admin or unauthenticated `GET /api/auth/settings` returns `scrub_settings()` output;
 - `POST /api/auth/settings` is admin-only and only writes keys present in `DEFAULT_SETTINGS`.
 
-`src.settings_scrub` owns deep secret-key scrubbing for non-admin settings reads. It preserves structure while blanking secret-shaped string values.
+`src.settings_scrub` owns deep secret-key scrubbing for non-admin settings reads, including snake_case and camelCase secret-like key names. It preserves structure while blanking secret-shaped string values.
 
 Admin gates inherit the auth contracts in `auth-security.md`: normal deployments require an admin user, while `AUTH_ENABLED=false`, first-run/setup mode, validated internal-tool loopback, and direct localhost bypass have explicit behavior in auth middleware/helpers.
 
@@ -79,7 +79,7 @@ Logout/user-switch flows clear local/session storage to avoid stale cross-accoun
 
 ## Presets
 
-`src.preset_manager.PresetManager` owns preset persistence, default preset healing, corrupt-store fallback, and legacy custom-preset migration. `routes.preset_routes` owns HTTP behavior.
+`src.preset_manager.PresetManager` owns preset persistence, atomic writes, default preset healing, corrupt-store fallback, and legacy custom-preset migration. `routes.preset_routes` owns HTTP behavior.
 
 Runtime behavior:
 
@@ -118,7 +118,7 @@ HTTP import is best-effort and section-based. It rejects invalid top-level JSON,
 
 ## Diagnostics, Cleanup, And Wipe
 
-`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, and research status. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
+`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, and aggregate optional service health. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
 
 `routes.cleanup_routes` is owner-scoped, not admin-only. It previews and applies session cleanup for the current user through `src.cleanup_service`; when auth is disabled, cleanup can operate as a single-user unscoped flow.
 
@@ -158,7 +158,7 @@ Vault tool paths duplicate some route behavior and can return vault item secrets
 
 ## Degraded And Compatibility Behavior
 
-- Settings/features fall back to defaults on missing/corrupt/non-object stores.
+- Settings/features fall back to defaults on missing/corrupt/unreadable/non-object stores.
 - `is_setting_overridden()` has a narrower error contract than `load_settings()`.
 - Prefs support legacy flat files and auth-disabled first-user writes.
 - Presets heal missing built-ins and legacy custom state without clobbering user edits.
@@ -169,7 +169,7 @@ Vault tool paths duplicate some route behavior and can return vault item secrets
 
 ## Testing Notes
 
-Current targeted coverage includes settings store fallback/error paths, settings scrub, prefs no-clobber behavior, preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore safety, cleanup owner scope, diagnostics admin-gate source checks, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, and a token-budget `manage_settings` path.
+Current targeted coverage includes settings store fallback/error paths, settings scrub, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore safety, cleanup owner scope, diagnostics admin-gate/source/service-health checks, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, and a token-budget `manage_settings` path.
 
 ## Current Gaps
 
@@ -183,5 +183,4 @@ Current targeted coverage includes settings store fallback/error paths, settings
 - Add frontend tests for Settings/Admin panel save/load flows, vault password clearing, diagnostics buttons, cleanup/wipe confirmations, custom font/theme wiring, and tab state.
 - Decide whether `user_templates` and `group_presets` should remain shared despite user-facing names.
 - Decide whether backup/import should preserve explicit owner fields or force imported owner ownership.
-- Decide whether `is_setting_overridden()` should match `load_settings()` permission-error fallback.
 - Decide whether a dedicated split is needed for the large `static/js/settings.js` and `static/js/admin.js` ownership boundary.

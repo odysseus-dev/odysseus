@@ -1,6 +1,6 @@
 # Shell And MCP
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -8,7 +8,7 @@ This spec covers shell and MCP behavior in:
 
 - shell routes in `routes/shell_routes.py`;
 - the standalone shell helper in `services/shell/service.py`;
-- agent shell/background execution in `src/tool_execution.py`, `src/bg_jobs.py`, and `src/bg_monitor.py`;
+- agent shell/background execution in `src/tool_execution.py`, `src/agent_tools/subprocess_tools.py`, `src/bg_jobs.py`, and `src/bg_monitor.py`;
 - app wiring and startup/shutdown in `app.py`;
 - MCP configuration routes in `routes/mcp_routes.py`;
 - MCP runtime state in `src/mcp_manager.py`;
@@ -42,7 +42,7 @@ Runtime behavior:
 - `/api/cookbook/packages/install`;
 - `/api/cookbook/rebuild-engine`.
 
-Those endpoints probe local or SSH-remote packages, prepend user install bins for pip CLIs, validate SSH host/port and remote venv values, and restrict package installs to allowlisted dependencies.
+Those endpoints probe local or SSH-remote packages, prepend user install bins for pip CLIs, validate SSH host/port through shared route validators, validate remote venv values, and restrict package installs to allowlisted dependencies.
 
 `services.shell.service.ShellService` is a small standalone subprocess abstraction with output caps. It does not own live route behavior, PTY/tmux paths, Windows shell selection, admin checks, or Cookbook package probes.
 
@@ -122,7 +122,7 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 - Admin shell is intentional host command execution; do not expose shell routes or shell tools to regular users.
 - `_require_admin()` gates shell routes and MCP config routes. The internal-tool loopback can be admin-equivalent only after auth middleware validates the internal token and loopback client.
 - `_reject_cross_site()` currently applies to `/api/cookbook/packages`; `/api/shell/exec`, `/api/shell/stream`, package install, rebuild, and MCP write/OAuth routes do not call it directly.
-- Shell helper paths use argv-based SSH, reject option-like hosts, validate SSH ports, restrict remote venv characters, and allowlist package installs.
+- Shell helper paths use argv-based SSH, reject option-like hosts, validate SSH ports through shared helpers, restrict remote venv characters, and allowlist package installs.
 - Non-admin/public tool policy blocks `bash`, `python`, file tools, `manage_mcp`, and all `mcp__*` tools.
 - MCP stdio server registration is arbitrary host process execution and is admin-only.
 - MCP OAuth key/token file paths supplied through routes are confined under `data/mcp_oauth`; generic Streamable HTTP OAuth token state is encrypted in the database.

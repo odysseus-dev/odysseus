@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -53,7 +53,7 @@ Setup instructions are duplicated in integration READMEs and `static/js/settings
 
 ## API Tokens
 
-`routes.api_token_routes` owns token profiles, allowed scopes, scope normalization, token creation/update/revocation, and profile metadata shown in Settings. Write scopes auto-include their read scope where applicable.
+`routes.api_token_routes` owns token profiles, allowed scopes, scope normalization, token creation/update/revocation, and profile metadata shown in Settings. Partial updates preserve existing scopes unless new scopes are supplied, owner checks apply to update/delete, and write scopes auto-include their read scope where applicable.
 
 `app.py` owns bearer-token validation. It accepts `Bearer ody_...`, checks a bcrypt hash through a prefix cache, updates `last_used_at` asynchronously, and stamps:
 
@@ -79,7 +79,7 @@ The Cookbook scoped-agent surface currently exposes `cookbook:read` and `cookboo
 
 `routes.auth_routes` owns admin-only HTTP CRUD/test routes for these integrations. Presets are public metadata. The ntfy test route is special: it publishes a real test notification to the configured reminder topic instead of only probing server health.
 
-`api_call` is the agent/tool execution path for configured integrations. It is blocked for non-admin/public users by tool security, accepts only relative paths, uses the admin-configured base URL/auth settings, and returns truncated external responses to the model. Admin-authored integration descriptions are prompt context; external responses remain untrusted data.
+`api_call` is the agent/tool execution path for configured integrations. It is blocked for non-admin/public users by tool security, accepts only relative paths, uses the admin-configured base URL/auth settings, and returns truncated external responses to the model, including a sentinel when long JSON lists are shortened. Admin-authored integration descriptions are prompt context; external responses remain untrusted data.
 
 Current call sites include:
 
@@ -90,7 +90,7 @@ Current call sites include:
 
 ## Webhooks And External Chat
 
-Outgoing webhooks are admin-managed `Webhook` rows. `routes.webhook_routes` owns CRUD/test/toggle/delete and `/api/v1/chat`. `src.webhook_manager` owns allowed event validation, public URL validation, delivery-time URL revalidation, HMAC signing, fire-and-forget delivery, and delivery status/error persistence.
+Outgoing webhooks are admin-managed `Webhook` rows. `routes.webhook_routes` owns CRUD/test/toggle/delete and `/api/v1/chat`. `src.webhook_manager` owns allowed event validation, public URL validation, delivery-time URL revalidation, HMAC signing, fire-and-forget delivery, in-flight task references, and delivery status/error persistence. Sanitized delivery errors redact IPv6-style address details.
 
 Allowed outgoing events are:
 
@@ -130,7 +130,7 @@ The Settings Integrations view aggregates several subsystem surfaces:
 
 - generic API integrations;
 - Codex/Claude agent token setup;
-- CalDAV, CardDAV, email accounts, MCP/OAuth links, and agent tokens.
+- CalDAV, CardDAV, email accounts, MCP/OAuth links, provider device-flow links, and agent tokens.
 
 Vault and companion/mobile setup are separate settings/route surfaces today, not entries in the unified add-integration list.
 
@@ -161,7 +161,7 @@ This spec owns the cross-integration framing and agent/token/webhook surfaces. D
 
 ## Testing Notes
 
-Current targeted coverage includes API-token CRUD basics, companion pairing/read-only owner scoping, webhook SSRF validation, webhook auth-exempt source checks, webhook CLI token masking, integration-store shape/encryption migration, and `/api/v1/chat` base-url/fallback owner scoping.
+Current targeted coverage includes API-token CRUD basics, companion pairing/read-only owner scoping, webhook SSRF validation, webhook auth-exempt source checks, webhook CLI token masking, integration-store shape/encryption migration, Cookbook API-token scopes, and `/api/v1/chat` base-url/fallback owner scoping.
 
 The integration audit also ran the targeted venv subset covering those areas with 52 passing tests and one warning.
 
@@ -169,7 +169,7 @@ The integration audit also ran the targeted venv subset covering those areas wit
 
 - Codex/Claude scoped routes, owner restoration, degraded 503 behavior, plugin zip contents, and helper-script path refusal need focused regression tests.
 - Token profile/update behavior and Settings agent-token scope toggles need direct coverage.
-- Codex Cookbook scopes need reconciliation between Settings, route checks, and `ALLOWED_SCOPES`.
+- Codex Cookbook scopes need continued Settings, route-check, and `ALLOWED_SCOPES` regression coverage.
 - Generic integration HTTP CRUD/test routes, `execute_api_call()` auth modes, response shaping, and frontend Settings/Admin flows need direct coverage.
 - `do_manage_tokens()` does not match `/api/tokens` semantics for `ody_` prefix, owner, scopes, and cache invalidation.
 - `do_manage_webhooks()` bypasses route behavior and does not cover signing-secret parity.

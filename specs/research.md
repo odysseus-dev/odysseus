@@ -1,6 +1,6 @@
 # Research
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -33,7 +33,7 @@ This spec covers deep research behavior in:
 
 ## Job Ownership
 
-`src.research_handler.ResearchHandler` owns panel and chat-stream active research jobs: validation, query synthesis, model probing, endpoint/model selection inputs, task registry state, cancellation, progress, raw findings, result persistence, and owner stamping.
+`src.research_handler.ResearchHandler` owns panel and chat-stream active research jobs: validation, query synthesis, model probing, endpoint/model selection inputs, task registry state, cancellation, progress, raw findings, result persistence, average-duration caching, owner stamping, and owner rename for active/disk-backed task state.
 
 `routes/research_routes.py` owns the browser/API surface: auth and privileges, active/status/cancel/result/result-peek/stream routes, report HTML, hide/unhide images, library/detail/archive/delete, endpoint resolution for panel launch, and spinoff chat creation.
 
@@ -48,6 +48,7 @@ Agent tools and the CLI read and mutate persisted research JSON directly. They a
 - date/context setup;
 - search provider selection and fallback through `src.search.providers` and `src.search.core`;
 - URL/content fetching through `src.search.fetch_webpage_content`;
+- separate tracking of analyzed URLs, last search errors, and empty-round limits;
 - source summarization/extraction;
 - synthesis into final answers/reports;
 - partial/fallback reports when extraction or synthesis fails.
@@ -69,7 +70,7 @@ Chat-stream runtime behavior:
 - progress, sources, raw findings, and `research_done` are emitted as SSE events;
 - `/api/research/result/{id}` is destructive for chat consumption and marks/clears consumed in-memory results.
 
-Spinoff creates a new chat session from a saved report. It currently seeds the report text without sources.
+Spinoff creates a new chat session from a saved report. It currently seeds the report text without injecting source details, though it uses the source session owner/endpoint context where available.
 
 ## Reports And Persistence
 
@@ -88,7 +89,7 @@ Research persistence uses `data/deep_research/<session_id>.json`. Current JSON c
 ## Degraded Runtime
 
 - `/api/research*` is exempt from the app-level hard request timeout.
-- `ResearchHandler.start_research()` applies `research_run_timeout_seconds`; `0` means unlimited and bounded settings protect accidental extremes. User-selected round count is threaded into `DeepResearcher`.
+- `ResearchHandler.start_research()` applies `research_run_timeout_seconds`; `0` means unlimited and bounded settings protect accidental extremes. User-selected round count is threaded into `DeepResearcher`; `max_rounds=0` means automatic mode capped by the route/handler rather than unbounded research.
 - Deep extraction has separate timeout and concurrency controls.
 - Scheduled research currently uses its own fixed max-time behavior.
 - Probe failures are formatted before long jobs start.
@@ -103,7 +104,7 @@ Native/Docker endpoint behavior is delegated to model endpoint registration and 
 
 The active FastAPI app path uses `src.research_handler.ResearchHandler`.
 
-`services/research/service.py` is a public wrapper around a duplicate `services.research.research_handler.ResearchHandler`. That services handler is older than the active `src` handler and lacks current owner stamping, raw findings, report helpers, configurable timeout behavior, and route options. Treat it as compatibility/cleanup surface, not canonical runtime truth.
+`services/research/service.py` is a public wrapper around a duplicate `services.research.research_handler.ResearchHandler`. That services handler remains compatibility/cleanup surface rather than canonical runtime truth; check parity before assuming it has every active-route field or policy behavior.
 
 Search compatibility also matters: `src.search.core`, `src.search.providers`, and `src.search.content` alias the service search path so old imports stay live without a second fetch implementation.
 
@@ -114,7 +115,7 @@ Research routes require an authenticated user, and start routes require research
 Endpoint secret policy:
 
 - `/api/research/start` must use owner-scoped enabled endpoints before decrypted API keys/base URLs are passed to the handler;
-- spinoff/follow-up endpoint selection still needs owner-scope hardening; current fallback paths can resolve without the route owner;
+- spinoff/follow-up endpoint selection should keep using owner-scoped endpoint context when present;
 - token-authenticated behavior must preserve token owner/scope expectations before being treated as an API surface.
 
 Research sources, fetched pages, summaries, generated reports, and saved research context are untrusted data when reused in chat or another model call. Fetched webpage content in `DeepResearcher` is wrapped with `untrusted_context_message("webpage", content)` before extraction; other reuse paths should keep the same user-role/metadata policy.
@@ -131,7 +132,7 @@ Coverage is still thin around live job route ownership, `/api/research/start` ro
 
 - Consolidate, retire, or clearly deprecate `services/research/research_handler.py`.
 - Decide whether direct JSON access by `manage_research` and `scripts/odysseus-research` must be owner-filtered like browser routes or is local/tool-only.
-- Spinoff endpoint fallback needs owner-scoped endpoint regression coverage.
+- Spinoff endpoint fallback needs continued owner-scoped endpoint regression coverage.
 - Spinoff research context should use the shared untrusted-context role/metadata policy.
 - Research search/fetch logic does not yet share a single result shape with chat prefetch and agent tools.
 - Visual report remote image policy needs stronger regressions.

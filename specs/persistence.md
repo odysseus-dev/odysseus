@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -30,13 +30,14 @@ Current model families include:
 - documents and document versions;
 - gallery albums/images, editor drafts, signatures, generated-media metadata;
 - email accounts, model endpoints, MCP servers, comparisons;
+- provider auth sessions for OAuth/device-flow-backed provider credentials;
 - API tokens, admin-global webhooks, user tools/tool data, integrations;
 - crew members, scheduled tasks, task runs, notes;
 - memory rows, calendar calendars, and calendar events.
 
 `core/models.py` owns pure dataclasses used by `SessionManager`. It does not own database persistence.
 
-`routes/email_helpers.py` owns a second SQLite database at `data/scheduled_emails.db` for scheduled email, summary, reply, tag, and cache state. Its migrations and owner backfills are local to that module, not `core/database.py`.
+`routes/email_helpers.py` owns a second SQLite database at `data/scheduled_emails.db` for scheduled email, summary, reply, tag, sender-signature, urgency-alert, calendar-extraction, and cache state. Its migrations and owner backfills are local to that module, not `core/database.py`, and those auxiliary tables are owner-scoped.
 
 ## Migration Policy
 
@@ -59,7 +60,7 @@ Route code owns filtering for its domain. `src.auth_helpers.owner_filter()` is t
 
 ## Secrets And Local Stores
 
-`ModelEndpoint` includes cached/hidden/pinned model lists, endpoint kind, refresh mode/interval/timeout, model type, supports-tools, owner, and encrypted API key columns. New endpoint columns need matching startup migration helpers.
+`ModelEndpoint` includes cached/hidden/pinned model lists, endpoint kind, refresh mode/interval/timeout, model type, supports-tools, owner, optional `provider_auth_id`, and encrypted API key columns. New endpoint columns need matching startup migration helpers.
 
 `McpServer` includes stdio/SSE/HTTP transport config, plaintext env JSON, OAuth config, disabled tool names, and encrypted generic OAuth token/client state in `oauth_tokens`.
 
@@ -74,7 +75,9 @@ Current JSON/local stores include:
 - `data/settings.json`, user preferences, feature flags, integration settings, and `data/embedding_endpoint.json`;
 - presets, API key manager state, memory/skills state, upload metadata, personal docs indexes, research JSON, background jobs, contacts/vault JSON, and task/cookbook auxiliary state.
 
-`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Upload metadata uses its own locked atomic writer with `.bak` recovery. Memory and user prefs use temp-and-rename. API keys preserve encrypted values when saving one provider, while presets, research, and some older stores still use simpler or direct JSON writes with load-time fallback behavior.
+Cookbook state lives under the shared `DATA_DIR` path through the `COOKBOOK_STATE_FILE` constant. Search cache/analytics files also resolve from shared data-dir constants and tolerate read-only image layers during startup.
+
+`core.atomic_io` owns atomic file-write behavior for auth/settings/integration-style stores. Upload metadata uses its own locked atomic writer with `.bak` recovery and can rewrite owner fields plus owner-qualified index keys during user rename. Memory and user prefs use temp-and-rename. API keys preserve encrypted values when saving one provider, presets persist atomically, and settings/feature loads degrade to defaults when the store is unreadable.
 
 Persisted memories, skills, documents, email, RAG chunks, notes, and other user-editable data are untrusted when reintroduced to model context. Route and processor code must pass them through the untrusted-context contract described in `context-building.md` and `auth-security.md`.
 

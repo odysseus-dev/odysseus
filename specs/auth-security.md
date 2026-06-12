@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -39,7 +39,7 @@ Odysseus is a trusted-user private-network app. Admins intentionally have powerf
 - `core.middleware.require_admin()` owns the normal admin gate. Local wrappers must document and test any intentional divergence from that boundary.
 - `src.auth_helpers.effective_user()` owns cookie/API-token owner attribution for selected route code. `require_user()` owns route-level degraded user resolution, `require_privilege()` owns privilege checks, and `owner_filter()` owns shared/null-owner query compatibility.
 
-Reserved usernames include `internal-tool`, `api`, `demo`, and `system`. Do not create flows that can register or rename real users into those names.
+Reserved usernames include `internal-tool`, `api`, `demo`, and `system`. Loaded auth data drops reserved user records, and create/rename flows must reject real users with those names.
 
 ## Auth Runtime Flow
 
@@ -51,6 +51,8 @@ Login issues an `HttpOnly`, `SameSite=Lax` cookie, with `SECURE_COOKIES` opt-in 
 
 Deleting a user revokes that user's browser sessions and API-token rows, then the admin delete route invalidates the in-memory bearer-token cache so already-cached tokens stop authenticating.
 
+Rename first changes the auth username, then migrates owner-bearing DB rows and disk-backed stores. Current rename coverage includes user preferences, active/disk research state, `memory.json`, upload metadata and owner-qualified upload index keys, skills frontmatter/usage state, cached browser sessions, and API-token cache invalidation. If owner migration fails after the auth rename, the route attempts to roll auth back to the old username instead of leaving a split identity.
+
 ## Owner Attribution
 
 Cookie requests use the real username. Bearer-token requests are stamped as `request.state.current_user = "api"` plus `api_token_owner`, `api_token_scopes`, and token id. Routes that support API-token access must explicitly use `effective_user()` or route-local scope helpers instead of treating `"api"` as an owner.
@@ -59,11 +61,11 @@ Internal loopback calls may stamp `current_user = "internal-tool"` or a validate
 
 ## API Tokens And Scoped Integrations
 
-`routes/api_token_routes.py` owns token CRUD and scope normalization. `app.py` caches active token prefix rows and verifies bearer tokens with bcrypt. API-token requests set `request.state.current_user = "api"` plus token owner/scopes.
+`routes/api_token_routes.py` owns token CRUD and scope normalization. Partial updates preserve existing scopes unless new scopes are supplied, write scopes imply the matching read scopes where applicable, and Cookbook scopes are part of the normalized scope set. `app.py` caches active token prefix rows and verifies bearer tokens with bcrypt. API-token requests set `request.state.current_user = "api"` plus token owner/scopes.
 
 Current call sites include Codex/Claude scoped APIs, `/api/v1/chat`, webhooks, selected session routes, companion pairing, and external integrations. `/api/codex/*` and `/api/v1/chat` enforce route-local scopes; companion and selected session routes use owner attribution. `companion/pairing.py` can mint chat-scoped tokens outside normal token CRUD.
 
-Admin token CRUD is cookie/admin gated. Scoped route code must use the token owner and declared scopes instead of falling back to cookie-user assumptions.
+Admin token CRUD is cookie/admin gated. Update/delete operations check token ownership, and cache rebuild ignores active tokens whose owner no longer maps to a known auth user. Scoped route code must use the token owner and declared scopes instead of falling back to cookie-user assumptions.
 
 ## Internal Tool Loopback
 

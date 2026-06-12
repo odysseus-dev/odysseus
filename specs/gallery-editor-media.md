@@ -1,6 +1,6 @@
 # Gallery, Editor, And Media
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -42,6 +42,8 @@ This spec covers media surfaces in:
 
 Frontend gallery behavior includes upload progress, folder-drop album import, stale-while-revalidate cards, saved editor projects, detail actions, bulk delete/download, and cache-busted image refreshes.
 
+Album assignment and gallery image detail/update endpoints enforce owner scope and fail closed when no authenticated owner is available instead of falling back to broad access.
+
 Generated media provenance:
 
 - generated filenames are opaque hex-like media names, not trusted content hashes;
@@ -67,7 +69,7 @@ Gallery/editor image transforms are split across:
 - `/api/image/remove-bg`;
 - `/api/image/enhance-face`.
 
-AI image endpoints mostly require image-generation privilege in the gallery route layer. Utility routes such as sharpen have separate coverage and should not be assumed to share that gate. The chat image-generation session path calls `do_generate_image()` separately and has its own privilege/tool-listing behavior.
+AI image endpoints mostly require image-generation privilege in the gallery route layer. The sharpen route is explicitly auth-gated; utility routes that live outside gallery still need their own route-level gate checks rather than assuming a shared decorator. The chat image-generation session path calls `do_generate_image()` separately and has its own privilege/tool-listing behavior.
 
 Provider behavior:
 
@@ -140,7 +142,7 @@ Known boundaries:
 
 ## Testing Coverage
 
-Existing tests cover EXIF dimensions, owner-filter helper behavior, direct upload limits, image-generation privilege source shape, endpoint SSRF/source checks, editor draft payload validation, font family derivation, visual-report helper behavior, gallery CLI previews, and selected security regressions.
+Existing tests cover EXIF dimensions, owner-filter helper behavior, direct upload limits, image-generation privilege source shape, sharpen auth, gallery null-user denial, endpoint SSRF/source checks, editor draft payload validation, font family derivation, visual-report helper behavior, gallery CLI previews, and selected security regressions.
 
 Route-level coverage is thin for full gallery CRUD/album/tag/download/delete flows, generated-image serving, editor draft owner CRUD, signature owner CRUD, emoji proxy/cache behavior, image-tool degraded responses, optional dependency fallbacks, and frontend editor behavior.
 

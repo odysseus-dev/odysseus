@@ -1,6 +1,6 @@
 # Search
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -50,9 +50,9 @@ Runtime behavior:
 
 - disabled search returns disabled/unavailable text in the comprehensive path;
 - missing keyed-provider secrets return empty provider results instead of exposing secrets;
-- SearXNG retries through JSON variants before HTML fallback;
+- SearXNG retries through JSON variants before HTML fallback, pins English/general-engine defaults where needed, and maps news/recency settings into provider time filters;
 - comprehensive search retries providers and then walks the fallback chain;
-- `/api/search/query` is a direct provider test/query path and does not use the comprehensive fallback chain.
+- `/api/search/query` is a direct provider test/query path and does not use the comprehensive fallback chain. Direct provider result limits can be controlled dynamically by the caller.
 
 ## Content Fetching
 
@@ -63,9 +63,10 @@ Runtime behavior:
 - rejection of localhost, metadata, private, reserved, multicast, and link-local targets;
 - redirect revalidation on each hop;
 - metadata, Open Graph image, list, table, code block, PDF, and text extraction;
+- readable text extraction for `text/*`, Markdown, `.txt`, `.json`, `.jsonl`, and JSON content types;
 - JS-heavy empty result hints;
 - cache writes;
-- empty/error result shape.
+- empty/error result shape, including explicit HTTP-status failures instead of raising through callers.
 
 `src/search/content.py` is now a compatibility alias to `services.search.content`; chat URL auto-fetch, agent `web_fetch`, and deep research keep the `src.search` import path but share the services implementation.
 
@@ -87,6 +88,8 @@ Search does not have one canonical result shape yet. Current shapes include:
 - agent `web_search`: tool output text plus a hidden sources marker stripped by the agent loop;
 - agent `web_fetch`: fetched page text or tool error;
 - deep research: findings, cited sources, optional source images, and `_last_search_error` state.
+
+Chat/session transcript search is separate from web search but now uses `chat_messages_fts` when available, sanitizes FTS queries, and batches message lookup after FTS hits to avoid per-hit database reads.
 
 Search owns Open Graph image extraction for fetched pages. Research owns promotion of those images into research sources and visual reports. This is not a standalone web image-search provider or gallery image proxy.
 
@@ -116,7 +119,7 @@ Deep research wraps fetched webpage content through `untrusted_context_message("
 
 ## Optional And Platform Behavior
 
-`duckduckgo-search` is optional; provider code has an HTML fallback. PDF extraction uses `pdfminer.six` only when installed. Native SearXNG defaults to `http://localhost:8080`; Docker uses the compose `searxng` service URL and pins the SearXNG image with a healthcheck.
+`ddgs` is optional; provider code has an HTML fallback. Search cache and analytics state live under the shared data dir and mkdir failures in read-only image layers are tolerated where possible. PDF extraction uses `pdfminer.six` only when installed. Native SearXNG defaults to `http://localhost:8080`; Docker uses the compose `searxng` service URL and pins the SearXNG image with a healthcheck.
 
 `httpx` and BeautifulSoup are required runtime dependencies for the active search/fetch path.
 

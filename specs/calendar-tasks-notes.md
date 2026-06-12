@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -32,19 +32,19 @@ Runtime behavior:
 - recurring rules are expanded server-side, including compound recurrence IDs;
 - RRULE expansion is capped and marks truncated responses;
 - event datetimes preserve UTC/local metadata through `CalendarEvent.is_utc` where supported;
-- CalDAV pull uses a bounded sync window, scopes existing UID lookups to the synced calendar, stamps account ids on local calendars, maps Google principal URLs to event collections, preserves locally-created events that are not yet remote-owned, and deletes stale in-window remote events;
+- CalDAV pull uses a bounded sync window, scopes existing UID lookups to the synced calendar, stamps account ids on local calendars, maps Google principal URLs to event collections, preserves locally-created events that are not yet remote-owned, and deletes stale in-window remote events only when remote object parsing did not fail;
 - ICS import is per-owner, capped, and creates fresh local IDs in the target import calendar;
 - writeback is best-effort and local SQLite remains source of truth when remote writes fail.
 
-Calendar credentials are encrypted at rest and are not returned to clients. CalDAV URL validation rejects unsafe schemes, credentials, fragments, localhost names, bad ports, unsafe IP literals, and hostnames resolving to disallowed addresses, with `ODYSSEUS_ALLOW_PRIVATE_CALDAV=1` as the explicit private-IP escape hatch.
+Calendar credentials are encrypted at rest and are not returned to clients. CalDAV URL validation rejects unsafe schemes, credentials, fragments, localhost names, bad ports, unsafe IP literals, and hostnames resolving to disallowed addresses, with `ODYSSEUS_ALLOW_PRIVATE_CALDAV=1` as the explicit private-IP escape hatch. CalDAV sync/writeback clients disable redirects so credentials are not followed to another origin.
 
 ## Tasks And Assistant Runs
 
 `src.task_scheduler.TaskScheduler` owns scheduled task execution, next-run computation, strict single-slot execution, queued/running cleanup at startup, overdue next-run advancement, webhook-triggered tasks, notifications, run records, chained tasks, and event-triggered actions.
 
-Cookbook serve scheduling crosses this domain. The Cookbook UI creates `cookbook_serve` scheduled tasks, can mirror them as Cookbook calendar events with `cookbook_event_uid`, and task deletion cleans up the linked event when present. Cookbook command execution/lifecycle details stay in `cookbook-hwfit.md`.
+Cookbook serve scheduling crosses this domain. The Cookbook UI creates `cookbook_serve` scheduled tasks, can mirror them as Cookbook calendar events with `cookbook_event_uid`, and task deletion cleans up the linked event when present, falling back to exact-summary matching for legacy events without a stored UID. Cookbook command execution/lifecycle details stay in `cookbook-hwfit.md`.
 
-`routes/task_routes.py` owns task CRUD, status, manual run/stop/cancel, pause/resume, run/activity history, metadata, onboarding defaults, cache clearing, parse endpoints, and webhook-token regeneration.
+`routes/task_routes.py` owns task CRUD, status, manual run/stop/cancel, pause/resume, owner-scoped run/activity history, metadata, onboarding defaults, cache clearing, parse endpoints, and webhook-token regeneration. Chained-task `then_task_id` values are validated as same-owner relationships on create/update, and scheduler execution also rejects cross-owner or cyclic chains.
 
 Task webhook paths are auth-exempt at the app middleware layer only for `/api/tasks/{task_id}/webhook/{token}`. The route still validates active task state plus task-specific webhook token before dispatch.
 
@@ -52,6 +52,7 @@ Task runtime behavior:
 
 - task runs move through queued/running/success/error/skipped/aborted states;
 - output targets include chat sessions, notifications, email, and MCP delivery paths;
+- task-created chat sessions can be foldered under `Tasks`, and startup migration backfills task/research folders for legacy sessions;
 - event-bus triggers persist counters and `next_run` before scheduler handoff;
 - the in-process scheduler is gated by `ODYSSEUS_INPROCESS_TASKS`, and multiple enabled app processes can double-run work.
 
@@ -71,7 +72,7 @@ Reminder policy:
 Reminder dispatch is Note-owned:
 
 - `dispatch_reminder()` owns browser, email, ntfy, generic webhook, in-app notification, optional LLM reminder text, and dedupe behavior;
-- the scheduler note scanner calls note-ping actions for backend due-note delivery;
+- the scheduler note scanner calls note-ping actions for backend due-note delivery with per-owner notification state, and calendar-event reminders are treated as Note-owned reminders rather than separate scheduler event pings;
 - the notes frontend has a browser-tab fallback for visible sessions;
 - calendar frontend reminder UI stores reminder records as Notes, not calendar-event notification jobs.
 
@@ -79,7 +80,7 @@ Email/ntfy failures degrade into channel result fields rather than blocking ever
 
 ## Agent, Codex, And CLI Surfaces
 
-`do_manage_tasks`, `do_manage_notes`, and `do_manage_calendar` own agent-side writes. `src.tool_index` encodes the reminder policy that notes/todos own reminders while calendar events own time blocks.
+`do_manage_tasks`, `do_manage_notes`, and `do_manage_calendar` own agent-side writes. `do_manage_calendar` supports batch event creation plus list range aliases, calendar name/short-id lookup, and importance/tag aliases. Event classification reads `Memory.text` for personal context before LLM classification. `src.tool_index` encodes the reminder policy that notes/todos own reminders while calendar events own time blocks.
 
 Chat forwards browser timezone offset so natural-language note/calendar tools can anchor dates to the user clock. Chat can auto-promote note/calendar/reminder intents to agent mode.
 
@@ -125,7 +126,7 @@ Note routes store caller-provided `source`, `session_id`, `image_url`, and agent
 
 ## Testing Coverage
 
-Existing coverage is strongest around CalDAV URL hardening/writeback, CalDAV UID calendar scoping, calendar recurrence/timezone helpers, owner-scoped calendar basics, scheduler restart/cancel/next-run behavior, webhook auth-exemption source shape, notes CLI/tool due-date behavior, and task CLI preview.
+Existing coverage is strongest around CalDAV URL hardening/writeback, CalDAV UID calendar scoping, calendar recurrence/timezone helpers, owner-scoped calendar basics, scheduler restart/cancel/next-run behavior, webhook auth-exemption source shape, notes CLI/tool due-date behavior, task CLI preview, and same-owner chained task validation.
 
 Route-level coverage is thinner for full calendar route behavior, task CRUD/security/run controls, live webhook token dispatch, notes owner CRUD/reminder delivery, assistant defaults/run status, event-bus triggers, Codex todo/calendar scopes, and frontend panel wiring.
 

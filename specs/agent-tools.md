@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -20,13 +20,13 @@ This spec covers agent/tool behavior in:
 - `src/action_intents.py`;
 - `src/goal_based_extractor.py`;
 - `src/teacher_escalation.py`;
-- `src/agent_tools.py`;
+- `src/agent_tools/` modules and compatibility facade;
 - `src/mcp_manager.py`;
 - `src/builtin_mcp.py`;
 - `src/bg_jobs.py` and `src/bg_monitor.py`;
 - `routes/chat_routes.py`, `routes/chat_helpers.py`, `routes/model_routes.py`, `routes/skills_routes.py`, `routes/mcp_routes.py`, and `routes/workspace_routes.py`;
 - `mcp_servers/*.py`;
-- frontend stream/admin/settings files that display tool events, active plans, workspaces, and disabled tools;
+- frontend stream/admin/settings files that display tool events, workspaces, and disabled tools;
 - `tests/test_agent_loop.py`, `tests/test_tool_*`, and focused MCP/public-policy/schema tests.
 
 ## Agent Loop
@@ -39,15 +39,15 @@ Agent mode enters through chat routes, including auto-escalation from intent hel
 
 Guide-only/no-tools turns are runtime policy, not prompt advice. `src.tool_policy` detects strong latest-turn directives such as guide-only mode, no-tools mode, and explicit requests not to use tools; it builds a `ToolPolicy` that hides schemas, disables known native tools, disables MCP for that turn, skips tool retrieval, suppresses local/workspace context injection, blocks document streaming/teacher escalation, and gives `tool_execution` a final execution backstop.
 
-Plan mode is a read-only investigation path inside the same loop. It adds a denylist for known mutating tools, filters write/unknown MCP tools, prepends plan-mode instructions, and uses the `update_plan` tool only after a plan is approved for execution.
+Plan mode is a read-only investigation path inside the same loop. It adds a denylist for known mutating tools, filters write/unknown MCP tools, prepends plan-mode instructions, and uses the `update_plan` tool only after a plan is approved for execution. The backend path still exists for compatibility, but current browser chat forces incoming `plan_mode` off and the old plan-window UI module is gone.
 
-Workspace mode is request-scoped. Chat can send a workspace directory selected through `static/js/workspace.js`; `agent_loop` injects that fact early in the prompt and `tool_execution` confines bash, python, read/write/edit-file, and code-navigation tools to that root.
+Workspace mode is request-scoped. Admin chat can send a workspace directory selected through `static/js/workspace.js`; `agent_loop` injects that fact early in the prompt and `tool_execution` confines bash, python, read/write/edit-file, and code-navigation tools to that root. `routes.workspace_routes` owns admin-only browse/vet APIs, skips hidden/symlink directory traversal, caps listings, and rejects sensitive/root paths before a workspace reaches chat.
 
 ## Tool Registry
 
 Tool registration is split:
 
-- `src.agent_tools.TOOL_TAGS` owns executable fenced tags and the global MCP manager handle;
+- `src.agent_tools` is now a package/facade. `TOOL_HANDLERS` maps native tool names to handler functions across filesystem, subprocess, web, and document modules, while `TOOL_TAGS` keeps compatibility metadata and the global MCP manager handle;
 - `src.tool_parsing._TOOL_NAME_MAP` owns aliases and prompted-block parsing;
 - `src.tool_schemas.FUNCTION_TOOL_SCHEMAS` and `function_call_to_tool_block()` own native schema and native-call conversion;
 - `src.tool_index.BUILTIN_TOOL_DESCRIPTIONS` owns retrieval text;
@@ -62,7 +62,7 @@ When adding, removing, or renaming a tool, update the registry chain, execution 
 
 `src.tool_index.ToolIndex` owns candidate retrieval using embeddings/keywords and cached index data. Security filtering is not its hard boundary: `agent_loop` hides unavailable schemas, and `tool_execution` blocks disabled, admin-only, and public-restricted calls before dispatch.
 
-`src.tool_execution` owns built-in tool execution, MCP dispatch, path confinement, background markers, output truncation, internal HTTP loopback, owner/admin checks, policy-blocked execution results, and formatting tool results for the model/UI. File tools support exact edit diffs, full-file writes, read line ranges, and workspace confinement. Code-navigation tools (`grep`, `glob`, `ls`) prefer `rg`/structured filesystem traversal over ad hoc shell commands.
+`src.tool_execution` owns built-in tool execution, MCP dispatch, path confinement, background markers, output truncation, internal HTTP loopback, owner/admin checks, policy-blocked execution results, and formatting tool results for the model/UI. File tools support exact edit diffs, full-file writes, read line ranges, and workspace confinement. Code-navigation tools (`grep`, `glob`, `ls`) prefer `rg`/structured filesystem traversal over ad hoc shell commands. Shared truncation and MCP manager compatibility helpers live in `src.tool_utils`.
 
 Current call sites include:
 
@@ -85,7 +85,7 @@ Loop-breaker final-answer rounds, optional verifier retries, and teacher escalat
 - `src.tool_security` owns non-admin blocked-tool decisions.
 - Non-admin users must not reach admin tools through agent mode, MCP, retrieval, or loopback calls.
 - Path-based tools must remain confined to allowed roots and reject sensitive paths.
-- Tool output is bounded/truncated where native execution owns the path. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
+- Tool output is bounded/truncated where native execution owns the path, including displayed agent-tool output through the shared truncation helper. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
 - Provider-emitted native tool calls are requests, not authorization. `tool_execution` and route-level policy remain the authority.
 - Guide-only/no-tools mode blocks tools before prompt assembly, before execution, and in chat preprocessing paths that would otherwise fetch context or start tool-backed research.
 - Plan mode is policy, not prompt advice: mutating native tools are disabled and write/unknown MCP tools are hidden and runtime-blocked for that turn.

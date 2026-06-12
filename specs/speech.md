@@ -1,6 +1,6 @@
 # Speech
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -11,6 +11,7 @@ This spec covers speech behavior in:
 - `services/tts/tts_service.py`;
 - `routes/stt_routes.py`;
 - `routes/tts_routes.py`;
+- `src/upload_limits.py`;
 - settings defaults/cache in `src/settings.py`;
 - settings routes in `routes/auth_routes.py`;
 - model endpoint cleanup in `routes/model_routes.py`;
@@ -43,7 +44,7 @@ Provider runtime:
 
 Route behavior:
 
-- audio uploads are capped by `STT_MAX_AUDIO_BYTES`;
+- audio uploads are capped by the shared STT upload limit from `src.upload_limits`, including environment override validation;
 - empty uploads return a route error;
 - uploaded content type, extension, and magic bytes are not strongly validated today;
 - endpoint providers report optimistic availability and fail at request time if offline/misconfigured.

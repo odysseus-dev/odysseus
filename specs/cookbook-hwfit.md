@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -13,7 +13,7 @@ This spec covers model setup/serving and hardware fit in:
 - `routes/cookbook_helpers.py`;
 - `routes/hwfit_routes.py`;
 - `services/hwfit/*` and `services/hwfit/data/hf_models.json`;
-- durable Cookbook state in `data/cookbook_state.json`;
+- durable Cookbook state through `routes.cookbook_helpers.COOKBOOK_STATE_FILE`;
 - helper/CLI scripts `scripts/odysseus-cookbook`, `scripts/add_hwfit_models.py`, `scripts/hf_download.py`, and `scripts/diffusion_server.py`;
 - Docker GPU overlays `docker-compose.gpu-*.yml`, `docker/gpu.*.yml`, `scripts/check-docker-gpu.sh`, and `scripts/check-docker-amd-gpu.sh`;
 - frontend modules `static/js/cookbook*.js`, including Cookbook running, serve, download, diagnosis, progress, and HW Fit modules;
@@ -27,6 +27,7 @@ This spec covers model setup/serving and hardware fit in:
 - model endpoint setup and serve flows;
 - hardware-fit recommendations for model choices;
 - image-model recommendations for diffusion serving;
+- APFEL/local platform dependency paths where supported;
 - Docker GPU helper scripts and compose overlays;
 - the `odysseus-cookbook` CLI using the same Cookbook state file.
 
@@ -49,6 +50,8 @@ Runtime behavior:
 - missing `tmux`, `docker`, or serve-engine binaries return shaped errors where possible;
 - model serve auto-registers LLM or image `ModelEndpoint` rows immediately, then frontend readiness probing can repair/create fallback endpoints;
 - diffusion-server serves are registered as image endpoints;
+- Hugging Face download/setup paths can detect and persist encrypted HF tokens for later Cookbook/agent use;
+- local and remote model paths can contain spaces or non-ASCII characters when helper validation/quoting accepts them;
 - task status handles tmux, remote Windows logs, local Windows PID/log files, HF cache completion checks, pip dependency-install success sentinels, exit-code wrappers, serve diagnosis snapshots, and scheduled serve lifecycle hooks.
 
 `routes.cookbook_helpers` owns validation and command construction:
@@ -71,7 +74,7 @@ These are admin-only code-execution surfaces and should be reviewed with Cookboo
 
 ## State, Secrets, And Provenance
 
-Cookbook state lives in `data/cookbook_state.json`.
+Cookbook state lives under the shared data dir through the `COOKBOOK_STATE_FILE` constant, normally `data/cookbook_state.json`. Routes and the `odysseus-cookbook` CLI use the same state path.
 
 State behavior:
 
@@ -120,6 +123,9 @@ Runtime behavior:
 - vLLM is rejected on unsupported Windows/macOS paths.
 - llama.cpp CPU-only and GPU fallback scripts should preserve usable CPU paths.
 - SSH probe failures, GPU driver errors, and no-GPU states should be distinguishable.
+- Remote SSH host/port validation is shared through route validators for Cookbook/HWFit paths.
+- Windows launcher/runtime Git Bash discovery includes per-user installs under `%LocalAppData%\\Programs\\Git`, and WSL/Git Bash detection shapes PATH handling for NVIDIA/remote flows.
+- macOS startup helpers start ChromaDB alongside the app path.
 - Ollama serve can auto-pick an available port, and task stop paths should verify
   the process/session is actually gone before treating it as stopped.
 
@@ -127,7 +133,7 @@ Runtime behavior:
 
 HW Fit model scoring depends on `services/hwfit/data/hf_models.json`, catalog normalization, and assumptions about model formats and quantization. `scripts/add_hwfit_models.py` updates that catalog.
 
-Hugging Face latest lookup uses external Hub metadata and can degrade to empty, unknown-size, or malformed-result behavior. Catalog drift and dynamic latest-model metadata are separate sources of recommendation drift.
+Hugging Face latest lookup uses external Hub metadata and can degrade to empty, unknown-size, or malformed-result behavior. HW Fit tolerates non-numeric `gpu_count` values from callers. Catalog drift and dynamic latest-model metadata are separate sources of recommendation drift.
 
 ## Security Policy
 
@@ -145,17 +151,17 @@ Shell-bound Cookbook inputs must pass helper validation before command construct
 
 ## Testing Coverage
 
-Existing coverage is strongest for helper validation/quoting, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, hardware detection/ranking across AMD/NVIDIA/macOS/manual modes, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, and selected frontend progress regressions.
+Existing coverage is strongest for helper validation/quoting, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, hardware detection/ranking across AMD/NVIDIA/macOS/manual modes, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, and selected frontend progress regressions.
 
 Route-level auth/security and degraded-return coverage is thinner for Cookbook admin routes, shell dependency routes, `/api/cookbook/hf-latest`, state/status edge cases, HW Fit routes, frontend JS behavior, and helper scripts such as `hf_download.py`, `add_hwfit_models.py`, and `diffusion_server.py`.
 
 ## Current Gaps
 
-- HW Fit remote SSH host/port validation needs to be aligned with Cookbook route validation or explicitly accepted.
 - Cookbook-created model endpoint ownership/shared/null-owner policy needs a deliberate decision.
 - `/api/shell/exec` and Cookbook package/rebuild routes need to remain cross-referenced with shell/admin specs because they are Cookbook-critical code-execution surfaces.
 - Cookbook route auth/security and degraded-return behavior need route-level tests.
 - `/api/cookbook/hf-latest` needs tests locking its user-authenticated access policy and failure behavior.
 - HW Fit routes need route-level tests around missing catalogs, manual overrides, `fit_only`, profiles, and image-model cases.
 - Dependency install/serve diagnosis remains split across Cookbook routes, shell routes, frontend diagnosis, optional binaries, and platform-specific scripts.
+- Cookbook output/error tails are still route-specific despite `routes/cookbook_output.py` centralizing a longer 50-line tail for current serve diagnostics.
 - Model catalog, quantization, backend, and Hugging Face metadata drift need ongoing maintenance.

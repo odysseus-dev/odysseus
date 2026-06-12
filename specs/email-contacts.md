@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -38,7 +38,6 @@ This spec covers mail and contacts in:
 `routes.email_helpers` owns:
 
 - account owner assertions and config fallback order;
-- IMAP/SMTP connection helpers;
 - IMAP/SMTP connection helpers and related transport utilities;
 - SMTP security modes (`ssl`, `starttls`, `none`);
 - envelope recipients and Odysseus headers;
@@ -46,7 +45,7 @@ This spec covers mail and contacts in:
 - email pre-retrieval context for AI reply drafting;
 - scheduled email, summary, reply, tag, calendar extraction, urgency, and signature-boundary side databases.
 
-Email config can fall back to legacy `data/settings.json` or environment variables when no scoped account is configured. That fallback is compatibility-sensitive in multi-user contexts.
+Email config can fall back to legacy `data/settings.json` or environment variables when no scoped account is configured. Account discovery now owner-scopes the default/first-enabled fallback and can still match legacy account rows by IMAP username or from-address. That fallback remains compatibility-sensitive in multi-user contexts.
 
 `routes.email_routes` owns the HTTP mail surface:
 
@@ -60,6 +59,8 @@ Email config can fall back to legacy `data/settings.json` or environment variabl
 - mark read/unread/answered, spam flags, move, archive, and delete.
 
 MCP full-message read/reply/attachment fetches use IMAP `BODY.PEEK[]` rather than bare `RFC822`, so iCloud-style servers return the full body without marking messages seen. Poller UID handling must tolerate both bytes and string UIDs.
+
+IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messages, close sockets after connect/login failures, and preserve Gmail FETCH attributes that follow header literals so unread flag state is not lost.
 
 ## Runtime And Pollers
 
@@ -79,7 +80,7 @@ Transport degraded behavior:
 
 Email list/read behavior uses short route caches, longer read caches, capped warm prefetch, and owner/account-aware pool/cache keys. The frontend email library has its own session SWR cache, cache-buster refreshes, scheduled/search cache exclusions, and stale-row behavior when refresh fails.
 
-List/read route caches are owner/account-aware. Helper-side summary, AI-reply, calendar-extraction, and urgency-alert tables carry owner columns and owner clauses. Thread-boundary rows and learned sender-signature rows are still keyed by message/sender shape rather than a full owner/account/mailbox key, so those caches remain cross-owner audit points when identical messages appear in multiple mailboxes.
+List/read route caches are owner/account-aware. Helper-side summary, AI-reply, tag, calendar-extraction, urgency-alert, and learned sender-signature tables carry owner columns and owner clauses. Thread-boundary rows are still keyed by message shape rather than a full owner/account/mailbox key, so they remain cross-owner audit points when identical messages appear in multiple mailboxes.
 
 ## Attachments And Signed Replies
 
@@ -109,6 +110,7 @@ Contact runtime behavior:
 
 - contacts routes are admin-gated;
 - local `data/contacts.json` is used when CardDAV is unconfigured;
+- import paths tolerate malformed or non-string contact bodies by skipping invalid rows instead of crashing the import;
 - configured CardDAV uses REPORT with GET fallback and a short in-memory cache;
 - configured-but-offline CardDAV can return cached reads but writes fail instead of falling back to local JSON;
 - the native contacts CLI is CardDAV-oriented and does not fully match web JSON fallback behavior;
@@ -143,13 +145,13 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 
 ## Testing Coverage
 
-Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, iCloud-compatible MCP full-message fetch shape, owner scope, scheduled offset normalization, thread parsing, HTML sanitizer source checks, MCP header decoding, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
+Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, iCloud-compatible MCP full-message fetch shape, owner scope, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, thread parsing, HTML sanitizer source checks, MCP header decoding, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
 
 Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
 
 ## Current Gaps
 
-- Owner-keyed cache policy still needs an explicit decision for thread boundaries and learned sender signatures, plus migration/query audits for every email side table.
+- Owner-keyed cache policy still needs an explicit decision for thread boundaries, plus continued migration/query audits for every email side table.
 - CardDAV still needs encrypted credential storage, redirect/proxy policy, and route-level tests for URL validation, private-address blocking configuration, and same-origin href enforcement.
 - MCP email needs an explicit owner/scope decision and route-helper parity for credentials, attachment path containment, sanitization, and transport behavior.
 - CLI send/contact paths need parity decisions for SMTP security, recipient parsing, local fallback, and normalized contact shapes.

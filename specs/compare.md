@@ -1,6 +1,6 @@
 # Compare
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -26,7 +26,7 @@ The active text compare UI creates ordinary `[CMP]` sessions through `/api/sessi
 Current call sites include:
 
 - `/api/session` compare session creation and cleanup in compare frontend modules;
-- `/api/chat_stream` pane execution through chat routes and detached stream infrastructure;
+- `/api/chat_stream` pane execution through chat routes and detached stream infrastructure, streamed directly into panes so upstream generation stops promptly when panes are stopped;
 - `/api/models` and probe routes for model/endpoint selection;
 - search-provider compare mode through `routes/search_routes.py`;
 - `/api/compare/record` as a fire-and-forget backend vote summary, while active scoreboard state is localStorage-backed.
@@ -51,7 +51,7 @@ Compare frontend code is part of the app DOM security surface. Current stream/se
 ## Policy Notes
 
 - Current blind compare is UI/API masking until vote/reveal, not a full confidentiality boundary. `[CMP]` session names and session-list model fields are redacted for helper sessions, and legacy `/api/compare/start` withholds model identity/mapping while blind. Client-side selected model state and privileged/local inspection can still expose identity.
-- Compare endpoint lists use owner filtering so users see only shared or owned endpoints.
+- Compare endpoint lists and secondary endpoint lookups use owner filtering so users see and resolve only shared or owned endpoints.
 - Non-admin compare session creation must use registered owner-visible endpoints; compare must not allow arbitrary raw endpoint URLs to bypass session-route endpoint policy.
 - Prefetched search, URL, RAG, and research context entering compare panes must use the untrusted-context wrapper.
 - If endpoint fallback behavior changes, verify each pane still goes to the intended model and that fallback notices/errors are visible in compare panes.

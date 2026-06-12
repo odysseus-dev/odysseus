@@ -1,6 +1,6 @@
 # Chat
 
-Last updated: dev@a3cb15d | 2026-06-06
+Last updated: dev@9d7a3d | 2026-06-12
 
 ## Scope
 
@@ -14,7 +14,7 @@ This spec covers current chat behavior in:
 - `core/session_manager.py` and `core/models.py`;
 - `src/context_budget.py`, `src/context_compactor.py`, and `src/topic_analyzer.py`;
 - `routes/workspace_routes.py` for workspace selection support;
-- frontend modules `static/js/chat.js`, `static/js/chatStream.js`, `static/js/chatRenderer.js`, `static/js/sessions.js`, `static/js/search-chat.js`, `static/js/compare/stream.js`, `static/js/planWindow.js`, `static/js/workspace.js`, `static/js/streamingSegmenter.js`, `static/js/group.js`, and `static/js/notes.js`;
+- frontend modules `static/js/chat.js`, `static/js/chatStream.js`, `static/js/chatRenderer.js`, `static/js/sessions.js`, `static/js/search-chat.js`, `static/js/compare/stream.js`, `static/js/workspace.js`, `static/js/composerArrowUpRecall.js`, `static/js/streamingSegmenter.js`, `static/js/group.js`, and `static/js/notes.js`;
 - integration points with uploads, documents, compare, research, agent tools, memory, RAG, search, and model endpoints.
 
 ## Session Ownership
@@ -27,16 +27,16 @@ This spec covers current chat behavior in:
 
 `routes/chat_routes.py` owns `/api/chat`, `/api/chat_stream`, detached stream resume/stop/status, injected context, chat-message search, and rewrite routes. Streaming is the main UI path.
 
-`static/js/chat.js` owns send/abort/continue UI state, the main fetch/read loop, SSE parsing, rendering dispatch, plan-window handoff, workspace form wiring, and background/resumable stream tracking. `static/js/chatStream.js` owns UI-control event handling and stream/research notification helpers. `static/js/sessions.js` polls server stream status after refresh or session switch.
+`static/js/chat.js` owns send/abort/continue UI state, the main fetch/read loop, SSE parsing, rendering dispatch, workspace form wiring, and background/resumable stream tracking. `static/js/chatStream.js` owns UI-control event handling and stream/research notification helpers. `static/js/sessions.js` polls server stream status after refresh or session switch. `static/js/composerArrowUpRecall.js` owns prompt recall from the composer when the caret is at the top of an empty input.
 
 Runtime behavior:
 
 - the `/api/chat*` prefix is exempt from the global request hard timeout;
 - browser chat sends `X-Tz-Offset`; route code forwards it into `routes.calendar_routes` request-local state so note/calendar tool parsing can anchor natural-language dates to the user clock;
-- browser chat can send a selected workspace path; route code validates it as an existing directory and forwards it so agent file/shell tools are confined by `src.tool_execution`;
+- browser chat can send a selected workspace path; route code only resolves it for admin/single-user flows, validates it as an existing directory, and forwards it so agent file/shell tools are confined by `src.tool_execution`;
 - stream callbacks can outlive a deleted session, so persistence must fail closed instead of recreating orphan messages;
 - message metadata carries timestamps, metrics, tool events, sources, and related UI state;
-- metadata preserves both requested and actual reply models when provider streams or fallbacks report them;
+- metadata preserves both requested and actual reply models when provider streams or fallbacks report them, and stable session ids are kept available so prompt/sequence-memory and KV-cache paths can address the same conversation consistently;
 - multimodal content can be a list of content blocks, not just a string.
 
 `src.agent_runs` owns detached in-memory stream runs, replay buffers, replacement cancellation, resume subscribers, explicit stop, and terminal-buffer eviction. Closing the SSE connection does not necessarily stop generation. `static/js/chat.js` can live-resume a still-running detached stream through `/api/chat/resume/{session_id}`; rich responses reload from DB for canonical rendering. Detached runs are process-local and do not survive server restart.
@@ -57,6 +57,8 @@ Chat-owned external context must enter the model through `untrusted_context_mess
 
 Chat can dispatch to normal LLM calls, agent mode, research mode, or compare-related flows. Session mode is stored on `sessions.mode`.
 
+Legacy plan-mode backend plumbing still exists below chat, but `routes/chat_routes.py` currently forces browser/form `plan_mode` input off and the old visible plan window frontend module is not part of the current SPA. Treat plan-mode changes as compatibility work unless the UI contract is intentionally reintroduced.
+
 Current call sites include:
 
 - chat/research dispatch in `routes/chat_routes.py`;
@@ -65,6 +67,8 @@ Current call sites include:
 - compare entry points in `routes/compare_routes.py` and frontend compare modules.
 
 Agent-mode tool access is gated in layers. Chat route toggles and privileges build a disabled-tool set; incognito and compare mode remove persistence-heavy or UI-breaking tools; `src.action_intents.message_needs_tools()` provides conservative regex auto-escalation hints; `src.agent_loop`, `src.tool_security`, `src.tool_execution`, and internal loopback validation remain server-side enforcement owners.
+
+`allow_bash` and `allow_web_search` can be read from the JSON request body for browser chat posts that do not submit traditional form fields.
 
 Guide-only/no-tools requests build an effective tool policy before preprocessing and agent dispatch. That policy suppresses tool-backed preprocessing/background extraction/research, disables schemas and MCP for the turn, and is still enforced by `src.tool_execution` if a model emits a tool call anyway.
 
@@ -93,6 +97,7 @@ Incognito disables memory, skill, and chat-history tools and skips assistant DB 
 - Chat repairs empty selected models and orphaned endpoint references before provider calls when possible.
 - Deleted-session stream writes fail closed.
 - Docker/native endpoint differences are owned by runtime/model setup, but chat sessions depend on the saved endpoint URLs and headers.
+- Copying a response from the UI copies the displayed answer text and omits hidden reasoning/thinking segments.
 
 ## Current Gaps
 
