@@ -39,6 +39,32 @@ async def test_agent_signal_email_llm_needs_action_succeeds(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_agent_signal_email_parses_verdict_inside_prose(monkeypatch):
+    _patch_llm(monkeypatch, "This is a failed pipeline notice. Verdict: NEEDS_ACTION because CI is broken.")
+
+    result, success = await _agent_handle_email_received(
+        "admin",
+        _payload(subject="gitlab-test | Failed pipeline for main | dad023c0", from_name="GitLab"),
+    )
+
+    assert success is True
+    assert result.startswith("Email analysed:")
+
+
+@pytest.mark.asyncio
+async def test_agent_signal_email_failed_pipeline_fallback_succeeds(monkeypatch):
+    _patch_llm(monkeypatch, "This looks important but I cannot choose one label.")
+
+    result, success = await _agent_handle_email_received(
+        "admin",
+        _payload(subject="gitlab-test | Failed pipeline for main | dad023c0", from_name="GitLab"),
+    )
+
+    assert success is True
+    assert result == "New email needs action: GitLab — gitlab-test | Failed pipeline for main | dad023c0"
+
+
+@pytest.mark.asyncio
 async def test_agent_signal_email_llm_informational_skips(monkeypatch):
     _patch_llm(monkeypatch, "INFORMATIONAL: this is a newsletter.")
 

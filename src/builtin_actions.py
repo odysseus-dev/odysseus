@@ -7,6 +7,7 @@ scheduler without needing an LLM call.
 
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Tuple
 
@@ -16,6 +17,32 @@ from core.constants import internal_api_base
 from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
+
+
+_EMAIL_SIGNAL_ACTION_RE = re.compile(
+    r"\b("
+    r"failed\s+(?:ci(?:/cd)?\s+)?pipeline|"
+    r"pipeline\s+failed|"
+    r"security\s+alert|"
+    r"incident(?:s)?\s+detected|"
+    r"requires?\s+(?:developer\s+)?attention|"
+    r"action\s+required|"
+    r"input\s+required|"
+    r"approval\s+required|"
+    r"deadline|urgent|reply|rsvp|meeting|question|can\s+you|please|"
+    r"confirm|schedule|appointment"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _email_signal_verdict(text: str) -> str | None:
+    match = re.search(r"\b(NEEDS_ACTION|INFORMATIONAL|SKIP)\b", text or "", re.IGNORECASE)
+    return match.group(1).upper() if match else None
+
+
+def _email_signal_needs_action(subject: str, summary: str = "") -> bool:
+    return bool(_EMAIL_SIGNAL_ACTION_RE.search(f"{subject or ''}\n{summary or ''}"))
 
 
 class TaskNoop(BaseException):
@@ -2325,21 +2352,21 @@ async def _agent_handle_email_received(
             except Exception:
                 pass
 
-            verdict_upper = verdict.upper()
-            if verdict_upper.startswith("NEEDS_ACTION"):
+            parsed_verdict = _email_signal_verdict(verdict)
+            if parsed_verdict == "NEEDS_ACTION":
                 return f"Email analysed: {verdict}", True
-            if verdict_upper.startswith("SKIP"):
+            if parsed_verdict == "SKIP":
                 raise TaskNoop(f"Skipped email from {from_name}: {subject[:60]}")
-            if verdict_upper.startswith("INFORMATIONAL"):
+            if parsed_verdict == "INFORMATIONAL":
                 raise TaskNoop(f"Informational email from {from_name}: {subject[:60]}")
+            if _email_signal_needs_action(subject, summary):
+                return f"New email needs action: {from_name} — {subject[:100]}", True
             raise TaskNoop(f"Unclear email triage from {from_name}: {subject[:60]}")
     except Exception as e:
         logger.debug("email_received LLM analysis failed: %s", e)
 
     # Fallback: simple heuristic
-    _action_keywords = ["meeting", "question", "can you", "please", "urgent", "deadline",
-                        "confirm", "schedule", "appointment", "reply", "rsvp"]
-    _needs_action = any(kw in subject.lower() for kw in _action_keywords)
+    _needs_action = _email_signal_needs_action(subject, summary)
 
     try:
         from src.assistant_log import log_to_assistant
