@@ -11,7 +11,7 @@ pitfall already fixed in topic_analyzer.py.
 `retrieve` (which needs a chroma collection) is stubbed out so these tests
 exercise only the keyword-hint loop.
 """
-from src.tool_index import ToolIndex
+from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
 
 
 def _index():
@@ -40,14 +40,19 @@ def test_substring_inside_word_does_not_force_document_tools():
 
 def test_substring_inside_word_does_not_force_serve_tools():
     ti = _index()
+    baseline = set(ALWAYS_AVAILABLE) - {"serve_model", "serve_preset"}
     # "observe"/"reserve" contain "serve".
-    tools = ti.get_tools_for_query("please observe the reserve levels")
+    tools = ti.get_tools_for_query(
+        "please observe the reserve levels",
+        always_include=baseline,
+    )
     assert "serve_model" not in tools
     assert "serve_preset" not in tools
 
 
 def test_genuine_keywords_still_force_include():
     ti = _index()
+    baseline = set(ALWAYS_AVAILABLE) - {"serve_model", "serve_preset"}
     assert "reply_to_email" in ti.get_tools_for_query("reply to this email")
     assert "edit_document" in ti.get_tools_for_query("edit the document")
-    assert "serve_model" in ti.get_tools_for_query("serve the model")
+    assert "serve_model" in ti.get_tools_for_query("serve the model", always_include=baseline)
