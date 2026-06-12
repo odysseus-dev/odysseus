@@ -17,10 +17,10 @@ import chatRenderer from './chatRenderer.js';
 import spinnerModule from './spinner.js';
 import themeModule from './theme.js';
 import documentModule from './document.js';
-import workspaceModule from './workspace.js';
 import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
+import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
 
 // ── Module state ──────────────────────────────────────────────────────
 
@@ -54,12 +54,31 @@ const SETUP_PROVIDER_URLS = {
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1' },
   gemini: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
+  'opencode-zen': { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1' },
+  'opencode-go': { name: 'OpenCode Go', url: 'https://opencode.ai/zen/go/v1' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini'];
-const SETUP_PROVIDER_HINT = SETUP_PROVIDER_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_NAMES[SETUP_PROVIDER_NAMES.length - 1];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go'];
+const SETUP_DEVICE_AUTH_PROVIDERS = [
+  { key: 'copilot', name: 'GitHub Copilot', aliases: ['github'], command: '/setup copilot' },
+  { key: 'chatgpt-subscription', name: 'ChatGPT Subscription', aliases: ['chatgptsubscription', 'chatgpt-sub', 'codex'], command: '/setup chatgpt-subscription' },
+];
+const SETUP_PROVIDER_HINT_NAMES = SETUP_PROVIDER_NAMES.concat(SETUP_DEVICE_AUTH_PROVIDERS.map(provider => provider.key));
+const SETUP_PROVIDER_HINT = SETUP_PROVIDER_HINT_NAMES.slice(0, -1).join(', ') + ', or ' + SETUP_PROVIDER_HINT_NAMES[SETUP_PROVIDER_HINT_NAMES.length - 1];
 const SETUP_LOCAL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>';
 const SETUP_API_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:5px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
 const SETUP_SETTINGS_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+
+function _setupApiProviderChips() {
+  return SETUP_PROVIDER_NAMES.map(name =>
+    '<span class="setup-clickable-provider" data-setup-kind="api-key" data-setup-provider="' + name + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
+  ).join(' ');
+}
+
+function _setupDeviceAuthProviderChips() {
+  return SETUP_DEVICE_AUTH_PROVIDERS.map(provider =>
+    '<span class="setup-clickable-provider" data-setup-kind="device-auth" data-setup-provider="' + provider.key + '" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Run ' + provider.command + '">' + provider.name + '</span>'
+  ).join(' ');
+}
 
 function _setupProviderFromInput(input) {
   const raw = (input || '').trim().toLowerCase().replace(/\s+/g, '');
@@ -80,6 +99,17 @@ function _setupProviderFromInput(input) {
     grok: 'xai',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
+}
+
+function _setupDeviceAuthProviderFromInput(input) {
+  const raw = (input || '').trim().toLowerCase().replace(/\s+/g, '').replace(/_/g, '-');
+  if (!raw) return '';
+  for (const provider of SETUP_DEVICE_AUTH_PROVIDERS) {
+    const candidates = [provider.key, provider.name, ...(provider.aliases || [])]
+      .map(value => String(value || '').toLowerCase().replace(/\s+/g, '').replace(/_/g, '-'));
+    if (candidates.includes(raw)) return provider.key;
+  }
+  return '';
 }
 
 function _extractSetupProviderCredential(input) {
@@ -156,9 +186,8 @@ function _setupReply(text, remember = true) {
 }
 
 function _showSetupEndpointChoices() {
-  const providers = SETUP_PROVIDER_NAMES.map(name =>
-    '<span class="setup-clickable-provider" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
-  ).join(' ');
+  const providers = _setupApiProviderChips();
+  const deviceAuthProviders = _setupDeviceAuthProviderChips();
   return slashReply(
     '<div class="setup-guide-no-censor" style="display:grid;gap:10px;">' +
       '<div>' +
@@ -176,6 +205,7 @@ function _showSetupEndpointChoices() {
         '<div>Paste provider name then API key (example):</div>' +
         '<pre style="margin:4px 0 0;"><code class="setup-clickable-code" style="cursor:pointer;text-decoration:underline;" title="Click to fill in chat">deepseek sk-...</code></pre>' +
         '<div style="margin-top:8px;font-size:1em;"><span>Supported providers:</span><br>' + providers + '</div>' +
+        '<div style="margin-top:8px;font-size:1em;"><span>Account sign-in:</span><br>' + deviceAuthProviders + '</div>' +
       '</div>' +
     '</div>'
   );
@@ -206,9 +236,8 @@ function _showSetupEndpointChoicesStreamed(options = {}) {
       text: 'deepseek sk-...',
       copyText: 'deepseek sk-...',
     },
-    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + SETUP_PROVIDER_NAMES.map(name =>
-      '<span class="setup-clickable-provider" style="cursor:pointer;text-decoration:underline;margin-right:8px;" title="Click to setup ' + name + '">' + name + '</span>'
-    ).join(' ') },
+    { kind: 'p', html: '<strong>Supported providers:</strong><br>' + _setupApiProviderChips() },
+    { kind: 'p', html: '<strong>Account sign-in:</strong><br>' + _setupDeviceAuthProviderChips() },
   ];
   return typewriterBlocksReply(blocks, { gap: '4px', bodyClass: 'setup-guide-no-censor', interval: 3 });
 }
@@ -229,7 +258,7 @@ async function _hasConfiguredModels() {
 }
 
 function _setupProviderPrompt() {
-  const chips = SETUP_PROVIDER_NAMES.map(name =>
+  const chips = SETUP_PROVIDER_HINT_NAMES.map(name =>
     '<span style="font-weight:650;">' + name + '</span>'
   ).join('  ');
   slashReply('<b>Supported providers:</b><br>' + chips);
@@ -282,6 +311,53 @@ function slashReply(text) {
   uiModule.scrollHistory();
   _persistMsg('assistant', body.textContent, { source: 'slash' });
   return { el: div, body };
+}
+
+let _skillCatalogCache = { at: 0, items: [] };
+
+async function _loadSkillSlashCatalog(force = false) {
+  const now = Date.now();
+  if (!force && (now - _skillCatalogCache.at) < 15000) return _skillCatalogCache.items;
+  try {
+    const res = await fetch(`${API_BASE}/api/skills/slash-catalog`, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('catalog unavailable');
+    const data = await res.json();
+    const items = Array.isArray(data.skills) ? data.skills : [];
+    _skillCatalogCache = { at: now, items };
+    return items;
+  } catch {
+    return _skillCatalogCache.items || [];
+  }
+}
+
+function _submitComposedMessage(text) {
+  const msgInput = document.getElementById('message');
+  const form = document.getElementById('chat-form');
+  if (!msgInput || !form) return false;
+  msgInput.value = text;
+  msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+  if (typeof form.requestSubmit === 'function') form.requestSubmit();
+  else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  return true;
+}
+
+async function _invokeSkillByName(name, requestText, ctx) {
+  const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/invoke`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ request: requestText || '' })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    slashReply(ctx?.esc ? ctx.esc(err?.detail || 'Skill is not available') : 'Skill is not available');
+    return true;
+  }
+  const data = await res.json();
+  if (!data.message || !_submitComposedMessage(data.message)) {
+    slashReply('Could not start skill invocation.');
+  }
+  return true;
 }
 
 /** Minimal footer for slash replies: copy + dismiss */
@@ -677,6 +753,13 @@ async function handleSetupWizard(mode, input) {
       setupMode = 'endpoint-provider';
       _showSetupUserBubble(input, false);
       await _setupProviderPrompt();
+      return;
+    }
+    const deviceAuthProvider = _setupDeviceAuthProviderFromInput(input);
+    if (deviceAuthProvider) {
+      _addMessage('user', input);
+      setupMode = false;
+      await _setupProviderDeviceFlow(deviceAuthProvider);
       return;
     }
     const paired = _extractSetupProviderCredential(input);
@@ -1142,35 +1225,6 @@ async function _cmdToggleDoc(args, ctx) {
   return true;
 }
 
-// Workspace: confine the agent's file/shell tools to a folder. Not a boolean —
-// show / set <path> / clear / pick (open the directory browser).
-async function _cmdWorkspace(args, ctx) {
-  const sub = (args[0] || '').toLowerCase();
-  const rest = args.slice(1).join(' ').trim();
-  const cur = workspaceModule.getWorkspace();
-  if (!sub || sub === 'show' || sub === 'status' || sub === 'info') {
-    slashReply(cur ? `Workspace: <code>${uiModule.esc(cur)}</code>` : 'No workspace set. <code>/workspace pick</code> or <code>/workspace set /path</code>.');
-    return true;
-  }
-  if (sub === 'set' || sub === 'cd' || sub === 'use') {
-    if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
-    workspaceModule.setWorkspace(rest);
-    slashReply(`Workspace set: <code>${uiModule.esc(rest)}</code>`);
-    return true;
-  }
-  if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
-    workspaceModule.clearWorkspace();
-    slashReply('Workspace cleared.');
-    return true;
-  }
-  if (sub === 'pick' || sub === 'browse' || sub === 'open') {
-    workspaceModule.openWorkspaceBrowser();
-    return true;
-  }
-  slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
-  return true;
-}
-
 async function _cmdToggleShow(args, ctx) {
   const name = (args[0] || '').toLowerCase();
   const val = (args[1] || '').toLowerCase();
@@ -1411,6 +1465,42 @@ async function _cmdModels(args, ctx) {
   return true;
 }
 
+async function _cmdModel(args, ctx) {
+  const sub = (args[0] || '').toLowerCase();
+  if (sub === 'list' || sub === 'ls') return _cmdModels(args.slice(1), ctx);
+
+  const model = sessionModule.getCurrentModel ? sessionModule.getCurrentModel() : '';
+  const endpoint = sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : '';
+  slashReply(`<pre>${[
+    `Current model: ${ctx.esc(model || 'None selected')}`,
+    endpoint ? `Endpoint: ${ctx.esc(endpoint)}` : 'Endpoint: not available',
+    '',
+    'Usage: /model list to show all available models'
+  ].join('\n')}</pre>`);
+  return true;
+}
+
+async function _cmdMcp(args, ctx) {
+  const res = await fetch(`${API_BASE}/api/mcp/servers`, { credentials: 'same-origin' });
+  if (!res.ok) {
+    slashReply('MCP status is unavailable for this user.');
+    return true;
+  }
+  const servers = await res.json();
+  if (!Array.isArray(servers) || !servers.length) {
+    slashReply('No MCP servers configured.');
+    return true;
+  }
+  const lines = servers.map(s => {
+    const status = s.status || (s.is_enabled ? 'enabled' : 'disabled');
+    const enabled = Number(s.enabled_tool_count ?? s.tool_count ?? 0);
+    const total = Number(s.tool_count ?? enabled);
+    return `${s.name || s.id || 'MCP server'} - ${status} (${enabled}/${total} tools)`;
+  });
+  slashReply(`<pre>${lines.map(line => ctx.esc(line)).join('\n')}</pre>`);
+  return true;
+}
+
 // ── Memory ──
 
 async function _cmdMemoryList(args, ctx) {
@@ -1486,6 +1576,73 @@ async function _cmdMemorySearch(args, ctx) {
   if (!mems.length) { await typewriterReply(`No memories matching "${ctx.esc(query)}"`); return true; }
   const lines = mems.map(m => `[${m.category||'fact'}] ${ctx.esc(m.text)}`);
   slashReply(`<pre>${lines.join('\n')}</pre>`);
+  return true;
+}
+
+// ── Skills ──
+
+async function _cmdSkills(args, ctx) {
+  const sub = (args[0] || 'list').toLowerCase();
+  const rest = args.slice(1);
+
+  if (sub === 'list' || sub === 'ls') {
+    const skills = await _loadSkillSlashCatalog(true);
+    if (!skills.length) {
+      slashReply('No published skills available for slash commands.');
+      return true;
+    }
+    const lines = skills.map(s => {
+      const uses = Number(s.uses || 0);
+      const useText = uses > 0 ? `  uses:${uses}` : '';
+      return `${ctx.esc(String(s.token || '').padEnd(24))}${ctx.esc(s.help || '')}${useText}`;
+    });
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+    return true;
+  }
+
+  if (sub === 'search' || sub === 'find') {
+    const query = rest.join(' ').trim();
+    if (!query) { slashReply('Usage: /skills search query'); return true; }
+    const res = await fetch(`${API_BASE}/api/skills/search`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    if (!res.ok) { slashReply('Skill search failed.'); return true; }
+    const data = await res.json();
+    const skills = Array.isArray(data.skills) ? data.skills : [];
+    if (!skills.length) { slashReply(`No skills found for "${ctx.esc(query)}".`); return true; }
+    const lines = skills.map(s =>
+      ctx.esc(`/${s.name || s.id || ''}`.padEnd(24)) + ctx.esc(s.description || '')
+    );
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+    return true;
+  }
+
+  if (sub === 'view' || sub === 'cat' || sub === 'show') {
+    const name = (rest[0] || '').trim();
+    if (!name) { slashReply('Usage: /skills view name'); return true; }
+    const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/markdown`, { credentials: 'same-origin' });
+    if (!res.ok) { slashReply(`Skill "${ctx.esc(name)}" was not found.`); return true; }
+    const data = await res.json();
+    slashReply(`<pre>${ctx.esc(data.markdown || '')}</pre>`);
+    return true;
+  }
+
+  if (sub === 'use' || sub === 'run') {
+    const name = (rest[0] || '').trim();
+    if (!name) { slashReply('Usage: /skills use name request'); return true; }
+    return _invokeSkillByName(name, rest.slice(1).join(' ').trim(), ctx);
+  }
+
+  slashReply('Usage: /skills list | search query | view name | use name request');
+  return true;
+}
+
+async function _cmdReloadSkills(args, ctx) {
+  const skills = await _loadSkillSlashCatalog(true);
+  slashReply(`Reloaded skills. ${skills.length} skill command${skills.length === 1 ? '' : 's'} available.`);
   return true;
 }
 
@@ -1778,6 +1935,53 @@ Memories:  ${d.memories || '?'}
 Documents: ${d.documents || '?'}
 Uploads:   ${d.uploads || '?'}</pre>`);
   } else { slashReply('Failed to fetch stats'); }
+  return true;
+}
+
+async function _cmdUsage(args, ctx) {
+  const sid = ctx.sid;
+  if (!sid) {
+    slashReply('No active session.');
+    return true;
+  }
+
+  let session = null;
+  try {
+    const sessions = sessionModule.getSessions ? sessionModule.getSessions() : [];
+    session = (sessions || []).find(s => s.id === sid) || null;
+    if (!session) {
+      const res = await fetch(`${API_BASE}/api/sessions`, { credentials: 'same-origin' });
+      if (res.ok) {
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : (data.sessions || data.items || []);
+        session = items.find(s => s.id === sid) || null;
+      }
+    }
+  } catch (_) {}
+
+  const model = session?.model || 'Unknown';
+  const endpointUrl = session?.endpoint_url || (
+    sessionModule.getCurrentEndpointUrl ? sessionModule.getCurrentEndpointUrl() : ''
+  );
+  const messageCount = Number(session?.message_count || 0);
+  const totalTokens = Number(session?.total_tokens || 0);
+  const costTracked = chatRenderer.isCostTrackedEndpoint ? chatRenderer.isCostTrackedEndpoint(endpointUrl) : true;
+  const cost = costTracked && chatRenderer.getSessionCost ? Number(chatRenderer.getSessionCost(sid) || 0) : 0;
+  const costLine = costTracked
+    ? (cost > 0
+      ? `Estimated local cost: $${cost < 0.01 ? cost.toFixed(4) : cost.toFixed(3)}`
+      : 'Estimated local cost: unavailable or zero')
+    : 'Estimated local cost: not tracked for this endpoint';
+
+  slashReply(`<pre>${[
+    `Session: ${ctx.esc(session?.name || 'Current chat')}`,
+    `Model: ${ctx.esc(model)}`,
+    `Messages: ${messageCount.toLocaleString()}`,
+    `Recorded tokens: ${totalTokens.toLocaleString()}`,
+    costLine,
+    '',
+    'Provider account usage is not available from here; check the provider dashboard for account quota/billing.'
+  ].join('\n')}</pre>`);
   return true;
 }
 
@@ -4765,39 +4969,53 @@ function _clearSetupCommandInput() {
   }
 }
 
-// GitHub Copilot device-flow sign-in, driven from chat (mirrors the Settings
-// "Connect GitHub Copilot" button). Replies via the setup guide messages.
-async function _setupCopilot() {
+async function _setupProviderDeviceFlow(providerKey) {
   _clearSetupGuideMessages();
-  await _setupReply('Starting GitHub Copilot sign-in…');
-  let start;
+  const config = PROVIDER_DEVICE_FLOWS[providerKey];
+  if (!config) {
+    await _setupReply('Provider not recognised.');
+    return;
+  }
+  await _setupReply(`Starting ${config.label} sign-in...`);
   try {
-    const r = await fetch(`${API_BASE}/api/copilot/device/start`, { method: 'POST', body: new FormData(), credentials: 'same-origin' });
-    start = await r.json();
-    if (!r.ok) { await _setupReply(start.detail || 'Failed to start Copilot sign-in.'); return; }
-  } catch (e) { await _setupReply('Request failed.'); return; }
-  const authUrl = start.verification_uri_complete || start.verification_uri || '';
-  await _setupReply(`Opening GitHub — approve the request (code ${start.user_code}). Waiting…`);
-  try { if (authUrl) window.open(authUrl, '_blank', 'noopener'); } catch (e) {}
-  const deadline = Date.now() + (start.expires_in || 900) * 1000;
-  const stepMs = Math.max((start.interval || 5), 2) * 1000;
-  const poll = async () => {
-    if (Date.now() > deadline) { await _setupReply('Copilot sign-in expired — run /setup copilot again.'); return; }
-    try {
-      const fd = new FormData(); fd.append('poll_id', start.poll_id);
-      const r = await fetch(`${API_BASE}/api/copilot/device/poll`, { method: 'POST', body: fd, credentials: 'same-origin' });
-      const d = await r.json();
-      if (d.status === 'authorized') {
-        const n = ((d.endpoint && d.endpoint.models) || []).length;
-        await _setupReply(`Connected — ${n} Copilot model${n !== 1 ? 's' : ''} available.`);
-        if (modelsModule) modelsModule.refreshModels(true);
-        return;
-      }
-      if (d.status === 'failed') { await _setupReply('Copilot sign-in failed (' + (d.error || 'denied') + ').'); return; }
-    } catch (e) { /* transient — keep polling */ }
-    setTimeout(poll, stepMs);
-  };
-  setTimeout(poll, stepMs);
+    const result = await runProviderDeviceFlow(providerKey, {
+      onStart: async ({ start, authUrl }) => {
+        const place = providerKey === 'copilot' ? 'GitHub' : 'OpenAI';
+        const action = providerKey === 'copilot' ? 'approve the request' : 'enter the code';
+        if (providerKey === 'chatgpt-subscription') {
+          slashReply(
+            '<div class="setup-guide-no-censor" style="display:grid;gap:6px;">' +
+              '<div>Open this URL in your browser, enter the code, then come back here. Waiting...</div>' +
+              '<div>Code: <code>' + uiModule.esc(start.user_code || '') + '</code></div>' +
+              '<div><a href="' + uiModule.esc(authUrl || '') + '" target="_blank" rel="noopener noreferrer">' + uiModule.esc(authUrl || '') + '</a></div>' +
+            '</div>'
+          );
+          return;
+        }
+        await _setupReply(`Opening ${place} - ${action} (code ${start.user_code}). Waiting...`);
+      },
+      openWindow: (url) => {
+        if (providerKey === 'chatgpt-subscription') return;
+        try { if (url) window.open(url, '_blank', 'noopener'); } catch (e) {}
+      },
+    });
+    if (result.status === 'authorized') {
+      const n = ((result.endpoint && result.endpoint.models) || []).length;
+      await _setupReply(`Connected - ${n} ${config.label} model${n !== 1 ? 's' : ''} available.`);
+      if (modelsModule) modelsModule.refreshModels(true);
+      return;
+    }
+    if (result.status === 'failed') {
+      await _setupReply(`${config.label} sign-in failed (${result.error || 'denied'}).`);
+      return;
+    }
+    if (result.status === 'expired') {
+      await _setupReply(`${config.label} sign-in expired - run /setup ${providerKey} again.`);
+      return;
+    }
+  } catch (e) {
+    await _setupReply(formatDeviceFlowError(e));
+  }
 }
 
 async function _cmdSetup(args, ctx) {
@@ -4805,7 +5023,11 @@ async function _cmdSetup(args, ctx) {
   _clearSetupCommandInput();
   const topic = (args[0] || '').trim().toLowerCase();
   const topicArgs = args.slice(1);
-  if (topic === 'copilot' || topic === 'github') { await _setupCopilot(); return true; }
+  const deviceAuthProvider = _setupDeviceAuthProviderFromInput(topic);
+  if (deviceAuthProvider) {
+    await _setupProviderDeviceFlow(deviceAuthProvider);
+    return true;
+  }
   const provider = _setupProviderFromInput(topic);
   if (provider) {
     _clearSetupGuideMessages();
@@ -5445,8 +5667,20 @@ async function _cmdHelp(args, ctx) {
       lines.push('');
     }
   }
+  const skillCommands = await _loadSkillSlashCatalog(false);
+  if (skillCommands.length) {
+    lines.push('Skills:');
+    for (const skill of skillCommands.slice(0, 20)) {
+      const token = String(skill.token || '').padEnd(21);
+      lines.push(`  ${ctx.esc(token)}${ctx.esc(skill.help || '')}`);
+    }
+    if (skillCommands.length > 20) {
+      lines.push(`  ... ${skillCommands.length - 20} more. Use /skills list`);
+    }
+    lines.push('');
+  }
   lines.push('Tip: /<command> --help for details');
-  lines.push('Shortcuts: /new /rename /fork /web /bash /memories /forget');
+  lines.push('Shortcuts: /new /rename /fork /web /bash /memories /skills');
   slashReply(`<pre style="line-height:1.7">${lines.join('\n')}</pre>`);
   return true;
 }
@@ -5493,14 +5727,6 @@ const COMMANDS = {
       '_show':     { handler: _cmdToggleShow,      alias: [],     help: 'Show all toggle states',  usage: '/toggle' }
     }
   },
-  workspace: {
-    alias: ['ws'],
-    category: 'Agent',
-    help: 'Set the folder the agent works in',
-    handler: _cmdWorkspace,
-    noUserBubble: true,
-    usage: '/workspace [set <path> | clear | pick]',
-  },
   memory: {
     alias: ['m'],
     category: 'Memory',
@@ -5512,6 +5738,20 @@ const COMMANDS = {
       'delete': { handler: _cmdMemoryDelete, alias: ['del', 'rm'],   help: 'Delete by ID',        usage: '/memory delete id' },
       'search': { handler: _cmdMemorySearch, alias: ['grep'],        help: 'Search memories',     usage: '/memory search q' }
     }
+  },
+  skills: {
+    alias: ['skill'],
+    category: 'Memory',
+    help: 'List, search, inspect, or run skills',
+    handler: _cmdSkills,
+    usage: '/skills list | search query | view name | use name request',
+  },
+  'reload-skills': {
+    alias: ['reload_skills'],
+    category: 'Memory',
+    help: 'Refresh the slash skill catalog',
+    handler: _cmdReloadSkills,
+    usage: '/reload-skills',
   },
   rag: {
     alias: [],
@@ -5546,7 +5786,7 @@ const COMMANDS = {
     category: 'Getting started',
     help: 'Add local or API model endpoints',
     handler: _cmdSetup,
-    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup endpoint',
+    usage: '/setup local URL  ·  /setup groq KEY  ·  /setup copilot  ·  /setup chatgpt-subscription',
     // Provider subs so the autocomplete popup surfaces "/setup deepseek",
     // "/setup openai", etc. when the user types "/setup de". Each sub's
     // handler is a thin wrapper that re-prepends the sub name and
@@ -5564,6 +5804,7 @@ const COMMANDS = {
       xai:        { help: 'xAI (Grok)',    alias: ['grok'],   usage: '/setup xai xai-...',   handler: (a, c) => _cmdSetup(['xai',    ...a], c) },
       ollama:     { help: 'Ollama Cloud',  usage: '/setup ollama KEY',          handler: (a, c) => _cmdSetup(['ollama',     ...a], c) },
       copilot:    { help: 'GitHub Copilot', usage: '/setup copilot',            handler: (a, c) => _cmdSetup(['copilot',    ...a], c) },
+      'chatgpt-subscription': { help: 'ChatGPT Subscription', alias: ['codex'], usage: '/setup chatgpt-subscription', handler: (a, c) => _cmdSetup(['chatgpt-subscription', ...a], c) },
       local:      { help: 'Local model server (vLLM / LM Studio / llama.cpp / Ollama)',
                     usage: '/setup local http://localhost:8000/v1',
                     handler: (a, c) => _cmdSetup(['local', ...a], c) },
@@ -5741,8 +5982,22 @@ const COMMANDS = {
     handler: (args, ctx) => _cmdToolPanel('compare', args, ctx),
     usage: '/compare'
   },
+  mcp: {
+    alias: [],
+    category: 'Tools',
+    help: 'Show MCP server status',
+    handler: _cmdMcp,
+    usage: '/mcp'
+  },
+  model: {
+    alias: [],
+    category: 'Settings',
+    help: 'Show current chat model',
+    handler: _cmdModel,
+    usage: '/model  ·  /model list'
+  },
   models: {
-    alias: ['model'],
+    alias: [],
     category: 'Settings',
     help: 'List available models',
     handler: _cmdModels,
@@ -5773,10 +6028,16 @@ const COMMANDS = {
     handler: _cmdStats,
     usage: '/stats'
   },
+  usage: {
+    alias: ['cost', 'tokens'],
+    category: 'Utility',
+    help: 'Show local usage for the current chat',
+    handler: _cmdUsage,
+    usage: '/usage'
+  },
   compact: {
     alias: [],
     category: 'Utility',
-    hidden: true,
     help: 'Compact older chat messages',
     handler: _cmdCompact,
     usage: '/compact'
@@ -6049,33 +6310,13 @@ async function handleSlashCommand(input) {
     }
 
     // --- 4. Skill invocation: /<skill-name> [request] ---
-    // If `rawCmd` matches a published skill, pin its SKILL.md to the user's
-    // message and re-submit. Lets you fire a stored procedure on demand
-    // without the model having to discover the skill itself.
+    // If `rawCmd` matches a published skill, the backend records usage and
+    // returns a skill-pinned message to submit as the next agent turn.
     try {
-      const skillRes = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(rawCmd)}/markdown`, { credentials: 'same-origin' });
-      if (skillRes.ok) {
-        const skillData = await skillRes.json();
-        const md = skillData.markdown || '';
-        if (md) {
-          _showUser();
-          const request = args.join(' ').trim();
-          const msgInput = document.getElementById('message');
-          const composed =
-            `Apply the skill below to my request, following its Procedure / Pitfalls / Verification.\n\n` +
-            `--- BEGIN SKILL ---\n${md}\n--- END SKILL ---\n\n` +
-            (request ? `Request: ${request}` : `Request: (use the skill as appropriate)`);
-          if (msgInput) {
-            msgInput.value = composed;
-            const form = document.getElementById('chat-form');
-            if (form && typeof form.requestSubmit === 'function') {
-              form.requestSubmit();
-            } else if (form) {
-              form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-            }
-          }
-          return true;
-        }
+      const catalog = await _loadSkillSlashCatalog(false);
+      if (catalog.some(s => s.name === rawCmd)) {
+        _showUser();
+        return await _invokeSkillByName(rawCmd, args.join(' ').trim(), ctx);
       }
     } catch (_) { /* fall through to fuzzy match */ }
 
@@ -6132,10 +6373,13 @@ export function initSlashCommands(deps) {
     const providerEl = e.target.closest('.setup-clickable-provider');
     if (providerEl) {
       e.preventDefault();
+      const providerKey = providerEl.dataset.setupProvider || providerEl.textContent.trim();
       const providerName = providerEl.textContent.trim();
       const messageInput = document.getElementById('message');
       if (messageInput) {
-        const text = providerName + ' sk-';
+        const text = providerEl.dataset.setupKind === 'device-auth'
+          ? '/setup ' + providerKey
+          : providerName + ' sk-';
         messageInput.value = text;
         messageInput.dispatchEvent(new Event('input', { bubbles: true }));
         messageInput.focus();

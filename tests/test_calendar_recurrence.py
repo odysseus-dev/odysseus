@@ -319,3 +319,20 @@ def test_expand_metadata_inheritance():
         assert r["importance"] == "critical"
         assert r["event_type"] == "work"
         assert r["location"] == "Room 42"
+
+
+def test_expand_daily_rrule_large_window_is_capped_and_marked_truncated():
+    """Wide recurring windows must not materialize unbounded occurrence lists."""
+    cal = _import_calendar_helpers()
+    ev = _make_event(
+        uid="evt-daily-cap",
+        dtstart=datetime(2020, 1, 1, 9, 0),
+        dtend=datetime(2020, 1, 1, 10, 0),
+        rrule="FREQ=DAILY",
+    )
+
+    results = cal._expand_rrule(ev, datetime(2020, 1, 1), datetime(2030, 1, 1))
+
+    assert len(results) == cal._RRULE_EXPANSION_LIMIT
+    assert results[-1]["uid"] == "evt-daily-cap::2022-09-26T09:00"
+    assert all(r["truncated"] is True for r in results)

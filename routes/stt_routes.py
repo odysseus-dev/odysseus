@@ -4,11 +4,9 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File
 import logging
 
-from src.upload_limits import read_upload_limited
+from src.upload_limits import read_upload_limited, STT_MAX_AUDIO_BYTES
 
 logger = logging.getLogger(__name__)
-
-STT_MAX_AUDIO_BYTES = 25 * 1024 * 1024
 
 
 def setup_stt_routes(stt_service):

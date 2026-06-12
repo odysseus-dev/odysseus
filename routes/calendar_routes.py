@@ -1,6 +1,7 @@
 """Calendar routes — local SQLite-backed calendar CRUD."""
 
 import logging
+import re
 import uuid
 from datetime import datetime, date, timedelta
 from typing import Optional, List
@@ -12,7 +13,7 @@ from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import require_user
-from src.upload_limits import read_upload_limited
+from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,15 @@ def _ics_escape(text: str) -> str:
         .replace("\n", "\\n")
         .replace("\r", "\\n")
     )
+
+
+def _safe_ics_filename(name: str) -> str:
+    """Return a conservative .ics filename safe for Content-Disposition."""
+    stem = name if isinstance(name, str) else ""
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem).strip("._-")
+    if not stem:
+        stem = "calendar"
+    return f"{stem[:128]}.ics"
 
 
 def _resolve_base_uid(uid: str) -> str:
@@ -245,6 +255,17 @@ def parse_due_for_user(s: str) -> str:
         if not rest:
             return base.isoformat()
         t = _parse_time(rest)
+        if t is not None:
+            return base.replace(hour=t[0], minute=t[1]).isoformat()
+
+    # Time-first: "3pm today", "11pm today", "9am tomorrow"
+    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    if m:
+        time_part, word = m.group(1).strip(), m.group(2)
+        base = today
+        if word in ("tomorrow", "tmrw"): base = today + _td(days=1)
+        elif word == "yesterday":        base = today - _td(days=1)
+        t = _parse_time(time_part)
         if t is not None:
             return base.replace(hour=t[0], minute=t[1]).isoformat()
 
@@ -399,7 +420,17 @@ def _parse_dt(s: str) -> datetime:
     # Last resort: dateutil's fuzzy parser
     try:
         from dateutil import parser as _du
-        return _du.parse(s)
+        parsed = _du.parse(s)
+        # Strip tz like every other return path above — this function's
+        # contract is naive datetimes (CalendarEvent.dtstart is naive). An
+        # offset-bearing non-ISO input (e.g. RFC-2822 "Mon, 05 Jan 2026
+        # 14:00:00 +0900") otherwise leaked tz-aware into the naive column and
+        # crashed read-back comparisons in _expand_rrule with "can't compare
+        # offset-naive and offset-aware datetimes".
+        if parsed.tzinfo is not None:
+            from datetime import timezone as _tz
+            return parsed.astimezone(_tz.utc).replace(tzinfo=None)
+        return parsed
     except Exception:
         raise ValueError(f"could not parse datetime: {s!r}")
 
@@ -440,6 +471,9 @@ def _event_to_dict(ev: CalendarEvent) -> dict:
 
 # ── Recurrence expansion ──
 
+_RRULE_EXPANSION_LIMIT = 1000
+
+
 def _expand_rrule(
     ev: CalendarEvent, start: datetime, end: datetime
 ) -> List[dict]:
@@ -462,6 +496,7 @@ def _expand_rrule(
         d = _event_to_dict(ev)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
+        d["truncated"] = False
         return [d]
 
     # Parse the rrule, applying it to the base dtstart.
@@ -487,6 +522,7 @@ def _expand_rrule(
         d = _event_to_dict(ev)
         d["is_recurrence"] = False
         d["series_uid"] = ev.uid
+        d["truncated"] = False
         # Malformed RRULE rows are fetched by the recurring SQL branch
         # with only dtstart < end_dt — the base event may not actually
         # overlap the window. Only return if it does.
@@ -499,21 +535,25 @@ def _expand_rrule(
     # (matching non-recurring overlap semantics: dtstart < end AND
     # dtend > start).
     expand_start = start - duration
-    occurrences = rule.between(expand_start, end, inc=True)
-    if not occurrences:
-        return []
-
     results = []
+    truncated = False
     base = _event_to_dict(ev)
 
-    for occ_start in occurrences:
+    for occ_start in rule.xafter(expand_start, inc=True):
+        if occ_start >= end:
+            break
+
         occ_end = occ_start + duration
 
         # Overlap filter: occurrence must intersect [start, end).
         # This enforces exclusive-end semantics (occ_start >= end is
         # excluded) and includes multi-day crossings (occ_end > start).
-        if occ_start >= end or occ_end <= start:
+        if occ_end <= start:
             continue
+
+        if len(results) >= _RRULE_EXPANSION_LIMIT:
+            truncated = True
+            break
 
         # Build the compound uid: {base_uid}::{date} or ::{datetime}
         if ev.all_day:
@@ -525,6 +565,7 @@ def _expand_rrule(
         d["uid"] = occ_uid
         d["series_uid"] = ev.uid
         d["is_recurrence"] = True
+        d["truncated"] = False
 
         if ev.all_day:
             d["dtstart"] = occ_start.strftime("%Y-%m-%d")
@@ -537,6 +578,10 @@ def _expand_rrule(
 
         results.append(d)
 
+    if truncated:
+        for d in results:
+            d["truncated"] = True
+
     return results
 
 
@@ -545,72 +590,178 @@ def _expand_rrule(
 def setup_calendar_routes() -> APIRouter:
     router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 
-    # CalDAV connect form (Integrations → Calendar). Storage is local
-    # SQLite; sync (src/caldav_sync.py) pulls remote events into it on
-    # calendar open and periodically via the scheduler.
+    # ── CalDAV multi-account helpers ─────────────────────────────────────────
+
+    def _get_caldav_accounts(owner: str) -> list:
+        from src.caldav_sync import _load_caldav_accounts
+        return _load_caldav_accounts(owner)
+
+    def _save_caldav_accounts(owner: str, accounts: list) -> None:
+        from routes.prefs_routes import _load_for_user, _save_for_user
+        prefs = _load_for_user(owner) or {}
+        prefs["caldav_accounts"] = accounts
+        prefs.pop("caldav", None)
+        _save_for_user(owner, prefs)
+
+    # ── CalDAV config routes (backward-compat single-account API) ────────────
+
     @router.get("/config")
     async def get_config(request: Request):
+        """Legacy single-account endpoint — returns the first configured account."""
         owner = _require_user(request)
-        from routes.prefs_routes import _load_for_user
-        cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
-        caldav_password = cfg.get("password") or ""
-        if caldav_password:
+        accounts = _get_caldav_accounts(owner)
+        if not accounts:
+            return {"url": "", "username": "", "password": "", "has_password": False, "local": True}
+        first = accounts[0]
+        pw = first.get("password") or ""
+        has_pw = False
+        if pw:
             try:
                 from src.secret_storage import decrypt
-                caldav_password = decrypt(caldav_password)
+                has_pw = bool(decrypt(pw))
             except Exception:
-                pass
-        # Surface url+username but never hand the password back to the
-        # client — saved-state UI shouldn't leak the credential.
+                has_pw = bool(pw)
         return {
-            "url": cfg.get("url", "") or "",
-            "username": cfg.get("username", "") or "",
+            "url": first.get("url", "") or "",
+            "username": first.get("username", "") or "",
             "password": "",
-            "has_password": bool(caldav_password),
-            "local": not bool(cfg.get("url")),
+            "has_password": has_pw,
+            "local": not bool(first.get("url")),
         }
 
     @router.post("/config")
     async def save_config(request: Request):
+        """Legacy single-account endpoint — upserts the first account."""
         owner = _require_user(request)
-        from routes.prefs_routes import _load_for_user, _save_for_user
         try:
             body = await request.json()
         except Exception:
             body = {}
-        prefs = _load_for_user(owner) or {}
-        cfg = dict(prefs.get("caldav") or {})
-        # Empty url => clear the whole entry (treat as "remove integration").
+        accounts = _get_caldav_accounts(owner)
         if not (body.get("url") or "").strip():
-            prefs.pop("caldav", None)
-            _save_for_user(owner, prefs)
+            _save_caldav_accounts(owner, [])
             return {"ok": True, "cleared": True}
         from src.caldav_sync import validate_caldav_url
         try:
-            cfg["url"] = validate_caldav_url(body.get("url", ""))
+            validated_url = validate_caldav_url(body.get("url", ""))
         except ValueError as e:
             raise HTTPException(400, str(e))
-        cfg["username"] = (body.get("username") or "").strip()
-        # Preserve the stored password when the client sends an empty
-        # one (edit form re-submitted without re-typing the password).
-        # cfg already holds the existing (already-encrypted) password from
-        # prefs, so we only touch it when a new password is supplied —
-        # re-encrypting the stored value would double-encrypt it.
+        if accounts:
+            acc = dict(accounts[0])
+        else:
+            import uuid as _uuid
+            acc = {"id": str(_uuid.uuid4()), "label": "CalDAV"}
+        acc["url"] = validated_url
+        acc["username"] = (body.get("username") or "").strip()
         if body.get("password"):
             from src.secret_storage import encrypt
-            cfg["password"] = encrypt(body["password"])
-        prefs["caldav"] = cfg
-        _save_for_user(owner, prefs)
+            acc["password"] = encrypt(body["password"])
+        new_accounts = [acc] + (accounts[1:] if len(accounts) > 1 else [])
+        _save_caldav_accounts(owner, new_accounts)
+        return {"ok": True}
+
+    # ── CalDAV multi-account CRUD ─────────────────────────────────────────────
+
+    @router.get("/config/accounts")
+    async def list_caldav_accounts(request: Request):
+        """Return all configured CalDAV accounts (passwords never returned)."""
+        owner = _require_user(request)
+        accounts = _get_caldav_accounts(owner)
+        safe = []
+        for acc in accounts:
+            pw = acc.get("password") or ""
+            has_pw = False
+            if pw:
+                try:
+                    from src.secret_storage import decrypt
+                    has_pw = bool(decrypt(pw))
+                except Exception:
+                    has_pw = bool(pw)
+            safe.append({
+                "id": acc.get("id", ""),
+                "label": acc.get("label", "") or acc.get("url", ""),
+                "url": acc.get("url", "") or "",
+                "username": acc.get("username", "") or "",
+                "has_password": has_pw,
+            })
+        return {"accounts": safe}
+
+    @router.post("/config/accounts")
+    async def add_caldav_account(request: Request):
+        """Add a new CalDAV account."""
+        import uuid as _uuid
+        owner = _require_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        from src.caldav_sync import validate_caldav_url
+        try:
+            url = validate_caldav_url(body.get("url", ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not body.get("password"):
+            raise HTTPException(400, "Password is required")
+        from src.secret_storage import encrypt
+        new_acc = {
+            "id": str(_uuid.uuid4()),
+            "label": (body.get("label") or "").strip() or "CalDAV",
+            "url": url,
+            "username": (body.get("username") or "").strip(),
+            "password": encrypt(body["password"]),
+        }
+        accounts = _get_caldav_accounts(owner)
+        accounts.append(new_acc)
+        _save_caldav_accounts(owner, accounts)
+        return {"ok": True, "id": new_acc["id"]}
+
+    @router.put("/config/accounts/{account_id}")
+    async def update_caldav_account(account_id: str, request: Request):
+        """Update an existing CalDAV account by id."""
+        owner = _require_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        accounts = _get_caldav_accounts(owner)
+        idx = next((i for i, a in enumerate(accounts) if a.get("id") == account_id), None)
+        if idx is None:
+            raise HTTPException(404, "Account not found")
+        acc = dict(accounts[idx])
+        if body.get("url"):
+            from src.caldav_sync import validate_caldav_url
+            try:
+                acc["url"] = validate_caldav_url(body["url"])
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+        if body.get("label") is not None:
+            acc["label"] = (body.get("label") or "").strip() or "CalDAV"
+        if body.get("username") is not None:
+            acc["username"] = (body.get("username") or "").strip()
+        if body.get("password"):
+            from src.secret_storage import encrypt
+            acc["password"] = encrypt(body["password"])
+        accounts[idx] = acc
+        _save_caldav_accounts(owner, accounts)
+        return {"ok": True}
+
+    @router.delete("/config/accounts/{account_id}")
+    async def delete_caldav_account(account_id: str, request: Request):
+        """Remove a CalDAV account by id."""
+        owner = _require_user(request)
+        accounts = _get_caldav_accounts(owner)
+        new_accounts = [a for a in accounts if a.get("id") != account_id]
+        if len(new_accounts) == len(accounts):
+            raise HTTPException(404, "Account not found")
+        _save_caldav_accounts(owner, new_accounts)
         return {"ok": True}
 
     @router.post("/test")
     async def test_connection(request: Request):
-        """Actually probe the configured CalDAV server with a PROPFIND
-        request (the same handshake every CalDAV client uses). Accepts
-        an optional {url, username, password} body so the user can test
-        a configuration BEFORE saving it; falls back to the stored
-        creds otherwise. Returns {ok, error?} with a useful message on
-        failure (status code, auth issue, network error)."""
+        """Probe a CalDAV server with a PROPFIND. Accepts an optional body:
+        {url, username, password} to test before saving, or {account_id} to
+        test an already-saved account. Falls back to the first saved account
+        when nothing is provided."""
         owner = _require_user(request)
         try:
             body = await request.json()
@@ -620,19 +771,24 @@ def setup_calendar_routes() -> APIRouter:
         user = (body.get("username") or "").strip()
         pw = body.get("password") or ""
         if not (url and user and pw):
-            # Fall back to saved settings for this user.
-            from routes.prefs_routes import _load_for_user
-            cfg = (_load_for_user(owner) or {}).get("caldav", {}) or {}
-            url = url or (cfg.get("url") or "")
-            user = user or (cfg.get("username") or "")
-            if not pw:
-                pw = cfg.get("password") or ""
-                if pw:
-                    try:
-                        from src.secret_storage import decrypt
-                        pw = decrypt(pw)
-                    except Exception:
-                        pass
+            # Look up a saved account: by id if supplied, else first account.
+            accounts = _get_caldav_accounts(owner)
+            acc = None
+            if body.get("account_id"):
+                acc = next((a for a in accounts if a.get("id") == body["account_id"]), None)
+            if acc is None and accounts:
+                acc = accounts[0]
+            if acc:
+                url = url or (acc.get("url") or "")
+                user = user or (acc.get("username") or "")
+                if not pw:
+                    pw = acc.get("password") or ""
+                    if pw:
+                        try:
+                            from src.secret_storage import decrypt
+                            pw = decrypt(pw)
+                        except Exception:
+                            pass
         if not (url and user and pw):
             return {"ok": False, "error": "Missing URL, username, or password"}
         from src.caldav_sync import validate_caldav_url
@@ -695,6 +851,28 @@ def setup_calendar_routes() -> APIRouter:
         from src.caldav_sync import sync_caldav
         return await sync_caldav(owner)
 
+    @router.delete("/calendars/{cal_id}")
+    async def delete_calendar(cal_id: str, request: Request):
+        owner = _require_user(request)
+        db = SessionLocal()
+        try:
+            cal = db.query(CalendarCal).filter(
+                CalendarCal.id == cal_id,
+                CalendarCal.owner == owner,
+            ).first()
+            if not cal:
+                raise HTTPException(404, "Calendar not found")
+            db.delete(cal)
+            db.commit()
+            return {"ok": True}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Failed to delete calendar %s: %s", cal_id, e)
+            raise HTTPException(500, "Failed to delete calendar")
+        finally:
+            db.close()
+
     @router.get("/calendars")
     async def list_calendars(request: Request):
         owner = _require_user(request)
@@ -703,7 +881,7 @@ def setup_calendar_routes() -> APIRouter:
             _ensure_default_calendar(db, owner)
             cals = db.query(CalendarCal).filter(CalendarCal.owner == owner).all()
             return {"calendars": [
-                {"name": c.name, "href": c.id, "color": c.color}
+                {"name": c.name, "href": c.id, "color": c.color, "source": c.source}
                 for c in cals
             ]}
         except HTTPException:
@@ -766,8 +944,12 @@ def setup_calendar_routes() -> APIRouter:
                 expanded.extend(_expand_rrule(e, start_dt, end_dt))
 
             # Sort by occurrence start time for consistent frontend ordering.
+            truncated = any(e.get("truncated") for e in expanded)
             expanded.sort(key=lambda d: d["dtstart"])
-            return {"events": expanded}
+            response: dict = {"events": expanded}
+            if truncated:
+                response["truncated"] = True
+            return response
         except HTTPException:
             raise
         except Exception as e:
@@ -988,9 +1170,9 @@ def setup_calendar_routes() -> APIRouter:
         finally:
             db.close()
 
-    # 10 MB hard cap on ICS upload. Loading the whole file into memory is
-    # unavoidable with python-icalendar, so an unbounded upload would OOM.
-    _ICS_MAX_BYTES = 10 * 1024 * 1024
+    # Hard cap on ICS upload (ICS_MAX_BYTES, default 10 MB). Loading the whole
+    # file into memory is unavoidable with python-icalendar, so an unbounded
+    # upload would OOM.
 
     @router.post("/import")
     async def import_ics(request: Request, file: UploadFile = File(...), calendar_name: str = ""):
@@ -1000,7 +1182,7 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            content = await read_upload_limited(file, _ICS_MAX_BYTES, "ICS file")
+            content = await read_upload_limited(file, ICS_MAX_BYTES, "ICS file")
             try:
                 cal_data = iCal.from_ical(content)
             except Exception as e:
@@ -1168,11 +1350,14 @@ def setup_calendar_routes() -> APIRouter:
             lines.append("END:VCALENDAR")
 
             ics_data = "\r\n".join(lines)
-            safe_name = cal.name.replace(" ", "_").replace("/", "_")
+            download_name = _safe_ics_filename(cal.name)
             return Response(
                 content=ics_data,
                 media_type="text/calendar",
-                headers={"Content-Disposition": f'attachment; filename="{safe_name}.ics"'},
+                headers={
+                    "Content-Disposition": f'attachment; filename="{download_name}"',
+                    "X-Content-Type-Options": "nosniff",
+                },
             )
         except HTTPException:
             raise
@@ -1194,7 +1379,7 @@ def setup_calendar_routes() -> APIRouter:
         "tomorrow", "next Tuesday", "in 30 minutes" resolve correctly.
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
-        _require_user(request)
+        owner = _require_user(request)
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think
@@ -1220,9 +1405,9 @@ def setup_calendar_routes() -> APIRouter:
         if tz_hint:
             set_user_tz_name(tz_hint)
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner or None)
         if not url:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner or None)
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 

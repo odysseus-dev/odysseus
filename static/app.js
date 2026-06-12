@@ -4,7 +4,6 @@
 // ============================================
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
-import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
@@ -1586,7 +1585,15 @@ function initializeEventListeners() {
   function applyModeToToggles(mode) {
     MODE_TOOLS.forEach(({ btnId, checkboxId, stateKey }) => {
       const btn = el(btnId);
-      if (!btn || btn.style.display === 'none') return;
+      if (!btn) return;
+      // Hide bash button in chat mode
+      if (mode === 'chat' && stateKey === 'bash') {
+        btn.style.display = 'none';
+        return;
+      }
+      // Show buttons in agent mode (or for web toggle in any mode)
+      btn.style.display = '';
+      if (btn.style.display === 'none') return;
       const on = loadToolPref(stateKey, mode);
       btn.classList.toggle('active', on);
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
@@ -1600,6 +1607,12 @@ function initializeEventListeners() {
     if (!agentBtn || !chatBtn) return;
     const state = loadToggleState();
     let currentMode = state.mode || 'chat';
+
+    // Immediately hide bash button in chat mode on page load
+    if (currentMode === 'chat') {
+      const bashBtn = el('bash-toggle-btn');
+      if (bashBtn) bashBtn.style.display = 'none';
+    }
 
     function setMode(mode) {
       currentMode = mode;
@@ -1688,7 +1701,6 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
-  try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   const overflowDocBtn = el('overflow-doc-btn');
@@ -2417,7 +2429,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2445,11 +2457,9 @@ function initializeEventListeners() {
     document.querySelectorAll('.section[draggable]').forEach(el => {
       el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
     });
-    // Text-only emojis toggle. Default is ON (the checkbox defaults to
-    // checked because text-emojis isn't in UI_VIS_DEFAULT_OFF), so treat
-    // an absent value as enabled — otherwise the toggle looked on at
-    // startup but the effect only activated after the user flipped it.
-    applyTextEmojis(state['text-emojis'] !== false);
+    // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
+    // like `:blush:` render through the normal monochrome emoji path.
+    applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }

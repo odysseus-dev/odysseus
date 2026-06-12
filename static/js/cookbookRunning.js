@@ -255,6 +255,8 @@ let _savePresets;
 let _copyText;
 let _persistEnvState;
 let _refreshDependencies;
+let _serverByVal;
+let _selectedServer;
 let modelLogo;
 let esc;
 let _detectBackend;
@@ -1263,7 +1265,8 @@ async function _openServeEditForTask(task, cmdOverride, fieldOverrides = null) {
   // Switch the active server to the one this serve ran on (mirrors _openEdit).
   const _tHost = task.remoteHost || '';
   _envState.remoteHost = _tHost;
-  const _tSrv = _envState.servers.find(s => s.host === _tHost);
+  const _tSrv = _serverByVal(_envState.remoteServerKey || _tHost)
+    || _envState.servers.find(s => s.host === _tHost);
   if (_tSrv) { _envState.env = _tSrv.env || 'none'; _envState.envPath = _tSrv.envPath || ''; _envState.platform = _tSrv.platform || ''; }
   else if (!_tHost) { _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
   document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
@@ -1473,7 +1476,8 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
   // up that server's port/platform from the shared servers list. Only fall back
   // to _envState.remoteHost for legacy callers (diagnosis/pip-update).
   const _host = (hostOverride !== undefined) ? (hostOverride || '') : (_envState.remoteHost || '');
-  const _hsrv = _envState.servers.find(s => s.host === _host) || {};
+  const _hsrv = _serverByVal(_envState.remoteServerKey || _host)
+    || _envState.servers.find(s => s.host === _host) || {};
   const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');
 
   // Replace any serve already targeting this same host:port — you can't run two
@@ -1560,6 +1564,10 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     const payload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
     _addTask(data.session_id, shortName, 'serve', payload);
     uiModule.showToast(`Serving ${shortName}...`);
+    // Auto-register may have enabled an existing (offline) endpoint for this
+    // host:port. Refresh the picker so the row is no longer dimmed, and the
+    // user doesn't see "offline" on a serve they just started.
+    try { _refreshModelsAfterEndpointChange(); } catch (_) {}
   } catch (e) {
     uiModule.showToast('Failed: ' + e.message);
   }
@@ -1700,7 +1708,8 @@ export function _renderRunningTab() {
   // Group tasks by server
   const _serverName = (host) => {
     if (!host) return 'Local';
-    const srv = _envState.servers.find(s => s.host === host);
+    const srv = _serverByVal(_envState.remoteServerKey || host)
+      || _envState.servers.find(s => s.host === host);
     return srv?.name || host;
   };
   const serverGroups = {};
@@ -1862,7 +1871,17 @@ export function _renderRunningTab() {
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
       const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
-      if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      if (terminalDiag) {
+        _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      } else {
+        const existingDiag = el.querySelector('.cookbook-diagnosis');
+        // Keep diagnosis for failed tasks even if output was cleared and we
+        // can no longer re-derive the exact message — removing it would hide
+        // the crash reason from the user.
+        if (existingDiag && !['stopped', 'error', 'crashed', 'failed'].includes(task.status)) {
+          existingDiag.remove();
+        }
+      }
     }
     if (!task) {
       if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
@@ -1900,6 +1919,9 @@ export function _renderRunningTab() {
 
     const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
+    if (!terminalDiag && (task.status === 'error' || task.status === 'crashed') && task._backendDiagnosis) {
+      _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+    }
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
     if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && task.status === 'running') {
@@ -1958,7 +1980,8 @@ export function _renderRunningTab() {
           // Point the active server at the one it downloaded to.
           const _tHost = task.remoteHost || '';
           _envState.remoteHost = _tHost;
-          const _tSrv = _envState.servers.find(s => s.host === _tHost);
+          const _tSrv = _serverByVal(_envState.remoteServerKey || _tHost)
+            || _envState.servers.find(s => s.host === _tHost);
           if (_tSrv) { _envState.env = _tSrv.env || 'none'; _envState.envPath = _tSrv.envPath || ''; _envState.platform = _tSrv.platform || ''; }
           else if (!_tHost) { _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
           document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
@@ -2198,6 +2221,10 @@ export function _renderRunningTab() {
         items.push({ label: 'Copy last 50 lines', action: 'copy-log', custom: () => {
           const out = (el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
           const last = out.split('\n').slice(-50).join('\n');
+          if (!last.trim()) {
+            uiModule.showToast('No log content available yet');
+            return;
+          }
           _copyText(last);
           uiModule.showToast('Copied last 50 lines');
         }});
@@ -2434,6 +2461,10 @@ export function _renderRunningTab() {
     el.querySelector('.cookbook-output-copy').addEventListener('click', (e) => {
       e.stopPropagation();
       const text = el.querySelector('.cookbook-output-pre')?.textContent || '';
+      if (!text.trim()) {
+        uiModule.showToast('No log content available yet');
+        return;
+      }
       _copyText(text).then(() => {
         const btn = el.querySelector('.cookbook-output-copy');
         const origHTML = btn.innerHTML;
@@ -2733,6 +2764,7 @@ async function _reconnectTask(el, task) {
                   _updateTask(task.sessionId, { status: 'done', _doneConfirmAt: null, _lastStatusFlipAt: Date.now() });
                   const _el = document.querySelector(`.cookbook-task[data-task-id="${task.sessionId}"]`);
                   if (_el) {
+                    _clearDiagnosis(_el);
                     _el.dataset.status = 'done';
                     const _badge = _el.querySelector('.cookbook-task-status');
                     if (_badge) { _badge.textContent = _statusLabel('done', task.type); _badge.className = 'cookbook-task-status cookbook-task-done'; }
@@ -2799,13 +2831,14 @@ async function _reconnectTask(el, task) {
             const curProgress = computeProgressSignal(_bytes, _dlAgg, lastPct, snapshot);
             const _fetchPctMatches = [...snapshot.matchAll(/Fetching\s+\d+\s+files:\s*(\d+)%/g)];
             const _fetchPct = _fetchPctMatches.length ? parseInt(_fetchPctMatches[_fetchPctMatches.length - 1][1]) : null;
+            const isPipDep = !!(task.payload && task.payload._dep);
             const _startupStalled = !_bytes && ((_dlAgg === 0) || (_fetchPct === 0)) && curProgress === '0';
             const _STALE_TIMEOUT = _startupStalled ? STARTUP_STALE_PROGRESS_MS : STALE_PROGRESS_MS;
             if (!el._lastProgress) { el._lastProgress = curProgress; el._lastProgressTime = Date.now(); }
             if (curProgress !== el._lastProgress) {
               el._lastProgress = curProgress;
               el._lastProgressTime = Date.now();
-            } else if (Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && task._autoRestarted) {
+            } else if (!isPipDep && Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && task._autoRestarted) {
               const mins = Math.floor((Date.now() - (el._lastProgressTime || 0)) / 60000);
               // Already auto-restarted once and stalled again — make the badge a
               // one-click retry (resumes from the cached partial files) so the
@@ -2818,7 +2851,7 @@ async function _reconnectTask(el, task) {
                 badge._retryBound = true;
                 badge.addEventListener('click', (e) => { e.stopPropagation(); _retryTask(el, task); });
               }
-            } else if (Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && !task._autoRestarted) {
+            } else if (!isPipDep && Date.now() - (el._lastProgressTime || 0) > _STALE_TIMEOUT && !task._autoRestarted) {
               task._autoRestarted = true;
               _updateTask(task.sessionId, { _autoRestarted: true });
               badge.textContent = _startupStalled ? '0% stall — retrying' : 'stale — restarting';
@@ -2970,6 +3003,7 @@ async function _reconnectTask(el, task) {
               break;
             }
             if (snapshot.includes('DOWNLOAD_OK') || (snapshot.includes('/snapshots/') && completed >= totalFiles && totalFiles > 0)) {
+              _clearDiagnosis(el);
               _dlRetryCount.delete(task.payload?.repo_id || task.name);
               badge.textContent = _statusLabel('done', task.type);
               badge.className = 'cookbook-task-status cookbook-task-done';
@@ -3000,6 +3034,11 @@ async function _reconnectTask(el, task) {
             if (info.status === 'ready' && !task._serveReady) {
               task._serveReady = true;
               _updateTask(task.sessionId, { _serveReady: true });
+              // The auto-registered endpoint was marked offline while the
+              // server was coming up. Now that it's reachable, nudge the
+              // picker to re-probe so the offline pill clears without the
+              // user having to reopen Settings or refresh the page.
+              try { _refreshModelsAfterEndpointChange(); } catch (_) {}
             }
             if (info.phase) {
               badge.textContent = info.phase;
@@ -3513,6 +3552,12 @@ async function _pollBackgroundStatus() {
             updates.output = `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
           }
         }
+        if (live.diagnosis && !task._diagnosisDismissed) {
+          updates._backendDiagnosis = live.diagnosis;
+        }
+        if (live.cmd && !task.payload?._cmd) {
+          updates.payload = { ...(task.payload || {}), _cmd: live.cmd };
+        }
         if (Object.keys(updates).length) {
           Object.assign(task, updates);
           changed = true;
@@ -3521,6 +3566,12 @@ async function _pollBackgroundStatus() {
       if (changed) {
         _saveTasks(localTasks);
         _renderRunningTab();
+        for (const task of localTasks) {
+          if (!task._backendDiagnosis) continue;
+          const el = document.querySelector(`[data-session-id="${CSS.escape(task.sessionId)}"]`);
+          if (!el || el.querySelector('.cookbook-diagnosis')) continue;
+          _showDiagnosis(el, task._backendDiagnosis, task.output || '');
+        }
         completedDeps.forEach(t => _refreshDepsAfterInstall(t));
       }
     } catch (_) { /* non-fatal: background status should never break polling */ }
@@ -3669,6 +3720,8 @@ export function initRunning(shared) {
   _copyText = shared._copyText;
   _persistEnvState = shared._persistEnvState;
   _refreshDependencies = shared._refreshDependencies;
+  _serverByVal = shared._serverByVal;
+  _selectedServer = shared._selectedServer;
   modelLogo = shared.modelLogo;
   esc = shared.esc;
   _detectBackend = shared._detectBackend;

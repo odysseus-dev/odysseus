@@ -51,10 +51,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 # Core imports
 from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY,
+    REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware
+from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
 from core.auth import AuthManager
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
@@ -64,6 +64,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -252,6 +253,15 @@ if AUTH_ENABLED:
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
+            # A genuine CORS preflight (OPTIONS + Access-Control-Request-Method)
+            # carries no credentials by design and must reach CORSMiddleware to be
+            # answered. AuthMiddleware is the outermost middleware, so gating the
+            # preflight on auth 401s it before CORS can respond -- which blocks
+            # every cross-origin browser/WebView client before the real request
+            # is sent. Let real preflights through (only OPTIONS w/ the ACRM
+            # header; never a credentialed request).
+            if is_cors_preflight(request.method, request.headers):
+                return await call_next(request)
             if _is_auth_exempt(path):
                 return await call_next(request)
             # In-process internal-tool token bypass. Used by the agent
@@ -387,13 +397,7 @@ app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 @app.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
-    from pathlib import Path
-    import re
-    if not re.match(r'^[a-f0-9]{8,64}\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv|m4v)$', filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    img_path = Path("data/generated_images") / filename
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+    img_path = resolve_generated_image_path(filename)
     # SECURITY: filename is the only key, so anyone who knows / guesses a
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
@@ -429,7 +433,7 @@ async def serve_generated_image(filename: str, request: Request):
     return FileResponse(
         str(img_path),
         media_type=mime,
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers=GENERATED_IMAGE_HEADERS,
     )
 
 # ========= YOUTUBE INIT =========
@@ -525,9 +529,6 @@ upload_cleanup_task = None
 from routes.emoji_routes import setup_emoji_routes
 app.include_router(setup_emoji_routes())
 
-from routes.workspace_routes import setup_workspace_routes
-app.include_router(setup_workspace_routes())
-
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
@@ -593,6 +594,10 @@ app.include_router(setup_model_routes(model_discovery))
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
 app.include_router(setup_copilot_routes())
+
+# ChatGPT Subscription device-flow login
+from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
+app.include_router(setup_chatgpt_subscription_routes())
 
 # TTS
 from routes.tts_routes import setup_tts_routes
@@ -789,6 +794,8 @@ async def serve_backgrounds(request: Request):
 
 @app.get("/login")
 async def serve_login(request: Request):
+    if not AUTH_ENABLED:
+        return RedirectResponse(url="/", status_code=302)
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
@@ -948,7 +955,7 @@ async def _startup_event():
         owners = set()
         try:
             import json as _json
-            auth_path = "data/auth.json"
+            auth_path = AUTH_FILE
             with open(auth_path, encoding="utf-8") as f:
                 users = _json.load(f).get("users", {})
             owners.update(users.keys())
@@ -995,7 +1002,7 @@ async def _startup_event():
     # does not make an existing library look empty after auth/account changes.
     try:
         import json as _json
-        auth_path = "data/auth.json"
+        auth_path = AUTH_FILE
         with open(auth_path, encoding="utf-8") as f:
             users = _json.load(f).get("users", {})
         primary_owner = None

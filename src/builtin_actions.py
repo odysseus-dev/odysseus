@@ -12,6 +12,8 @@ from typing import Tuple
 
 from src.auth_helpers import owner_filter
 from core.platform_compat import IS_WINDOWS, find_bash
+from core.constants import internal_api_base
+from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +168,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     drop_items = decision.get("drop") if isinstance(decision, dict) else None
                     if isinstance(keep_items, list) and isinstance(drop_items, list):
                         by_id = {m.get("id"): m for m in group_memories if m.get("id")}
-                        keep_ids = set()
                         cleaned_by_id = {}
                         for item in keep_items:
                             if not isinstance(item, dict):
@@ -177,7 +178,6 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                             text = (item.get("text") or "").strip()
                             if not text:
                                 continue
-                            keep_ids.add(mid)
                             cleaned = {
                                 "category": (item.get("category") or by_id[mid].get("category") or "fact").strip(),
                             }
@@ -186,11 +186,20 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                 cleaned["text"] = text
                             cleaned_by_id[mid] = cleaned
 
-                        # If the model only saw a truncated memory, do not let
-                        # that partial view delete or rewrite the full memory.
-                        keep_ids.update(mid for mid in truncated_ids if mid in by_id)
+                        # Delete only memories the model EXPLICITLY dropped, never
+                        # ones it merely omitted from `keep`. Treating the
+                        # complement of `keep` as deletions meant a model that
+                        # forgot to re-list an id (common) silently destroyed that
+                        # memory. Honor the explicit `drop` set instead.
+                        drop_ids = {
+                            d.get("id")
+                            for d in drop_items
+                            if isinstance(d, dict) and d.get("id") in by_id
+                        }
+                        # Never delete a memory the model only saw truncated.
+                        drop_ids -= truncated_ids
 
-                        if keep_ids:
+                        if drop_ids or cleaned_by_id:
                             changed_text = 0
                             group_ref_ids = {id(m) for m in group_memories}
                             kept_all = []
@@ -199,7 +208,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                     kept_all.append(mem)
                                     continue
                                 mid = mem.get("id")
-                                if mid not in keep_ids:
+                                if mid in drop_ids:
                                     continue
                                 cleaned = cleaned_by_id.get(mid) or {}
                                 if mid in truncated_ids:
@@ -211,7 +220,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                                     mem["category"] = cleaned["category"]
                                 kept_all.append(mem)
 
-                            removed = len(group_memories) - len(keep_ids)
+                            removed = sum(1 for m in group_memories if m.get("id") in drop_ids)
                             total_scanned += len(group_memories)
                             if removed or changed_text:
                                 all_memories = kept_all
@@ -348,7 +357,7 @@ async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         from pathlib import Path
         import json as _json
-        research_dir = Path("data/deep_research")
+        research_dir = Path(DEEP_RESEARCH_DIR)
         if not research_dir.exists():
             raise TaskNoop("no research directory")
         files = list(research_dir.glob("*.json"))
@@ -386,7 +395,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
         from core.database import SessionLocal, CalendarEvent
         from sqlalchemy import func
 
-        STATE_FILE = Path("data/tidy_calendar_state.json")
+        STATE_FILE = Path(TIDY_CALENDAR_STATE_FILE)
         last_watermark = None
         try:
             if STATE_FILE.exists():
@@ -593,9 +602,9 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             if not events:
                 return "No upcoming events to classify", True
 
-            llm_url, llm_model, llm_headers = resolve_endpoint("utility")
+            llm_url, llm_model, llm_headers = resolve_endpoint("utility", owner=owner)
             if not llm_url:
-                llm_url, llm_model, llm_headers = resolve_endpoint("default")
+                llm_url, llm_model, llm_headers = resolve_endpoint("default", owner=owner)
             llm_available = bool(llm_url and llm_model)
 
             # Pull user memories so the LLM has personal context (relationships,
@@ -867,9 +876,9 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         if not eligible:
             return "All sender sigs already cached (or no eligible senders)", True
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
 
@@ -1303,12 +1312,12 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         # users' entries (review C4). Legacy path kept as fallback so a
         # single-user install (empty owner) doesn't lose its history.
         _owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-        STATE = _P(f"data/note_pings_{_owner_slug}.json")
+        STATE = _P(DATA_DIR) / f"note_pings_{_owner_slug}.json"
         STATE.parent.mkdir(parents=True, exist_ok=True)
         # One-time migration: if legacy global file exists and per-owner file
         # doesn't, seed from global (entries for OTHER owners still get pruned
         # on their first run — acceptable, prevents silent loss).
-        _legacy = _P("data/note_pings.json")
+        _legacy = _P(DATA_DIR) / "note_pings.json"
         if _legacy.exists() and not STATE.exists():
             try:
                 STATE.write_text(_legacy.read_text(encoding="utf-8"), encoding="utf-8")
@@ -1465,8 +1474,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # notified_uids / urgency counts. Empty owner falls back to a generic
         # filename for single-user installs (matches prior behaviour).
         _owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-        STATE_PATH = _P(f"data/email_urgency_state_{_owner_slug}.json")
-        CACHE_DIR = _P("data/email_urgency_cache")
+        STATE_PATH = _P(DATA_DIR) / f"email_urgency_state_{_owner_slug}.json"
+        CACHE_DIR = _P(EMAIL_URGENCY_CACHE_DIR)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
         AGE_CUTOFF = _dt.utcnow() - _td(days=7)
@@ -1480,12 +1489,12 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
 
         # ── 1. Resolve LLM candidates (utility primary + utility fallbacks; fall
         # through to default chat as a last resort).
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner)
         if not url or not model:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner)
         if not url or not model:
             return "No LLM endpoint available", False
-        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates()
+        candidates = [(url, model, headers)] + resolve_utility_fallback_candidates(owner=owner)
 
         # ── 2. Enumerate enabled accounts. Match this task's owner AND fall
         # back to the legacy "unowned account whose imap_user / from_address
@@ -1902,6 +1911,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                     delivered = bool(dispatch_result.get("email_sent"))
                 elif channel == "ntfy":
                     delivered = bool(dispatch_result.get("ntfy_sent"))
+                elif channel == "webhook":
+                    delivered = bool(dispatch_result.get("webhook_sent"))
                 if delivered:
                     newly_notified.update(new_urgent)
                 else:
@@ -2040,7 +2051,7 @@ async def action_cookbook_serve(
     except Exception:
         end_after_min = 0
 
-    state_path = Path("/app/data/cookbook_state.json")
+    state_path = Path(COOKBOOK_STATE_FILE)
     try:
         state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     except Exception:
@@ -2116,7 +2127,7 @@ async def action_cookbook_serve(
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.post("http://localhost:7000/api/model/serve",
+            r = await client.post(f"{internal_api_base()}/api/model/serve",
                                   json=body, headers=headers)
             data = r.json() if r.content else {}
     except Exception as e:

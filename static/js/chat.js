@@ -12,6 +12,7 @@ import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
 import markdownModule from './markdown.js';
+import { svgifyEmoji } from './markdown.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
 import fileHandlerModule from './fileHandler.js';
@@ -21,6 +22,9 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
+import { createStreamRenderer } from './streamingRenderer.js';
+import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -50,7 +54,27 @@ import createResearchSynapse from './researchSynapse.js';
 
   // shortModel and modelColor are now in chatRenderer.js
   var _shortModel = chatRenderer.shortModel;
+  var _modelRouteLabel = chatRenderer.modelRouteLabel;
+  var _sameModelName = chatRenderer.sameModelName;
   var _applyModelColor = chatRenderer.applyModelColor;
+  function _setRoleModelLabel(roleEl, requestedModel, actualModel, opts) {
+    if (!roleEl) return;
+    opts = opts || {};
+    const tsSpan = roleEl.querySelector('.role-timestamp');
+    const req = requestedModel || actualModel || '';
+    const actual = actualModel || requestedModel || '';
+    let label = _modelRouteLabel(req, actual);
+    if (opts.suffix) label += ' (' + opts.suffix + ')';
+    if (opts.characterName) label = opts.characterName;
+    roleEl.textContent = label + ' ';
+    _applyModelColor(roleEl, actual || req);
+    if (req && actual && !_sameModelName(req, actual)) {
+      roleEl.title = req + ' -> ' + actual + (opts.reason ? ': ' + opts.reason : '');
+    } else if (!opts.reason) {
+      roleEl.removeAttribute('title');
+    }
+    if (tsSpan) roleEl.appendChild(tsSpan);
+  }
   // Per-session research tracking (supports concurrent research across sessions)
   const _researchingStreamIds = new Set();
   let _researchTimerEl = null, _researchTimerInterval = null;
@@ -165,6 +189,19 @@ import createResearchSynapse from './researchSynapse.js';
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
+
+    // ArrowUp on empty composer recalls last user message (like many chat apps).
+    const _wireArrowUpRecall = (composer) =>
+      wireArrowUpRecall(composer, () => getLastUserMessageFromChatHistory(), {
+        autoResize: uiModule?.autoResize,
+      });
+
+    const composer = document.getElementById('message');
+    if (!_wireArrowUpRecall(composer)) {
+      // Init can run before #message exists (templated UI); short retries only.
+      try { requestAnimationFrame(() => _wireArrowUpRecall(document.getElementById('message'))); } catch (_) {}
+      setTimeout(() => _wireArrowUpRecall(document.getElementById('message')), 250);
+    }
   }
 
   // addMessage, createMsgFooter, displayMetrics, hideWelcomeScreen, showWelcomeScreen
@@ -524,7 +561,6 @@ import createResearchSynapse from './researchSynapse.js';
     let _thinkOpen = false;
     let holder = null;
     let finalMeta = null;
-    let finalModelName = null;
     let spinner = null;
     let timedOut = false;
     let processingProbeTimer = null;
@@ -781,10 +817,6 @@ import createResearchSynapse from './researchSynapse.js';
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
       }
-      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
-      if (_ws) {
-        fd.append('workspace', _ws);
-      }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
@@ -844,11 +876,13 @@ import createResearchSynapse from './researchSynapse.js';
         loadingText = 'Processing request...';
       }
 
-      var roleLabel = _shortModel(modelName);
+      var roleLabel = _modelRouteLabel(modelName, modelName);
       var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       holder.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
+      holder._requestedModel = modelName;
+      holder._actualModel = modelName;
       _applyModelColor(holder.querySelector('.role'), modelName);
       holder.style.position = 'relative';
       
@@ -1120,9 +1154,6 @@ import createResearchSynapse from './researchSynapse.js';
       let _liveThinkToggle = null;
       let _liveThinkDomId = null;
 
-      // Offscreen measurement div — reused across renders
-      let _measureDiv = null;
-
       function _replyAfterClosedThinking(text) {
         const closeRe = /<\/(?:think(?:ing)?|thought)>|<channel\|>/gi;
         let match = null;
@@ -1177,19 +1208,18 @@ import createResearchSynapse from './researchSynapse.js';
             }
           }
           if (replyTrimmed) {
-            const replyHtml = markdownModule.mdToHtml(markdownModule.squashOutsideCode(replyTrimmed));
-            const prevLen = liveReply._prevTextLen || 0;
-            liveReply.innerHTML = replyHtml;
-            _fadeNewTokens(liveReply, prevLen);
-            liveReply._prevTextLen = liveReply.textContent.length;
-            if (window.hljs) liveReply.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+            const r = liveReply._streamRenderer ||
+              (liveReply._streamRenderer = createStreamRenderer(liveReply, {
+                render: (t) => markdownModule.mdToHtml(markdownModule.squashOutsideCode(t)),
+                hljs: window.hljs,
+              }));
+            r.update(replyTrimmed);
           }
           // Reply empty or not — preserve thinking bar, don't fall through to full re-render
           uiModule.scrollHistory();
           return;
         }
 
-        const prevLen = contentEl._prevTextLen || 0;
         // If thinking is still streaming (unclosed <think>), show indicator instead of raw text
         if (markdownModule.hasUnclosedThinkTag && markdownModule.hasUnclosedThinkTag(dt)) {
           const thinkStart = dt.search(/<(?:think(?:ing)?|thought)(?:\s+[^>]*)?>|<\|channel>thought/i);
@@ -1203,65 +1233,25 @@ import createResearchSynapse from './researchSynapse.js';
           contentEl.innerHTML =
             '<div class="thinking-section"><div class="thinking-header"><div class="thinking-header-left">Thinking' +
             (lines > 1 ? ` (${lines} lines)` : '') + '</div></div></div>';
-          contentEl._prevTextLen = 0;
+          // The stream renderer self-heals when it next sees this overwritten
+          // container (streamingRenderer.js), so no explicit reset is needed here.
           uiModule.scrollHistory();
           return;
         }
-        const html = markdownModule.processWithThinking(markdownModule.squashOutsideCode(dt));
 
-        // Smooth expand only for regular chat text (not thinking/agent blocks)
-        const _hasThinking = html.includes('thinking-section');
-        const _isAgentRound = roundHolder !== holder;
-        if (!_hasThinking && !_isAgentRound) {
-          // Render into offscreen clone to measure new height before swapping
-          if (!_measureDiv) {
-            _measureDiv = document.createElement('div');
-            _measureDiv.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;z-index:-1;';
-          }
-          _measureDiv.style.width = contentEl.offsetWidth + 'px';
-          _measureDiv.className = contentEl.className;
-          _measureDiv.innerHTML = html;
-          contentEl.parentNode.appendChild(_measureDiv);
-          const measuredH = _measureDiv.offsetHeight;
-          _measureDiv.remove();
-          const curMin = parseFloat(contentEl.style.minHeight) || 0;
-          contentEl.style.minHeight = Math.max(curMin, measuredH) + 'px';
-        } else {
-          contentEl.style.minHeight = '';
-        }
-
-        contentEl.innerHTML = html;
-        _fadeNewTokens(contentEl, prevLen);
-        contentEl._prevTextLen = contentEl.textContent.length;
-        if (window.hljs) contentEl.querySelectorAll('pre code').forEach((b) => window.hljs.highlightElement(b));
+        // Incremental streaming render: freeze finalized blocks, re-render only the
+        // growing tail, and highlight each code block once on completion. This is
+        // what keeps code-block hover buttons from flickering and avoids the O(N^2)
+        // re-parse/re-highlight of the whole message on every token.
+        // See streamingRenderer.js / streamingSegmenter.js.
+        const renderer = contentEl._streamRenderer ||
+          (contentEl._streamRenderer = createStreamRenderer(contentEl, {
+            render: (t) => markdownModule.processWithThinking(markdownModule.squashOutsideCode(t)),
+            hljs: window.hljs,
+          }));
+        renderer.update(dt);
         uiModule.scrollHistory();
       };
-
-      // Walk text nodes, skip past `prevLen` characters of old text,
-      // wrap everything after that in <span class="token-new"> for fade-in
-      function _fadeNewTokens(container, prevLen) {
-        if (!prevLen) return; // First chunk — skip, whole msg already has entrance anim
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-        let charCount = 0;
-        const toWrap = [];
-        while (walker.nextNode()) {
-          const node = walker.currentNode;
-          const len = node.textContent.length;
-          if (charCount + len <= prevLen) { charCount += len; continue; }
-          const splitAt = charCount < prevLen ? prevLen - charCount : 0;
-          toWrap.push({ node, splitAt });
-          charCount += len;
-        }
-        for (const { node, splitAt } of toWrap) {
-          const parent = node.parentNode;
-          if (!parent || parent.closest('pre, .think-content')) continue;
-          const target = splitAt > 0 ? node.splitText(splitAt) : node;
-          const span = document.createElement('span');
-          span.className = 'token-new';
-          parent.replaceChild(span, target);
-          span.appendChild(target);
-        }
-      }
 
       let _nextIsError = false;
       let _streamSawDone = false;
@@ -1803,21 +1793,16 @@ import createResearchSynapse from './researchSynapse.js';
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
                   if (roleEl) {
-                    const tsSpan = roleEl.querySelector('.role-timestamp');
-                    var _modelLabel = _shortModel(json.model);
-                    if (json.suffix) {
-                      _modelLabel += ' (' + json.suffix + ')';
-                      holder._roleSuffix = json.suffix;
-                    }
+                    holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
+                    holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                    if (json.suffix) holder._roleSuffix = json.suffix;
                     // Prepend character name if sent by server or set locally
                     var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
-                    if (_charName) {
-                      _modelLabel = _charName;
-                      holder._characterName = _charName;
-                    }
-                    roleEl.textContent = _modelLabel + ' ';
-                    _applyModelColor(roleEl, json.model);
-                    if (tsSpan) roleEl.appendChild(tsSpan);
+                    if (_charName) holder._characterName = _charName;
+                    _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
+                      suffix: holder._roleSuffix,
+                      characterName: holder._characterName,
+                    });
                   }
                 }
               } else if (json.type === 'fallback') {
@@ -1837,6 +1822,14 @@ import createResearchSynapse from './researchSynapse.js';
                         (json.reason ? ': ' + json.reason : '') + ' — answered by ' + (json.answered_by || '');
                       _applyModelColor(_rEl, json.answered_by);
                       if (_tsS) _rEl.appendChild(_tsS);
+                      holder._requestedModel = json.selected_model || holder._requestedModel || modelName;
+                      const _hasResolvedActual = holder._actualModel && !_sameModelName(holder._actualModel, holder._requestedModel);
+                      holder._actualModel = _hasResolvedActual ? holder._actualModel : (json.answered_by || holder._actualModel || holder._requestedModel);
+                      _setRoleModelLabel(_rEl, holder._requestedModel, holder._actualModel, {
+                        suffix: holder._roleSuffix,
+                        characterName: holder._characterName,
+                        reason: json.reason,
+                      });
                     }
                   }
                 }
@@ -1877,6 +1870,15 @@ import createResearchSynapse from './researchSynapse.js';
                   note.appendChild(contBtn);
                   _chatBox.appendChild(note);
                   try { note.scrollIntoView({ block: 'end', behavior: 'smooth' }); } catch (_) { uiModule.scrollHistory && uiModule.scrollHistory(); }
+                }
+              } else if (json.type === 'model_actual') {
+                if (!_isBg && holder) {
+                  holder._requestedModel = json.requested_model || holder._requestedModel || modelName;
+                  holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
+                  _setRoleModelLabel(holder.querySelector('.role'), holder._requestedModel, holder._actualModel, {
+                    suffix: holder._roleSuffix,
+                    characterName: holder._characterName,
+                  });
                 }
               } else if (json.type === 'attachments') {
                 if (_isBg) continue;
@@ -1955,6 +1957,10 @@ import createResearchSynapse from './researchSynapse.js';
                 }
               } else if (json.type === 'metrics') {
                 metrics = json.data;
+                if (!_isBg && holder && metrics) {
+                  holder._requestedModel = metrics.requested_model || holder._requestedModel || modelName;
+                  holder._actualModel = metrics.model || holder._actualModel || holder._requestedModel;
+                }
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
                   if (bgM) bgM.metrics = json.data;
@@ -2261,6 +2267,159 @@ import createResearchSynapse from './researchSynapse.js';
                 if (_isBg) continue;
                 chatStream.handleUIControl(json.data || {});
 
+              } else if (json.type === 'ask_user') {
+                if (_isBg) continue;
+                // The agent posed a multiple-choice question; the turn has ended.
+                // Render clickable options at the bottom of the history. The
+                // user's pick is sent as the next message and the agent resumes.
+                _cancelThinkingTimer();
+                _removeThinkingSpinner();
+                const _aq = json.data || {};
+                const _opts = Array.isArray(_aq.options) ? _aq.options : [];
+                if (_aq.question && _opts.length) {
+                  const chatBox = document.getElementById('chat-history');
+                  // Drop any prior unanswered card so only the latest shows.
+                  chatBox.querySelectorAll('.ask-user-card').forEach(n => n.remove());
+                  const card = document.createElement('div');
+                  card.className = 'ask-user-card';
+                  const multi = !!_aq.multi;
+                  // Group the choices for assistive tech and label the group with
+                  // the question (set below); make the card focusable so it can be
+                  // moved to when it appears.
+                  card.setAttribute('role', 'group');
+                  card.tabIndex = -1;
+                  // Render any emoji in agent-supplied text through the app's
+                  // pipeline: escape, then svgify to monochrome theme-tinted
+                  // glyphs (project rule: never colorful emoji; respects the
+                  // "Text-only Emojis" setting like the rest of the chat).
+                  const _emo = (s) => svgifyEmoji(uiModule.esc(String(s)));
+
+                  // Header row holds the close (×) to dismiss the affordances and
+                  // just type a reply instead.
+                  const head = document.createElement('div');
+                  head.className = 'ask-user-head';
+                  const closeBtn = document.createElement('button');
+                  closeBtn.type = 'button';
+                  closeBtn.className = 'modal-close ask-user-close';
+                  closeBtn.setAttribute('aria-label', 'Dismiss question');
+                  closeBtn.textContent = '×';
+                  closeBtn.addEventListener('click', () => {
+                    card.remove();
+                    const mi = uiModule.el('message');
+                    if (mi) mi.focus();
+                  });
+                  head.appendChild(closeBtn);
+                  card.appendChild(head);
+
+                  // Render the question inside the card so it's self-contained:
+                  // some models call ask_user without first narrating the question
+                  // as assistant text, in which case the card would otherwise show
+                  // bare options with no prompt.
+                  if (_aq.question) {
+                    const q = document.createElement('div');
+                    q.className = 'ask-user-question';
+                    q.id = `ask-user-q-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
+                    q.innerHTML = _emo(_aq.question);
+                    card.appendChild(q);
+                    // Label the choice group with the question for screen readers.
+                    card.setAttribute('aria-labelledby', q.id);
+                  } else {
+                    card.setAttribute('aria-label', 'Question from the assistant');
+                  }
+
+                  const list = document.createElement('div');
+                  list.className = 'ask-user-options';
+                  card.appendChild(list);
+
+                  const _send = (text) => {
+                    if (!text) return;
+                    // Remove the card once answered — the choice is sent as a
+                    // normal user message (and the question persists as the
+                    // assistant text above), so the affordances are spent.
+                    card.remove();
+                    const mi = uiModule.el('message');
+                    if (mi) mi.value = text;
+                    const sb = document.querySelector('.send-btn');
+                    if (sb) sb.click();
+                  };
+
+                  _opts.forEach((opt, i) => {
+                    const label = (opt && opt.label) ? String(opt.label) : String(opt || '');
+                    if (!label) return;
+                    const descr = (opt && opt.description) ? String(opt.description) : '';
+                    const row = document.createElement(multi ? 'label' : 'button');
+                    row.className = 'ask-user-option';
+                    if (multi) {
+                      const cb = document.createElement('input');
+                      cb.type = 'checkbox';
+                      cb.value = label;
+                      row.appendChild(cb);
+                    }
+                    const txt = document.createElement('span');
+                    txt.className = 'ask-user-option-label';
+                    txt.innerHTML = _emo(label);
+                    row.appendChild(txt);
+                    if (descr) {
+                      const d = document.createElement('span');
+                      d.className = 'ask-user-option-desc';
+                      d.innerHTML = _emo(descr);
+                      row.appendChild(d);
+                    }
+                    if (!multi) {
+                      row.type = 'button';
+                      row.addEventListener('click', () => _send(label));
+                    }
+                    list.appendChild(row);
+                  });
+
+                  // Free-text "Other" — type a custom answer + send (Enter or →).
+                  const other = document.createElement('div');
+                  other.className = 'ask-user-other';
+                  const otherInput = document.createElement('input');
+                  otherInput.type = 'text';
+                  otherInput.className = 'styled-prompt-input ask-user-other-input';
+                  otherInput.placeholder = multi ? 'Other (added to selection)…' : 'Other… (type your own answer)';
+                  otherInput.setAttribute('aria-label', multi ? 'Add a custom option' : 'Type a custom answer');
+                  const otherSend = document.createElement('button');
+                  otherSend.type = 'button';
+                  otherSend.className = 'confirm-btn confirm-btn-primary ask-user-other-send';
+                  otherSend.setAttribute('aria-label', 'Send answer');
+                  otherSend.textContent = multi ? 'Send selection' : 'Send';
+                  const _submit = () => {
+                    const free = otherInput.value.trim();
+                    if (multi) {
+                      const picked = Array.from(card.querySelectorAll('.ask-user-option input:checked')).map(c => c.value);
+                      if (free) picked.push(free);
+                      if (picked.length) _send(picked.join(', '));
+                    } else if (free) {
+                      _send(free);
+                    }
+                  };
+                  otherSend.addEventListener('click', _submit);
+                  otherInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+                      e.preventDefault();
+                      _submit();
+                    }
+                  });
+                  other.appendChild(otherInput);
+                  other.appendChild(otherSend);
+                  card.appendChild(other);
+
+                  chatBox.appendChild(card);
+                  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  // Move focus to the card so keyboard/screen-reader users land on
+                  // the question + choices when it appears.
+                  try { card.focus(); } catch (_) {}
+                }
+
+              } else if (json.type === 'plan_update') {
+                if (_isBg) continue;
+                // Agent wrote back to the plan (ticked a step / revised). Update
+                // the stored plan + live-refresh the docked plan window.
+                const _pu = (json.data && json.data.plan) ? json.data.plan : '';
+                if (_pu) _setStoredPlan(_pu);
+
               } else if (json.type === 'agent_step') {
                 if (_isBg) continue;
                 _cancelThinkingTimer();
@@ -2284,8 +2443,10 @@ import createResearchSynapse from './researchSynapse.js';
                 const newRole = document.createElement('div');
                 newRole.className = 'role';
                 const metaS = sessionModule.getSessions().find(s => s.id === streamSessionId);
-                newRole.textContent = _shortModel(metaS?.model) || '';
-                _applyModelColor(newRole, metaS?.model);
+                const _roundRequested = holder?._requestedModel || metaS?.model;
+                const _roundActual = holder?._actualModel || _roundRequested;
+                newRole.textContent = _modelRouteLabel(_roundRequested, _roundActual) || '';
+                _applyModelColor(newRole, _roundActual);
                 newWrap.appendChild(newRole);
                 const newBody = document.createElement('div');
                 newBody.className = 'body';
@@ -2391,18 +2552,16 @@ import createResearchSynapse from './researchSynapse.js';
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-        finalModelName = _shortModel(metrics?.model || finalMeta?.model);
-        // Preserve suffix (e.g. "Research") if set by model_info event
-        if (holder._roleSuffix) finalModelName += ' (' + holder._roleSuffix + ')';
+        const _finalActualModel = metrics?.model || holder._actualModel || finalMeta?.model;
+        const _finalRequestedModel = metrics?.requested_model || holder._requestedModel || finalMeta?.model || _finalActualModel;
         // Prepend character name if set
         var _charNameFinal = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
-        if (_charNameFinal) finalModelName = _charNameFinal;
         const roleEl = holder.querySelector('.role');
         if (roleEl) {
-          const tsSpan = roleEl.querySelector('.role-timestamp');
-          roleEl.textContent = finalModelName + ' ';
-          _applyModelColor(roleEl, metrics?.model || finalMeta?.model);
-          if (tsSpan) roleEl.appendChild(tsSpan);
+          _setRoleModelLabel(roleEl, _finalRequestedModel, _finalActualModel, {
+            suffix: holder._roleSuffix,
+            characterName: _charNameFinal || holder._characterName,
+          });
         }
         holder.dataset.raw = accumulated;
 

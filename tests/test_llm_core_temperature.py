@@ -75,6 +75,28 @@ def test_normal_model_payload_keeps_temperature_above_one(monkeypatch):
     assert payload["temperature"] == 1.2
 
 
+def test_chatgpt_subscription_payload_uses_max_output_tokens():
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-5.1-codex",
+        [{"role": "user", "content": "Say OK"}],
+        temperature=0.2,
+        max_tokens=37,
+    )
+
+    assert payload["max_output_tokens"] == 37
+
+
+def test_chatgpt_subscription_payload_omits_empty_max_output_tokens():
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-5.1-codex",
+        [{"role": "user", "content": "Say OK"}],
+        temperature=0.2,
+        max_tokens=0,
+    )
+
+    assert "max_output_tokens" not in payload
+
+
 def _anthropic_payload(temperature):
     return llm_core._build_anthropic_payload(
         "claude-3-5-sonnet",

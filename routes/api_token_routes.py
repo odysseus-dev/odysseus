@@ -25,10 +25,13 @@ ALLOWED_SCOPES = {
     "calendar:write",
     "memory:read",
     "memory:write",
+    "cookbook:read",
+    "cookbook:launch",
 }
 TOKEN_PROFILES = {
     "chat": ["chat"],
     "codex_todos": ["todos:read", "todos:write"],
+    "codex_documents": ["documents:read", "documents:write"],
     "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
 }
 
@@ -155,22 +158,30 @@ def setup_api_token_routes() -> APIRouter:
             payload = await request.json()
         except Exception:
             payload = {}
-        scope_list = _normalize_scopes(payload.get("scopes"))
-        scopes_value = ",".join(scope_list)
         with get_db_session() as db:
             token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
             if not token:
                 raise HTTPException(404, "Token not found")
             if isinstance(payload.get("name"), str) and payload["name"].strip():
                 token.name = payload["name"].strip()[:MAX_NAME_LEN]
-            token.scopes = scopes_value
+            # Only touch scopes when the caller actually sent them. A partial
+            # update such as a rename ({"name": ...} with no "scopes" key) must
+            # not silently reset the token to the default scope — that dropped
+            # every previously granted scope.
+            if "scopes" in payload:
+                token.scopes = ",".join(_normalize_scopes(payload.get("scopes")))
             db.add(token)
+            current_scopes = [
+                s.strip()
+                for s in (getattr(token, "scopes", "") or DEFAULT_SCOPES).split(",")
+                if s.strip()
+            ]
             response = {
                 "id": token_id,
                 "name": getattr(token, "name", ""),
                 "owner": getattr(token, "owner", None),
                 "token_prefix": getattr(token, "token_prefix", ""),
-                "scopes": scope_list,
+                "scopes": current_scopes,
             }
         _invalidate_cache(request)
         return response

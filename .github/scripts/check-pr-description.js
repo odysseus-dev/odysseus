@@ -103,14 +103,21 @@ module.exports = async ({ github, context, core }) => {
 
   async function swapLabel(num, add, remove) {
     if (await labelExists(add)) {
-      await github.rest.issues.addLabels({ owner, repo, issue_number: num, labels: [add] });
+      try {
+        await github.rest.issues.addLabels({ owner, repo, issue_number: num, labels: [add] });
+      } catch (e) {
+        // Fail soft on a token that can't write labels so a label permission
+        // problem never masks the actual description verdict.
+        if (e.status !== 403) throw e;
+        core.warning(`Could not add "${add}" — token lacks label write here; skipping.`);
+      }
     } else {
       core.warning(`Label "${add}" does not exist in the repo — skipping. Create it once to enable labelling.`);
     }
     try {
       await github.rest.issues.removeLabel({ owner, repo, issue_number: num, name: remove });
     } catch (e) {
-      if (e.status !== 404 && e.status !== 410) throw e;
+      if (e.status !== 404 && e.status !== 410 && e.status !== 403) throw e;
     }
   }
 

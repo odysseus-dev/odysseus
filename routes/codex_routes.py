@@ -15,8 +15,9 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from src.auth_helpers import require_user
+from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
+from src.constants import COOKBOOK_STATE_FILE
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -41,7 +42,9 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
     the scope-gated owner (not the "api" pseudo-user the bearer middleware sets).
     Restores the original value when done. Works for sync and async handlers."""
     orig = getattr(request.state, "current_user", None)
+    orig_api_token = getattr(request.state, "api_token", None)
     request.state.current_user = owner
+    request.state.api_token = False
     try:
         result = fn(*args, **kwargs)
         if asyncio.iscoroutine(result):
@@ -49,6 +52,13 @@ async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
         return result
     finally:
         request.state.current_user = orig
+        if orig_api_token is None:
+            try:
+                delattr(request.state, "api_token")
+            except AttributeError:
+                pass
+        else:
+            request.state.api_token = orig_api_token
 
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
@@ -58,6 +68,20 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
         if not scopes.intersection(allowed):
             required = " or ".join(sorted(allowed))
             raise HTTPException(403, f"API token missing required scope: {required}")
+        owner = getattr(request.state, "api_token_owner", None)
+        if not owner:
+            raise HTTPException(403, "API token has no owner")
+        return owner
+    return require_user(request)
+
+
+def _scope_owner_all(request: Request, required: set[str]) -> str:
+    """Return owner only when an API token has every required scope."""
+    if getattr(request.state, "api_token", False):
+        scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+        missing = required - scopes
+        if missing:
+            raise HTTPException(403, f"API token missing required scope: {' and '.join(sorted(missing))}")
         owner = getattr(request.state, "api_token_owner", None)
         if not owner:
             raise HTTPException(403, "API token has no owner")
@@ -112,7 +136,7 @@ def setup_codex_routes(
                     "read": scoped(EMAIL_READ_SCOPES),
                     "draft": scoped(EMAIL_DRAFT_SCOPES),
                     "send": scoped(EMAIL_SEND_SCOPES),
-                    "actions": ["list", "read", "draft", "send"],
+                    "actions": ["list", "read", "draft_document", "draft", "send"],
                 },
                 "memory": {
                     "read": scoped(MEMORY_READ_SCOPES),
@@ -146,7 +170,7 @@ def setup_codex_routes(
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
-        require_user(request)
+        require_authenticated_request(request)
         root = Path(__file__).resolve().parent.parent / "integrations" / "codex"
         if not root.exists():
             raise HTTPException(404, "Codex plugin bundle not found")
@@ -235,6 +259,56 @@ def setup_codex_routes(
     # ── Email draft + send ────────────────────────────────────────────────
     # Both handlers in routes/email_routes.py already accept `owner=` via
     # FastAPI Depends, so we call them directly without patching state.
+
+    def _email_draft_document_content(body: dict[str, Any]) -> str:
+        def clean(v: Any) -> str:
+            if isinstance(v, list):
+                return ", ".join(str(x).strip() for x in v if str(x).strip())
+            return str(v or "").strip()
+
+        to = clean(body.get("to"))
+        cc = clean(body.get("cc"))
+        bcc = clean(body.get("bcc"))
+        subject = clean(body.get("subject"))
+        in_reply_to = clean(body.get("in_reply_to"))
+        references = clean(body.get("references"))
+        body_text = str(body.get("body") or body.get("body_html") or "").strip()
+        lines = [
+            f"To: {to}",
+        ]
+        if cc:
+            lines.append(f"Cc: {cc}")
+        if bcc:
+            lines.append(f"Bcc: {bcc}")
+        lines.append(f"Subject: {subject}")
+        if in_reply_to:
+            lines.append(f"In-Reply-To: {in_reply_to}")
+        if references:
+            lines.append(f"References: {references}")
+        lines.extend(["---", body_text])
+        return "\n".join(lines).rstrip() + "\n"
+
+    @router.post("/emails/draft-document")
+    async def codex_email_draft_document(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        owner = _scope_owner_all(request, {"email:draft", "documents:write"})
+        if documents_create_endpoint is None:
+            raise HTTPException(503, "Documents integration is not available")
+        from routes.document_routes import DocumentCreate
+
+        subject = str(body.get("subject") or "Email draft").strip() or "Email draft"
+        title = str(body.get("title") or subject).strip() or "Email draft"
+        req = DocumentCreate(
+            session_id=body.get("session_id"),
+            title=title,
+            language="email",
+            content=_email_draft_document_content(body),
+        )
+        result = await _as_owner(request, owner, documents_create_endpoint, request, req)
+        if isinstance(result, dict):
+            result = dict(result)
+            result["draft_type"] = "document"
+            result["send_required_confirmation"] = True
+        return result
 
     @router.post("/emails/draft")
     async def codex_email_draft(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
@@ -415,8 +489,8 @@ def setup_codex_routes(
 
     def _read_cookbook_state() -> dict:
         from pathlib import Path as _Path
-        import os as _os, json as _json
-        p = _Path(_os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+        import json as _json
+        p = _Path(COOKBOOK_STATE_FILE)
         if not p.exists():
             return {}
         try:
@@ -724,7 +798,7 @@ def setup_codex_routes(
         import time as _t, json as _json
         from core.atomic_io import atomic_write_json
         from pathlib import Path as _Path
-        cookbook_state_path = _Path("/app/data/cookbook_state.json")
+        cookbook_state_path = _Path(COOKBOOK_STATE_FILE)
         try:
             state = _json.loads(cookbook_state_path.read_text(encoding="utf-8"))
         except Exception:
@@ -762,7 +836,7 @@ def setup_claude_routes() -> APIRouter:
 
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
-        require_user(request)
+        require_authenticated_request(request)
         # Only ship the skills/ subtree so extracting at ~/.claude/ doesn't dump
         # README.md or other bundle metadata into the user's claude config dir.
         skills_root = Path(__file__).resolve().parent.parent / "integrations" / "claude" / "skills"

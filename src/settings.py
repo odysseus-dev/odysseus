@@ -141,10 +141,17 @@ DEFAULT_SETTINGS = {
     # library can grow beyond this; cleanup/retirement is an explicit review flow.
     "skill_max_injected": 3,
     # Reminders
-    "reminder_channel": "browser",   # "browser" | "email" | "ntfy"
+    "reminder_channel": "browser",   # "browser" | "email" | "ntfy" | "webhook"
     "reminder_llm_synthesis": False,
     "reminder_ntfy_topic": "Reminders",
     "reminder_email_to": "",
+    # Generic outbound webhook channel: pick any saved Integration as the
+    # target and supply a JSON payload template. Use {{title}} and {{message}}
+    # as placeholders — they are JSON-escaped before substitution, so the
+    # rendered string is always valid JSON. Works with Discord, Slack, Teams,
+    # ntfy (JSON mode), or any service that accepts a POST with a JSON body.
+    "reminder_webhook_integration_id": "",
+    "reminder_webhook_payload_template": "",
     # Email triage scanner rules. Running/paused state and schedule live in
     # Tasks via the built-in `check_email_urgency` task.
     "urgent_email_prompt": (

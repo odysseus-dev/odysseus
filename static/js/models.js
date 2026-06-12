@@ -178,7 +178,14 @@ export async function refreshModels(force = false) {
     _loadingSpinner.start();
     try {
       if (!_fetchInflight) {
-        _fetchInflight = fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
+        // Pass ?refresh=true on forced refreshes so the BACKEND's 30s
+        // per-user cache also gets bypassed. Without this, `force=true`
+        // only clears the frontend cache and the same stale list comes
+        // back — newly-served endpoints don't appear until the cache
+        // ages out. (Bug repro: serve a model, picker is empty for ~30s
+        // even though the endpoint is in the DB and online.)
+        const _url = `${API_BASE}/api/models` + (force ? '?refresh=true' : '');
+        _fetchInflight = fetch(_url, { credentials: 'same-origin' })
           .then(async (res) => {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             return res.json();
