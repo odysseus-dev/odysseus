@@ -3873,9 +3873,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   }
 
   /**
-   * Resend a user message — truncates history to that point and resubmits.
+   * Resend a user message. Normal resend appends a fresh copy at the end of
+   * the current thread; regenerate flows can opt into replacing from here.
    */
-  export async function resendUserMessage(userMsgElement) {
+  export async function resendUserMessage(userMsgElement, opts = {}) {
+    const replaceFromHere = Boolean(opts && opts.replaceFromHere);
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const msgIndex = allMsgs.indexOf(userMsgElement);
@@ -3921,25 +3923,28 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
-    // Truncate backend to keep everything before this user message
-    const keepCount = msgIndex;
     try {
-      await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount })
-      });
+      if (replaceFromHere) {
+        // Regenerate flows intentionally trim history to this point before
+        // resubmitting. The plain "Resend message" action must not do this.
+        const keepCount = msgIndex;
+        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keep_count: keepCount })
+        });
 
-      // Drop the AI replies after the user message but KEEP the user bubble
-      // itself (so its photo stays visible). Then suppress the new user
-      // bubble that send would otherwise add — same pattern as regenerate.
-      let sibling = userMsgElement.nextSibling;
-      while (sibling) {
-        const next = sibling.nextSibling;
-        sibling.remove();
-        sibling = next;
+        // Drop the AI replies after the user message but KEEP the user bubble
+        // itself (so its photo stays visible). Then suppress the new user
+        // bubble that send would otherwise add — same pattern as regenerate.
+        let sibling = userMsgElement.nextSibling;
+        while (sibling) {
+          const next = sibling.nextSibling;
+          sibling.remove();
+          sibling = next;
+        }
+        _hideUserBubble = true;
       }
-      _hideUserBubble = true;
       _pendingRegenAttachments = _ids;
 
       // Resubmit
