@@ -57,8 +57,30 @@ limits spuriously OOM numpy/pandas; real-memory capping belongs in Tier B's cont
 **Does NOT close:** network egress, absolute-path FS reads, bridge reachability. Honest
 ceiling — Tier A is necessary but not sufficient.
 
-### Tier B — Sandbox-runner sidecar container *(the real fix, ~1-2 days)*
-A second Compose service the agent's code runs *in*, isolated from the app:
+### Tier B — Sandbox-runner sidecar container  ✅ IMPLEMENTED
+Built as `docker/sandbox/` (Dockerfile + `runner.py`), the `sandbox` Compose service, the
+`src/sandbox_client.py` dispatch client, and the wiring in `tool_execution.py`. Tests:
+`tests/test_sandbox_runner.py` (end-to-end over a real Unix socket — execution, exit codes,
+timeout-kill, **secret isolation**, fail-closed). When `SANDBOX_RUNNER_SOCK` is set (default in
+compose), the agent's `bash`/`python` run **in the isolated container**; unset it to fall back
+to in-container Tier-A-hardened local execution. Key implementation decisions:
+
+- **App↔runner IPC is a Unix socket on a shared volume**, not a network call — because
+  `network_mode:none` leaves the runner with no network interfaces. Filesystem IPC works
+  regardless. (`sandbox-ipc` volume mounted in both containers.)
+- **Fail-closed**: if the runner is configured but unreachable, `bash`/`python` return an
+  error rather than silently running unconfined. `SANDBOX_FALLBACK_LOCAL=true` opts into
+  resilience-over-containment.
+- **Functional trade-off (by design)**: the sandbox sees **only its tmpfs `/work`** — not the
+  app's `data/`, workspace, or network. So `python` can't read `/app/data/...` directly; the
+  agent uses the (path-confined) `read_file` tool to fetch content and passes it inline. This
+  is the FS isolation working as intended.
+- **Runner runs as root inside an otherwise-empty, capability-stripped, network-less,
+  read-only container** (so it can create the socket in the root-owned shared volume). With
+  `cap_drop:ALL` + `no-new-privileges` + no mounts + no network, root here has no reach. A
+  later hardening can move to non-root with pre-chowned volume ownership.
+
+Original design (as built):
 
 ```yaml
   sandbox:

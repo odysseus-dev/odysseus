@@ -16,6 +16,9 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ./data/local:/app/.local:z
+      # Tier-B sandbox IPC: the runner's Unix socket lives here, shared with the
+      # sandbox container. The app dispatches bash/python over it.
+      - sandbox-ipc:/app/sandbox-ipc
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
@@ -62,11 +65,42 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Tier-B: dispatch the agent's bash/python into the isolated sandbox runner.
+      # Unset to fall back to in-container (Tier-A-hardened) local execution.
+      - SANDBOX_RUNNER_SOCK=${SANDBOX_RUNNER_SOCK:-/app/sandbox-ipc/runner.sock}
+      - SANDBOX_FALLBACK_LOCAL=${SANDBOX_FALLBACK_LOCAL:-false}
     depends_on:
       searxng:
         condition: service_healthy
       chromadb:
         condition: service_started
+      sandbox:
+        condition: service_started
+    restart: unless-stopped
+
+  # Tier-B bash/python sandbox runner. Executes the agent's shell/python tool
+  # calls in hard isolation: NO network, read-only rootfs, tmpfs scratch, all
+  # capabilities dropped, no-new-privileges, and NO data/secret/.ssh mounts — so
+  # a prompt-injection that reaches the shell cannot exfiltrate, reach internal
+  # services / the ToufHealth bridge, or read the data volume. App↔runner IPC is
+  # a Unix socket on the shared sandbox-ipc volume (works with no network).
+  # See docs/security/bash-python-sandbox-scoping.md (Tier B).
+  sandbox:
+    build: ./docker/sandbox
+    network_mode: "none"
+    read_only: true
+    tmpfs:
+      - /work:size=512m,mode=1777
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - sandbox-ipc:/ipc
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    mem_limit: 1g
+    cpus: "1.0"
     restart: unless-stopped
 
   chromadb:
@@ -144,3 +178,4 @@ volumes:
   searxng-data:
   chromadb-data:
   ntfy-cache:
+  sandbox-ipc:

@@ -138,10 +138,15 @@ regressions.
 - **R-1 — No shell/filesystem sandbox** (Known Gap #1). The single strongest residual risk:
   a successful injection that reaches `bash`/`python` has unfiltered egress and full FS
   write. Fences raise the bar but a determined injection that the model still obeys has no
-  second line of defense. **Tier A landed** (env-scrub + scratch workdir + rlimits — see F-7);
-  **Tier B (network/FS isolation via a sidecar runner) is still pending** — egress, SSRF to
-  internal services, the bridge reach, and absolute-path FS access remain open until then.
-  Full plan in `bash-python-sandbox-scoping.md`. Sandbox proposal upstream: #1058.
+  second line of defense. **Tier A landed** (env-scrub + scratch workdir + rlimits — see F-7).
+  **Tier B landed** (`bash-python-sandbox-scoping.md`): `bash`/`python` now dispatch into an
+  isolated `sandbox` container (`network_mode:none`, read-only rootfs, tmpfs scratch,
+  `cap_drop:ALL`, no data/secret/.ssh mounts) over a Unix socket, fail-closed. This closes
+  egress, SSRF to internal services, the ToufHealth-bridge reach, and data-volume FS access
+  for the shell tools — when `SANDBOX_RUNNER_SOCK` is set (default in compose). Residual:
+  the runner runs as root-in-empty-container (non-root is a future hardening), and Tier C
+  (egress allowlist) is only needed if a workflow requires internet from sandboxed code.
+  Sandbox proposal upstream: #1058.
 
 - **F-7 — `bash`/`python` inherited the full container env** *(verified-in-code · FIXED, Tier A)*.
   `tool_execution.py` used to pass `**os.environ` to the subprocess, so an injected `bash`
@@ -167,8 +172,16 @@ regressions.
 ## 6. How to re-verify
 
 ```bash
-# Unit tests for the hardening (no heavy deps):
-PYTHONPATH=. python -m pytest tests/test_untrusted_tool_output.py tests/test_ledger_write_protection.py -q
+# Unit + end-to-end tests for the hardening (no heavy deps; Tier-B runner spawns locally):
+PYTHONPATH=. python -m pytest \
+  tests/test_untrusted_tool_output.py tests/test_ledger_write_protection.py \
+  tests/test_bash_python_sandbox_tierA.py tests/test_sandbox_runner.py -q
 # Compile check (CI parity):
-python -m compileall -q src/prompt_security.py src/agent_loop.py src/chat_processor.py src/tool_execution.py
+python -m compileall -q src/prompt_security.py src/agent_loop.py src/chat_processor.py \
+  src/tool_execution.py src/sandbox_client.py docker/sandbox/runner.py
+# Tier-B Docker acceptance (after `docker compose up -d --build`):
+#   docker compose exec odysseus python -c "import asyncio,sys; sys.path.insert(0,'.'); \
+#     from src.sandbox_client import run_in_sandbox; \
+#     print(asyncio.run(run_in_sandbox('bash','curl -m5 https://example.com || echo BLOCKED')))"
+#   -> expect BLOCKED (network_mode:none); `cat /app/data/...` -> No such file (not mounted)
 ```

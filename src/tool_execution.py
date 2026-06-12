@@ -20,6 +20,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES
+from src.sandbox_client import run_in_sandbox, sandbox_enabled, SandboxUnavailable
 
 # Persistent working directory for agent subprocesses.
 # Resolves to <repo_root>/data, which is the bind-mounted volume in Docker
@@ -126,6 +127,31 @@ def _sandbox_preexec() -> None:
 
 # preexec_fn is POSIX-only; passing a non-None value on Windows raises ValueError.
 _SANDBOX_PREEXEC = _sandbox_preexec if os.name == "posix" else None
+
+# Tier-B: when the sandbox runner is reachable but errors, fail CLOSED by default
+# — running unconfined locally would defeat the isolation. Set
+# SANDBOX_FALLBACK_LOCAL=true to prefer resilience over containment.
+_SANDBOX_FALLBACK_LOCAL = os.getenv("SANDBOX_FALLBACK_LOCAL", "false").lower() in ("1", "true", "yes")
+
+
+def _format_sandbox_result(tool: str, timeout: int, res: Dict[str, Any]) -> Dict[str, Any]:
+    """Map the runner's {stdout,stderr,exit_code,timed_out,error} to the same
+    result shapes the local bash/python path returns."""
+    if res.get("error"):
+        return {"error": f"{tool}: sandbox: {res['error']}", "exit_code": res.get("exit_code", 1)}
+    if res.get("timed_out"):
+        return {
+            "error": f"{tool}: timed out after {timeout}s — process killed",
+            "exit_code": 124,
+            "stdout": _truncate(res.get("stdout", ""), MAX_OUTPUT_CHARS),
+            "stderr": _truncate(res.get("stderr", ""), MAX_OUTPUT_CHARS),
+        }
+    output = (res.get("stdout") or "").rstrip()
+    err = (res.get("stderr") or "").rstrip()
+    if err:
+        output = (output + "\nSTDERR: " + err).strip() if output else "STDERR: " + err
+    output = _truncate(output, MAX_OUTPUT_CHARS)
+    return {"output": output or "(no output)", "exit_code": res.get("exit_code") or 0}
 
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
@@ -820,6 +846,16 @@ async def _direct_fallback(
 
     try:
         if tool == "bash":
+            if sandbox_enabled():
+                try:
+                    res = await run_in_sandbox("bash", content, timeout=DEFAULT_BASH_TIMEOUT)
+                    return _format_sandbox_result("bash", DEFAULT_BASH_TIMEOUT, res)
+                except SandboxUnavailable as e:
+                    if not _SANDBOX_FALLBACK_LOCAL:
+                        return {"error": f"bash: sandbox unavailable ({e}). Refusing to run "
+                                         f"unconfined; set SANDBOX_FALLBACK_LOCAL=true to override.",
+                                "exit_code": 1}
+                    logger.warning("Sandbox unavailable; falling back to local bash: %s", e)
             proc = await asyncio.create_subprocess_shell(
                 content,
                 stdout=asyncio.subprocess.PIPE,
@@ -843,6 +879,16 @@ async def _direct_fallback(
             return {"output": output or "(no output)", "exit_code": rc or 0}
 
         if tool == "python":
+            if sandbox_enabled():
+                try:
+                    res = await run_in_sandbox("python", content, timeout=DEFAULT_PYTHON_TIMEOUT)
+                    return _format_sandbox_result("python", DEFAULT_PYTHON_TIMEOUT, res)
+                except SandboxUnavailable as e:
+                    if not _SANDBOX_FALLBACK_LOCAL:
+                        return {"error": f"python: sandbox unavailable ({e}). Refusing to run "
+                                         f"unconfined; set SANDBOX_FALLBACK_LOCAL=true to override.",
+                                "exit_code": 1}
+                    logger.warning("Sandbox unavailable; falling back to local python: %s", e)
             # Run user code in a subprocess so an infinite loop or crash
             # can't take the whole server down. -I = isolated mode (skip
             # user site, no PYTHONPATH inheritance) for hygiene.
