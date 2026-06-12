@@ -1937,6 +1937,10 @@ async def stream_agent_loop(
     # and can override this list for users who know their setup.
     _model_no_tools = any(kw in _model_lc for kw in (
         "deepseek-r1",
+        # Open-weight GPT-OSS models are commonly served through llama.cpp /
+        # llama-cpp-python. Their names contain "gpt-o", but they do not use
+        # OpenAI's native tool-call channel unless the endpoint opts in.
+        "gpt-oss",
     ))
     # Native Ollama endpoints (/api/chat) handle tool schemas differently from
     # the OpenAI-compat path. Models like gemma4, qwen3.5, ministral respond to
