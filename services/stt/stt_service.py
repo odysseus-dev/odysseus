@@ -62,7 +62,11 @@ class STTService:
         settings = self._load_settings()
         if settings.get("stt_enabled") is False:
             return False
-        return settings["stt_provider"] == "local" and self._get_whisper() is not None
+        # Cheap check only — settings, no model load. The model loads lazily
+        # inside transcribe_array (already offloaded to a worker thread by the
+        # WS route); if it turns out unavailable, transcribe_array returns
+        # None and the route reports the error on finalize.
+        return settings["stt_provider"] == "local"
 
     # ── Local Whisper ──
 

@@ -315,6 +315,7 @@ async function start() {
       onError: (err) => {
         console.warn('Voice dialog: stt stream degraded → single-shot fallback', err);
         _useStream = false;
+        if (_stt) { try { _stt.detach(); } catch (_) {} }
         if (_finalTimer) { clearTimeout(_finalTimer); _finalTimer = null; }
         if (_state === 'transcribing') _fallbackTranscribe(_pendingAudio);
       },
