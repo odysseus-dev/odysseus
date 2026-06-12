@@ -875,22 +875,31 @@ async def _execute_tool_block_impl(
         if mcp:
             _raw = content.strip()
             args = {}
+            _args_error = None
             if _raw.startswith(("{", "[")):
                 try:
                     args = json.loads(_raw)
-                except (json.JSONDecodeError, TypeError):
-                    args = {}
-            if not isinstance(args, dict):
+                except (json.JSONDecodeError, TypeError) as _je:
+                    # The classic tag/body form reaches execution unvalidated
+                    # (only INLINE args are JSON-checked by the parser). A body
+                    # like {account: "work"} silently becoming {} would read
+                    # the DEFAULT mailbox instead of the one the model meant —
+                    # answer with a correctable parse error instead.
+                    _args_error = (
+                        f"'{tool}' arguments are not valid JSON ({_je}). "
+                        'Send a JSON object, e.g. {"account": "work"} — '
+                        "keys and strings need double quotes."
+                    )
+            if _args_error is None and not isinstance(args, dict):
                 # The fence parser accepts JSON arrays as inline args, but
                 # every email tool takes an object. Answer with a correctable
                 # error instead of silently calling with no args (#3966 class).
-                result = {
-                    "error": (
-                        f"'{tool}' arguments must be a JSON object, "
-                        'e.g. {"uid": "..."} — got a JSON array/value instead.'
-                    ),
-                    "exit_code": 1,
-                }
+                _args_error = (
+                    f"'{tool}' arguments must be a JSON object, "
+                    'e.g. {"uid": "..."} — got a JSON array/value instead.'
+                )
+            if _args_error is not None:
+                result = {"error": _args_error, "exit_code": 1}
             else:
                 result = await mcp.call_tool(qualified, args)
         else:

@@ -42,6 +42,24 @@ def test_non_admin_blocklist_covers_email_tools():
     assert BUILTIN_EMAIL_TOOLS <= NON_ADMIN_BLOCKED_TOOLS
 
 
+def test_plan_mode_classifies_every_email_tool():
+    """Every fence-taggable email tool must be EXPLICITLY classified for plan
+    mode: read-only (allowlisted) or mutating (in the static denylist via the
+    fail-closed backstop). Allowed-by-omission is not a classification — it
+    silently flips when schemas/backstop change, and it leaves bare-alias
+    safety depending on the MCP read-only inventory being present."""
+    from src.tool_security import plan_mode_disabled_tools
+
+    denied = plan_mode_disabled_tools()
+    readonly = {"list_email_accounts", "list_emails", "read_email", "search_emails"}
+    for tool in sorted(BUILTIN_EMAIL_TOOLS):
+        if tool in readonly:
+            assert tool in PLAN_MODE_READONLY_TOOLS, f"{tool} must be explicit read-only"
+            assert tool not in denied, f"read-only {tool} must not be denied in plan mode"
+        else:
+            assert tool in denied, f"mutating {tool} missing from the plan-mode denylist"
+
+
 def test_plan_mode_allows_qualified_readonly_email_discovery():
     """list_email_accounts has a native schema, so plan mode's schema-derived
     bare denylist contains it; with the bidirectional alias gate, the bare

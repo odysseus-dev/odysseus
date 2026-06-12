@@ -104,6 +104,11 @@ PLAN_MODE_READONLY_TOOLS = {
     "list_email_accounts",
     "list_emails",
     "read_email",
+    # Explicitly read-only rather than allowed-by-omission: this PR makes
+    # every BUILTIN_EMAIL_TOOLS name fence-taggable, so each one must be
+    # classified — see the plan-mode partition test in
+    # tests/test_email_registry_sync.py.
+    "search_emails",
     "list_served_models",
     "list_downloads",
     "list_cached_models",
@@ -137,7 +142,14 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "manage_webhooks", "manage_tokens", "manage_settings", "manage_contact",
     "manage_calendar", "api_call", "app_api", "ui_control",
     "send_email", "reply_to_email", "bulk_email", "delete_email",
-    "archive_email", "mark_email_read", "download_model", "serve_model",
+    "archive_email", "mark_email_read",
+    # The draft tools create documents and download_attachment writes to
+    # disk — mutating. They have no native schemas (yet), so without these
+    # static entries plan-mode safety for their bare fence tags would depend
+    # entirely on the MCP read-only inventory being present and current.
+    "draft_email", "draft_email_reply", "ai_draft_email_reply",
+    "download_attachment",
+    "download_model", "serve_model",
     "stop_served_model", "cancel_download", "adopt_served_model", "serve_preset",
     "generate_image", "edit_image", "trigger_research", "manage_research",
     # Shell is never read-only-safe; block it explicitly so it stays out of plan

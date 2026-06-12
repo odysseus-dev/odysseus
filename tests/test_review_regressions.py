@@ -790,6 +790,62 @@ async def test_bare_email_dispatch_rejects_non_object_json_args(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bare_email_dispatch_rejects_invalid_json_body(monkeypatch):
+    """The classic tag/body form reaches execution unvalidated (only INLINE
+    args are JSON-checked by the parser). A body like {account: "work"} must
+    return a correctable parse error — silently becoming {} args would read
+    the DEFAULT mailbox instead of the one the model meant."""
+    _install_admin_auth_stub(monkeypatch)
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+
+    mcp = _FakeMcpManager()
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="list_emails", content='{account: "work"}'),
+        owner="admin-user",
+    )
+    assert result["exit_code"] == 1
+    assert "not valid JSON" in result["error"]
+    assert mcp.calls == [], "malformed args must never reach the MCP server"
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_blocks_mutating_email_aliases_without_mcp_inventory(monkeypatch):
+    """Plan-mode safety for bare email aliases must hold from the STATIC
+    partition alone — no MCP read-only inventory involved: mutators (the
+    draft/download tools included) are blocked before dispatch, while the
+    explicitly read-only search_emails goes through."""
+    _install_admin_auth_stub(monkeypatch)
+    import src.tool_execution as tool_execution
+    from src.tool_execution import execute_tool_block
+    from src.tool_security import plan_mode_disabled_tools
+
+    mcp = _FakeMcpManager()
+    monkeypatch.setattr(tool_execution, "get_mcp_manager", lambda: mcp)
+    denied = plan_mode_disabled_tools()
+
+    for tool_name in ("draft_email", "draft_email_reply", "ai_draft_email_reply",
+                      "download_attachment", "send_email", "delete_email"):
+        desc, result = await execute_tool_block(
+            SimpleNamespace(tool_type=tool_name, content="{}"),
+            owner="admin-user",
+            disabled_tools=denied,
+        )
+        assert result["exit_code"] == 1, tool_name
+        assert mcp.calls == [], f"{tool_name} reached the MCP server in plan mode"
+
+    desc, result = await execute_tool_block(
+        SimpleNamespace(tool_type="search_emails", content='{"query": "x"}'),
+        owner="admin-user",
+        disabled_tools=denied,
+    )
+    assert result["exit_code"] == 0
+    assert mcp.calls == [("mcp__email__search_emails", {"query": "x"})]
+
+
+@pytest.mark.asyncio
 async def test_bare_email_dispatch_empty_content_calls_with_empty_args(monkeypatch):
     """An empty fence (```list_email_accounts``` with no body) dispatches with
     {} args — the no-arg call shape local models really emit."""
