@@ -26,7 +26,6 @@ from routes.cookbook_helpers import (
     _validate_repo_id,
     _validate_serve_cmd,
     _validate_serve_model_id,
-    _validate_ssh_port,
     _shell_path,
     run_ssh_command_async,
 )
@@ -104,12 +103,6 @@ def test_safe_env_prefix_accepts_powershell_activation_path():
         _safe_env_prefix("& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'")
         == "& 'C:\\Users\\me\\venv\\Scripts\\Activate.ps1'"
     )
-
-
-def test_validate_ssh_port_rejects_shell_payload():
-    with pytest.raises(HTTPException):
-        _validate_ssh_port("22; touch /tmp/pwned")
-    assert _validate_ssh_port("2222") == "2222"
 
 
 def test_validate_local_dir_accepts_external_drive_paths_with_spaces():

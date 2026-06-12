@@ -46,6 +46,20 @@ async def test_search_and_extract_respects_extraction_concurrency():
 
 
 @pytest.mark.asyncio
+async def test_search_and_extract_tracks_all_urls_selected_for_analysis():
+    researcher = _ControlledResearcher(extraction_concurrency=2, max_urls_per_round=2)
+    researcher._start_time = time.time()
+
+    findings = await researcher._search_and_extract(["a"], "question")
+
+    assert len(findings) == 2
+    assert researcher.analyzed_urls == [
+        {"url": "https://example.test/a/0", "title": "a-0"},
+        {"url": "https://example.test/a/1", "title": "a-1"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_fetch_and_extract_uses_configured_timeout(monkeypatch):
     captured = {}
     search_mod = types.ModuleType("src.search")
