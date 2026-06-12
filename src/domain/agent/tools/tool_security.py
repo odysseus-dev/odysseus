@@ -129,7 +129,7 @@ def plan_mode_disabled_tools() -> Set[str]:
         # cluster that only resolves cleanly when entered via agent_tools.
         # Import it first so the lazy schema import works even from a cold
         # import (e.g. tests) — not just after the app has wired everything up.
-        import src.agent_tools  # noqa: F401
+        import src.domain.agent.agent_tools  # noqa: F401
         from src.domain.agent.tools.tool_schemas import FUNCTION_TOOL_SCHEMAS
 
         all_names = {

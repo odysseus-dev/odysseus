@@ -16,7 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.database import ChatMessage as DBChatMessage, Session as DbSession
 
 

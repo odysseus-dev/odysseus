@@ -27,7 +27,7 @@ import asyncio
 
 import pytest
 
-from src import agent_runs
+from src.domain.agent import agent_runs
 
 
 # --------------------------------------------------------------------------- #

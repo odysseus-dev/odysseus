@@ -64,7 +64,7 @@ async def test_auto_summarize_pass_logs_out_imap_on_select_failure(monkeypatch):
     post-connect path is the first un-guarded IMAP call, so forcing
     it to raise lands us in the outer `except` cleanly without any
     of the inner try/except scans swallowing the error first."""
-    import routes.email_pollers as email_pollers
+    import src.api.handler.email_pollers as email_pollers
 
     captured = {}
 

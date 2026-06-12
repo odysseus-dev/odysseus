@@ -93,7 +93,7 @@ def test_owned_document_query_filters_to_owner():
 
 def test_manage_documents_list_filters_to_calling_owner(monkeypatch):
     query = _Query()
-    _install_database_stub(monkeypatch, "core.database", query)
+    _install_database_stub(monkeypatch, "src.infra.database.database", query)
 
     result = asyncio.run(
         TOOL_HANDLERS["manage_documents"]('{"action":"list"}', {"owner": "alice"})
@@ -105,7 +105,7 @@ def test_manage_documents_list_filters_to_calling_owner(monkeypatch):
 
 def test_manage_documents_read_filters_to_calling_owner(monkeypatch):
     query = _Query()
-    _install_database_stub(monkeypatch, "core.database", query)
+    _install_database_stub(monkeypatch, "src.infra.database.database", query)
 
     result = asyncio.run(
         TOOL_HANDLERS["manage_documents"](

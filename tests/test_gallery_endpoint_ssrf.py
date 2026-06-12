@@ -39,6 +39,6 @@ def test_endpoint_validated_before_fetch():
 def test_url_safety_blocks_metadata_endpoint():
     # The guard is only as strong as the checker: confirm the link-local cloud
     # metadata address is rejected even with private IPs otherwise allowed.
-    from src.url_safety import check_outbound_url
+    from src.pkg.security.url_safety import check_outbound_url
     ok, _ = check_outbound_url("http://169.254.169.254/latest/meta-data")
     assert ok is False

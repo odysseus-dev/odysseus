@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from src.infra.database.database import Base, ModelEndpoint, ProviderAuthSession
-import routes.chatgpt_subscription_routes as csr
+import src.api.router.chatgpt_subscription_routes as csr
 
 
 def _mem_db(monkeypatch):
@@ -104,7 +104,7 @@ def _add_auth_and_endpoints(db, *, auth_id="auth1", ep_ids=("ep1",)):
 
 
 def test_delete_orphaned_provider_auth_revokes_when_last_endpoint_removed(monkeypatch):
-    from routes.model_routes import _delete_orphaned_provider_auth
+    from src.api.router.model_routes import _delete_orphaned_provider_auth
 
     TestSessionLocal = _mem_db(monkeypatch)
     db = TestSessionLocal()
@@ -123,7 +123,7 @@ def test_delete_orphaned_provider_auth_revokes_when_last_endpoint_removed(monkey
 
 
 def test_delete_orphaned_provider_auth_requires_exclude_ep_id_for_pending_delete(monkeypatch):
-    from routes.model_routes import _delete_orphaned_provider_auth
+    from src.api.router.model_routes import _delete_orphaned_provider_auth
 
     TestSessionLocal = _mem_db(monkeypatch)
     db = TestSessionLocal()
@@ -141,7 +141,7 @@ def test_delete_orphaned_provider_auth_requires_exclude_ep_id_for_pending_delete
 
 
 def test_delete_orphaned_provider_auth_keeps_auth_while_another_endpoint_uses_it(monkeypatch):
-    from routes.model_routes import _delete_orphaned_provider_auth
+    from src.api.router.model_routes import _delete_orphaned_provider_auth
 
     TestSessionLocal = _mem_db(monkeypatch)
     db = TestSessionLocal()
@@ -155,7 +155,7 @@ def test_delete_orphaned_provider_auth_keeps_auth_while_another_endpoint_uses_it
 
 
 def test_delete_orphaned_provider_auth_noop_without_auth_id(monkeypatch):
-    from routes.model_routes import _delete_orphaned_provider_auth
+    from src.api.router.model_routes import _delete_orphaned_provider_auth
 
     TestSessionLocal = _mem_db(monkeypatch)
     db = TestSessionLocal()
@@ -166,7 +166,7 @@ def test_delete_orphaned_provider_auth_noop_without_auth_id(monkeypatch):
 
 
 def test_delete_orphaned_provider_auth_noop_when_auth_row_missing(monkeypatch):
-    from routes.model_routes import _delete_orphaned_provider_auth
+    from src.api.router.model_routes import _delete_orphaned_provider_auth
 
     TestSessionLocal = _mem_db(monkeypatch)
     db = TestSessionLocal()
@@ -193,9 +193,9 @@ def _delete_route(monkeypatch, TestSessionLocal):
     in-memory session manager) so the test stays hermetic and focuses on the
     provider-auth revocation wiring.
     """
-    import routes.model_routes as mr
-    import routes.prefs_routes as prefs_routes
-    import src.ai_interaction as ai_interaction
+    import src.api.router.model_routes as mr
+    import src.api.router.prefs_routes as prefs_routes
+    import src.domain.agent.ai_interaction as ai_interaction
 
     monkeypatch.setattr(mr, "SessionLocal", TestSessionLocal)
     monkeypatch.setattr(mr, "require_admin", lambda request: None)
@@ -256,7 +256,7 @@ def test_delete_endpoint_route_keeps_auth_when_shared(monkeypatch):
 
 
 def test_delete_orphaned_provider_auth_revokes_only_after_last_of_several(monkeypatch):
-    from routes.model_routes import _delete_orphaned_provider_auth
+    from src.api.router.model_routes import _delete_orphaned_provider_auth
 
     TestSessionLocal = _mem_db(monkeypatch)
     db = TestSessionLocal()

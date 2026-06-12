@@ -6,7 +6,7 @@ import pytest
 from fastapi import Request
 from fastapi.datastructures import State
 
-from routes.skills_routes import SkillUpdateRequest, setup_skills_routes
+from src.api.router.skills_routes import SkillUpdateRequest, setup_skills_routes
 from services.memory.skill_format import slugify
 from services.memory.skills import SkillsManager
 

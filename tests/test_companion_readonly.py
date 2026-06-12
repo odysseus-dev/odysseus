@@ -19,11 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # blows up under conftest's sqlalchemy MagicMock stubs. companion.routes only
 # imports it lazily inside the /models handler, but stub it defensively so the
 # import is robust regardless of collection order.
-if "core.database" not in sys.modules:
-    _db = types.ModuleType("core.database")
+if "src.infra.database.database" not in sys.modules:
+    _db = types.ModuleType("src.infra.database.database")
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()
-    sys.modules["core.database"] = _db
+    sys.modules["src.infra.database.database"] = _db
 
 import companion.routes as companion_routes
 from companion.routes import setup_companion_routes, token_owner, owner_can_see
@@ -124,14 +124,14 @@ def _models_route():
 
 def _call_models_route(monkeypatch, rows, request):
     db = _DB(rows)
-    db_mod = sys.modules["core.database"]
+    db_mod = sys.modules["src.infra.database.database"]
     monkeypatch.setattr(db_mod, "SessionLocal", lambda: db)
     monkeypatch.setattr(db_mod, "ModelEndpoint", _ModelEndpoint)
 
-    endpoint_mod = sys.modules.get("src.endpoint_resolver")
+    endpoint_mod = sys.modules.get("src.infra.llm.endpoint_resolver")
     if endpoint_mod is None:
-        endpoint_mod = types.ModuleType("src.endpoint_resolver")
-        sys.modules["src.endpoint_resolver"] = endpoint_mod
+        endpoint_mod = types.ModuleType("src.infra.llm.endpoint_resolver")
+        sys.modules["src.infra.llm.endpoint_resolver"] = endpoint_mod
     monkeypatch.setattr(
         endpoint_mod,
         "build_chat_url",

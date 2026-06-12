@@ -13,7 +13,7 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.constants import MEMORY_FILE, SKILLS_FILE
+from src.pkg.constants import MEMORY_FILE, SKILLS_FILE
 
 
 def claim_json_entries(entries, owner):

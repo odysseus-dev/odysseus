@@ -3,7 +3,7 @@ import sys
 import types
 from types import SimpleNamespace
 
-from src import bg_monitor
+from src.infra.scheduler import bg_monitor
 
 
 def test_drain_agent_ignores_non_string_deltas(monkeypatch):
@@ -15,9 +15,9 @@ def test_drain_agent_ignores_non_string_deltas(monkeypatch):
         yield 'data: {"type": "tool_output", "tool": "shell", "output": "done"}'
         yield "data: [DONE]"
 
-    agent_loop = types.ModuleType("src.agent_loop")
+    agent_loop = types.ModuleType("src.domain.agent.agent_loop")
     agent_loop.stream_agent_loop = fake_stream_agent_loop
-    monkeypatch.setitem(sys.modules, "src.agent_loop", agent_loop)
+    monkeypatch.setitem(sys.modules, "src.domain.agent.agent_loop", agent_loop)
 
     sess = SimpleNamespace(
         endpoint_url="http://example.test",

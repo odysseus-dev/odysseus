@@ -30,15 +30,15 @@ _REPO = Path(__file__).resolve().parent.parent
 # the cached routes.session_routes is identical regardless of collection order.
 # preserve_import_state restores both sys.modules and parent-package attributes
 # after the block, preventing stub leakage into siblings.
-_TEMP_STUBS = ("core.database", "core.models")
-with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes"):
+_TEMP_STUBS = ("src.infra.database.database", "src.infra.database.models")
+with preserve_import_state(*_TEMP_STUBS, "src.infra.database.session_manager", "src.api.router.session_routes"):
     for _name in _TEMP_STUBS:
         sys.modules[_name] = MagicMock(name=_name)
-    if isinstance(sys.modules.get("core.session_manager"), MagicMock):
-        del sys.modules["core.session_manager"]
-    clear_module("routes.session_routes")
-    importlib.import_module("core.session_manager")
-    import routes.session_routes as SR  # noqa: E402
+    if isinstance(sys.modules.get("src.infra.database.session_manager"), MagicMock):
+        del sys.modules["src.infra.database.session_manager"]
+    clear_module("src.api.router.session_routes")
+    importlib.import_module("src.infra.database.session_manager")
+    import src.api.router.session_routes as SR  # noqa: E402
 
 
 # ── backend: GET /api/sessions model redaction ─────────────────────────────

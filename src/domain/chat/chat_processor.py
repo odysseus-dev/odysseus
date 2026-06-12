@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from src.domain.chat.chat_helpers import extract_urls
 from src.domain.document.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
-from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
+from src.pkg.security.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
 
 logger = logging.getLogger(__name__)
 

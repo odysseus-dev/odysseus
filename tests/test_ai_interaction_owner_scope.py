@@ -2,7 +2,7 @@ import inspect
 
 import pytest
 
-from src import ai_interaction
+from src.domain.agent import ai_interaction
 
 
 def _source(fn) -> str:

@@ -13,7 +13,7 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
-from core.platform_compat import IS_APPLE_SILICON, which_tool
+from src.pkg.platform_compat import IS_APPLE_SILICON, which_tool
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
 # on Windows, so importing them unconditionally crashed app startup there
@@ -34,7 +34,7 @@ from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from core.platform_compat import (
+from src.pkg.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,

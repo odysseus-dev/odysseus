@@ -12,7 +12,7 @@ cache from the DB, where the rows are already gone, and the token is rejected.
 import asyncio
 import types
 
-from routes.auth_routes import setup_auth_routes, DeleteUserRequest
+from src.api.router.auth_routes import setup_auth_routes, DeleteUserRequest
 
 
 def _handler(router):

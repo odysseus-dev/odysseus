@@ -13,12 +13,12 @@ for mod in [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database',
-    'core.models', 'core.database',
+    'src.infra.database.models', 'src.infra.database.database',
 ]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
-import src.context_compactor as cc
+import src.domain.context.context_compactor as cc
 from src.domain.context.context_compactor import maybe_compact
 
 

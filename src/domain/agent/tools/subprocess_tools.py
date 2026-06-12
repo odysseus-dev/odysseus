@@ -3,7 +3,7 @@ import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
-from src.constants import MAX_OUTPUT_CHARS
+from src.pkg.constants import MAX_OUTPUT_CHARS
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
 DEFAULT_PYTHON_TIMEOUT = 60 * 60

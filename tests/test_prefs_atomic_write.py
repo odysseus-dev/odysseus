@@ -1,6 +1,6 @@
 import json
 
-import routes.prefs_routes as prefs_routes
+import src.api.router.prefs_routes as prefs_routes
 
 
 def test_save_replaces_prefs_file_atomically(monkeypatch, tmp_path):

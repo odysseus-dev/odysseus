@@ -1405,7 +1405,7 @@ class TaskScheduler:
         # "The user wants me to…" reasoning) is safe here — without this the
         # thinking leaked into the saved result.
         try:
-            from src.text_helpers import strip_think
+            from src.pkg.text.text_helpers import strip_think
             result = strip_think(result or "", prose=True, prompt_echo=True).strip() or result
         except Exception:
             pass
@@ -1560,8 +1560,8 @@ class TaskScheduler:
             explicit = target
 
         try:
-            from routes.email_routes import _resolve_send_config
-            from routes.email_helpers import _send_smtp_message
+            from src.api.router.email_routes import _resolve_send_config
+            from src.api.handler.email_helpers import _send_smtp_message
 
             cfg = _resolve_send_config(owner=task.owner or "")
             to_addr = explicit or cfg.get("from_address") or cfg.get("smtp_user") or ""
@@ -1887,7 +1887,7 @@ class TaskScheduler:
         # the legacy `email_from` setting and the per-account DB rows.
         recipient = None
         try:
-            from routes.email_helpers import _get_email_config
+            from src.api.handler.email_helpers import _get_email_config
             cfg = _get_email_config() or {}
             recipient = cfg.get("from_address") or None
         except Exception as _e:
@@ -1969,7 +1969,7 @@ class TaskScheduler:
         """Create default housekeeping tasks for this owner (idempotent per action)."""
         from src.infra.database.database import SessionLocal, ScheduledTask
         try:
-            from routes.prefs_routes import _load_for_user
+            from src.api.router.prefs_routes import _load_for_user
             _prefs = _load_for_user(owner) or {}
         except Exception:
             _prefs = {}

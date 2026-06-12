@@ -1,4 +1,4 @@
-from src import model_discovery
+from src.infra.llm import model_discovery
 
 
 def test_parse_tailscale_status_rejects_wrong_shapes():

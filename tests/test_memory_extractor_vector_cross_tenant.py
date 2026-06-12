@@ -33,7 +33,7 @@ def _load_extractor():
 
 
 def _install_llm_stub(monkeypatch, facts_json):
-    mod = types.ModuleType("src.llm_core")
+    mod = types.ModuleType("src.infra.llm.llm_core")
 
     async def llm_call_async(*a, **k):
         return facts_json
@@ -45,7 +45,7 @@ def _install_llm_stub(monkeypatch, facts_json):
     # into every later-collected test that imports the real module.
     src_pkg = sys.modules.get("src") or types.ModuleType("src")
     monkeypatch.setitem(sys.modules, "src", src_pkg)
-    monkeypatch.setitem(sys.modules, "src.llm_core", mod)
+    monkeypatch.setitem(sys.modules, "src.infra.llm.llm_core", mod)
 
 
 class FakeSession:

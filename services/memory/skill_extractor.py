@@ -204,7 +204,7 @@ async def maybe_extract_skill(
         # preambles. Without it, json.loads bombed on character 0 every
         # time and the silent-bail looked like "extractor doesn't work".
         try:
-            from src.text_helpers import strip_think as _strip_think
+            from src.pkg.text.text_helpers import strip_think as _strip_think
             response = _strip_think(response, prose=True, prompt_echo=True)
         except Exception:
             pass
@@ -250,7 +250,7 @@ async def maybe_extract_skill(
         # ON matches the UI label "Auto-approve skills".
         _initial_status = "draft"
         try:
-            from routes.prefs_routes import _load_for_user as _load_prefs
+            from src.api.router.prefs_routes import _load_for_user as _load_prefs
             _prefs = _load_prefs(owner) or {}
             if _prefs.get("auto_approve_skills", True):
                 _initial_status = "published"

@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from routes.calendar_routes import _ics_naive_dtstart
+from src.api.router.calendar_routes import _ics_naive_dtstart
 
 
 def test_tz_aware_dedup_key_matches_utc_storage_form():

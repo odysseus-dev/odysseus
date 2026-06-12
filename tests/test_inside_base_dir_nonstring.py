@@ -4,7 +4,7 @@ The `os.path.realpath(path)` calls run before the try/except (which only wraps
 commonpath), so a None / non-string path raised TypeError out of this
 path-safety check instead of returning False.
 """
-from src.app_helpers import inside_base_dir
+from src.pkg.io import inside_base_dir
 
 
 def test_non_string_fails_closed():

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from routes import personal_routes
+from src.api.router import personal_routes
 
 
 def test_personal_upload_paths_are_owner_scoped_and_unique(tmp_path, monkeypatch):

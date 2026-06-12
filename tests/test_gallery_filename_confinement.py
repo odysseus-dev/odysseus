@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 
 def _gallery_module():
-    import routes.gallery_routes as gallery_routes
+    import src.api.router.gallery_routes as gallery_routes
     return gallery_routes
 
 

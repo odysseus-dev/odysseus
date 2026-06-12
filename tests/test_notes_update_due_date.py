@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src import tool_implementations
+from src.domain.agent.tools import tool_implementations
 
 
 def _install_fakes(monkeypatch, note, parse=None):
@@ -52,10 +52,10 @@ def _install_fakes(monkeypatch, note, parse=None):
         def close(self):
             pass
 
-    fake_core_db = types.ModuleType("core.database")
+    fake_core_db = types.ModuleType("src.infra.database.database")
     fake_core_db.SessionLocal = lambda: FakeDB()
     fake_core_db.Note = MagicMock()  # only used as a query/filter argument
-    monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", fake_core_db)
 
     calls = {"parsed": []}
 
@@ -63,9 +63,9 @@ def _install_fakes(monkeypatch, note, parse=None):
         calls["parsed"].append(s)
         return "PARSED::" + s
 
-    fake_cal = types.ModuleType("routes.calendar_routes")
+    fake_cal = types.ModuleType("src.api.router.calendar_routes")
     fake_cal.parse_due_for_user = parse or _default_parse
-    monkeypatch.setitem(sys.modules, "routes.calendar_routes", fake_cal)
+    monkeypatch.setitem(sys.modules, "src.api.router.calendar_routes", fake_cal)
     return calls
 
 

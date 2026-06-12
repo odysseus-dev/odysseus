@@ -10,7 +10,7 @@ import time
 import logging
 from typing import Any
 
-from src.constants import SETTINGS_FILE, FEATURES_FILE
+from src.pkg.constants import SETTINGS_FILE, FEATURES_FILE
 
 logger = logging.getLogger(__name__)
 

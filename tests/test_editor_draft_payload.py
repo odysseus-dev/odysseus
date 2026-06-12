@@ -4,13 +4,13 @@ from unittest.mock import MagicMock
 
 
 def _load_module(monkeypatch):
-    db_stub = types.ModuleType("core.database")
+    db_stub = types.ModuleType("src.infra.database.database")
     db_stub.EditorDraft = MagicMock()
     db_stub.SessionLocal = MagicMock()
-    monkeypatch.setitem(sys.modules, "core.database", db_stub)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db_stub)
     monkeypatch.delitem(sys.modules, "routes.editor_draft_routes", raising=False)
 
-    import routes.editor_draft_routes as mod
+    import src.api.router.editor_draft_routes as mod
 
     return mod
 

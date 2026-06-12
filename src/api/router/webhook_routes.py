@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from src.infra.database.database import SessionLocal, Webhook, ModelEndpoint
 from src.auth_helpers import owner_filter
-from src.url_security import validate_public_http_url
+from src.pkg.security.url_security import validate_public_http_url
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
 
 logger = logging.getLogger(__name__)

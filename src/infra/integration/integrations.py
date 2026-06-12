@@ -8,9 +8,9 @@ from typing import Dict, List, Optional, Any
 import httpx
 
 from src.infra.storage.atomic_io import atomic_write_json
-from core.platform_compat import safe_chmod
+from src.pkg.platform_compat import safe_chmod
 from src.infra.storage.secret_storage import decrypt, encrypt, is_encrypted
-from src.constants import DATA_DIR, INTEGRATIONS_FILE, SETTINGS_FILE
+from src.pkg.constants import DATA_DIR, INTEGRATIONS_FILE, SETTINGS_FILE
 
 log = logging.getLogger(__name__)
 

@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 
-from src import bg_jobs
+from src.infra.scheduler import bg_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ async def _run_followup(rec: dict) -> bool:
     # no per-session lock the two interleave (reordered/clobbered messages).
     # Defer — return False so we retry on the next tick once the turn finishes.
     try:
-        from src import agent_runs
+        from src.domain.agent import agent_runs
         if agent_runs.is_active(sess.id):
             logger.info("bg-followup: session %s busy (live turn) — deferring job %s", sess.id, rec.get("id"))
             return False

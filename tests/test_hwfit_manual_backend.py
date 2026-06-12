@@ -7,7 +7,7 @@ notably that "metal" is honoured (Apple Silicon is GGUF-only via llama.cpp /
 Ollama) instead of being silently coerced to CUDA.
 """
 
-from routes.hwfit_routes import _apply_manual_hardware, _MANUAL_BACKENDS
+from src.api.router.hwfit_routes import _apply_manual_hardware, _MANUAL_BACKENDS
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
 

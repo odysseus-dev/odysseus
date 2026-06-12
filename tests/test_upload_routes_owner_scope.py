@@ -31,7 +31,7 @@ class _Request:
 
 def _upload_endpoints(upload_handler, monkeypatch):
     import fastapi.dependencies.utils as dependency_utils
-    from routes.upload_routes import router, setup_upload_routes
+    from src.api.router.upload_routes import router, setup_upload_routes
 
     monkeypatch.setattr(dependency_utils, "ensure_multipart_is_installed", lambda: None)
     before = len(router.routes)
@@ -42,7 +42,7 @@ def _upload_endpoints(upload_handler, monkeypatch):
 
 def _make_upload_store(tmp_path, monkeypatch):
     from src.infra.storage.upload_handler import UploadHandler
-    from src import constants
+    from src.pkg import constants
 
     upload_dir = tmp_path / "uploads"
     dated = upload_dir / "2026" / "06" / "02"

@@ -32,7 +32,7 @@ from email.mime.multipart import MIMEMultipart
 
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
-from src.constants import DATA_DIR
+from src.pkg.constants import DATA_DIR
 
 from src.infra.llm.llm_core import llm_call_async
 from src.infra.storage.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
@@ -1524,7 +1524,7 @@ def setup_email_routes():
             # ── PDF path (existing) ────────────────────────────────────
             if ext == ".pdf":
                 import shutil as _shutil
-                from src.constants import UPLOAD_DIR
+                from src.pkg.constants import UPLOAD_DIR
                 from src.domain.document.pdf_forms import has_form_fields, extract_fields
                 from src.domain.document.pdf_form_doc import (
                     save_field_sidecar,

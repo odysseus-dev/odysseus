@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # conftest's MagicMock sqlalchemy shim. preserve_import_state restores both the
 # stubs and the cached route module — including the parent `routes`/`core`
 # package attributes — on exit, preventing poisoning of later tests via
-# `import routes.session_routes`.
+# `import src.api.router.session_routes`.
 
 
 def _set_module_and_parent_attr(dotted_name, module):
@@ -49,19 +49,19 @@ def _set_module_and_parent_attr(dotted_name, module):
 # core.session_manager and routes.session_routes are (re)imported fresh.
 # preserve_import_state captures each at both levels and restores them on exit so
 # this file cannot poison later tests via `import core.<...>` /
-# `import routes.session_routes`.
-_TEMP_STUBS = ("core.database", "core.models")
-_MANAGED = _TEMP_STUBS + ("core.session_manager", "routes.session_routes")
+# `import src.api.router.session_routes`.
+_TEMP_STUBS = ("src.infra.database.database", "src.infra.database.models")
+_MANAGED = _TEMP_STUBS + ("src.infra.database.session_manager", "src.api.router.session_routes")
 with preserve_import_state(*_MANAGED):
     for _name in _TEMP_STUBS:
         _set_module_and_parent_attr(_name, MagicMock(name=_name))
     # Clear sys.modules AND the parent package attribute for the modules we
     # re-import so the stubbed import below yields fresh modules with no stale
     # binding reachable behind them.
-    clear_module("core.session_manager")
-    clear_module("routes.session_routes")
-    importlib.import_module("core.session_manager")
-    import routes.session_routes as SR  # noqa: E402
+    clear_module("src.infra.database.session_manager")
+    clear_module("src.api.router.session_routes")
+    importlib.import_module("src.infra.database.session_manager")
+    import src.api.router.session_routes as SR  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 from src.auth_helpers import effective_user  # noqa: E402

@@ -24,8 +24,8 @@ def _route_endpoint(router, path: str, method: str):
 
 @pytest.fixture
 def schedule(tmp_path, monkeypatch):
-    import routes.email_helpers as email_helpers
-    import routes.email_routes as email_routes
+    import src.api.handler.email_helpers as email_helpers
+    import src.api.router.email_routes as email_routes
 
     db_path = tmp_path / "scheduled_emails.db"
     monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)

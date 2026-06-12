@@ -48,7 +48,7 @@ def test_lane_reset_restores_when_chroma_returns_numpy_embeddings(monkeypatch):
     fake.fail_next_add_for["odysseus_memories_custom"] = 1
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
 

@@ -6,7 +6,7 @@ import logging
 import time
 from pathlib import Path
 
-from src.constants import RAG_DIR
+from src.pkg.constants import RAG_DIR
 
 logger = logging.getLogger(__name__)
 

@@ -61,7 +61,7 @@ class _FakeDb:
 
 
 def _default_chat_endpoint():
-    from routes.model_routes import setup_model_routes
+    from src.api.router.model_routes import setup_model_routes
 
     router = setup_model_routes(model_discovery=None)
     for route in router.routes:
@@ -73,45 +73,45 @@ def _default_chat_endpoint():
 def _install_model_route_import_stubs(monkeypatch):
     core_mod = types.ModuleType("core")
     core_mod.__path__ = []
-    db_mod = types.ModuleType("core.database")
+    db_mod = types.ModuleType("src.infra.database.database")
     db_mod.SessionLocal = lambda: _FakeDb([])
     db_mod.ModelEndpoint = _FakeModelEndpoint
     db_mod.Session = _FakeDbSession
     db_mod.Document = MagicMock()
     db_mod.DocumentVersion = MagicMock()
     db_mod.GalleryImage = MagicMock()
-    middleware_mod = types.ModuleType("core.middleware")
+    middleware_mod = types.ModuleType("src.api.middleware.security_headers")
     middleware_mod.require_admin = lambda request: None
     multipart_mod = types.ModuleType("python_multipart")
     multipart_mod.__version__ = "0.0.13"
-    models_mod = types.ModuleType("core.models")
+    models_mod = types.ModuleType("src.infra.database.models")
     models_mod.ChatMessage = MagicMock()
-    exceptions_mod = types.ModuleType("core.exceptions")
+    exceptions_mod = types.ModuleType("src.pkg.exceptions")
     exceptions_mod.SessionNotFoundError = type("SessionNotFoundError", (Exception,), {})
-    session_mgr_mod = types.ModuleType("core.session_manager")
+    session_mgr_mod = types.ModuleType("src.infra.database.session_manager")
     session_mgr_mod.SessionManager = MagicMock()
 
     monkeypatch.delitem(sys.modules, "routes.model_routes", raising=False)
-    monkeypatch.delitem(sys.modules, "routes.chat_routes", raising=False)
-    monkeypatch.delitem(sys.modules, "routes.session_routes", raising=False)
+    monkeypatch.delitem(sys.modules, "src.api.router.chat_routes", raising=False)
+    monkeypatch.delitem(sys.modules, "src.api.router.session_routes", raising=False)
     monkeypatch.setitem(sys.modules, "core", core_mod)
-    monkeypatch.setitem(sys.modules, "core.database", db_mod)
-    monkeypatch.setitem(sys.modules, "core.middleware", middleware_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db_mod)
+    monkeypatch.setitem(sys.modules, "src.api.middleware.security_headers", middleware_mod)
     monkeypatch.setitem(sys.modules, "python_multipart", multipart_mod)
-    monkeypatch.setitem(sys.modules, "core.models", models_mod)
-    monkeypatch.setitem(sys.modules, "core.exceptions", exceptions_mod)
-    monkeypatch.setitem(sys.modules, "core.session_manager", session_mgr_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.database.models", models_mod)
+    monkeypatch.setitem(sys.modules, "src.pkg.exceptions", exceptions_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.database.session_manager", session_mgr_mod)
 
 
 def _install_core_auth_stub(monkeypatch):
     """Install the narrow auth surface needed by tool-policy tests."""
     core_mod = types.ModuleType("core")
     core_mod.__path__ = []
-    auth_mod = types.ModuleType("core.auth")
+    auth_mod = types.ModuleType("src.infra.auth.auth")
     auth_mod.AuthManager = MagicMock()
     core_mod.auth = auth_mod
     monkeypatch.setitem(sys.modules, "core", core_mod)
-    monkeypatch.setitem(sys.modules, "core.auth", auth_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.auth.auth", auth_mod)
     return auth_mod
 
 
@@ -119,18 +119,18 @@ def _install_core_middleware_stub(monkeypatch):
     """Install the narrow middleware surface needed by loopback tool tests."""
     core_mod = types.ModuleType("core")
     core_mod.__path__ = []
-    middleware_mod = types.ModuleType("core.middleware")
+    middleware_mod = types.ModuleType("src.api.middleware.security_headers")
     middleware_mod.INTERNAL_TOOL_HEADER = "X-Internal-Tool"
     middleware_mod.INTERNAL_TOOL_TOKEN = "test-token"
     core_mod.middleware = middleware_mod
     monkeypatch.setitem(sys.modules, "core", core_mod)
-    monkeypatch.setitem(sys.modules, "core.middleware", middleware_mod)
+    monkeypatch.setitem(sys.modules, "src.api.middleware.security_headers", middleware_mod)
     return middleware_mod
 
 
 def test_providers_requires_admin_before_discovery_and_cache(monkeypatch):
     _install_model_route_import_stubs(monkeypatch)
-    import routes.model_routes as model_routes
+    import src.api.router.model_routes as model_routes
 
     class _Discovery:
         def __init__(self):
@@ -166,8 +166,8 @@ def test_providers_requires_admin_before_discovery_and_cache(monkeypatch):
 
 def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypatch):
     _install_model_route_import_stubs(monkeypatch)
-    import routes.model_routes as model_routes
-    import routes.prefs_routes as prefs_routes
+    import src.api.router.model_routes as model_routes
+    import src.api.router.prefs_routes as prefs_routes
 
     shared_ep = SimpleNamespace(
         id="shared",
@@ -208,8 +208,8 @@ def test_default_chat_does_not_auto_pick_shared_endpoint_for_fresh_user(monkeypa
 
 def test_default_chat_uses_owned_endpoint_as_regular_user_last_resort(monkeypatch):
     _install_model_route_import_stubs(monkeypatch)
-    import routes.model_routes as model_routes
-    import routes.prefs_routes as prefs_routes
+    import src.api.router.model_routes as model_routes
+    import src.api.router.prefs_routes as prefs_routes
 
     owned_ep = SimpleNamespace(
         id="owned",
@@ -308,19 +308,19 @@ def test_normalize_thinking_handles_lowercase_thinking_process(monkeypatch):
     for mod_name in [
         "starlette.middleware",
         "starlette.middleware.base",
-        "core.models",
-        "core.database",
+        "src.infra.database.models",
+        "src.infra.database.database",
         "routes.prefs_routes",
         "routes.research_routes",
-        "src.llm_core",
-        "src.context_compactor",
-        "src.model_context",
+        "src.infra.llm.llm_core",
+        "src.domain.context.context_compactor",
+        "src.domain.context.model_context",
         "src.auth_helpers",
     ]:
         if mod_name not in sys.modules:
             monkeypatch.setitem(sys.modules, mod_name, MagicMock())
 
-    chat_helpers = importlib.import_module("routes.chat_helpers")
+    chat_helpers = importlib.import_module("src.api.handler.chat_helpers")
 
     text = (
         "Thinking process:\n"
@@ -341,19 +341,19 @@ async def test_build_chat_context_incognito_does_not_duplicate_current_user_mess
     for mod_name in [
         "starlette.middleware",
         "starlette.middleware.base",
-        "core.models",
-        "core.database",
+        "src.infra.database.models",
+        "src.infra.database.database",
         "routes.prefs_routes",
         "routes.research_routes",
-        "src.llm_core",
-        "src.context_compactor",
-        "src.model_context",
+        "src.infra.llm.llm_core",
+        "src.domain.context.context_compactor",
+        "src.domain.context.model_context",
         "src.auth_helpers",
     ]:
         if mod_name not in sys.modules:
             monkeypatch.setitem(sys.modules, mod_name, MagicMock())
 
-    chat_helpers = importlib.import_module("routes.chat_helpers")
+    chat_helpers = importlib.import_module("src.api.handler.chat_helpers")
 
     async def fake_preprocess(chat_handler, message, att_ids, sess, **kwargs):
         # **kwargs absorbs auto_opened_docs (added when PDF imports auto-create
@@ -707,7 +707,7 @@ async def test_webhook_tool_reuses_private_url_validation():
         def close(self):
             pass
 
-    fake_core_db = types.ModuleType("core.database")
+    fake_core_db = types.ModuleType("src.infra.database.database")
     fake_core_db.SessionLocal = lambda: FakeDb()
     fake_core_db.Webhook = object
     fake_src_db = types.ModuleType("src.database")
@@ -733,7 +733,7 @@ async def test_webhook_tool_reuses_private_url_validation():
         delattr(_src_pkg, "webhook_manager")
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", fake_core_db)
     monkeypatch.setitem(sys.modules, "src.database", fake_src_db)
 
     from src.domain.agent.tools.tool_implementations import do_manage_webhooks
@@ -766,8 +766,8 @@ def test_default_chat_skips_hidden_first_model(monkeypatch):
     """get_default_chat picks first visible model when default_model is empty
     and the first cached model is hidden."""
     _install_model_route_import_stubs(monkeypatch)
-    import routes.model_routes as model_routes
-    import routes.prefs_routes as prefs_routes
+    import src.api.router.model_routes as model_routes
+    import src.api.router.prefs_routes as prefs_routes
 
     ep = SimpleNamespace(
         id="ep1",
@@ -800,7 +800,7 @@ def test_default_chat_skips_hidden_first_model(monkeypatch):
 def test_default_chat_admin_skips_hidden_first_model(monkeypatch):
     """Admin user with global defaults also skips hidden models in fallback."""
     _install_model_route_import_stubs(monkeypatch)
-    import routes.model_routes as model_routes
+    import src.api.router.model_routes as model_routes
 
     ep = SimpleNamespace(
         id="ep1",
@@ -832,7 +832,7 @@ def test_default_chat_admin_skips_hidden_first_model(monkeypatch):
 def test_default_chat_all_models_hidden_returns_empty_model(monkeypatch):
     """When all cached models are hidden, get_default_chat returns model: ''."""
     _install_model_route_import_stubs(monkeypatch)
-    import routes.model_routes as model_routes
+    import src.api.router.model_routes as model_routes
 
     ep = SimpleNamespace(
         id="ep1",
@@ -863,7 +863,7 @@ def test_default_chat_all_models_hidden_returns_empty_model(monkeypatch):
 
 def test_visible_models_filters_hidden_first(monkeypatch):
     """_visible_models removes hidden models from the list."""
-    from routes.model_routes import _visible_models
+    from src.api.router.model_routes import _visible_models
 
     result = _visible_models(
         '["hidden-model", "visible-model"]',
@@ -874,7 +874,7 @@ def test_visible_models_filters_hidden_first(monkeypatch):
 
 def test_visible_models_all_hidden_returns_empty(monkeypatch):
     """_visible_models returns [] when all models are hidden."""
-    from routes.model_routes import _visible_models
+    from src.api.router.model_routes import _visible_models
 
     result = _visible_models(
         '["hidden-a", "hidden-b"]',
@@ -885,7 +885,7 @@ def test_visible_models_all_hidden_returns_empty(monkeypatch):
 
 def test_visible_models_no_hidden_returns_all(monkeypatch):
     """_visible_models returns full list when no hidden_models."""
-    from routes.model_routes import _visible_models
+    from src.api.router.model_routes import _visible_models
 
     result = _visible_models(
         '["model-a", "model-b"]',
@@ -896,7 +896,7 @@ def test_visible_models_no_hidden_returns_all(monkeypatch):
 
 def test_visible_models_empty_cached_returns_empty(monkeypatch):
     """_visible_models returns [] for empty cached list."""
-    from routes.model_routes import _visible_models
+    from src.api.router.model_routes import _visible_models
 
     result = _visible_models([], None)
     assert result == []

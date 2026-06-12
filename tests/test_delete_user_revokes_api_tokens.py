@@ -24,13 +24,13 @@ def _real_core_package():
         core = types.ModuleType("core")
         sys.modules["core"] = core
     core.__path__ = [core_path]
-    clear_module("core.auth")
+    clear_module("src.infra.auth.auth")
     return core
 
 
 def _auth_module():
     _real_core_package()
-    return importlib.import_module("core.auth")
+    return importlib.import_module("src.infra.auth.auth")
 
 
 class _OwnerColumn:
@@ -91,10 +91,10 @@ def db_calls(monkeypatch):
     def _fake_db_session():
         yield _FakeSession(calls)
 
-    db_stub = types.ModuleType("core.database")
+    db_stub = types.ModuleType("src.infra.database.database")
     db_stub.get_db_session = _fake_db_session
     db_stub.ApiToken = _FakeApiToken
-    monkeypatch.setitem(sys.modules, "core.database", db_stub)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db_stub)
     return calls
 
 
@@ -124,10 +124,10 @@ def test_delete_user_fails_closed_when_api_token_purge_fails(manager, monkeypatc
         raise RuntimeError("database unavailable")
         yield
 
-    db_stub = types.ModuleType("core.database")
+    db_stub = types.ModuleType("src.infra.database.database")
     db_stub.get_db_session = _failing_db_session
     db_stub.ApiToken = _FakeApiToken
-    monkeypatch.setitem(sys.modules, "core.database", db_stub)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db_stub)
 
     assert manager.delete_user("bob", "admin") is False
     assert "bob" in manager.users

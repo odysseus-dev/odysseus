@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-import routes.contacts_routes as cr
+import src.api.router.contacts_routes as cr
 
 
 def _add_handler():

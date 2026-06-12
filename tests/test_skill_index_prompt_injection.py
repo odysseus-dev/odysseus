@@ -31,8 +31,8 @@ for _mod in [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative",
     "sqlalchemy.ext.hybrid", "sqlalchemy.sql", "sqlalchemy.sql.expression",
     "src.database",
-    "src.agent_tools",
-    "core.models", "core.database",
+    "src.domain.agent.tools",
+    "src.infra.database.models", "src.infra.database.database",
 ]:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
@@ -97,7 +97,7 @@ def _patch_prefs(monkeypatch, data_dir):
     """Mirror the helpers from test_skill_prompt_injection.py: point
     `src.constants.DATA_DIR` at our tmp, and patch the prefs loader so
     skills injection is enabled."""
-    import src.constants as _constants
+    import src.pkg.constants as _constants
     monkeypatch.setattr(_constants, "DATA_DIR", str(data_dir), raising=False)
 
     fake_prefs = types.ModuleType("routes.prefs_routes")
@@ -108,7 +108,7 @@ def _patch_prefs(monkeypatch, data_dir):
     sys.modules["routes.prefs_routes"] = fake_prefs
 
     # Bust the base-prompt cache so our test re-reads the skill index.
-    from src import agent_loop
+    from src.domain.agent import agent_loop
     agent_loop._cached_base_prompt = None
     agent_loop._cached_base_prompt_key = None
 

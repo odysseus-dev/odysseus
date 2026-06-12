@@ -53,15 +53,15 @@ def token_routes_mod(monkeypatch):
     def _noop_db_session():
         yield MagicMock()
 
-    db_stub = _DBStub("core.database")
+    db_stub = _DBStub("src.infra.database.database")
     db_stub.get_db_session = _noop_db_session
     db_stub.ApiToken = MagicMock()
-    monkeypatch.setitem(sys.modules, "core.database", db_stub)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db_stub)
 
     # Force a fresh import so the route module binds to the stubbed core.database
     monkeypatch.delitem(sys.modules, "routes.api_token_routes", raising=False)
 
-    import routes.api_token_routes as mod  # noqa: PLC0415
+    import src.api.router.api_token_routes as mod  # noqa: PLC0415
     return mod
 
 

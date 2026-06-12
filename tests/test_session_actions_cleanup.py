@@ -20,9 +20,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.database import ChatMessage as DbMessage, Session as DbSession, utcnow_naive
-import src.session_actions as session_actions
+import src.domain.agent.session_actions as session_actions
 
 
 def _make_session_factory():
@@ -38,7 +38,7 @@ def _make_session_factory():
 
 
 def _install_session_factory(monkeypatch, session_factory):
-    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", cdb)
     core_pkg = sys.modules.get("core")
     if core_pkg is not None:
         monkeypatch.setattr(core_pkg, "database", cdb, raising=False)

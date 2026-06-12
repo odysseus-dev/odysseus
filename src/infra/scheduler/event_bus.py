@@ -12,7 +12,7 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from src.constants import AUTH_FILE
+from src.pkg.constants import AUTH_FILE
 
 logger = logging.getLogger(__name__)
 

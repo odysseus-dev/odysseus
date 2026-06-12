@@ -10,8 +10,8 @@ import pytest
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-import routes.backup_routes as backup_routes
-from routes.backup_routes import setup_backup_routes
+import src.api.router.backup_routes as backup_routes
+from src.api.router.backup_routes import setup_backup_routes
 
 # require_admin / get_current_user are bound into routes.backup_routes at import
 # time (`from x import name`). We patch them on that module directly per-test

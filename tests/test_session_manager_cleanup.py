@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from src.infra.database.session_manager import SessionManager
-import core.session_manager as SM
+import src.infra.database.session_manager as SM
 
 
 def _manager_with(sessions=None):

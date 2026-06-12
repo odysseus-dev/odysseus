@@ -1,5 +1,5 @@
 def test_gallery_url_normalization_bug():
-    from routes.gallery_routes import _normalize_image_endpoint_base
+    from src.api.router.gallery_routes import _normalize_image_endpoint_base
 
     def check_match(ep_url: str, base_url: str) -> bool:
         return (

@@ -9,7 +9,7 @@ import httpx
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from src.constants import TTS_CACHE_DIR
+from src.pkg.constants import TTS_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 

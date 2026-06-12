@@ -143,7 +143,7 @@ def test_blocks_netrc():
 def test_allows_project_data(tmp_path):
     """Paths under project data/ must resolve cleanly."""
     from src.domain.agent.tools.tool_execution import _resolve_tool_path
-    from src.constants import DATA_DIR
+    from src.pkg.constants import DATA_DIR
     target = os.path.join(DATA_DIR, "test-confinement-ok.txt")
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(target, "w") as f:
@@ -201,9 +201,9 @@ def test_extra_root_still_blocks_sensitive(tmp_path):
 @pytest.mark.asyncio
 async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
     """End-to-end: read_file dispatch must reject /etc/shadow."""
-    auth_mod = sys.modules.get("core.auth")
+    auth_mod = sys.modules.get("src.infra.auth.auth")
     if auth_mod is None:
-        import core.auth as _real_auth
+        import src.infra.auth.auth as _real_auth
         auth_mod = _real_auth
 
     class _AdminAuth:
@@ -229,9 +229,9 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
 @pytest.mark.asyncio
 async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
     """End-to-end: write_file dispatch must reject ~/.ssh/authorized_keys."""
-    auth_mod = sys.modules.get("core.auth")
+    auth_mod = sys.modules.get("src.infra.auth.auth")
     if auth_mod is None:
-        import core.auth as _real_auth
+        import src.infra.auth.auth as _real_auth
         auth_mod = _real_auth
 
     class _AdminAuth:
@@ -257,9 +257,9 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
 @pytest.mark.asyncio
 async def test_write_file_dispatch_blocks_cron(monkeypatch):
     """End-to-end: write_file to /etc/cron.d must be rejected."""
-    auth_mod = sys.modules.get("core.auth")
+    auth_mod = sys.modules.get("src.infra.auth.auth")
     if auth_mod is None:
-        import core.auth as _real_auth
+        import src.infra.auth.auth as _real_auth
         auth_mod = _real_auth
 
     class _AdminAuth:

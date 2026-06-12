@@ -9,7 +9,7 @@ owner's ModelEndpoint in a multi-user deployment. See #2283.
 import asyncio
 
 import src.teacher_escalation as teacher_escalation
-import routes.skills_routes as skills_routes
+import src.api.router.skills_routes as skills_routes
 
 
 def test_call_teacher_scopes_model_resolution_to_owner(monkeypatch):

@@ -10,7 +10,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import routes.backup_routes as br
+import src.api.router.backup_routes as br
 
 
 class _Req:

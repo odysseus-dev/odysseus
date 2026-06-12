@@ -16,7 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.database import Session as DbSession
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -58,7 +58,7 @@ def _stub_multipart_if_missing(monkeypatch):
 
 @pytest.fixture
 def archived_endpoint(monkeypatch):
-    import routes.session_routes as sr
+    import src.api.router.session_routes as sr
     from unittest.mock import MagicMock
 
     _stub_multipart_if_missing(monkeypatch)

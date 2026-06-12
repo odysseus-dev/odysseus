@@ -12,11 +12,11 @@ ROOT = Path(__file__).resolve().parent.parent
 def _load_builtin_mcp(monkeypatch):
     core = types.ModuleType("core")
     core.__path__ = []
-    platform_compat = types.ModuleType("core.platform_compat")
+    platform_compat = types.ModuleType("src.pkg.platform_compat")
     platform_compat.IS_WINDOWS = False
     platform_compat.which_tool = lambda name: None
     monkeypatch.setitem(sys.modules, "core", core)
-    monkeypatch.setitem(sys.modules, "core.platform_compat", platform_compat)
+    monkeypatch.setitem(sys.modules, "src.pkg.platform_compat", platform_compat)
 
     spec = importlib.util.spec_from_file_location(
         "builtin_mcp_under_test",

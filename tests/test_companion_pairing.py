@@ -48,17 +48,17 @@ class _DBStub(types.ModuleType):
         return MagicMock()
 
 
-_db = _DBStub("core.database")
+_db = _DBStub("src.infra.database.database")
 _db.get_db_session = _get_db_session
 _db.ApiToken = _ApiToken
 
 
 @pytest.fixture(autouse=True)
 def _companion_pairing_stubs(monkeypatch):
-    monkeypatch.setitem(sys.modules, "core.database", _db)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", _db)
     for _name, _attrs in {
-        "core.auth": {"AuthManager": MagicMock()},
-        "src.endpoint_resolver": {"build_chat_url": (lambda u: u)},
+        "src.infra.auth.auth": {"AuthManager": MagicMock()},
+        "src.infra.llm.endpoint_resolver": {"build_chat_url": (lambda u: u)},
     }.items():
         if _name not in sys.modules:
             _mm = types.ModuleType(_name)
@@ -73,13 +73,13 @@ from fastapi import HTTPException  # noqa: E402
 import companion.pairing as P  # noqa: E402
 import companion.routes as R  # noqa: E402
 from companion.routes import mint_pairing_token, setup_companion_routes  # noqa: E402
-from core.middleware import require_admin  # noqa: E402
+from src.api.middleware.security_headers import require_admin  # noqa: E402
 
 
 # --- token minting: shown once, hashed at rest -----------------------------
 
 def test_mint_token_returns_raw_once_and_stores_only_a_hash(monkeypatch):
-    monkeypatch.setitem(sys.modules, "core.database", _db)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", _db)
     parent = sys.modules.get("core")
     if parent is not None:
         monkeypatch.setattr(parent, "database", _db, raising=False)

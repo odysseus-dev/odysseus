@@ -3,7 +3,7 @@
 import json
 from types import SimpleNamespace
 
-import src.endpoint_resolver as endpoint_resolver
+import src.infra.llm.endpoint_resolver as endpoint_resolver
 from src.infra.llm.endpoint_resolver import resolve_endpoint
 
 
@@ -58,7 +58,7 @@ def _endpoint(ep_id, model, *, hidden=None):
 
 
 def _install_resolver_fakes(monkeypatch, settings, endpoints):
-    import src.settings as settings_mod
+    import conf.settings as settings_mod
 
     monkeypatch.setattr(settings_mod, "load_settings", lambda: settings)
     monkeypatch.setattr(

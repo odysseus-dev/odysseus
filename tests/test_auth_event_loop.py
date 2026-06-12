@@ -67,13 +67,13 @@ def _ensure_stub(name: str, **attrs):
 
 @pytest.fixture(autouse=True)
 def _event_loop_stubs(monkeypatch):
-    db = _ensure_stub("core.database", SessionLocal=MagicMock())
-    auth = _ensure_stub("core.auth", AuthManager=MagicMock())
-    monkeypatch.setitem(sys.modules, "core.database", db)
-    monkeypatch.setitem(sys.modules, "core.auth", auth)
+    db = _ensure_stub("src.infra.database.database", SessionLocal=MagicMock())
+    auth = _ensure_stub("src.infra.auth.auth", AuthManager=MagicMock())
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db)
+    monkeypatch.setitem(sys.modules, "src.infra.auth.auth", auth)
 
 
-from routes.auth_routes import setup_auth_routes, LoginRequest
+from src.api.router.auth_routes import setup_auth_routes, LoginRequest
 
 
 def _login_endpoint(auth_manager):

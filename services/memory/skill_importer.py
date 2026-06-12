@@ -10,7 +10,7 @@ from urllib.parse import quote, urlparse
 
 import httpx
 
-from src.url_safety import check_outbound_url
+from src.pkg.security.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
 

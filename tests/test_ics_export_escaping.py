@@ -24,7 +24,7 @@ def _make_ev(summary, dtstart, dtend, all_day=False, is_utc=False, uid="test-uid
 
 def _export(cal_name, events):
     """Call the ICS export helper directly without HTTP."""
-    from routes.calendar_routes import _ics_escape
+    from src.api.router.calendar_routes import _ics_escape
 
     lines = [
         "BEGIN:VCALENDAR",

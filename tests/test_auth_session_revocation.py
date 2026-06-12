@@ -22,13 +22,13 @@ def _real_core_package():
         core = types.ModuleType("core")
         sys.modules["core"] = core
     core.__path__ = [core_path]
-    clear_module("core.auth")
+    clear_module("src.infra.auth.auth")
     return core
 
 
 def _auth_module():
     _real_core_package()
-    return importlib.import_module("core.auth")
+    return importlib.import_module("src.infra.auth.auth")
 
 
 def _make_manager(tmp_path):
@@ -83,7 +83,7 @@ def test_password_change_allows_new_password_and_blocks_old_password(tmp_path):
 def _change_password_endpoint(auth_manager):
     sys.modules.pop("routes.auth_routes", None)
     _real_core_package()
-    from routes.auth_routes import ChangePasswordRequest, setup_auth_routes
+    from src.api.router.auth_routes import ChangePasswordRequest, setup_auth_routes
 
     router = setup_auth_routes(auth_manager)
     for route in router.routes:

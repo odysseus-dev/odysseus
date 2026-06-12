@@ -8,7 +8,7 @@ boundary.
 """
 import os
 
-from src import personal_docs
+from src.domain.rag import personal_docs
 
 
 def _make_manager(tmp_path):

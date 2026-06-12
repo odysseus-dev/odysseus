@@ -34,7 +34,7 @@ def test_unknown_window_falls_back_to_configured():
 
 
 def test_is_setting_overridden_reads_raw_saved_file(tmp_path, monkeypatch):
-    import src.settings as settings
+    import conf.settings as settings
 
     f = tmp_path / "settings.json"
     f.write_text(json.dumps({"agent_input_token_budget": 12000}), encoding="utf-8")
@@ -78,7 +78,7 @@ def test_hard_max_has_no_effect_on_explicit_branch():
 
 def test_default_settings_registers_hard_max_key():
     """Required so /api/auth/settings and manage_settings can persist the key."""
-    from src.settings import DEFAULT_SETTINGS
+    from conf.settings import DEFAULT_SETTINGS
     assert "agent_input_token_hard_max" in DEFAULT_SETTINGS
     assert DEFAULT_SETTINGS["agent_input_token_hard_max"] == DEFAULT_HARD_MAX
 
@@ -95,7 +95,7 @@ def test_alias_map_registers_friendly_names():
 def test_agent_loop_reads_hard_max_setting(tmp_path, monkeypatch):
     """End-to-end: a saved settings.json value for agent_input_token_hard_max
     must reach compute_input_token_budget on the real agent_loop call path."""
-    import src.settings as settings
+    import conf.settings as settings
     # Point SETTINGS_FILE at a temp file with our override.
     f = tmp_path / "settings.json"
     f.write_text(json.dumps({"agent_input_token_hard_max": 750_000}), encoding="utf-8")

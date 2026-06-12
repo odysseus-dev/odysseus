@@ -20,11 +20,11 @@ def _make_manager():
 
     # Import after DATABASE_URL is set so the engine binds to the temp DB.
     import importlib
-    import core.database as database
+    import src.infra.database.database as database
     importlib.reload(database)
     database.Base.metadata.create_all(bind=database.engine)
 
-    import core.session_manager as sm_mod
+    import src.infra.database.session_manager as sm_mod
     importlib.reload(sm_mod)
     return sm_mod.SessionManager(), database, sm_mod
 

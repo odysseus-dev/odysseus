@@ -1,5 +1,5 @@
 import pytest
-from src.text_helpers import strip_think
+from src.pkg.text.text_helpers import strip_think
 
 def test_strip_think_cases():
     # 1. Mid-text unclosed leak (fails before fix)

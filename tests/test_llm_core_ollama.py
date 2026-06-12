@@ -1,7 +1,7 @@
 """Regression tests for native Ollama Cloud provider handling."""
 import httpx
 
-from src import llm_core
+from src.infra.llm import llm_core
 
 
 def test_detects_ollama_cloud_native_provider():

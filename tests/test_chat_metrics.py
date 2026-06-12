@@ -16,7 +16,7 @@ These tests lock in two things:
 import json
 import asyncio
 
-from src import llm_core
+from src.infra.llm import llm_core
 from src.domain.agent.agent_loop import _compute_final_metrics
 
 

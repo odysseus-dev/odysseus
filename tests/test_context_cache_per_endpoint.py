@@ -6,7 +6,7 @@ collided: whichever resolved first won process-wide and the other was served the
 wrong window. The fix keys the cache on (endpoint_url, model).
 """
 
-import src.model_context as mc
+import src.domain.context.model_context as mc
 
 
 def _setup(monkeypatch, windows):

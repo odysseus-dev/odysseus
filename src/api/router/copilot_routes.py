@@ -35,7 +35,7 @@ from src.api.handler.device_flow import (
     create_device_flow_router,
 )
 from src.auth_helpers import get_current_user
-from src import copilot
+from src.infra.integration import copilot
 
 logger = logging.getLogger(__name__)
 

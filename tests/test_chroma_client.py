@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-import src.chroma_client as cc
+import src.domain.memory.chroma_client as cc
 
 
 def _free_port() -> int:

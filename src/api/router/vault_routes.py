@@ -16,8 +16,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from core.middleware import require_admin
-from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
-from src.constants import VAULT_FILE as _VAULT_FILE
+from src.pkg.platform_compat import IS_WINDOWS, safe_chmod, which_tool
+from src.pkg.constants import VAULT_FILE as _VAULT_FILE
 
 logger = logging.getLogger(__name__)
 

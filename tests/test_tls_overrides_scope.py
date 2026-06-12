@@ -125,7 +125,7 @@ def test_llm_verify_default_is_true_when_env_unset():
     os.environ.pop("LLM_CA_BUNDLE", None)
     import importlib
 
-    import src.tls_overrides as mod
+    import src.pkg.tls_overrides as mod
     importlib.reload(mod)
     assert mod.llm_verify() is True, (
         f"Default llm_verify() must be True (httpx built-in trust store); "
@@ -142,7 +142,7 @@ def test_llm_verify_falls_back_to_true_for_missing_bundle_file():
     try:
         import importlib
 
-        import src.tls_overrides as mod
+        import src.pkg.tls_overrides as mod
         importlib.reload(mod)
         assert mod.llm_verify() is True
     finally:

@@ -6,7 +6,7 @@ import sys
 import pytest
 from fastapi import HTTPException
 
-from routes.cookbook_helpers import (
+from src.api.handler.cookbook_helpers import (
     _cached_model_scan_script,
     _append_llama_cpp_linux_accel_build_lines,
     _append_pip_install_runner_lines,
@@ -676,7 +676,7 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     """The command should succeed even when neither path exists yet."""
     import os
-    from core.platform_compat import find_bash, git_bash_path
+    from src.pkg.platform_compat import find_bash, git_bash_path
 
     bash = find_bash() or "bash"
     env = dict(os.environ)
@@ -770,7 +770,7 @@ def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):
 # ── #1219 / #1459: keep big dependency wheel builds off the home pip cache ──
 
 def test_pip_install_no_cache_injects_flag():
-    from routes.cookbook_helpers import _pip_install_no_cache
+    from src.api.handler.cookbook_helpers import _pip_install_no_cache
     assert _pip_install_no_cache("python -m pip install vllm") == \
         "python -m pip install --no-cache-dir vllm"
     assert _pip_install_no_cache("pip install -q huggingface-hub") == \
@@ -778,7 +778,7 @@ def test_pip_install_no_cache_injects_flag():
 
 
 def test_pip_install_no_cache_is_idempotent_and_scoped():
-    from routes.cookbook_helpers import _pip_install_no_cache
+    from src.api.handler.cookbook_helpers import _pip_install_no_cache
     # already present -> unchanged
     already = "pip install --no-cache-dir vllm"
     assert _pip_install_no_cache(already) == already

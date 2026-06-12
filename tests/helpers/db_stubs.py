@@ -23,11 +23,11 @@ def make_core_db_stub(
     if install_core_package:
         monkeypatch.setitem(sys.modules, "core", types.ModuleType("core"))
 
-    db = types.ModuleType("core.database")
+    db = types.ModuleType("src.infra.database.database")
     db.SessionLocal = MagicMock()
     for name in models:
         setattr(db, name, MagicMock())
     for name, value in (attributes or {}).items():
         setattr(db, name, value)
-    monkeypatch.setitem(sys.modules, "core.database", db)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db)
     return db

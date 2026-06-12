@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.domain.agent.tools.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 from src.domain.agent.tools.tool_policy import ToolPolicy
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
+from src.pkg.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, MAX_DIFF_LINES, DATA_DIR
 from src.domain.agent.tools.tool_utils import _truncate, get_mcp_manager
 
 # Persistent working directory for agent subprocesses.
@@ -94,7 +94,7 @@ def _tool_path_roots() -> list[str]:
     roots: list[str] = []
 
     # Project data directory — the agent's primary workspace.
-    from src.constants import DATA_DIR
+    from src.pkg.constants import DATA_DIR
     roots.append(DATA_DIR)
 
     # /tmp (and its macOS realpath /private/tmp).
@@ -208,7 +208,7 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 
 
 def get_mcp_manager():
-    from src import agent_tools
+    from src.domain.agent import agent_tools
     return agent_tools.get_mcp_manager()
 
 
@@ -620,7 +620,7 @@ async def execute_tool_block(
     if tool == "bash" and session_id:
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
-            from src import bg_jobs
+            from src.infra.scheduler import bg_jobs
             rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=_AGENT_WORKDIR)
             short = _bg_cmd.strip().split(chr(10))[0][:80]
             desc = f"bash (background): {short}"

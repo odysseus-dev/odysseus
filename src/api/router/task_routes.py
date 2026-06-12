@@ -11,9 +11,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.infra.database.database import SessionLocal, ScheduledTask, TaskRun
-from core.constants import internal_api_base
+from src.pkg.constants import internal_api_base
 from src.auth_helpers import get_current_user
-from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
+from src.pkg.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.infra.scheduler.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from src.api.router.prefs_routes import _load_for_user, _save_for_user
 
@@ -1070,7 +1070,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         saves it, so a misread schedule never goes live unreviewed."""
         from src.infra.llm.endpoint_resolver import resolve_endpoint
         from src.infra.llm.llm_core import llm_call_async
-        from src.text_helpers import strip_think as _strip_think
+        from src.pkg.text.text_helpers import strip_think as _strip_think
         import json as _json, re as _re
         from datetime import datetime as _dt
 

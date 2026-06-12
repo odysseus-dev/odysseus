@@ -7,7 +7,7 @@ A thin wrapper around VectorRAG for backward compatibility and additional featur
 import logging
 from typing import List, Dict, Any, Optional
 
-from src.constants import CHROMA_DIR
+from src.pkg.constants import CHROMA_DIR
 
 # Try to import from different possible locations
 try:

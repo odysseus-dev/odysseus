@@ -27,14 +27,14 @@ from unittest.mock import MagicMock
 @pytest.fixture(autouse=True)
 def _null_owner_stubs(monkeypatch):
     for _stub, _attrs in (
-        ("core.database", (
+        ("src.infra.database.database", (
             "Base", "SessionLocal", "CalendarCal", "CalendarEvent",
             "Document", "DocumentVersion", "Session", "ChatMessage",
             "GalleryImage", "GalleryAlbum", "Note", "ScheduledTask",
             "TaskRun", "ModelEndpoint", "Webhook",
         )),
-        ("core.auth", ("AuthManager",)),
-        ("src.endpoint_resolver", ()),
+        ("src.infra.auth.auth", ("AuthManager",)),
+        ("src.infra.llm.endpoint_resolver", ()),
     ):
         if _stub not in sys.modules:
             m = types.ModuleType(_stub)
@@ -68,7 +68,7 @@ def _import_calendar_helpers():
     """Import the two private gate helpers without booting the full
     calendar router. We patch sys.modules so the module-load side
     effects (DB import) don't blow up under the conftest stubs."""
-    mod_name = "routes.calendar_routes"
+    mod_name = "src.api.router.calendar_routes"
     if mod_name in sys.modules:
         return sys.modules[mod_name]
     # core.database is stubbed by conftest already; the module should
@@ -132,7 +132,7 @@ def test_calendar_event_gate_rejects_cross_owner():
 # ---------------------------------------------------------------------------
 
 def test_document_owner_filter_rejects_anonymous():
-    from routes.document_routes import _owner_session_filter
+    from src.api.router.document_routes import _owner_session_filter
     fake_q = MagicMock()
     out = _owner_session_filter(fake_q, user=None)
     # The fix should call .filter(False) — fake_q.filter was invoked once
@@ -142,7 +142,7 @@ def test_document_owner_filter_rejects_anonymous():
 
 
 def test_document_owner_filter_applies_owner_clause():
-    from routes.document_routes import _owner_session_filter
+    from src.api.router.document_routes import _owner_session_filter
     fake_q = MagicMock()
     out = _owner_session_filter(fake_q, user="alice")
     fake_q.filter.assert_called_once()  # one strict filter call
@@ -155,7 +155,7 @@ def test_document_owner_filter_applies_owner_clause():
 
 def test_gallery_owner_filter_blocks_anonymous(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
-    from routes.gallery_routes import _owner_filter
+    from src.api.router.gallery_routes import _owner_filter
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user=None)
     fake_q.filter.assert_called_once_with(False)
@@ -164,7 +164,7 @@ def test_gallery_owner_filter_blocks_anonymous(monkeypatch):
 
 def test_gallery_owner_filter_allows_single_user_mode(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "false")
-    from routes.gallery_routes import _owner_filter
+    from src.api.router.gallery_routes import _owner_filter
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user=None)
     fake_q.filter.assert_not_called()
@@ -172,7 +172,7 @@ def test_gallery_owner_filter_allows_single_user_mode(monkeypatch):
 
 
 def test_gallery_owner_filter_passes_user():
-    from routes.gallery_routes import _owner_filter
+    from src.api.router.gallery_routes import _owner_filter
     fake_q = MagicMock()
     out = _owner_filter(fake_q, user="alice")
     # Under the SQLAlchemy MagicMock stubs we can't introspect the

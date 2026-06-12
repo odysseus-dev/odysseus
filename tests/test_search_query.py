@@ -1,6 +1,6 @@
 """Tests for research query entity extraction (src/search/query.py)."""
 
-from src.search.query import _extract_entities
+from src.infra.search.query import _extract_entities
 
 
 def test_extracts_full_four_digit_year():

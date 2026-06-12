@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from routes.shell_routes import (
+from src.api.router.shell_routes import (
     _find_line_break,
     _running_in_container,
     _docker_row_status,
@@ -59,7 +59,7 @@ def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
 
 async def test_generate_pty_reports_explicit_unsupported_error(monkeypatch):
     """Clients can distinguish unsupported PTY mode from process failures."""
-    import routes.shell_routes as shell_routes
+    import src.api.router.shell_routes as shell_routes
 
     monkeypatch.setattr(shell_routes, "PTY_SUPPORTED", False)
     monkeypatch.setattr(
@@ -172,7 +172,7 @@ class TestAppleSiliconDetection:
     """APFEL should only surface as available on native Apple Silicon Macs."""
 
     def test_reports_true_on_macos_arm64(self, monkeypatch):
-        import core.platform_compat as platform_compat
+        import src.pkg.platform_compat as platform_compat
 
         monkeypatch.setattr(platform_compat.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(platform_compat.platform, "machine", lambda: "arm64")
@@ -182,7 +182,7 @@ class TestAppleSiliconDetection:
 
     @pytest.mark.parametrize("machine", ["x86_64", "amd64"])
     def test_reports_false_off_apple_silicon(self, monkeypatch, machine):
-        import core.platform_compat as platform_compat
+        import src.pkg.platform_compat as platform_compat
 
         monkeypatch.setattr(platform_compat.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(platform_compat.platform, "machine", lambda: machine)
@@ -191,7 +191,7 @@ class TestAppleSiliconDetection:
         assert platform_compat.IS_APPLE_SILICON is False
 
     def test_reports_false_on_non_macos(self, monkeypatch):
-        import core.platform_compat as platform_compat
+        import src.pkg.platform_compat as platform_compat
 
         monkeypatch.setattr(platform_compat.platform, "system", lambda: "Linux")
         monkeypatch.setattr(platform_compat.platform, "machine", lambda: "arm64")

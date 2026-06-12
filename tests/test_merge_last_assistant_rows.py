@@ -9,7 +9,7 @@ deletion mirror the in-memory rule.
 """
 from types import SimpleNamespace
 
-from routes.history_routes import _merge_continue_rows_to_delete
+from src.api.router.history_routes import _merge_continue_rows_to_delete
 
 
 def _m(role, content=""):

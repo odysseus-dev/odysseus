@@ -51,7 +51,7 @@ class _Db:
 
 
 def _resolver_spy(monkeypatch, utility_result=("", "", {}), default_result=("http://llm", "model", {})):
-    from src import endpoint_resolver
+    from src.infra.llm import endpoint_resolver
 
     calls = []
     fallback_calls = []
@@ -102,7 +102,7 @@ async def test_classify_events_resolves_llm_for_task_owner(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
-    from routes import email_helpers
+    from src.api.handler import email_helpers
     from src.domain.agent.builtin_actions import action_learn_sender_signatures
 
     class FakeImap:

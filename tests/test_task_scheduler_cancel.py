@@ -5,7 +5,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 
 def _setup_db(tmp_path, monkeypatch):
-    import core.database as cd
+    import src.infra.database.database as cd
 
     base = declarative_base()
 

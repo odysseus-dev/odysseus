@@ -3,7 +3,7 @@ import json
 import sys
 from types import SimpleNamespace
 
-import src.agent_loop as al
+import src.domain.agent.agent_loop as al
 from src.domain.agent.tools import ToolBlock
 from src.domain.agent.tools.tool_execution import execute_tool_block
 from src.domain.agent.tools.tool_policy import build_effective_tool_policy, detect_guide_only_turn
@@ -163,7 +163,7 @@ def test_guide_only_skips_tool_retrieval(monkeypatch):
     monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
     monkeypatch.setitem(
         sys.modules,
-        "src.tool_index",
+        "src.domain.agent.tools.tool_index",
         SimpleNamespace(get_tool_index=_fail_tool_index, ALWAYS_AVAILABLE=set()),
     )
     policy = build_effective_tool_policy(last_user_message="Do not use tools.")

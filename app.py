@@ -50,21 +50,21 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 
 # Core imports
-from core.constants import (
+from src.pkg.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
     REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from src.infra.database.database import SessionLocal, ApiToken
 from src.api.middleware.security_headers import SecurityHeadersMiddleware, is_cors_preflight
 from src.infra.auth.auth import AuthManager, normalize_known_username
-from core.exceptions import (
+from src.pkg.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
     LLMServiceError, WebSearchError,
 )
 
 import bcrypt as _bcrypt
 
-from src.app_helpers import abs_join
+from src.pkg.io import abs_join
 from src.domain.document.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
@@ -824,7 +824,7 @@ async def serve_login(request: Request):
 
 @app.get("/api/version")
 async def get_version():
-    from core.constants import APP_VERSION
+    from src.pkg.constants import APP_VERSION
     return {"version": APP_VERSION}
 
 @app.get("/api/health")

@@ -6,9 +6,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.database import GalleryAlbum, GalleryImage
-import routes.gallery_routes as gallery_routes
+import src.api.router.gallery_routes as gallery_routes
 
 
 def _client_with_gallery(monkeypatch, tmp_path):

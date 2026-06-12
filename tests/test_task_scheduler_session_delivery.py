@@ -16,7 +16,7 @@ from tests.helpers.import_state import clear_fake_database_modules
 
 clear_fake_database_modules()
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.database import Base, Session as DbSession
 from src.infra.database.models import ChatMessage as MemChatMessage
 from src.infra.scheduler.task_scheduler import TaskScheduler
@@ -57,7 +57,7 @@ def test_session_delivery_survives_empty_database(monkeypatch):
     """On a fresh/wiped database there is no session to inherit endpoint/model
     from, so _resolve_defaults returns None. The delivery must still persist a
     session instead of crashing on the NOT NULL constraint (issue #326)."""
-    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", cdb)
     parent = sys.modules.get("core")
     if parent is not None:
         monkeypatch.setattr(parent, "database", cdb, raising=False)
@@ -76,7 +76,7 @@ def test_session_delivery_survives_empty_database(monkeypatch):
 
 def test_session_delivery_uses_in_memory_messages_with_manager(monkeypatch):
     """Manager delivery must not construct the SQLAlchemy ChatMessage model."""
-    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", cdb)
     parent = sys.modules.get("core")
     if parent is not None:
         monkeypatch.setattr(parent, "database", cdb, raising=False)

@@ -6,7 +6,7 @@ import subprocess
 import time
 import shlex
 
-from core.platform_compat import (
+from src.pkg.platform_compat import (
     NVIDIA_PATH_CANDIDATES,
     SSH_PATH_OVERRIDE,
     run_ssh_command,

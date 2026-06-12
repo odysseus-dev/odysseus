@@ -3,7 +3,7 @@
 A stub resolver is injected so the tests never touch real DNS.
 """
 
-from src.url_safety import check_outbound_url
+from src.pkg.security.url_safety import check_outbound_url
 
 
 def _resolver(mapping):

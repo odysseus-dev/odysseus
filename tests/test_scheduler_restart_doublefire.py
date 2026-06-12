@@ -23,14 +23,14 @@ def _test_utcnow():
 
 def _stub_heavy():
     for name in [
-        "src.builtin_actions", "src.ai_interaction", "src.endpoint_resolver",
-        "src.agent_loop", "src.session_manager",
+        "src.domain.agent.builtin_actions", "src.domain.agent.ai_interaction", "src.infra.llm.endpoint_resolver",
+        "src.domain.agent.agent_loop", "src.session_manager",
     ]:
         sys.modules.setdefault(name, types.ModuleType(name))
 
 
 def _setup_isolated_db():
-    import core.database as cd
+    import src.infra.database.database as cd
     B = declarative_base()
 
     class ScheduledTask(B):

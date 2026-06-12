@@ -2,7 +2,7 @@
 import types
 import pytest
 
-from src import copilot
+from src.infra.integration import copilot
 
 
 # ── Provider detection ─────────────────────────────────────────────────────

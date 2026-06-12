@@ -42,7 +42,7 @@ def _make_failing_conn(captured, *, raises_on="select"):
 # ── email_helpers ──────────────────────────────────────────────────────────────
 
 def test_fetch_sender_thread_context_logs_out_on_select_failure(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     captured = {}
     conn = _make_failing_conn(captured, raises_on="select")
@@ -59,7 +59,7 @@ def test_fetch_sender_thread_context_logs_out_on_select_failure(monkeypatch):
 
 def test_fetch_sender_thread_context_logs_out_on_connect_failure(monkeypatch):
     """If _imap_connect itself raises, conn is None — no logout, no crash."""
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     def _fail(*a, **kw):
         raise ConnectionRefusedError("cannot connect")
@@ -70,7 +70,7 @@ def test_fetch_sender_thread_context_logs_out_on_connect_failure(monkeypatch):
 
 
 def test_pre_retrieve_context_logs_out_on_search_failure(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     captured = {}
     conn = MagicMock()
@@ -239,7 +239,7 @@ def test_mcp_download_attachment_logs_out_on_select_failure(monkeypatch):
 
 def test_imap_connect_shuts_down_socket_on_login_failure(monkeypatch):
     """A failed login() must close the already-connected socket, not leak it."""
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     captured = {}
     conn = MagicMock()
@@ -272,7 +272,7 @@ def test_imap_connect_shuts_down_socket_on_login_failure(monkeypatch):
 
 def test_open_imap_connection_shuts_down_on_starttls_failure(monkeypatch):
     """A rejected STARTTLS upgrade must close the open plain socket."""
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     captured = {}
     conn = MagicMock()

@@ -10,7 +10,7 @@ clear_fake_database_modules()
 
 from src.infra.database.database import Base, Session as DbSession, ChatMessage as DbChatMessage
 from src.infra.database.session_manager import SessionManager
-from src.topic_analyzer import analyze_topics
+from src.pkg.text.topic_analyzer import analyze_topics
 from datetime import datetime
 
 
@@ -76,8 +76,8 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
     db.close()
     
     # 4. Patch SessionLocal to use our in-memory DB
-    import core.session_manager
-    import core.database
+    import src.infra.database.session_manager
+    import src.infra.database.database
     monkeypatch.setattr(core.session_manager, "SessionLocal", TestSessionLocal)
     monkeypatch.setattr(core.database, "SessionLocal", TestSessionLocal)
     

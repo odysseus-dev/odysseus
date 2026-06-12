@@ -41,8 +41,8 @@ def _route(router, name):
 
 @pytest.fixture
 def rename_endpoint(monkeypatch, tmp_path):
-    import routes.auth_routes as ar
-    import core.database as cdb
+    import src.api.router.auth_routes as ar
+    import src.infra.database.database as cdb
 
     # Neutralize the DB owner-rename loop.
     monkeypatch.setattr(cdb, "SessionLocal", lambda: MagicMock())
@@ -81,7 +81,7 @@ def _request(tmp_path, session_manager=None, token="t", research_handler=None):
 
 
 def _auth_manager_for_rollback_test(monkeypatch, tmp_path):
-    import core.auth as auth_mod
+    import src.infra.auth.auth as auth_mod
 
     monkeypatch.setattr(auth_mod, "_hash_password", lambda password: f"hash:{password}")
     monkeypatch.setattr(auth_mod, "_verify_password", lambda password, hashed: hashed == f"hash:{password}")
@@ -93,7 +93,7 @@ def _auth_manager_for_rollback_test(monkeypatch, tmp_path):
 
 
 def _force_sql_owner_migration_failure(monkeypatch):
-    import core.database as cdb
+    import src.infra.database.database as cdb
 
     class OwnerModel:
         owner = "owner"
@@ -241,7 +241,7 @@ def test_rename_no_deep_research_dir_does_not_crash(rename_endpoint):
 def test_rename_updates_active_research_task_owner(rename_endpoint):
     endpoint, _am, tmp_path = rename_endpoint
 
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     from src.domain.research.research_handler import ResearchHandler
 
     rh = ResearchHandler.__new__(ResearchHandler)
@@ -345,8 +345,8 @@ def test_rename_research_respects_custom_data_dir(monkeypatch, tmp_path):
     hardcoded relative path. Before the fix, setting ODYSSEUS_DATA_DIR made
     the rename silently patch a different directory from where research files
     actually live, so reports still disappeared after rename."""
-    import routes.auth_routes as ar
-    import core.database as cdb
+    import src.api.router.auth_routes as ar
+    import src.infra.database.database as cdb
 
     custom_dr = tmp_path / "custom_data" / "deep_research"
     custom_dr.mkdir(parents=True)
@@ -526,7 +526,7 @@ def test_rename_usage_keys_case_insensitive(rename_endpoint):
 # ---------------------------------------------------------------------------
 
 def test_owner_migration_failure_rolls_back_auth_rename(monkeypatch, tmp_path):
-    import routes.auth_routes as ar
+    import src.api.router.auth_routes as ar
 
     db = _force_sql_owner_migration_failure(monkeypatch)
     am = _auth_manager_for_rollback_test(monkeypatch, tmp_path)
@@ -555,7 +555,7 @@ def test_owner_migration_failure_rolls_back_auth_rename(monkeypatch, tmp_path):
 
 
 def test_self_rename_owner_migration_failure_rolls_back_auth_session(monkeypatch, tmp_path):
-    import routes.auth_routes as ar
+    import src.api.router.auth_routes as ar
 
     db = _force_sql_owner_migration_failure(monkeypatch)
     am = _auth_manager_for_rollback_test(monkeypatch, tmp_path)
@@ -591,8 +591,8 @@ def test_rejected_rename_does_not_mutate_files(monkeypatch, tmp_path):
     should be touched. Before the fix the deep_research and memory writes
     ran before the auth check, so a rejected rename (e.g. reserved username)
     silently moved owner fields to the new name."""
-    import routes.auth_routes as ar
-    import core.database as cdb
+    import src.api.router.auth_routes as ar
+    import src.infra.database.database as cdb
 
     monkeypatch.setattr(cdb, "SessionLocal", lambda: MagicMock())
     monkeypatch.setattr(cdb, "Base", SimpleNamespace(registry=SimpleNamespace(mappers=[])), raising=False)

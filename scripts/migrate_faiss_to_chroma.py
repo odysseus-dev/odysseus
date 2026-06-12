@@ -63,7 +63,7 @@ def migrate_memories():
     """Migrate memory vectors from FAISS to ChromaDB."""
     from src.domain.memory.chroma_client import get_chroma_client
     from src.domain.embedding.embeddings import get_embedding_client
-    from src.constants import MEMORY_VECTORS_DIR, MEMORY_FILE
+    from src.pkg.constants import MEMORY_VECTORS_DIR, MEMORY_FILE
 
     ids_path = os.path.join(MEMORY_VECTORS_DIR, "ids.json")
     memory_path = MEMORY_FILE

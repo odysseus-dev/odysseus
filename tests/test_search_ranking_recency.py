@@ -52,7 +52,7 @@ def test_supported_timestamp_formats_parse():
 def test_shim_reexports_live_objects():
     # src.search.ranking is a compatibility shim; it must expose the *same*
     # objects as the live services module so the two cannot diverge.
-    import src.search.ranking as shim
+    import src.infra.search.ranking as shim
 
     assert shim.recency_score is live_ranking.recency_score
     assert shim.rank_search_results is live_ranking.rank_search_results

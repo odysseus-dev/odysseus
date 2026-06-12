@@ -14,7 +14,7 @@ import uuid
 
 import pytest
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.models import ChatMessage
 from tests.helpers.sqlite_db import make_temp_sqlite
 
@@ -23,7 +23,7 @@ _TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)
 
 @pytest.fixture
 def manager(monkeypatch):
-    import core.session_manager as sm
+    import src.infra.database.session_manager as sm
     monkeypatch.setattr(sm, "SessionLocal", _TS)
     mgr = sm.SessionManager.__new__(sm.SessionManager)
     mgr.sessions = {}

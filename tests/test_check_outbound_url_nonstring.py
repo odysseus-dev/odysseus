@@ -4,7 +4,7 @@ The `if not url or not url.strip()` guard only handled falsy values; a truthy
 non-string (e.g. an int) reached `.strip()` and raised AttributeError out of
 this SSRF check. Non-strings now fail closed with a clear message.
 """
-from src.url_safety import check_outbound_url
+from src.pkg.security.url_safety import check_outbound_url
 
 
 def test_non_string_fails_closed():

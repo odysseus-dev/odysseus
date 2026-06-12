@@ -14,13 +14,13 @@ from fastapi import HTTPException
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
-with preserve_import_state("core.database", "src.database", "core.session_manager", "routes.model_routes"):
+with preserve_import_state("src.infra.database.database", "src.database", "src.infra.database.session_manager", "routes.model_routes"):
     # Other tests stub this module during collection. These helper tests need
     # the real URL normalization helpers so Anthropic /v1 handling is covered.
     clear_fake_endpoint_resolver_modules()
 
-    if "core.database" not in sys.modules:
-        _core_db = types.ModuleType("core.database")
+    if "src.infra.database.database" not in sys.modules:
+        _core_db = types.ModuleType("src.infra.database.database")
         for _name in [
             "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
             "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
@@ -29,13 +29,13 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         ]:
             setattr(_core_db, _name, MagicMock())
         _core_db.utcnow_naive = MagicMock()
-        sys.modules["core.database"] = _core_db
+        sys.modules["src.infra.database.database"] = _core_db
 
-    import routes.model_routes as model_routes
+    import src.api.router.model_routes as model_routes
     import src.database as src_database
-    import src.endpoint_resolver as endpoint_resolver
-    import src.llm_core as llm_core
-    from routes.model_routes import (
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
+    import src.infra.llm.llm_core as llm_core
+    from src.api.router.model_routes import (
         _match_provider_curated,
         _curate_models,
         _visible_models,

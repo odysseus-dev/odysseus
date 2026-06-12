@@ -18,7 +18,7 @@ uses), so a short term no longer matches inside an unrelated word.
 import pytest
 
 import services.search.ranking as services_ranking
-import src.search.ranking as src_ranking
+import src.infra.search.ranking as src_ranking
 
 RANK_MODULES = [services_ranking, src_ranking]
 RANK_IDS = ["services", "src"]

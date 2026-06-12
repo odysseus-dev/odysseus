@@ -129,8 +129,8 @@ def test_push_missing_uid_reports_input_error_before_remote_lookup():
 
 
 def test_writeback_validates_saved_url_before_remote_call(monkeypatch):
-    import src.caldav_sync as sync
-    import src.caldav_writeback as wb
+    import src.domain.calendar.caldav_sync as sync
+    import src.domain.calendar.caldav_writeback as wb
 
     prefs_mod = types.ModuleType("routes.prefs_routes")
     prefs_mod._load_for_user = lambda owner: {
@@ -140,10 +140,10 @@ def test_writeback_validates_saved_url_before_remote_call(monkeypatch):
             "password": "enc:pw",
         }
     }
-    secret_mod = types.ModuleType("src.secret_storage")
+    secret_mod = types.ModuleType("src.infra.storage.secret_storage")
     secret_mod.decrypt = lambda value: "plain-password"
     monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
-    monkeypatch.setitem(sys.modules, "src.secret_storage", secret_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.storage.secret_storage", secret_mod)
 
     captured = {}
 
@@ -187,8 +187,8 @@ def test_writeback_validates_saved_url_before_remote_call(monkeypatch):
 
 
 def test_writeback_rejects_unsafe_saved_url_before_remote_call(monkeypatch):
-    import src.caldav_sync as sync
-    import src.caldav_writeback as wb
+    import src.domain.calendar.caldav_sync as sync
+    import src.domain.calendar.caldav_writeback as wb
 
     prefs_mod = types.ModuleType("routes.prefs_routes")
     prefs_mod._load_for_user = lambda owner: {
@@ -198,10 +198,10 @@ def test_writeback_rejects_unsafe_saved_url_before_remote_call(monkeypatch):
             "password": "enc:pw",
         }
     }
-    secret_mod = types.ModuleType("src.secret_storage")
+    secret_mod = types.ModuleType("src.infra.storage.secret_storage")
     secret_mod.decrypt = lambda value: "plain-password"
     monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
-    monkeypatch.setitem(sys.modules, "src.secret_storage", secret_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.storage.secret_storage", secret_mod)
 
     called = False
 

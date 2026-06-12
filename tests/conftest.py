@@ -25,7 +25,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 try:
     import sqlalchemy  # noqa: F401
     import sqlalchemy.orm  # noqa: F401
-    import core.database  # noqa: F401
+    import src.infra.database.database  # noqa: F401
 except ImportError:
     pass  # not installed - the stubs below will handle it
 
@@ -55,10 +55,10 @@ if "src.database" not in sys.modules:
     _db.ModelEndpoint = MagicMock()
     sys.modules["src.database"] = _db
 
-# Pre-import core.models before test_agent_loop.py's module-level stubs
-# run (it replaces sys.modules['core.models'] with a MagicMock during
+# Pre-import src.infra.database.models before test_agent_loop.py's module-level stubs
+# run (it replaces sys.modules['src.infra.database.models'] with a MagicMock during
 # collection, which breaks session import in subsequent tests).
-import core.models  # noqa: E402
+import src.infra.database.models  # noqa: E402
 
 def pytest_configure(config):
     """Register the dynamic taxonomy ``sub_*`` markers before collection.

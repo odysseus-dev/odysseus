@@ -27,13 +27,13 @@ import pytest
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
-with preserve_import_state("core.database", "src.database", "core.session_manager", "routes.model_routes"):
+with preserve_import_state("src.infra.database.database", "src.database", "src.infra.database.session_manager", "routes.model_routes"):
     # Match test_model_routes.py: if another test stubbed src.endpoint_resolver
     # during collection, drop the stub so the real URL helpers load here.
     clear_fake_endpoint_resolver_modules()
 
-    if "core.database" not in sys.modules:
-        _core_db = types.ModuleType("core.database")
+    if "src.infra.database.database" not in sys.modules:
+        _core_db = types.ModuleType("src.infra.database.database")
         for _name in [
             "SessionLocal", "ModelEndpoint", "Session", "ChatMessage", "Document",
             "DocumentVersion", "GalleryImage", "GalleryAlbum", "Note",
@@ -42,11 +42,11 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
         ]:
             setattr(_core_db, _name, MagicMock())
         _core_db.utcnow_naive = MagicMock()
-        sys.modules["core.database"] = _core_db
+        sys.modules["src.infra.database.database"] = _core_db
 
-    import routes.model_routes as model_routes
-    import src.endpoint_resolver as endpoint_resolver
-    from routes.model_routes import (
+    import src.api.router.model_routes as model_routes
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
+    from src.api.router.model_routes import (
         _probe_endpoint,
         _ping_endpoint,
         _probe_single_model,

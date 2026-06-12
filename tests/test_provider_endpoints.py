@@ -18,7 +18,7 @@ import types
 
 import pytest
 
-from src import endpoint_resolver as er
+from src.infra.llm import endpoint_resolver as er
 
 
 @pytest.fixture

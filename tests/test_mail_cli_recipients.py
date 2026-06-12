@@ -6,7 +6,7 @@ from tests.helpers.db_stubs import make_core_db_stub
 
 
 def _load_mail_cli(monkeypatch):
-    helpers = ModuleType("routes.email_helpers")
+    helpers = ModuleType("src.api.handler.email_helpers")
     helpers._imap = object
     helpers._get_email_config = lambda account=None: {}
     helpers._decode_header = lambda value: value
@@ -18,7 +18,7 @@ def _load_mail_cli(monkeypatch):
     pollers._scheduled_poll_once = lambda: {}
     pollers._run_auto_summarize_once = lambda **kwargs: ""
 
-    monkeypatch.setitem(sys.modules, "routes.email_helpers", helpers)
+    monkeypatch.setitem(sys.modules, "src.api.handler.email_helpers", helpers)
     monkeypatch.setitem(sys.modules, "routes.email_pollers", pollers)
     make_core_db_stub(
         monkeypatch,

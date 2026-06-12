@@ -2,7 +2,7 @@
 
 import pytest
 
-import routes.contacts_routes as contacts
+import src.api.router.contacts_routes as contacts
 
 
 def test_validate_carddav_url_blocks_metadata_targets(monkeypatch):

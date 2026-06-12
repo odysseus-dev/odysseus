@@ -5,7 +5,7 @@ import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from src import tool_implementations
+from src.domain.agent.tools import tool_implementations
 
 
 class _Query:
@@ -47,10 +47,10 @@ def _install_fakes(monkeypatch, note):
     monkeypatch.setitem(sys.modules, "sqlalchemy.orm.attributes", fake_sa_attrs)
 
     db = _Db(note)
-    fake_core_db = types.ModuleType("core.database")
+    fake_core_db = types.ModuleType("src.infra.database.database")
     fake_core_db.SessionLocal = lambda: db
     fake_core_db.Note = MagicMock()
-    monkeypatch.setitem(sys.modules, "core.database", fake_core_db)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", fake_core_db)
     return db
 
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from src.constants import GENERATED_IMAGES_DIR
+from src.pkg.constants import GENERATED_IMAGES_DIR
 
 
 GENERATED_IMAGE_DIR = Path(GENERATED_IMAGES_DIR)

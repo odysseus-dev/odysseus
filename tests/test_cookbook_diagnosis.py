@@ -1,4 +1,4 @@
-from routes.cookbook_helpers import _diagnose_serve_output
+from src.api.handler.cookbook_helpers import _diagnose_serve_output
 
 
 def test_diagnose_vllm_modelopt_lm_head_error():

@@ -126,7 +126,7 @@ class FakeChroma:
 
 
 def _patch_chroma(monkeypatch, fake):
-    import src.chroma_client as chroma_client
+    import src.domain.memory.chroma_client as chroma_client
 
     monkeypatch.setattr(chroma_client, "get_chroma_client", lambda: fake)
 
@@ -135,7 +135,7 @@ def test_build_embedding_lanes_keeps_custom_and_fastembed_dimensions_separate(mo
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(
         lanes,
@@ -184,7 +184,7 @@ def test_build_embedding_lanes_recreates_only_custom_when_fingerprint_changes(mo
     fast.add(ids=["fast"], embeddings=[[0.0] * 384], documents=["fast"])
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(1024, "bge-large", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "sentence-transformers/all-MiniLM-L6-v2", "local://fastembed"))
@@ -216,7 +216,7 @@ def test_lane_reset_reembeds_existing_documents_on_fingerprint_change(monkeypatc
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
 
@@ -253,7 +253,7 @@ def test_lane_reset_keeps_existing_collection_when_reembed_fails(monkeypatch):
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -289,7 +289,7 @@ def test_lane_reset_keeps_existing_collection_when_preserve_read_fails(monkeypat
     old_custom.get = fail_get
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
 
@@ -324,7 +324,7 @@ def test_lane_reset_restores_existing_collection_when_rewrite_fails(monkeypatch)
     fake.fail_next_add_for["odysseus_memories_custom"] = 1
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
 
@@ -346,7 +346,7 @@ def test_build_embedding_lanes_uses_fastembed_when_custom_unavailable(monkeypatc
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     def fail_custom():
         raise RuntimeError("down")
@@ -361,8 +361,8 @@ def test_build_embedding_lanes_uses_fastembed_when_custom_unavailable(monkeypatc
 
 
 def test_custom_lane_preserves_default_embedding_client_probe(monkeypatch):
-    import src.embedding_lanes as lanes
-    import src.embeddings as embeddings
+    import src.domain.embedding.embedding_lanes as lanes
+    import src.domain.embedding.embeddings as embeddings
 
     embeddings.reset_http_embed_state()
     monkeypatch.setattr(lanes, "_load_custom_endpoint", lambda: {})
@@ -384,8 +384,8 @@ def test_custom_lane_preserves_default_embedding_client_probe(monkeypatch):
 
 
 def test_custom_lane_uses_http_down_latch(monkeypatch):
-    import src.embedding_lanes as lanes
-    import src.embeddings as embeddings
+    import src.domain.embedding.embedding_lanes as lanes
+    import src.domain.embedding.embeddings as embeddings
 
     embeddings.reset_http_embed_state()
     calls = []
@@ -417,7 +417,7 @@ def test_memory_vector_store_writes_both_lanes_and_prefers_custom(monkeypatch):
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -496,7 +496,7 @@ def test_vector_rag_writes_both_lanes_and_falls_back_to_fastembed(monkeypatch):
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -517,7 +517,7 @@ def test_vector_rag_batch_index_continues_when_custom_lane_fails(monkeypatch, tm
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -539,7 +539,7 @@ def test_vector_rag_batch_index_reports_failure_when_all_lanes_fail(monkeypatch,
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FailingEmbedder(384, "mini", "local://fastembed"))
@@ -560,7 +560,7 @@ def test_tool_index_indexes_and_retrieves_from_available_lanes(monkeypatch):
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -731,7 +731,7 @@ def test_legacy_collection_backfills_fastembed_lane(monkeypatch):
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -756,7 +756,7 @@ def test_legacy_collection_backfills_custom_only_lane(monkeypatch):
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FakeEmbedder(768, "nomic", "http://embeddings/v1"))
 
@@ -786,7 +786,7 @@ def test_legacy_migration_continues_when_custom_backfill_fails(monkeypatch):
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -818,7 +818,7 @@ def test_legacy_migration_resumes_partial_lane_backfill(monkeypatch):
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -849,7 +849,7 @@ def test_memory_rebuild_does_not_reimport_legacy_collection(monkeypatch):
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -912,7 +912,7 @@ def test_memory_rebuild_continues_when_custom_lane_fails(monkeypatch):
     fake = FakeChroma()
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: FailingEmbedder(768, "nomic", "http://embeddings/v1"))
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))
@@ -945,7 +945,7 @@ def test_rag_rebuild_does_not_reimport_legacy_collection(monkeypatch, tmp_path):
     )
     _patch_chroma(monkeypatch, fake)
 
-    import src.embedding_lanes as lanes
+    import src.domain.embedding.embedding_lanes as lanes
 
     monkeypatch.setattr(lanes, "_build_custom_client", lambda: None)
     monkeypatch.setattr(lanes, "_build_fastembed_client", lambda: FakeEmbedder(384, "mini", "local://fastembed"))

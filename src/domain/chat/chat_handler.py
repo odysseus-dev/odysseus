@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Any
 
 from fastapi import HTTPException
 
-from src.constants import (
+from src.pkg.constants import (
     MAX_CONTEXT_MESSAGES,
     DEFAULT_TEMPERATURE,
     DEFAULT_MAX_TOKENS,

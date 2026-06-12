@@ -2,7 +2,7 @@
 from the native /api/v1/models endpoint, with no probing of cloud providers."""
 import pytest
 
-from src import chat_helpers
+from src.domain.chat import chat_helpers
 
 
 class _FakeResponse:

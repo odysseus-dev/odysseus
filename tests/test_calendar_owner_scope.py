@@ -148,7 +148,7 @@ class _FakeSession:
 
 
 def _install_calendar_db_stub(monkeypatch):
-    db = types.ModuleType("core.database")
+    db = types.ModuleType("src.infra.database.database")
     db.SessionLocal = MagicMock()
     db.CalendarCal = _CalendarCal
     db.CalendarEvent = _CalendarEvent
@@ -167,7 +167,7 @@ def _install_calendar_db_stub(monkeypatch):
         "Webhook",
     ]:
         setattr(db, name, MagicMock())
-    monkeypatch.setitem(sys.modules, "core.database", db)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db)
     return db
 
 
@@ -180,8 +180,8 @@ def _install_multipart_stub(monkeypatch):
 def _import_calendar_routes(monkeypatch):
     _install_calendar_db_stub(monkeypatch)
     _install_multipart_stub(monkeypatch)
-    monkeypatch.delitem(sys.modules, "routes.calendar_routes", raising=False)
-    mod = __import__("routes.calendar_routes", fromlist=["setup_calendar_routes"])
+    monkeypatch.delitem(sys.modules, "src.api.router.calendar_routes", raising=False)
+    mod = __import__("src.api.router.calendar_routes", fromlist=["setup_calendar_routes"])
     monkeypatch.setattr(mod, "or_", lambda *args: _Expr("or", children=args))
     monkeypatch.setattr(mod, "and_", lambda *args: _Expr("and", children=args))
     return mod

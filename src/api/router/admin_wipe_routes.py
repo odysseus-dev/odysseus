@@ -31,7 +31,7 @@ from src.infra.database.database import (
     CalendarEvent,
     CalendarCal,
 )
-from src.constants import DATA_DIR, SKILLS_DIR, SKILLS_FILE, GALLERY_DIR, GALLERY_UPLOADS_DIR
+from src.pkg.constants import DATA_DIR, SKILLS_DIR, SKILLS_FILE, GALLERY_DIR, GALLERY_UPLOADS_DIR
 
 logger = logging.getLogger(__name__)
 

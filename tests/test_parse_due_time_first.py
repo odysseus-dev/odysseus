@@ -8,8 +8,8 @@ scanner never fired the note. Fixes #3302.
 """
 from datetime import datetime, timezone
 
-import routes.calendar_routes as calendar_routes
-from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
+import src.api.router.calendar_routes as calendar_routes
+from src.pkg.time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
 
 
 class _FixedNow(datetime):

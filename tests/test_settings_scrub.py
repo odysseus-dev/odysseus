@@ -9,7 +9,7 @@ reachable over a Cloudflare tunnel / reverse proxy. These pin the scrub: deep
 Imports the stdlib-only `src.settings_scrub` directly, so the test does not pull
 in the FastAPI / auth / database import chain.
 """
-from src.settings_scrub import is_secret_key, scrub_settings
+from conf.settings_scrub import is_secret_key, scrub_settings
 
 
 def test_top_level_secrets_blanked():

@@ -20,11 +20,11 @@ from tests.helpers.import_state import clear_fake_database_modules
 
 clear_fake_database_modules()
 
-import core.database as cdb
-import routes.document_routes as droutes
+import src.infra.database.database as cdb
+import src.api.router.document_routes as droutes
 from src.infra.database.database import Document
 from src.infra.database.database import Session as DbSession
-from routes.document_helpers import DocumentPatch
+from src.api.handler.document_helpers import DocumentPatch
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(

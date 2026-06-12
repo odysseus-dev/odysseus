@@ -16,13 +16,13 @@ from src.infra.database.models import ChatMessage
 from src.request_models import ChatRequest
 from src.infra.llm.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.domain.agent.agent_loop import stream_agent_loop
-from src import agent_runs
+from src.domain.agent import agent_runs
 from src.domain.context.model_context import estimate_tokens
 from src.domain.chat.chat_helpers import coerce_message_and_session
 from src.infra.llm.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.domain.agent.session_search import search_session_messages
-from src.prompt_security import untrusted_context_message
-from core.exceptions import SessionNotFoundError
+from src.pkg.security.prompt_security import untrusted_context_message
+from src.pkg.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from src.api.router.session_routes import _verify_session_owner
 from src.api.handler.document_helpers import _owner_session_filter
@@ -286,7 +286,7 @@ def _set_user_time_from_request(request: Request) -> None:
     try:
         tz_offset = request.headers.get("x-tz-offset")
         tz_name = request.headers.get("x-tz-name")
-        from src.user_time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
+        from src.pkg.time import clear_user_time_context, set_user_tz_name, set_user_tz_offset
 
         clear_user_time_context()
         if tz_offset is not None:

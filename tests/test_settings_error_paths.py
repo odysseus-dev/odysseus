@@ -23,7 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def _fresh_load(settings_path, content=None):
     """Write content to settings_path, clear cache, and call load_settings()."""
-    import src.settings as s
+    import conf.settings as s
 
     if content is not None:
         settings_path.write_text(content, encoding="utf-8")
@@ -36,7 +36,7 @@ def _fresh_load(settings_path, content=None):
 
 def test_missing_file_returns_defaults(tmp_path):
     """FileNotFoundError → defaults, no crash."""
-    import src.settings as s
+    import conf.settings as s
     missing = tmp_path / "nonexistent_settings.json"
     s._settings_cache = None
     with patch.object(s, "SETTINGS_FILE", str(missing)):
@@ -48,14 +48,14 @@ def test_missing_file_returns_defaults(tmp_path):
 def test_corrupted_json_returns_defaults(tmp_path):
     """Invalid JSON → defaults, no crash."""
     result = _fresh_load(tmp_path / "settings.json", content="{not valid json")
-    import src.settings as s
+    import conf.settings as s
     assert result == {**s.DEFAULT_SETTINGS, **result}
 
 
 def test_wrong_type_returns_defaults(tmp_path):
     """JSON array instead of object → defaults, no crash."""
     result = _fresh_load(tmp_path / "settings.json", content="[1, 2, 3]")
-    import src.settings as s
+    import conf.settings as s
     assert result == {**s.DEFAULT_SETTINGS, **result}
 
 
@@ -66,7 +66,7 @@ def test_permission_error_returns_defaults(tmp_path):
     propagate and crash any code path that calls load_settings() at
     startup or request time.
     """
-    import src.settings as s
+    import conf.settings as s
     settings_path = tmp_path / "settings.json"
     settings_path.write_text('{"theme": "dark"}', encoding="utf-8")
 
@@ -82,7 +82,7 @@ def test_permission_error_returns_defaults(tmp_path):
 
 def test_valid_settings_merged_with_defaults(tmp_path):
     """Valid file → custom values merged over defaults."""
-    import src.settings as s
+    import conf.settings as s
     result = _fresh_load(
         tmp_path / "settings.json",
         content=json.dumps({"theme": "dark", "web_search_enabled": True}),

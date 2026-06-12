@@ -6,7 +6,7 @@ _tmp_data = Path(tempfile.mkdtemp(prefix="odysseus-email-smtp-test-"))
 os.environ.setdefault("DATA_DIR", str(_tmp_data))
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp_data / 'app.db'}")
 
-from routes.email_helpers import _send_smtp_message
+from src.api.handler.email_helpers import _send_smtp_message
 
 
 class _FakeSMTP:
@@ -51,7 +51,7 @@ def _cfg(security, port=2525):
 
 
 def test_send_smtp_message_supports_plain_smtp(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     _FakeSMTP.calls = []
     monkeypatch.setattr(helpers.smtplib, "SMTP", _FakeSMTP)
@@ -65,7 +65,7 @@ def test_send_smtp_message_supports_plain_smtp(monkeypatch):
 
 
 def test_send_smtp_message_supports_explicit_starttls(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     _FakeSMTP.calls = []
     monkeypatch.setattr(helpers.smtplib, "SMTP", _FakeSMTP)
@@ -79,7 +79,7 @@ def test_send_smtp_message_supports_explicit_starttls(monkeypatch):
 
 
 def test_send_smtp_message_defaults_587_to_starttls(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     _FakeSMTP.calls = []
     monkeypatch.setattr(helpers.smtplib, "SMTP", _FakeSMTP)
@@ -93,7 +93,7 @@ def test_send_smtp_message_defaults_587_to_starttls(monkeypatch):
 
 
 def test_send_smtp_message_uses_ssl_when_configured(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     _FakeSMTP.calls = []
     monkeypatch.setattr(helpers.smtplib, "SMTP", _FakeSMTP)

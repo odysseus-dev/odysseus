@@ -12,9 +12,9 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.pkg.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
 from src.domain.agent.tools.tool_utils import get_mcp_manager
-from core.constants import internal_api_base
+from src.pkg.constants import internal_api_base
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
     action = (args.get("action") or "").lower()
     from services.memory.skills import SkillsManager
     from services.memory.skill_format import Skill, slugify
-    from src.constants import DATA_DIR
+    from src.pkg.constants import DATA_DIR
     sm = SkillsManager(DATA_DIR)
 
     # Accept legacy `skill_id` as an alias for `name`.
@@ -190,7 +190,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         _status_arg = args.get("status")
         if not _status_arg:
             try:
-                from routes.prefs_routes import _load_for_user as _load_prefs
+                from src.api.router.prefs_routes import _load_for_user as _load_prefs
                 _prefs = _load_prefs(owner) or {}
                 _status_arg = "published" if _prefs.get("auto_approve_skills", True) else "draft"
             except Exception:
@@ -1306,7 +1306,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             due_iso = None
             if due_raw:
                 try:
-                    from routes.calendar_routes import parse_due_for_user as _pdt_user
+                    from src.api.router.calendar_routes import parse_due_for_user as _pdt_user
                     due_iso = _pdt_user(due_raw)
                 except Exception:
                     due_iso = due_raw  # fall through; trust the model
@@ -1379,7 +1379,7 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
             if args.get("due_date") is not None:
                 due_raw = args["due_date"]
                 try:
-                    from routes.calendar_routes import parse_due_for_user as _pdt_user
+                    from src.api.router.calendar_routes import parse_due_for_user as _pdt_user
                     note.due_date = _pdt_user(due_raw)
                 except Exception:
                     note.due_date = due_raw  # fall through; trust the model
@@ -1445,7 +1445,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from src.infra.database.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from src.api.router.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
     import uuid as _uuid
 
     try:

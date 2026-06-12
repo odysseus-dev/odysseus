@@ -21,9 +21,9 @@ from tests.helpers.import_state import clear_module, preserve_import_state
 # (validate_webhook_url is pure; the delivery test monkeypatches SessionLocal).
 # patch.dict restores the prior DATABASE_URL after the block.
 with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///:memory:"}), \
-        preserve_import_state("src.database", "core.database"):
+        preserve_import_state("src.database", "src.infra.database.database"):
     clear_module("src.database")
-    _core_database = sys.modules.get("core.database")
+    _core_database = sys.modules.get("src.infra.database.database")
     _core_database_all = (
         getattr(_core_database, "__all__", None) if _core_database is not None else None
     )
@@ -37,7 +37,7 @@ with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///:memory:"}), \
             )
         )
     ):
-        del sys.modules["core.database"]
+        del sys.modules["src.infra.database.database"]
     from src.webhook_manager import validate_webhook_url
 
 

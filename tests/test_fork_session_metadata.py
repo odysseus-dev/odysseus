@@ -10,7 +10,7 @@ import asyncio
 from types import SimpleNamespace
 
 from src.infra.database.models import ChatMessage
-import routes.history_routes as mod
+import src.api.router.history_routes as mod
 
 
 class _FakeSession:

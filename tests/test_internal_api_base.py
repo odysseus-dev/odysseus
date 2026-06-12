@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-import core.constants as cc
+import src.pkg.constants as cc
 
 
 def _base(monkeypatch, **env):

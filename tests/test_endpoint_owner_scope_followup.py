@@ -19,7 +19,7 @@ def _compare_request(user="alice", is_admin=False):
 
 
 def _compare_start_route(session_manager):
-    from routes.compare_routes import setup_compare_routes
+    from src.api.router.compare_routes import setup_compare_routes
 
     router = setup_compare_routes(session_manager)
     # setup_compare_routes registers on a module-global router, so each call
@@ -54,7 +54,7 @@ class _SessionStore:
 
 
 def test_compare_start_rejects_unregistered_endpoint_for_non_admin(monkeypatch):
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
     # Nothing visible to the caller matches the supplied URL → raw, unregistered.
@@ -81,7 +81,7 @@ def test_compare_start_allows_owned_registered_endpoint_for_non_admin(monkeypatc
     # resolves endpoints by URL (no endpoint_id), so a caller comparing a
     # registered endpoint they own has to be allowed — only truly raw,
     # unregistered URLs are rejected.
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
     owned = SimpleNamespace(id=7, api_key="sk-secret", base_url="http://127.0.0.1:8000/v1")
@@ -116,7 +116,7 @@ def test_compare_start_rejects_another_users_private_endpoint(monkeypatch):
     # match from the owner-scoped lookup (owner_filter drops bob's private row),
     # so compare treats it exactly like a raw unregistered URL → 403. She can
     # neither bind a session to his endpoint nor copy his key.
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
 
@@ -158,7 +158,7 @@ def test_compare_start_rejects_before_creating_any_session_on_mixed_endpoints(mo
     # nothing created — no half-built [CMP] session for A, and therefore none of
     # A's Authorization header left behind. Fails on the old interleaved loop
     # that created A's session before reaching (and rejecting) B.
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
     from src.infra.llm.endpoint_resolver import normalize_base
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
@@ -199,7 +199,7 @@ def test_compare_start_binds_session_to_registered_endpoint_url(monkeypatch):
     # never the raw caller-supplied string. Mint the owned row with a base URL
     # that differs from the messy raw input so a regression to `endpoint_url=
     # endpoint` would surface here.
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
     from src.infra.llm.endpoint_resolver import build_chat_url, normalize_base
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
@@ -238,7 +238,7 @@ def test_compare_start_admin_raw_endpoint_carries_no_borrowed_key(monkeypatch):
     # matches no registered endpoint. It is allowed (the reject helper is a
     # no-op for admins), the session keeps the raw URL, and — because nothing
     # matched — no key/headers are inherited from any endpoint row.
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
     monkeypatch.setattr(cr, "_owned_endpoint_by_url", lambda *a, **k: None)
@@ -275,7 +275,7 @@ def test_compare_start_prefers_endpoint_id_over_url(monkeypatch):
     # api_keys (e.g. two accounts on one provider). A base_url-only match returns
     # whichever row sorts first, so it can copy the WRONG key. Passing the
     # explicit id must pin the intended endpoint and copy ITS key.
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
     from src.infra.llm.endpoint_resolver import build_chat_url, build_headers, normalize_base
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
@@ -322,7 +322,7 @@ def test_compare_start_prefers_endpoint_id_over_url(monkeypatch):
 def test_compare_start_rejects_unowned_endpoint_id(monkeypatch):
     # An id the caller can't see (wrong owner / deleted) must 404 and must NOT
     # silently fall back to a same-URL row with a different key.
-    import routes.compare_routes as cr
+    import src.api.router.compare_routes as cr
 
     monkeypatch.setattr(cr, "SessionLocal", lambda: _FakeDB())
     # A same-URL row exists and would resolve, but the governing id is invisible.

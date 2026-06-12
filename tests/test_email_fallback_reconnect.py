@@ -9,7 +9,7 @@ command always runs on a clean socket. Tested with a fake IMAP connection — no
 live server needed; reconnecting is correct by construction (a fresh connection
 cannot carry the old one's leftover bytes).
 """
-from routes import email_pollers as ep
+from src.api.handler import email_pollers as ep
 
 
 class _FakeConn:

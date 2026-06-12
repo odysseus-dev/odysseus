@@ -5,7 +5,7 @@ import types
 
 import pytest
 
-import src.model_context as model_context
+import src.domain.context.model_context as model_context
 from src.domain.context.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
 
 
@@ -48,10 +48,10 @@ class _Db:
 
 
 def _install_endpoint_db(monkeypatch, rows):
-    mod = types.ModuleType("core.database")
+    mod = types.ModuleType("src.infra.database.database")
     mod.ModelEndpoint = _ModelEndpoint
     mod.SessionLocal = lambda: _Db(rows)
-    monkeypatch.setitem(sys.modules, "core.database", mod)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", mod)
 
 
 class TestIsLocalEndpoint:

@@ -9,7 +9,7 @@ reads from.
 """
 import json
 
-import routes.prefs_routes as pr
+import src.api.router.prefs_routes as pr
 
 
 def test_single_user_save_preserves_other_users(tmp_path, monkeypatch):

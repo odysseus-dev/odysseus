@@ -15,12 +15,12 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
-from src.constants import COOKBOOK_STATE_FILE
+from src.pkg.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
 from core.middleware import require_admin
 from src.api.validator import validate_remote_host, validate_ssh_port
-from core.platform_compat import (
+from src.pkg.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,
@@ -1547,7 +1547,7 @@ def setup_cookbook_routes() -> APIRouter:
                 _Pf = f"-P {_port} " if _port and _port != "22" else ""
                 _pf = f"-p {_port} " if _port and _port != "22" else ""
                 if "scripts/diffusion_server.py" in req.cmd:
-                    from core.constants import BASE_DIR
+                    from src.pkg.constants import BASE_DIR
                     diff_script = Path(BASE_DIR) / "scripts" / "diffusion_server.py"
                     if diff_script.exists():
                         scp_extras = f"scp -O {_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "

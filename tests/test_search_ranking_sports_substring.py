@@ -16,7 +16,7 @@ covered here.
 import pytest
 
 import services.search.ranking as services_ranking
-import src.search.ranking as src_ranking
+import src.infra.search.ranking as src_ranking
 
 MODULES = [services_ranking, src_ranking]
 MODULE_IDS = ["services", "src"]

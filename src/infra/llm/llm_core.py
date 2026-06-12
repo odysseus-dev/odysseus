@@ -230,7 +230,7 @@ def _get_http_client() -> httpx.AsyncClient:
     """Return process-wide AsyncClient. Per-request timeout is passed at call time."""
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        from src.tls_overrides import llm_verify
+        from src.pkg.tls_overrides import llm_verify
         _http_client = httpx.AsyncClient(
             limits=_http_limits, http2=False, verify=llm_verify(),
         )

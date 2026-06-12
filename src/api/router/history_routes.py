@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from src.infra.database.models import ChatMessage
 from src.infra.database.database import SessionLocal, ChatMessage as DbChatMessage, Session as DbSession
-from src.topic_analyzer import analyze_topics
+from src.pkg.text.topic_analyzer import analyze_topics
 from src.api.router.session_routes import (
     _message_role,
     _message_text,

@@ -14,7 +14,7 @@ import uuid
 import time
 from typing import Dict, Optional, Tuple
 
-from src.constants import GENERATED_IMAGES_DIR
+from src.pkg.constants import GENERATED_IMAGES_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -1398,7 +1398,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
         ]
         custom_themes = {}
         try:
-            from routes.prefs_routes import _load as _load_prefs
+            from src.api.router.prefs_routes import _load as _load_prefs
             custom_themes = _load_prefs().get("custom-themes", {}) or {}
         except Exception:
             pass

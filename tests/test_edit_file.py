@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from src import tool_security
+from src.domain.agent.tools import tool_security
 from src.domain.agent.tools.tool_security import (
     NON_ADMIN_BLOCKED_TOOLS,
     is_public_blocked_tool,
@@ -42,7 +42,7 @@ async def test_edit_file_blocked_at_execution_for_non_admin(monkeypatch):
     # sys.modules and re-import it, so a stale top-level reference would call a
     # different module's function than the one monkeypatch targets — silently
     # bypassing the admin gate.
-    import src.tool_execution as te
+    import src.domain.agent.tools.tool_execution as te
     monkeypatch.setattr(te, "_owner_is_admin", lambda owner: False)
     ws = tempfile.mkdtemp()
     p = os.path.join("/tmp", "ef_block.txt")

@@ -19,7 +19,7 @@ def setup_upload_routes(upload_handler):
     """Setup upload routes with the provided handler"""
 
     def _upload_root() -> str:
-        from src.constants import UPLOAD_DIR
+        from src.pkg.constants import UPLOAD_DIR
         return os.path.realpath(getattr(upload_handler, "upload_dir", UPLOAD_DIR))
 
     def _path_inside_upload_dir(path: str) -> bool:
@@ -29,7 +29,7 @@ def setup_upload_routes(upload_handler):
             return False
 
     def _resolve_upload_path(file_id: str) -> str:
-        from src.constants import UPLOAD_DIR
+        from src.pkg.constants import UPLOAD_DIR
         upload_root = getattr(upload_handler, "upload_dir", UPLOAD_DIR)
         direct = os.path.join(upload_root, file_id)
         if os.path.lexists(direct):

@@ -35,18 +35,18 @@ def _install_chat_helpers_stubs(monkeypatch):
     for mod_name in [
         "starlette.middleware",
         "starlette.middleware.base",
-        "core.models",
-        "core.database",
+        "src.infra.database.models",
+        "src.infra.database.database",
         "routes.prefs_routes",
         "routes.research_routes",
-        "src.llm_core",
-        "src.context_compactor",
-        "src.model_context",
+        "src.infra.llm.llm_core",
+        "src.domain.context.context_compactor",
+        "src.domain.context.model_context",
         "src.auth_helpers",
     ]:
         if mod_name not in sys.modules:
             monkeypatch.setitem(sys.modules, mod_name, MagicMock())
-    return importlib.import_module("routes.chat_helpers")
+    return importlib.import_module("src.api.handler.chat_helpers")
 
 
 def _build_context_harness(monkeypatch, chat_helpers, history):
@@ -124,7 +124,7 @@ async def test_static_system_prefix_is_byte_identical_across_turns(monkeypatch):
     need to reuse their KV cache (issue #2927, root cause #1)."""
     chat_helpers = _install_chat_helpers_stubs(monkeypatch)
 
-    import src.user_time as user_time
+    import src.pkg.time as user_time
     from datetime import datetime, timezone
 
     # Turn 1: clock reads 09:16
@@ -178,7 +178,7 @@ async def test_changed_instructions_do_change_the_system_prefix(monkeypatch):
     (e.g. the user edits project instructions mid-session), the resulting
     system prefix MUST differ — the cache *should* invalidate then."""
     chat_helpers = _install_chat_helpers_stubs(monkeypatch)
-    import src.user_time as user_time
+    import src.pkg.time as user_time
     user_time.clear_user_time_context()
 
     sess, request, chat_handler, chat_processor = _build_context_harness(monkeypatch, chat_helpers, history=[])
@@ -223,7 +223,7 @@ async def test_changed_instructions_do_change_the_system_prefix(monkeypatch):
 
 def test_current_datetime_is_user_role_message_not_system():
     from datetime import datetime, timezone
-    from src.user_time import current_datetime_context_message, clear_user_time_context
+    from src.pkg.time import current_datetime_context_message, clear_user_time_context
 
     clear_user_time_context()
     msg = current_datetime_context_message(datetime(2026, 6, 7, 9, 16, tzinfo=timezone.utc))
@@ -298,9 +298,9 @@ async def test_run_post_response_tasks_does_not_fire_extraction_concurrently(mon
     skill_extractor_mod.maybe_extract_skill = fake_maybe_extract_skill
     monkeypatch.setitem(sys.modules, "services.memory.skill_extractor", skill_extractor_mod)
 
-    task_endpoint_mod = types.ModuleType("src.task_endpoint")
+    task_endpoint_mod = types.ModuleType("src.infra.scheduler.task_endpoint")
     task_endpoint_mod.resolve_task_endpoint = lambda url, model, headers, owner=None: (url, model, headers)
-    monkeypatch.setitem(sys.modules, "src.task_endpoint", task_endpoint_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.scheduler.task_endpoint", task_endpoint_mod)
 
     captured_jobs = {}
 
@@ -393,7 +393,7 @@ def test_payload_includes_stable_session_id_for_local_backend(monkeypatch):
     one across turns of the same session, and a different one for a different
     session — plus cache_prompt, so the backend can maintain slot affinity
     (issue #2927, root cause #3: 'session_id=<empty> server-selected (LCP/LRU)')."""
-    from src import llm_core
+    from src.infra.llm import llm_core
 
     captured = []
     monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeStreamClient(captured))
@@ -424,7 +424,7 @@ def test_payload_omits_session_id_for_official_openai_api(monkeypatch):
     """api.openai.com (and other recognized cloud providers) must NOT receive
     the llama.cpp-specific session_id/cache_prompt extras — OpenAI's API
     rejects unrecognized top-level request fields with a 400."""
-    from src import llm_core
+    from src.infra.llm import llm_core
 
     captured = []
     monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeStreamClient(captured))
@@ -445,7 +445,7 @@ def test_payload_omits_session_id_for_official_openai_api(monkeypatch):
 def test_payload_omits_session_id_when_not_provided(monkeypatch):
     """No session_id kwarg → no extras added (e.g. title generation, internal
     one-off calls that don't carry a session)."""
-    from src import llm_core
+    from src.infra.llm import llm_core
 
     captured = []
     monkeypatch.setattr(llm_core, "_get_http_client", lambda: _FakeStreamClient(captured))

@@ -4,7 +4,7 @@ src.constants which imports nothing from src). Adding a project import here
 will reintroduce the circular dependency that this module exists to break.
 """
 
-from src.constants import MAX_OUTPUT_CHARS
+from src.pkg.constants import MAX_OUTPUT_CHARS
 
 _mcp_manager = None
 

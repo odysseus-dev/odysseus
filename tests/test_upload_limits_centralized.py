@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import src.upload_limits as upload_limits
+import src.infra.storage.upload_limits as upload_limits
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -106,5 +106,5 @@ def test_routes_import_from_upload_limits_not_local_defs():
     }
     for path, const in imports.items():
         text = (REPO / path).read_text(encoding="utf-8")
-        assert "from src.upload_limits import" in text
+        assert "from src.infra.storage.upload_limits import" in text
         assert const in text

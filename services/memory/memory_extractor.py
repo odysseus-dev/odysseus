@@ -247,7 +247,7 @@ def _parse_extraction_json(raw: str) -> list:
     """
     text = (raw or "").strip()
     try:
-        from src.text_helpers import strip_think as _strip_think
+        from src.pkg.text.text_helpers import strip_think as _strip_think
         text = _strip_think(text, prose=True, prompt_echo=True).strip()
     except Exception:
         pass

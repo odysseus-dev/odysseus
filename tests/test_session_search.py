@@ -270,7 +270,7 @@ def test_chat_messages_fts_migration_backfills_and_tracks_inserts(tmp_path, monk
 
 
 def test_search_chats_formats_shared_results(monkeypatch):
-    from src import session_search
+    from src.domain.agent import session_search
     from src.domain.agent.tools.tool_implementations import do_search_chats
 
     def fake_search(query, limit=20, owner=None, include_archived=False, context_messages=1, db=None):

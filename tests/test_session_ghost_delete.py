@@ -33,17 +33,17 @@ from tests.helpers.import_state import clear_module, preserve_import_state
 # package attributes after import, so these stubs never leak into sibling modules
 # — the local SM/SR bindings keep their captured stub modules for this file's own
 # assertions.
-_TEMP_STUBS = ("core.database", "core.models")
-with preserve_import_state(*_TEMP_STUBS, "core.session_manager", "routes.session_routes"):
+_TEMP_STUBS = ("src.infra.database.database", "src.infra.database.models")
+with preserve_import_state(*_TEMP_STUBS, "src.infra.database.session_manager", "src.api.router.session_routes"):
     for _name in _TEMP_STUBS:
         sys.modules[_name] = MagicMock(name=_name)
-    if isinstance(sys.modules.get("core.session_manager"), MagicMock):
-        del sys.modules["core.session_manager"]
+    if isinstance(sys.modules.get("src.infra.database.session_manager"), MagicMock):
+        del sys.modules["src.infra.database.session_manager"]
     # Drop the cached entry AND the parent `routes` attribute so the stubbed
     # import below yields a fresh module with no stale binding behind it.
-    clear_module("routes.session_routes")
-    SM = importlib.import_module("core.session_manager")
-    import routes.session_routes as SR  # noqa: E402
+    clear_module("src.api.router.session_routes")
+    SM = importlib.import_module("src.infra.database.session_manager")
+    import src.api.router.session_routes as SR  # noqa: E402
 
 from fastapi import HTTPException  # noqa: E402
 

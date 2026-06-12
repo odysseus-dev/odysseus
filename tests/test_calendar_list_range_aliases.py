@@ -19,7 +19,7 @@ from tests.helpers.import_state import clear_fake_database_modules
 
 clear_fake_database_modules()
 
-import core.database as cdb
+import src.infra.database.database as cdb
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(
@@ -33,7 +33,7 @@ _TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
 
 @pytest.fixture(autouse=True)
 def _bind_temp_db(monkeypatch):
-    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", cdb)
     parent = sys.modules.get("core")
     if parent is not None:
         monkeypatch.setattr(parent, "database", cdb, raising=False)

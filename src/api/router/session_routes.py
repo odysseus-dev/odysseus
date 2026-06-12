@@ -87,7 +87,7 @@ def _message_metadata(message) -> dict:
 
 
 def _reject_compact_during_active_run(session_id: str) -> None:
-    from src import agent_runs
+    from src.domain.agent import agent_runs
     if agent_runs.is_active(session_id):
         raise HTTPException(409, "Session has an active run; try compacting after it finishes")
 

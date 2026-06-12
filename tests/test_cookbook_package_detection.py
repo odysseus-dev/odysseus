@@ -11,7 +11,7 @@ package's declared pip spec instead.
 
 from pathlib import Path
 
-from routes.shell_routes import _pip_dist_name
+from src.api.router.shell_routes import _pip_dist_name
 
 
 def test_llama_cpp_maps_to_llama_cpp_python_distribution():

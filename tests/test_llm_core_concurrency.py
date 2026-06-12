@@ -14,7 +14,7 @@ thread to read the counter before any writes it back.
 import threading
 import time
 
-from src import llm_core
+from src.infra.llm import llm_core
 
 
 def test_cache_eviction_tolerates_already_removed_key():

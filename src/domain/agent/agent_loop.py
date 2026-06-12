@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from src.infra.llm.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.domain.context.model_context import estimate_tokens
 from src.settings import get_setting
-from src.prompt_security import untrusted_context_message
+from src.pkg.security.prompt_security import untrusted_context_message
 from src.domain.agent.tools.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.domain.agent.tools.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
 from src.domain.agent.tools.tool_utils import get_mcp_manager
@@ -902,7 +902,7 @@ def _build_system_prompt(
     # right alongside _doc_message / _skills_message, below.
     _datetime_message = None
     try:
-        from src.user_time import current_datetime_context_message
+        from src.pkg.time import current_datetime_context_message
         _datetime_message = current_datetime_context_message()
     except Exception:
         pass
@@ -1107,14 +1107,14 @@ def _build_system_prompt(
             _skills_on = True
             _prefs = {}
             try:
-                from routes.prefs_routes import _load_for_user as _load_prefs
+                from src.api.router.prefs_routes import _load_for_user as _load_prefs
                 _prefs = _load_prefs(owner) or {}
                 _skills_on = _prefs.get("skills_enabled", True)
             except Exception:
                 pass
             if last_user and _skills_on:
                 from services.memory.skills import SkillsManager
-                from src.constants import DATA_DIR
+                from src.pkg.constants import DATA_DIR
                 sm = SkillsManager(DATA_DIR)
                 # Brain → Skills settings → "Auto-approve skills" toggle +
                 # confidence threshold. Approve OFF → published-only (no draft
@@ -1312,7 +1312,7 @@ def _build_base_prompt(
     if not suppress_local_context:
         try:
             from services.memory.skills import SkillsManager
-            from src.constants import DATA_DIR
+            from src.pkg.constants import DATA_DIR
             _sm = SkillsManager(DATA_DIR)
             active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
             skill_idx = _sm.index_for(owner=owner, active_toolsets=active_tools)

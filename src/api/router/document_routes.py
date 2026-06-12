@@ -11,7 +11,7 @@ from sqlalchemy import case, func, or_
 from src.infra.database.database import SessionLocal, Document, DocumentVersion
 from src.infra.database.database import Session as DbSession
 from src.auth_helpers import get_current_user
-from src.constants import MAIL_ATTACHMENTS_DIR
+from src.pkg.constants import MAIL_ATTACHMENTS_DIR
 
 logger = logging.getLogger(__name__)
 

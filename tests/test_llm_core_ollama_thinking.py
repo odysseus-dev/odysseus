@@ -8,7 +8,7 @@ Covers:
 import asyncio
 import json
 
-from src import llm_core
+from src.infra.llm import llm_core
 
 
 # ---------------------------------------------------------------------------

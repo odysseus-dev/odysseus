@@ -4,7 +4,7 @@ from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 
-from src.constants import DATA_DIR as _DATA_DIR_CONST
+from src.pkg.constants import DATA_DIR as _DATA_DIR_CONST
 
 # Cross-platform OS flag, exposed here so callers can `from src.config import
 # IS_WINDOWS`. Defined locally (a trivial `os.name == "nt"`) rather than imported

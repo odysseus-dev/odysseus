@@ -2,7 +2,7 @@
 import time
 import pytest
 
-from src.rate_limiter import RateLimiter
+from src.pkg.security.rate_limiter import RateLimiter
 
 
 class TestRateLimiterAllow:

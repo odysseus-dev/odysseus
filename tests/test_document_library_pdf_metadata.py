@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from routes.document_routes import _aggregate_language_facets, _library_language_for_document
+from src.api.router.document_routes import _aggregate_language_facets, _library_language_for_document
 
 
 def test_pdf_backed_plain_document_displays_as_pdf_in_library():

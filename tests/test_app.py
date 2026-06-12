@@ -51,18 +51,18 @@ class TestImports:
 
     def test_constants_importable(self):
         """Test that constants module is importable"""
-        from src.constants import BASE_DIR, STATIC_DIR, SESSIONS_FILE, MEMORY_FILE
+        from src.pkg.constants import BASE_DIR, STATIC_DIR, SESSIONS_FILE, MEMORY_FILE
         assert BASE_DIR is not None
         assert STATIC_DIR is not None
 
     def test_app_helpers_importable(self):
         """Test that app_helpers module is importable"""
-        from src.app_helpers import abs_join
+        from src.pkg.io import abs_join
         assert callable(abs_join)
 
     def test_exceptions_importable(self):
         """Test that exceptions module is importable"""
-        from src.exceptions import (
+        from src.pkg.exceptions import (
             SessionNotFoundError,
             InvalidFileUploadError,
             LLMServiceError,

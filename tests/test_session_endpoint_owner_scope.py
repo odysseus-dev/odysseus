@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 # Import the route helper during collection so sibling session tests that use
 # partial import stubs do not become the first loader of core.session_manager.
-from routes.session_routes import _reject_raw_endpoint_url_for_non_admin
+from src.api.router.session_routes import _reject_raw_endpoint_url_for_non_admin
 
 
 def _request(user, *, admin=False):

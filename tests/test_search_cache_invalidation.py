@@ -14,8 +14,8 @@ from ``_get_result_count()`` so invalidation matches the stored default entry.
 """
 import pytest
 
-from src.search import core
-from src.search.cache import generate_cache_key
+from src.infra.search import core
+from src.infra.search.cache import generate_cache_key
 
 
 def test_invalidate_uses_configured_count_not_hardcoded_10(tmp_path, monkeypatch):

@@ -4,7 +4,7 @@ import os
 from typing import Optional
 from fastapi import APIRouter, Request
 from src.auth_helpers import get_current_user
-from src.constants import USER_PREFS_FILE
+from src.pkg.constants import USER_PREFS_FILE
 
 PREFS_FILE = USER_PREFS_FILE
 

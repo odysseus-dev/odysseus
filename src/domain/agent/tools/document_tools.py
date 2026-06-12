@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 import logging
 import re
 import json
-from src.constants import MAX_READ_CHARS
+from src.pkg.constants import MAX_READ_CHARS
 
 logger = logging.getLogger(__name__)
 

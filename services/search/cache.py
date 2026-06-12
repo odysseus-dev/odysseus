@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict
 
-from core.constants import DATA_DIR
+from src.pkg.constants import DATA_DIR
 
 logger = logging.getLogger(__name__)
 

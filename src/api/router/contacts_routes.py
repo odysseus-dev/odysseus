@@ -21,11 +21,11 @@ from fastapi import APIRouter, Query, Depends, Response, HTTPException
 from typing import List, Dict, Optional
 
 from core.middleware import require_admin
-from src.url_safety import check_outbound_url
+from src.pkg.security.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
 
-from src.constants import DATA_DIR as _DATA_DIR, SETTINGS_FILE as _SETTINGS_FILE, CONTACTS_FILE as _CONTACTS_FILE
+from src.pkg.constants import DATA_DIR as _DATA_DIR, SETTINGS_FILE as _SETTINGS_FILE, CONTACTS_FILE as _CONTACTS_FILE
 DATA_DIR = Path(_DATA_DIR)
 SETTINGS_FILE = Path(_SETTINGS_FILE)
 LOCAL_CONTACTS_FILE = Path(_CONTACTS_FILE)

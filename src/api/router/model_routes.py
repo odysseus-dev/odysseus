@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from src.infra.database.database import SessionLocal, ModelEndpoint, Session as DbSession
 from core.middleware import require_admin
 from src.infra.llm.llm_core import _detect_provider, _host_match, ANTHROPIC_MODELS
-from src.tls_overrides import llm_verify
+from src.pkg.tls_overrides import llm_verify
 from src.settings import load_settings as _load_settings, save_settings as _save_settings
 from src.infra.llm.endpoint_resolver import (
     normalize_base as _normalize_base,

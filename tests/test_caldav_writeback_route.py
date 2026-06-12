@@ -18,11 +18,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-import core.database as cdb
-import routes.calendar_routes as croutes
-import src.caldav_writeback as wb
+import src.infra.database.database as cdb
+import src.api.router.calendar_routes as croutes
+import src.domain.calendar.caldav_writeback as wb
 from src.infra.database.database import CalendarCal
-from routes.calendar_routes import EventCreate
+from src.api.router.calendar_routes import EventCreate
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(

@@ -1,6 +1,6 @@
 import asyncio
 
-from routes import emoji_routes
+from src.api.router import emoji_routes
 
 
 def _emoji_endpoint():

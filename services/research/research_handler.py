@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from src.domain.research.research_utils import is_low_quality
-from src.constants import DEEP_RESEARCH_DIR
+from src.pkg.constants import DEEP_RESEARCH_DIR
 
 logger = logging.getLogger(__name__)
 

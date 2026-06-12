@@ -1,8 +1,8 @@
 import pytest
 from fastapi import HTTPException
 
-from core.platform_compat import _ssh_exec_argv
-from routes.hwfit_routes import setup_hwfit_routes
+from src.pkg.platform_compat import _ssh_exec_argv
+from src.api.router.hwfit_routes import setup_hwfit_routes
 
 
 def _endpoint(path: str):

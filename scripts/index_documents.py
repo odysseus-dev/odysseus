@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.constants import PERSONAL_DIR
+from src.pkg.constants import PERSONAL_DIR
 
 # Configure logging for the script
 logging.basicConfig(

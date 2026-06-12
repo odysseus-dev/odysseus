@@ -9,7 +9,7 @@ import ipaddress
 
 import pytest
 
-from src import caldav_sync
+from src.domain.calendar import caldav_sync
 
 validate_caldav_url = caldav_sync.validate_caldav_url
 

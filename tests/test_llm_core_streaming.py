@@ -10,7 +10,7 @@ corrupting — its arguments) and must preserve extra_content per call.
 import json
 import asyncio
 
-from src import llm_core
+from src.infra.llm import llm_core
 
 
 class _FakeResp:

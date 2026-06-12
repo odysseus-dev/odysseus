@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.infra.llm.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
-from src.constants import DEEP_RESEARCH_DIR
+from src.pkg.constants import DEEP_RESEARCH_DIR
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 

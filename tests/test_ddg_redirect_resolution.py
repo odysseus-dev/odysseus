@@ -7,7 +7,7 @@ as `duckduckgo.com.evil.com` or `notduckduckgo.com` — so a result link on one 
 those would be silently rewritten to its embedded `uddg` target. Same
 substring-vs-hostname pitfall fixed for provider detection in 54ecfa3.
 """
-from src.search.providers import _resolve_ddg_redirect, _is_duckduckgo_host
+from src.infra.search.providers import _resolve_ddg_redirect, _is_duckduckgo_host
 
 
 def test_resolves_genuine_ddg_redirects():

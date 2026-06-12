@@ -16,8 +16,8 @@ from typing import Callable, Dict, List, Optional, Set
 
 from src.domain.research.research_utils import strip_thinking, is_low_quality
 
-from src.goal_based_extractor import EXTRACTOR_SYSTEM
-from src.prompt_security import untrusted_context_message
+from src.pkg.text.goal_based_extractor import EXTRACTOR_SYSTEM
+from src.pkg.security.prompt_security import untrusted_context_message
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from src.infra.database.database import Base, GalleryImage, GalleryAlbum
-from routes.admin_wipe_routes import setup_admin_wipe_routes
+from src.api.router.admin_wipe_routes import setup_admin_wipe_routes
 from fastapi import Request
 
 def test_wipe_gallery_clears_albums(monkeypatch):

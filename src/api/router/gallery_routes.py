@@ -18,7 +18,7 @@ from src.infra.storage.upload_limits import (
     GALLERY_UPLOAD_MAX_BYTES,
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
-from src.constants import GENERATED_IMAGES_DIR
+from src.pkg.constants import GENERATED_IMAGES_DIR
 
 from src.api.handler.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
@@ -1017,7 +1017,7 @@ def setup_gallery_routes() -> APIRouter:
         # SSRF hardening: validate a client-supplied endpoint before any
         # outbound request (mirrors routes/embedding_routes.py).
         if base:
-            from src.url_safety import check_outbound_url
+            from src.pkg.security.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 base,
                 block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
@@ -1220,7 +1220,7 @@ def setup_gallery_routes() -> APIRouter:
         # Local-first means loopback/LAN is allowed by default; the cloud
         # metadata range and non-HTTP(S) schemes are always rejected.
         if endpoint:
-            from src.url_safety import check_outbound_url
+            from src.pkg.security.url_safety import check_outbound_url
             ok, reason = check_outbound_url(
                 endpoint,
                 block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",

@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.middleware import is_cors_preflight
+from src.api.middleware.security_headers import is_cors_preflight
 
 
 def test_genuine_preflight_is_detected():

@@ -30,7 +30,7 @@ def _ensure_stub(name: str, **attrs):
     attribute. Without stubbing the parent we'd either (a) run the real
     `core/__init__.py`, which transitively imports SQLAlchemy-using
     modules and explodes under the conftest mocks, or (b) leave the
-    stub orphaned so `import core.auth; core.auth.AuthManager` raises
+    stub orphaned so `import src.infra.auth.auth; core.auth.AuthManager` raises
     `AttributeError`."""
     # Stub the parent package first if not already loaded. We point
     # `__path__` at the real on-disk directory so submodules NOT
@@ -68,7 +68,7 @@ def _ensure_stub(name: str, **attrs):
 
 @pytest.fixture(autouse=True)
 def _auth_regressions_stubs(monkeypatch):
-    db = _ensure_stub("core.database",
+    db = _ensure_stub("src.infra.database.database",
         SessionLocal=MagicMock(), ScheduledTask=MagicMock(), TaskRun=MagicMock(),
         ModelEndpoint=MagicMock(), Session=MagicMock(), ChatMessage=MagicMock(),
         CalendarCal=MagicMock(), CalendarEvent=MagicMock(),
@@ -76,17 +76,17 @@ def _auth_regressions_stubs(monkeypatch):
         GalleryImage=MagicMock(), GalleryAlbum=MagicMock(), Note=MagicMock(),
         McpServer=MagicMock(),
     )
-    auth = _ensure_stub("core.auth", AuthManager=MagicMock())
-    ep = _ensure_stub("src.endpoint_resolver",
+    auth = _ensure_stub("src.infra.auth.auth", AuthManager=MagicMock())
+    ep = _ensure_stub("src.infra.llm.endpoint_resolver",
         resolve_endpoint=MagicMock(return_value=("", "", {})),
         normalize_base=MagicMock(),
         build_chat_url=MagicMock(),
         build_models_url=MagicMock(),
         build_headers=MagicMock(),
     )
-    monkeypatch.setitem(sys.modules, "core.database", db)
-    monkeypatch.setitem(sys.modules, "core.auth", auth)
-    monkeypatch.setitem(sys.modules, "src.endpoint_resolver", ep)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db)
+    monkeypatch.setitem(sys.modules, "src.infra.auth.auth", auth)
+    monkeypatch.setitem(sys.modules, "src.infra.llm.endpoint_resolver", ep)
 
 from fastapi import HTTPException
 
@@ -95,7 +95,7 @@ from fastapi import HTTPException
 # ---------------------------------------------------------------------------
 
 def _auth_route_endpoint(path: str, method: str):
-    from routes.auth_routes import setup_auth_routes
+    from src.api.router.auth_routes import setup_auth_routes
 
     auth_manager = MagicMock()
     router = setup_auth_routes(auth_manager)
@@ -106,7 +106,7 @@ def _auth_route_endpoint(path: str, method: str):
 
 
 def _fake_auth_request(token="session-token"):
-    from routes.auth_routes import SESSION_COOKIE
+    from src.api.router.auth_routes import SESSION_COOKIE
 
     req = SimpleNamespace()
     req.cookies = {SESSION_COOKIE: token}
@@ -115,7 +115,7 @@ def _fake_auth_request(token="session-token"):
 
 
 def test_set_signup_enabled_true_is_idempotent():
-    from routes.auth_routes import SetOpenRegistrationRequest
+    from src.api.router.auth_routes import SetOpenRegistrationRequest
 
     auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
     auth.get_username_for_token.return_value = "admin"
@@ -135,7 +135,7 @@ def test_set_signup_enabled_true_is_idempotent():
     assert auth.signup_enabled is True
 
 def test_set_signup_enabled_false_is_idempotent():
-    from routes.auth_routes import SetOpenRegistrationRequest
+    from src.api.router.auth_routes import SetOpenRegistrationRequest
 
     auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
     auth.get_username_for_token.return_value = "admin"
@@ -155,7 +155,7 @@ def test_set_signup_enabled_false_is_idempotent():
     assert auth.signup_enabled is False
 
 def test_set_signup_enabled_requires_admin():
-    from routes.auth_routes import SetOpenRegistrationRequest
+    from src.api.router.auth_routes import SetOpenRegistrationRequest
 
     auth, target = _auth_route_endpoint("/api/auth/open-signup", "PUT")
     auth.get_username_for_token.return_value = "bob"
@@ -176,7 +176,7 @@ def _build_research_router():
     """Construct the research router with a mock research_handler so we
     can fish out the inner `_require_user` helper without booting the
     full app."""
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     rh = MagicMock()
     setup_research_routes(rh)
     # The helper lives inside the setup closure. Easiest way to exercise
@@ -198,7 +198,7 @@ def _fake_request(user=None):
 def test_research_status_rejects_anonymous():
     """research_status must 401 when no user is on the request state."""
     # Build a fresh router and pluck its registered routes.
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     rh = MagicMock()
     rh.get_status.return_value = {"status": "running"}  # would 200 if auth passed
     router = setup_research_routes(rh)
@@ -215,7 +215,7 @@ def test_research_status_rejects_anonymous():
 
 
 def test_research_status_accepts_authenticated():
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     rh = MagicMock()
     rh._active_tasks = {"x": {"owner": "alice", "status": "running"}}
     rh.get_status.return_value = {"status": "running", "progress": {}}
@@ -226,7 +226,7 @@ def test_research_status_accepts_authenticated():
 
 
 def test_research_status_rejects_wrong_owner():
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     rh = MagicMock()
     rh._active_tasks = {"x": {"owner": "alice", "status": "running"}}
     rh.get_status.return_value = {"status": "running", "progress": {}}
@@ -238,7 +238,7 @@ def test_research_status_rejects_wrong_owner():
 
 
 def test_research_cancel_rejects_anonymous():
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     rh = MagicMock()
     router = setup_research_routes(rh)
     target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/cancel/{session_id}")
@@ -248,7 +248,7 @@ def test_research_cancel_rejects_anonymous():
 
 
 def test_research_delete_rejects_anonymous():
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     rh = MagicMock()
     router = setup_research_routes(rh)
     target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/{session_id}")
@@ -262,7 +262,7 @@ def test_research_delete_rejects_anonymous():
 
 def test_research_spinoff_rejects_anonymous():
     """spinoff must 401 before reading any research data."""
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     rh = MagicMock()
     router = setup_research_routes(rh, session_manager=MagicMock())
     target = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/api/research/spinoff/{session_id}")
@@ -275,7 +275,7 @@ def test_research_spinoff_rejects_wrong_owner():
     """A user must not be able to spin off (and thereby read) another user's
     research report. The ownership gate must 404 before any data is read or a
     new session is created. Regression for the cross-user disclosure IDOR."""
-    from routes.research_routes import setup_research_routes
+    from src.api.router.research_routes import setup_research_routes
     sm = MagicMock()
     rh = MagicMock()
     rh._active_tasks = {"x": {"owner": "alice"}}
@@ -302,8 +302,8 @@ def test_pop_notifications_owner_filtered():
     import sys, types
     from unittest.mock import MagicMock as _MM
     # `task_scheduler` pulls in lots of helpers — stub the ones it uses.
-    for s in ["src.builtin_actions", "src.ai_interaction", "src.endpoint_resolver",
-              "src.agent_loop", "src.session_manager"]:
+    for s in ["src.domain.agent.builtin_actions", "src.domain.agent.ai_interaction", "src.infra.llm.endpoint_resolver",
+              "src.domain.agent.agent_loop", "src.session_manager"]:
         if s not in sys.modules:
             mod = types.ModuleType(s)
             sys.modules[s] = mod
@@ -334,7 +334,7 @@ def test_pop_notifications_owner_filtered():
 def test_admin_only_actions_set_contains_shell_runners():
     """The constant defining shell-executing action types must include
     the three risky entries. Catches accidental removal."""
-    from routes import task_routes
+    from src.api.router import task_routes
     # `_ADMIN_ONLY_ACTIONS` is a closure constant. Easiest pin: re-read
     # the source and check for the three risky entries + the admin gate
     # wording.
@@ -349,7 +349,7 @@ def test_admin_only_actions_set_contains_shell_runners():
 def test_task_create_notification_default_allows_action_specific_defaults():
     """Omitted notifications_enabled should stay None so create_task can
     default noisy/quiet built-ins differently."""
-    from routes.task_routes import TaskCreate
+    from src.api.router.task_routes import TaskCreate
 
     req = TaskCreate(task_type="action", action="check_email_urgency", schedule="cron", cron_expression="*/15 * * * *")
     assert req.notifications_enabled is None
@@ -358,8 +358,8 @@ def test_task_create_notification_default_allows_action_specific_defaults():
 def test_ship_paused_housekeeping_stays_paused_by_default():
     """Built-ins marked ship_paused are intentionally opt-in even after
     the user enables the rest of Tasks."""
-    from routes import task_routes
-    from src import task_scheduler
+    from src.api.router import task_routes
+    from src.infra.scheduler import task_scheduler
 
     route_src = open(task_routes.__file__, encoding="utf-8").read()
     scheduler_src = open(task_scheduler.__file__, encoding="utf-8").read()
@@ -369,7 +369,7 @@ def test_ship_paused_housekeeping_stays_paused_by_default():
 
 
 def test_task_payload_exposes_crew_member_id_for_ui_category():
-    from routes import task_routes
+    from src.api.router import task_routes
 
     src = open(task_routes.__file__, encoding="utf-8").read()
     assert '"crew_member_id"' in src

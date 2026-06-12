@@ -20,9 +20,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 import pytest
 
-import src.rag_vector as rag_vector
-import src.personal_docs as personal_docs
-import src.ai_interaction as ai
+import src.domain.rag.rag_vector as rag_vector
+import src.domain.rag.personal_docs as personal_docs
+import src.domain.agent.ai_interaction as ai
 
 
 # --------------------------------------------------------------------------- #

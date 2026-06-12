@@ -13,7 +13,7 @@ import httpx
 
 from src.infra.database.database import McpServer, SessionLocal
 from core.middleware import require_admin
-from src.constants import DATA_DIR, MCP_OAUTH_DIR
+from src.pkg.constants import DATA_DIR, MCP_OAUTH_DIR
 from src.infra.mcp.mcp_manager import McpManager
 
 logger = logging.getLogger(__name__)

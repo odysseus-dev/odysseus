@@ -11,9 +11,9 @@ from datetime import datetime
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
-from core.platform_compat import IS_WINDOWS, find_bash
-from core.constants import internal_api_base
-from src.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
+from src.pkg.platform_compat import IS_WINDOWS, find_bash
+from src.pkg.constants import internal_api_base
+from src.pkg.constants import DATA_DIR, DEEP_RESEARCH_DIR, TIDY_CALENDAR_STATE_FILE, EMAIL_URGENCY_CACHE_DIR, COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
     try:
         import json
         import re
-        from src.constants import DATA_DIR
+        from src.pkg.constants import DATA_DIR
         from src.infra.llm.endpoint_resolver import resolve_endpoint
         from src.infra.llm.llm_core import llm_call_async
         from src.domain.memory.memory import MemoryManager
@@ -156,7 +156,7 @@ async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
                     headers=headers,
                     timeout=120,
                 )
-                from src.text_helpers import strip_think
+                from src.pkg.text.text_helpers import strip_think
 
                 raw = strip_think(raw or "", prose=False, prompt_echo=False).strip()
                 raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
@@ -504,7 +504,7 @@ def _result_has_work(result: str | None) -> bool:
 async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of email summary background processing."""
     try:
-        from routes.email_pollers import _run_auto_summarize_once
+        from src.api.handler.email_pollers import _run_auto_summarize_once
         result = await _run_auto_summarize_once(do_summary=True, do_reply=False)
         if not _result_has_work(result):
             raise TaskNoop(f"summarize: {result or 'no new emails'}")
@@ -517,7 +517,7 @@ async def action_summarize_emails(owner: str, **kwargs) -> Tuple[str, bool]:
 async def action_draft_email_replies(owner: str, **kwargs) -> Tuple[str, bool]:
     """Run one pass of AI reply drafting."""
     try:
-        from routes.email_pollers import _run_auto_summarize_once
+        from src.api.handler.email_pollers import _run_auto_summarize_once
         result = await _run_auto_summarize_once(
             do_summary=False,
             do_reply=True,
@@ -705,7 +705,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
                         temperature=0.1, max_tokens=16384,
                         headers=llm_headers, timeout=180,
                     )
-                    from src.text_helpers import strip_think as _st
+                    from src.pkg.text.text_helpers import strip_think as _st
                     raw = _st(raw or "", prose=False, prompt_echo=False)
                     raw = _re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=_re.MULTILINE).strip()
                     m = _re.search(r"\[.*\]", raw, _re.DOTALL)
@@ -766,7 +766,7 @@ async def action_extract_email_events(owner: str, **kwargs) -> Tuple[str, bool]:
     and auto-add them to the calendar."""
     import asyncio as _aio
     try:
-        from routes.email_pollers import _run_auto_summarize_once
+        from src.api.handler.email_pollers import _run_auto_summarize_once
         try:
             # Hard wall-clock budget: 5 min total. Per-LLM call already has its own timeout.
             result = await _aio.wait_for(
@@ -809,7 +809,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import email as _email_mod
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
-        from routes.email_helpers import _imap_connect, SCHEDULED_DB
+        from src.api.handler.email_helpers import _imap_connect, SCHEDULED_DB
         from src.infra.llm.endpoint_resolver import resolve_endpoint
         from src.infra.llm.llm_core import llm_call_async
 
@@ -953,7 +953,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                     temperature=0.0, max_tokens=600,
                     headers=headers, timeout=60,
                 )
-                from src.text_helpers import strip_think as _st
+                from src.pkg.text.text_helpers import strip_think as _st
                 sig = _st(raw or "", prose=False, prompt_echo=False).strip()
                 # Strip surrounding code fences if the LLM added them.
                 sig = _re.sub(r"^```[\w]*\n?", "", sig)
@@ -1004,7 +1004,7 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         import json as _json
 
         from src.infra.database.database import SessionLocal, CalendarEvent, CalendarCal, Note
-        from routes.email_helpers import _imap_connect, _decode_header
+        from src.api.handler.email_helpers import _imap_connect, _decode_header
 
         # ----- Calendar: today's events -----
         today = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1132,8 +1132,8 @@ async def action_test_skills(owner: str, **kwargs) -> Tuple[str, bool]:
     demotes status, never overrides confidence)."""
     try:
         from services.memory.skills import SkillsManager
-        from src.constants import DATA_DIR
-        from routes.skills_routes import _run_skill_test_once, _skill_test_task
+        from src.pkg.constants import DATA_DIR
+        from src.api.router.skills_routes import _run_skill_test_once, _skill_test_task
         from src.infra.llm.endpoint_resolver import resolve_endpoint
 
         # #3 SCOPE GUARD: refuse to run on a None/empty owner — otherwise
@@ -1246,8 +1246,8 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
     """
     try:
         from services.memory.skills import SkillsManager
-        from src.constants import DATA_DIR
-        from routes.skills_routes import (
+        from src.pkg.constants import DATA_DIR
+        from src.api.router.skills_routes import (
             _resolve_audit_models, _run_audit_all_job, _skill_audit_jobs,
         )
 
@@ -1479,7 +1479,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         from datetime import datetime as _dt, timedelta as _td
         from pathlib import Path as _P
         from src.infra.database.database import SessionLocal as _SL, EmailAccount as _EA
-        from routes.email_helpers import _imap_connect, _decode_header
+        from src.api.handler.email_helpers import _imap_connect, _decode_header
         from src.infra.llm.endpoint_resolver import resolve_endpoint, resolve_utility_fallback_candidates
         from src.infra.llm.llm_core import llm_call_async_with_fallback
 
@@ -1791,7 +1791,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # classified items; message_id lives on the cached verdict so this is cheap.
         try:
             import sqlite3 as _sql3
-            from routes.email_helpers import SCHEDULED_DB, _init_scheduled_db
+            from src.api.handler.email_helpers import SCHEDULED_DB, _init_scheduled_db
             from datetime import datetime as _dt2
             _init_scheduled_db()
             _conn = _sql3.connect(SCHEDULED_DB)

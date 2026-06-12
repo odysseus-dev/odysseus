@@ -19,7 +19,7 @@ _tmp_data = Path(tempfile.mkdtemp(prefix="odysseus_decode_hdr_spaces_"))
 os.environ.setdefault("DATA_DIR", str(_tmp_data))
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp_data / 'app.db'}")
 
-from routes.email_helpers import _decode_header
+from src.api.handler.email_helpers import _decode_header
 
 
 def test_prefix_then_encoded_word_single_space():

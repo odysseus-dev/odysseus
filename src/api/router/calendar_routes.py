@@ -175,7 +175,7 @@ def _ensure_default_calendar(db, owner: str = None) -> CalendarCal:
 # headers so natural-language times the LLM emits ("today at 9pm") are parsed
 # in the user's timezone, not the server's clock. None = unknown, fall back to
 # legacy server-local behavior.
-from src.user_time import (
+from src.pkg.time import (
     get_user_tz_name,
     get_user_tz_offset,
     now_user_local,
@@ -1364,7 +1364,7 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         from src.infra.llm.endpoint_resolver import resolve_endpoint
         from src.infra.llm.llm_core import llm_call_async
-        from src.text_helpers import strip_think
+        from src.pkg.text.text_helpers import strip_think
         import json as _json
         import re as _re
 
@@ -1372,7 +1372,7 @@ def setup_calendar_routes() -> APIRouter:
         text = (body.get("text") or "").strip()
         if not text:
             raise HTTPException(400, "text is required")
-        from src.user_time import (
+        from src.pkg.time import (
             clear_user_time_context,
             current_datetime_prompt,
             now_user_local,

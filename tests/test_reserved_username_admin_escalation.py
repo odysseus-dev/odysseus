@@ -19,7 +19,7 @@ from tests.helpers.import_state import clear_module
 def _fresh_auth_manager(tmp_path):
     # Same import dance as test_security_regressions: drop any cached stub so
     # we exercise the real module from disk rather than a conftest mock.
-    clear_module("core.auth")
+    clear_module("src.infra.auth.auth")
     from src.infra.auth.auth import AuthManager
 
     return AuthManager(str(tmp_path / "auth.json"))
@@ -103,7 +103,7 @@ def test_legacy_reserved_single_user_migrates_to_admin(tmp_path):
 
 
 def test_token_cache_owner_normalization_requires_current_user():
-    clear_module("core.auth")
+    clear_module("src.infra.auth.auth")
     from src.infra.auth.auth import normalize_known_username
 
     users = {"alice": {}, "admin": {}}

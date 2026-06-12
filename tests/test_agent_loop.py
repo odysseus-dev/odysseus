@@ -8,11 +8,11 @@ _MOCKED_IMPORTS = [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database',
-    'src.agent_tools',
-    'core.models', 'core.database',
+    'src.domain.agent.tools',
+    'src.infra.database.models', 'src.infra.database.database',
 ]
 _INJECTED_IMPORT_STUBS = {}
-_PREEXISTING_AGENT_LOOP = sys.modules.get("src.agent_loop")
+_PREEXISTING_AGENT_LOOP = sys.modules.get("src.domain.agent.agent_loop")
 
 
 def _drop_module_if_same(name, expected):
@@ -40,10 +40,10 @@ try:
         _append_tool_results,
         _MCP_KEYWORDS,
     )
-    _IMPORTED_AGENT_LOOP = sys.modules.get("src.agent_loop")
+    _IMPORTED_AGENT_LOOP = sys.modules.get("src.domain.agent.agent_loop")
 finally:
     if _PREEXISTING_AGENT_LOOP is None and _IMPORTED_AGENT_LOOP is not None:
-        _drop_module_if_same("src.agent_loop", _IMPORTED_AGENT_LOOP)
+        _drop_module_if_same("src.domain.agent.agent_loop", _IMPORTED_AGENT_LOOP)
     for _mod, _stub in _INJECTED_IMPORT_STUBS.items():
         _drop_module_if_same(_mod, _stub)
 
@@ -55,7 +55,7 @@ def test_import_stubs_do_not_leak_into_later_tests():
     ]
     assert leaked == []
     if _PREEXISTING_AGENT_LOOP is None:
-        assert sys.modules.get("src.agent_loop") is not _IMPORTED_AGENT_LOOP
+        assert sys.modules.get("src.domain.agent.agent_loop") is not _IMPORTED_AGENT_LOOP
 
 
 def test_mcp_keyword_gate_matches_literal_mcp_requests():

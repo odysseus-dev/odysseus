@@ -8,11 +8,11 @@ def _load_signature_cli(monkeypatch):
     sqlalchemy_mod = ModuleType("sqlalchemy")
     sqlalchemy_mod.text = lambda value: value
     core_mod = ModuleType("core")
-    database_mod = ModuleType("core.database")
+    database_mod = ModuleType("src.infra.database.database")
     database_mod.engine = object()
     monkeypatch.setitem(sys.modules, "sqlalchemy", sqlalchemy_mod)
     monkeypatch.setitem(sys.modules, "core", core_mod)
-    monkeypatch.setitem(sys.modules, "core.database", database_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", database_mod)
     return load_script("odysseus-signature")
 
 

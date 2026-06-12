@@ -7,7 +7,7 @@ import logging
 import asyncio
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Form, Depends
-from core.constants import EMBEDDING_ENDPOINT_FILE, FASTEMBED_CACHE_DIR
+from src.pkg.constants import EMBEDDING_ENDPOINT_FILE, FASTEMBED_CACHE_DIR
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
@@ -262,7 +262,7 @@ def setup_embedding_routes():
         # request. Local-first means loopback/LAN endpoints are allowed by
         # default; non-HTTP(S) schemes and the cloud metadata range are always
         # rejected. Set EMBEDDING_BLOCK_PRIVATE_IPS=true for full lockdown.
-        from src.url_safety import check_outbound_url
+        from src.pkg.security.url_safety import check_outbound_url
         ok, reason = check_outbound_url(
             url,
             block_private=os.getenv("EMBEDDING_BLOCK_PRIVATE_IPS", "false").lower() == "true",
@@ -299,7 +299,7 @@ def setup_embedding_routes():
             os.environ["EMBEDDING_API_KEY"] = api_key
 
         # Reset the RAG singleton so it picks up the new endpoint
-        import src.rag_singleton as _rs
+        import src.domain.rag.rag_singleton as _rs
         _rs.rag_instance = None
         _rs._last_attempt = 0
 
@@ -343,7 +343,7 @@ def setup_embedding_routes():
         os.environ.pop("EMBEDDING_API_KEY", None)
 
         # Reset the RAG singleton so it falls back to fastembed
-        import src.rag_singleton as _rs
+        import src.domain.rag.rag_singleton as _rs
         _rs.rag_instance = None
         _rs._last_attempt = 0
         try:

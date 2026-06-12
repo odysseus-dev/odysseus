@@ -1,6 +1,6 @@
 """Tests for question-word detection in research query enhancement."""
 
-from src.search.query import _detect_question_type
+from src.infra.search.query import _detect_question_type
 
 
 def test_whole_word_questions_detected():

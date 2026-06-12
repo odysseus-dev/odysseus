@@ -24,8 +24,8 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from core.platform_compat import safe_chmod
-from src.constants import APP_KEY_FILE
+from src.pkg.platform_compat import safe_chmod
+from src.pkg.constants import APP_KEY_FILE
 
 logger = logging.getLogger(__name__)
 

@@ -19,7 +19,7 @@ def strip_thinking(text):
     """
     if text is None:
         return None
-    from src.text_helpers import strip_think
+    from src.pkg.text.text_helpers import strip_think
     return strip_think(text, prose=False, prompt_echo=True)
 
 

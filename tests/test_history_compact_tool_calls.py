@@ -4,8 +4,8 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from src.infra.database.models import ChatMessage
-import routes.history_routes as history_routes
-import routes.session_routes as session_routes
+import src.api.router.history_routes as history_routes
+import src.api.router.session_routes as session_routes
 
 
 class _FakeQuery:
@@ -102,10 +102,10 @@ def _compact_prompt_for(monkeypatch, history):
     monkeypatch.setattr(history_routes, "_verify_session_owner", lambda request, session_id: None)
     monkeypatch.setattr(history_routes, "SessionLocal", lambda: _FakeDb())
 
-    import src.agent_runs as agent_runs
-    import src.endpoint_resolver as endpoint_resolver
-    import src.llm_core as llm_core
-    import src.model_context as model_context
+    import src.domain.agent.agent_runs as agent_runs
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
+    import src.infra.llm.llm_core as llm_core
+    import src.domain.context.model_context as model_context
 
     monkeypatch.setattr(agent_runs, "is_active", lambda session_id: False)
     def fake_resolve_endpoint(kind, owner=None):
@@ -146,9 +146,9 @@ def _registered_compact_response(monkeypatch, history, active_run=False):
     monkeypatch.setattr(history_routes, "_verify_session_owner", lambda request, session_id: None)
     monkeypatch.setattr(history_routes, "SessionLocal", lambda: _FakeDb())
 
-    import src.agent_runs as agent_runs
-    import src.endpoint_resolver as endpoint_resolver
-    import src.llm_core as llm_core
+    import src.domain.agent.agent_runs as agent_runs
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
+    import src.infra.llm.llm_core as llm_core
 
     monkeypatch.setattr(agent_runs, "is_active", lambda session_id: active_run)
     def fake_resolve_endpoint(kind, owner=None):

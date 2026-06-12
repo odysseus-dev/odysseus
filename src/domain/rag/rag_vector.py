@@ -13,7 +13,7 @@ import logging
 import numpy as np
 from typing import List, Dict, Any, Optional, Set
 
-from src.constants import CHROMA_DIR
+from src.pkg.constants import CHROMA_DIR
 from pathlib import Path
 
 from src.domain.embedding.embedding_lanes import (

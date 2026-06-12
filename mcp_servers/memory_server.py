@@ -31,7 +31,7 @@ def _ensure_init():
         return
     _initialized = True
 
-    from src.constants import DATA_DIR
+    from src.pkg.constants import DATA_DIR
     from src.domain.memory.memory import MemoryManager
     _memory_manager = MemoryManager(DATA_DIR)
 

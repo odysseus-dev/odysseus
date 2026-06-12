@@ -1,7 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
-from routes.chat_helpers import (
+from src.api.handler.chat_helpers import (
     _enforce_chat_privileges,
     clean_thinking_for_save,
     needs_auto_name,

@@ -17,8 +17,8 @@ the facts still land in the JSON store.
 import asyncio
 import tempfile
 
-import src.llm_core
-import src.event_bus
+import src.infra.llm.llm_core
+import src.infra.scheduler.event_bus
 from src.domain.memory.memory import MemoryManager
 from services.memory.memory_extractor import extract_and_store
 

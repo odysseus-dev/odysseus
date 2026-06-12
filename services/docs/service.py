@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Dict, Any
 
 from src.domain.rag.rag_manager import RAGManager
-from src.constants import CHROMA_DIR
+from src.pkg.constants import CHROMA_DIR
 
 
 @dataclass

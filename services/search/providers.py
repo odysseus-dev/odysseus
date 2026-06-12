@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse, parse_qs
 import httpx
 from bs4 import BeautifulSoup
 
-from src.constants import SEARXNG_INSTANCE
+from src.pkg.constants import SEARXNG_INSTANCE
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 

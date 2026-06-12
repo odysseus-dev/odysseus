@@ -24,7 +24,7 @@ _sd = types.ModuleType("src.database")
 _sd.ModelEndpoint = MagicMock()
 sys.modules.setdefault("src.database", _sd)
 
-from routes.research_routes import _owned_enabled_endpoint, _resolve_endpoint_runtime  # noqa: E402
+from src.api.router.research_routes import _owned_enabled_endpoint, _resolve_endpoint_runtime  # noqa: E402
 
 
 class _Predicate:

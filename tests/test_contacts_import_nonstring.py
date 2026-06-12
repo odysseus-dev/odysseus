@@ -6,7 +6,7 @@ handler now coerces with str() and degrades to a structured "no data" response.
 """
 import asyncio
 
-from routes.contacts_routes import setup_contacts_routes
+from src.api.router.contacts_routes import setup_contacts_routes
 
 
 def _import_handler():

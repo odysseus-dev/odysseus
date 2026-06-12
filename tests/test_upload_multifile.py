@@ -21,7 +21,7 @@ import pytest
 from fastapi import APIRouter
 
 from src.infra.storage.upload_handler import count_recent_uploads, UploadHandler
-import routes.upload_routes as up
+import src.api.router.upload_routes as up
 
 _REPO = Path(__file__).resolve().parent.parent
 

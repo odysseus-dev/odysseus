@@ -36,7 +36,7 @@ def _ensure_init():
         pass
 
     try:
-        from src.constants import PERSONAL_DIR
+        from src.pkg.constants import PERSONAL_DIR
         from src.domain.rag.personal_docs import PersonalDocsManager
         _personal_docs_manager = PersonalDocsManager(PERSONAL_DIR, _rag_manager)
     except Exception:

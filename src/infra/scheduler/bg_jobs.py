@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.infra.storage.atomic_io import atomic_write_json
-from core.platform_compat import (
+from src.pkg.platform_compat import (
     detached_popen_kwargs,
     find_bash,
     git_bash_path,
@@ -38,7 +38,7 @@ from core.platform_compat import (
     pid_alive,
 )
 
-from src.constants import BG_JOBS_DIR, BG_JOBS_FILE
+from src.pkg.constants import BG_JOBS_DIR, BG_JOBS_FILE
 
 _JOBS_DIR = Path(BG_JOBS_DIR)
 _STORE = Path(BG_JOBS_FILE)

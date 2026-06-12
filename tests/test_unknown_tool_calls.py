@@ -5,15 +5,15 @@ from unittest.mock import MagicMock
 # DB/auth deps, so we stub those just long enough to import, then restore them.
 # We deliberately do NOT pop src.tool_execution: popping and re-importing it
 # rebinds the `src` package's `tool_execution` attribute, so a later
-# `import src.tool_execution as te` resolves to a different module object than
+# `import src.domain.agent.tools.tool_execution as te` resolves to a different module object than
 # the one its functions live in - which silently breaks tests that monkeypatch
 # it (e.g. test_edit_file's admin gate).
 _ABSENT = object()
-_AGENT_MODULES = ["src.agent_tools", "src.tool_parsing", "src.tool_schemas"]
+_AGENT_MODULES = ["src.domain.agent.tools", "src.domain.agent.tools.tool_parsing", "src.domain.agent.tools.tool_schemas"]
 _STUBBED = [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext", "sqlalchemy.ext.declarative",
     "sqlalchemy.ext.hybrid", "sqlalchemy.sql", "sqlalchemy.sql.expression",
-    "src.database", "core.models", "core.database", "core.auth",
+    "src.database", "src.infra.database.models", "src.infra.database.database", "src.infra.auth.auth",
 ]
 _saved_stubs = {name: sys.modules.get(name, _ABSENT) for name in _STUBBED}
 
@@ -24,7 +24,7 @@ for _mod in _STUBBED:
         sys.modules[_mod] = MagicMock()
 
 import pytest  # noqa: E402
-import src.agent_tools  # noqa: E402,F401
+import src.domain.agent.tools  # noqa: E402,F401
 from src.domain.agent.tools.tool_parsing import parse_tool_blocks  # noqa: E402
 from src.domain.agent.tools.tool_schemas import function_call_to_tool_block  # noqa: E402
 

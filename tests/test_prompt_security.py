@@ -12,7 +12,7 @@ Critically, no user-derived text (label or content) must appear before
 GUARD_OPEN in the trusted framing zone.
 """
 
-from src.prompt_security import (
+from src.pkg.security.prompt_security import (
     GUARD_CLOSE,
     GUARD_OPEN,
     _escape_guard_markers,

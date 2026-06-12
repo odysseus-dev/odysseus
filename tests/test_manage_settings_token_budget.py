@@ -2,7 +2,7 @@
 import asyncio
 import json
 
-import src.settings as settings_mod
+import conf.settings as settings_mod
 from src.domain.agent.tools.tool_implementations import do_manage_settings
 
 

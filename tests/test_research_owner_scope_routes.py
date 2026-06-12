@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from routes.research_routes import setup_research_routes
+from src.api.router.research_routes import setup_research_routes
 
 
 @pytest.fixture(autouse=True)

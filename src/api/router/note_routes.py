@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from src.infra.database.database import SessionLocal, Note
 from src.auth_helpers import get_current_user
-from src.constants import DATA_DIR
+from src.pkg.constants import DATA_DIR
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -220,7 +220,7 @@ async def dispatch_reminder(
                     ],
                     temperature=0.7, max_tokens=200, headers=headers, timeout=30,
                 )
-                from src.text_helpers import strip_think as _strip_think
+                from src.pkg.text.text_helpers import strip_think as _strip_think
                 # prose=True strips untagged "The user wants me to…" chain-of-thought.
                 # prompt_echo=True strips Qwen-style "Thinking Process:" / leaked
                 # prompt prefixes. Both are safe here because this is a
@@ -444,7 +444,7 @@ async def dispatch_reminder(
                         # REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS=true to also block
                         # RFC-1918 ranges for locked-down deployments.
                         import os as _os
-                        from src.url_safety import check_outbound_url as _chk
+                        from src.pkg.security.url_safety import check_outbound_url as _chk
                         _block = _os.getenv("REMINDER_WEBHOOK_BLOCK_PRIVATE_IPS", "false").lower() == "true"
                         _ok, _reason = _chk(url, block_private=_block)
                         if not _ok:

@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from routes import device_flow
+from src.api.handler import device_flow
 
 
 def _client(monkeypatch, now_ref, start_flow, poll_flow):

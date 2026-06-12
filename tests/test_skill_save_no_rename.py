@@ -22,7 +22,7 @@ from fastapi.datastructures import State
 
 from services.memory.skills import SkillsManager
 from services.memory.skill_format import slugify
-from routes.skills_routes import setup_skills_routes
+from src.api.router.skills_routes import setup_skills_routes
 
 
 def _write_skill_md(skills_root: Path, category: str, name: str, owner: str) -> Path:

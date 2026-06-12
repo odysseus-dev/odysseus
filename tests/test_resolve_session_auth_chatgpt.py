@@ -13,8 +13,8 @@ import types
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-import routes.chat_helpers as chat_helpers
-import src.endpoint_resolver as endpoint_resolver
+import src.api.handler.chat_helpers as chat_helpers
+import src.infra.llm.endpoint_resolver as endpoint_resolver
 from src.infra.database.database import Base, ModelEndpoint, Session as DbSession
 
 _CODEX_BASE = "https://chatgpt.com/backend-api/codex"

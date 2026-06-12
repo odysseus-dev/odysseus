@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.database import CalendarEvent
 from tests.helpers.sqlite_db import make_temp_sqlite
 
@@ -23,14 +23,14 @@ _TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)
 @pytest.fixture(autouse=True)
 def _bind_temp_db(monkeypatch):
     monkeypatch.setattr(cdb, "SessionLocal", _TS)
-    import routes.calendar_routes as cr
+    import src.api.router.calendar_routes as cr
     monkeypatch.setattr(cr, "SessionLocal", _TS, raising=False)
     yield
 
 
 @pytest.fixture
 def tokyo_offset():
-    from routes.calendar_routes import set_user_tz_offset
+    from src.api.router.calendar_routes import set_user_tz_offset
     set_user_tz_offset(540)  # Tokyo, UTC+9
     try:
         yield

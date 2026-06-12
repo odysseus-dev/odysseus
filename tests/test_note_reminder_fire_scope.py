@@ -52,7 +52,7 @@ class _Db:
 
 
 def _endpoint(monkeypatch, note=None):
-    import routes.note_routes as note_routes
+    import src.api.router.note_routes as note_routes
 
     calls = []
     db = _Db(note)

@@ -13,7 +13,7 @@ import json
 import httpx
 import pytest
 
-from src import llm_core
+from src.infra.llm import llm_core
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +102,8 @@ for _mod in [
     "sqlalchemy", "sqlalchemy.orm", "sqlalchemy.ext",
     "sqlalchemy.ext.declarative", "sqlalchemy.ext.hybrid",
     "sqlalchemy.sql", "sqlalchemy.sql.expression",
-    "src.database", "src.agent_tools",
-    "core.models", "core.database",
+    "src.database", "src.domain.agent.tools",
+    "src.infra.database.models", "src.infra.database.database",
 ]:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()

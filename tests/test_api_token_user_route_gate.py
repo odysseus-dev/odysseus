@@ -43,7 +43,7 @@ def test_require_authenticated_request_allows_api_token_owner(monkeypatch):
 
 def test_codex_as_owner_can_call_nested_user_routes(monkeypatch):
     monkeypatch.setenv("AUTH_ENABLED", "true")
-    from routes.codex_routes import _as_owner
+    from src.api.router.codex_routes import _as_owner
 
     req = _request()
 

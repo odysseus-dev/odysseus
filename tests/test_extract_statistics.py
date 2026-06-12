@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("bs4")  # content.py imports BeautifulSoup at module load
 
-from src.search.content import extract_statistics
+from src.infra.search.content import extract_statistics
 
 
 def test_captures_comma_less_large_number():

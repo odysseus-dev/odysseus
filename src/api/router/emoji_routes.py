@@ -18,7 +18,7 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import Response
 
-from src.constants import EMOJI_CACHE_DIR
+from src.pkg.constants import EMOJI_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 

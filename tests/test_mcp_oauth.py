@@ -1,5 +1,5 @@
 import asyncio
-from src import mcp_oauth
+from src.infra.mcp import mcp_oauth
 
 
 def test_registry_resolve_returns_code_and_state():

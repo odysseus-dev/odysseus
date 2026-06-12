@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from routes import signature_routes
+from src.api.router import signature_routes
 
 
 _PNG_BYTES = b"\x89PNG\r\n\x1a\nsignature-bytes"

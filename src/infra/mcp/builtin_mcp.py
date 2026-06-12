@@ -12,7 +12,7 @@ import subprocess
 import sys
 import asyncio
 
-from core.platform_compat import IS_WINDOWS, which_tool
+from src.pkg.platform_compat import IS_WINDOWS, which_tool
 
 logger = logging.getLogger(__name__)
 

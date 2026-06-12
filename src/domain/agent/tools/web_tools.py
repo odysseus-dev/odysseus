@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Dict, Any
 
-from src.constants import MAX_OUTPUT_CHARS
+from src.pkg.constants import MAX_OUTPUT_CHARS
 
 class WebSearchTool:
     async def execute(self, content: str, ctx: dict) -> dict:

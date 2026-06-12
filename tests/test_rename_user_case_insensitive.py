@@ -25,12 +25,12 @@ def _real_core_package():
         core = types.ModuleType("core")
         sys.modules["core"] = core
     core.__path__ = [core_path]
-    clear_module("core.auth")
+    clear_module("src.infra.auth.auth")
     return core
 
 
 def _fresh_auth_manager(tmp_path):
-    auth_mod = importlib.import_module("core.auth", package=_real_core_package())
+    auth_mod = importlib.import_module("src.infra.auth.auth", package=_real_core_package())
     auth_mod._hash_password = lambda password: f"hash:{password}"
     auth_mod._verify_password = lambda password, hashed: hashed == f"hash:{password}"
     return auth_mod.AuthManager(str(tmp_path / "auth.json"))

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from src.domain.chat.chat_processor import ChatProcessor
-from src.user_time import (
+from src.pkg.time import (
     clear_user_time_context,
     current_datetime_prompt,
     get_user_tz_name,
@@ -68,7 +68,7 @@ def test_current_datetime_context_message_is_user_role_not_system():
     """KV-cache regression guard: the per-turn date/time block must be a
     ``user``-role message (so it can sit outside the cached system prefix),
     not a ``system``-role one."""
-    from src.user_time import current_datetime_context_message
+    from src.pkg.time import current_datetime_context_message
 
     clear_user_time_context()
     set_user_tz_offset(600)
@@ -89,7 +89,7 @@ def test_agent_system_prompt_includes_shared_current_time(monkeypatch):
     Regression guard for a prior version that did
     ``agent_prompt = current_datetime_prompt() + agent_prompt``, which made
     the system message change every single minute."""
-    import src.agent_loop as agent_loop
+    import src.domain.agent.agent_loop as agent_loop
 
     clear_user_time_context()
     set_user_tz_offset(600)
@@ -118,7 +118,7 @@ def test_agent_system_prompt_includes_shared_current_time(monkeypatch):
 
 
 def test_calendar_relative_time_parser_handles_dotted_pm(monkeypatch):
-    import routes.calendar_routes as calendar_routes
+    import src.api.router.calendar_routes as calendar_routes
 
     class FixedDateTime(datetime):
         @classmethod

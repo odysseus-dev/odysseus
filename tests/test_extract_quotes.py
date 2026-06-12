@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("bs4")  # content.py imports BeautifulSoup at module load
 
-from src.search.content import extract_quotes
+from src.infra.search.content import extract_quotes
 
 
 def test_matched_double_quotes():

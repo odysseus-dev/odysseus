@@ -10,7 +10,7 @@ import sys
 from unittest.mock import MagicMock
 
 # Clean up any mocks from previous tests to ensure we load real modules.
-for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool_execution']:
+for mod in ['src.domain.agent.tools', 'src.domain.agent.tools.tool_parsing', 'src.domain.agent.tools.tool_schemas', 'src.domain.agent.tools.tool_execution']:
     sys.modules.pop(mod, None)
 
 # Mock heavy database/model dependencies before importing (avoids the
@@ -18,14 +18,14 @@ for mod in ['src.agent_tools', 'src.tool_parsing', 'src.tool_schemas', 'src.tool
 for mod in [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
-    'src.database', 'core.models', 'core.database', 'core.auth'
+    'src.database', 'src.infra.database.models', 'src.infra.database.database', 'src.infra.auth.auth'
 ]:
     if mod not in sys.modules:
         sys.modules[mod] = MagicMock()
 
 import json  # noqa: E402
 
-import src.agent_tools  # noqa: E402, F401
+import src.domain.agent.tools  # noqa: E402, F401
 from src.domain.agent.tools.tool_schemas import function_call_to_tool_block  # noqa: E402
 
 

@@ -47,14 +47,14 @@ def _stub_api_token_purge(monkeypatch):
     def _fake_db_session():
         yield _FakeSession()
 
-    db_stub = types.ModuleType("core.database")
+    db_stub = types.ModuleType("src.infra.database.database")
     db_stub.get_db_session = _fake_db_session
     db_stub.ApiToken = _FakeApiToken
-    monkeypatch.setitem(sys.modules, "core.database", db_stub)
+    monkeypatch.setitem(sys.modules, "src.infra.database.database", db_stub)
 
 
 def _fresh_auth_manager(tmp_path):
-    clear_module("core.auth")
+    clear_module("src.infra.auth.auth")
     from src.infra.auth.auth import AuthManager
 
     return AuthManager(str(tmp_path / "auth.json"))

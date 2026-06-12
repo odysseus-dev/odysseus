@@ -4,7 +4,7 @@ import pytest
 pytest.importorskip("bs4")
 from bs4 import BeautifulSoup
 
-from src.search.content import _extract_og_image
+from src.infra.search.content import _extract_og_image
 
 
 def _soup(html: str) -> BeautifulSoup:

@@ -14,7 +14,7 @@ import uuid
 
 import bcrypt
 
-from src.constants import AUTH_FILE
+from src.pkg.constants import AUTH_FILE
 
 PAIRING_VERSION = 1
 COMPANION_SCOPE = "chat"

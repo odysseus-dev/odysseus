@@ -15,7 +15,7 @@ from src.infra.llm.llm_core import normalize_model_id
 from src.infra.llm.endpoint_resolver import normalize_base
 from src.domain.context.context_compactor import maybe_compact, trim_for_context
 from src.auth_helpers import get_current_user
-from src.prompt_security import untrusted_context_message
+from src.pkg.security.prompt_security import untrusted_context_message
 from src.api.router.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
@@ -187,7 +187,7 @@ async def auto_name_session(session_manager, sess):
         title = title.strip().strip('"\'').strip()
         # Strip <think>/<thinking> blocks (closed, dangling, or stray tags)
         # via the central helper.
-        from src.text_helpers import strip_think
+        from src.pkg.text.text_helpers import strip_think
         title = strip_think(title, prose=False, prompt_echo=False)
         if title and len(title) < 80:
             session_manager.update_session_name(sess.id, title)
@@ -626,7 +626,7 @@ async def build_chat_context(
     # turn (modulo the genuinely new history entries) and the cache survives.
     if not agent_mode:
         try:
-            from src.user_time import current_datetime_context_message
+            from src.pkg.time import current_datetime_context_message
             _dt_msg = current_datetime_context_message()
             if messages and messages[-1].get("role") == "user":
                 messages.insert(len(messages) - 1, _dt_msg)
@@ -687,7 +687,7 @@ def _normalize_thinking(text: str) -> str:
     import re
     if not text:
         return text
-    from src.text_helpers import normalize_thinking_markup
+    from src.pkg.text.text_helpers import normalize_thinking_markup
     text = normalize_thinking_markup(text)
     reasoning_prefix_re = re.compile(
         r'^\s*(?:thinking(?:\s+process)?\s*:|the user |i need |i should |i will |they are |the question |i can )',
@@ -799,7 +799,7 @@ def _extract_thinking_meta(text: str) -> dict | None:
     import re
     if not text:
         return None
-    from src.text_helpers import normalize_thinking_markup
+    from src.pkg.text.text_helpers import normalize_thinking_markup
     original_text = text
     text = normalize_thinking_markup(text)
     normalized_changed = text != original_text

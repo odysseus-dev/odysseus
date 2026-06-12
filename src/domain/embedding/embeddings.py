@@ -14,7 +14,7 @@ Set EMBEDDING_URL in .env, e.g.:
 
 import os
 
-from src.constants import FASTEMBED_CACHE_DIR, EMBEDDING_ENDPOINT_FILE
+from src.pkg.constants import FASTEMBED_CACHE_DIR, EMBEDDING_ENDPOINT_FILE
 
 # Windows: force HuggingFace/fastembed to COPY model files rather than symlink
 # them. On a network-share/UNC cache dir Windows can't follow HF's symlinks

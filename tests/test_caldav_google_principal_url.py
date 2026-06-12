@@ -23,9 +23,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-import core.database as cdb
+import src.infra.database.database as cdb
 from src.infra.database.database import CalendarCal, CalendarEvent
-from src import caldav_sync
+from src.domain.calendar import caldav_sync
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _ENGINE = create_engine(

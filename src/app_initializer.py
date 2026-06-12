@@ -4,7 +4,7 @@ import os
 import logging
 from typing import Dict, Any
 
-from src.constants import (
+from src.pkg.constants import (
     DATA_DIR, PERSONAL_DIR, RUNBOOK_DIR, UPLOAD_DIR,
     SESSIONS_FILE, DEFAULT_HOST, OPENAI_API_KEY
 )

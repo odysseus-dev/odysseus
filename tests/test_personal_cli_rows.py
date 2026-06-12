@@ -6,9 +6,9 @@ from tests.helpers.cli_loader import load_script
 
 
 def _load_cli(monkeypatch):
-    personal_docs = types.ModuleType("src.personal_docs")
+    personal_docs = types.ModuleType("src.domain.rag.personal_docs")
     personal_docs.PersonalDocsManager = MagicMock()
-    monkeypatch.setitem(sys.modules, "src.personal_docs", personal_docs)
+    monkeypatch.setitem(sys.modules, "src.domain.rag.personal_docs", personal_docs)
     return load_script("odysseus-personal")
 
 

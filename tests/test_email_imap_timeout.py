@@ -8,7 +8,7 @@ _tmp_data = Path(tempfile.mkdtemp(prefix="odysseus-email-imap-test-"))
 os.environ.setdefault("DATA_DIR", str(_tmp_data))
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp_data / 'app.db'}")
 
-from routes.email_helpers import (
+from src.api.handler.email_helpers import (
     _IMAP_TIMEOUT_SECONDS,
     _coerce_imap_timeout_seconds,
     _open_imap_connection,
@@ -57,7 +57,7 @@ def test_imap_timeout_defaults_and_clamps():
 
 
 def test_open_imap_connection_uses_shared_timeout_for_implicit_ssl(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     _FakeIMAP.calls = []
     monkeypatch.setattr(helpers.imaplib, "IMAP4", _FakeIMAP)
@@ -72,7 +72,7 @@ def test_open_imap_connection_uses_shared_timeout_for_implicit_ssl(monkeypatch):
 
 
 def test_open_imap_connection_supports_starttls(monkeypatch):
-    import routes.email_helpers as helpers
+    import src.api.handler.email_helpers as helpers
 
     _FakeIMAP.calls = []
     monkeypatch.setattr(helpers.imaplib, "IMAP4", _FakeIMAP)
@@ -88,7 +88,7 @@ def test_open_imap_connection_supports_starttls(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_account_config_uses_shared_imap_timeout(monkeypatch):
-    import routes.email_routes as email_routes
+    import src.api.router.email_routes as email_routes
 
     captured = {}
 

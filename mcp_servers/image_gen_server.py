@@ -16,7 +16,7 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.constants import GENERATED_IMAGES_DIR
+from src.pkg.constants import GENERATED_IMAGES_DIR
 
 server = Server("image_gen")
 

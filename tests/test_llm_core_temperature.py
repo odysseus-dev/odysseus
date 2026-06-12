@@ -8,7 +8,7 @@ models so chat (with a non-default preset) and endpoint probing don't break.
 import httpx
 import pytest
 
-from src import llm_core
+from src.infra.llm import llm_core
 
 
 @pytest.mark.parametrize(

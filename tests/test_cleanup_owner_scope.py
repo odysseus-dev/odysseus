@@ -80,7 +80,7 @@ def cleanup_imports(monkeypatch):
     monkeypatch.delitem(sys.modules, "routes.cleanup_routes", raising=False)
 
     import src.cleanup_service as svc
-    import routes.cleanup_routes as rts
+    import src.api.router.cleanup_routes as rts
     return svc._apply_owner_filter, rts.setup_cleanup_routes
 
 

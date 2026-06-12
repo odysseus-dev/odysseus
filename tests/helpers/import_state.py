@@ -18,8 +18,8 @@ test left in import state, without touching a real ``src.endpoint_resolver``
 loaded from disk.
 
 Background: importing ``routes.session_routes`` also sets ``session_routes`` on
-the parent ``routes`` package object. A ``from routes import session_routes``
-or ``import routes.session_routes as X`` statement resolves through that parent
+the parent ``routes`` package object. A ``from src.api.router import session_routes``
+or ``import src.api.router.session_routes as X`` statement resolves through that parent
 attribute, so restoring ``sys.modules`` alone is not sufficient — the parent
 attribute must be restored too. This helper handles both.
 
@@ -75,7 +75,7 @@ def clear_fake_database_modules():
     Test-only. Some tests install a fake ``core.database`` — a stub module with
     no on-disk ``__file__`` — into ``sys.modules`` and onto the ``core`` package.
     A later test that needs the real database module must evict that stub first,
-    or its ``import core.database`` resolves to the fake.
+    or its ``import src.infra.database.database`` resolves to the fake.
 
     This is deliberately conservative and mirrors the per-file helpers it
     replaces:
@@ -89,10 +89,10 @@ def clear_fake_database_modules():
     """
     parent = sys.modules.get("core")
     attr = getattr(parent, "database", None) if parent is not None else None
-    mod = sys.modules.get("core.database") or attr
+    mod = sys.modules.get("src.infra.database.database") or attr
     if mod is None or isinstance(getattr(mod, "__file__", None), str):
         return
-    sys.modules.pop("core.database", None)
+    sys.modules.pop("src.infra.database.database", None)
     sys.modules.pop("src.database", None)
     if parent is not None and attr is mod:
         delattr(parent, "database")
@@ -131,10 +131,10 @@ def clear_fake_endpoint_resolver_modules(*extra_modules):
     """
     parent = sys.modules.get("src")
     attr = getattr(parent, "endpoint_resolver", None) if parent is not None else None
-    mod = sys.modules.get("src.endpoint_resolver") or attr
+    mod = sys.modules.get("src.infra.llm.endpoint_resolver") or attr
     if mod is None or getattr(mod, "__file__", None):
         return
-    sys.modules.pop("src.endpoint_resolver", None)
+    sys.modules.pop("src.infra.llm.endpoint_resolver", None)
     if parent is not None and attr is mod:
         delattr(parent, "endpoint_resolver")
     clear_module("routes.model_routes")

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src import personal_docs
+from src.domain.rag import personal_docs
 
 
 def test_personal_index_includes_office_uploads(tmp_path, monkeypatch):
