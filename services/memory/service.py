@@ -217,12 +217,19 @@ class MemoryService:
 
     def delete(self, memory_id: str) -> bool:
         """Delete a memory by ID."""
-        memories = self.manager.load_all()
-        remaining = [m for m in memories if m.get("id") != memory_id]
-        if len(remaining) == len(memories):
-            return False
+       with self._io_lock:
+            memories = self.manager.load_all()
+            remaining = [m for m in memories if m.get("id") != memory_id]
+            if len(remaining) == len(memories):
+                return False
 
-        self.manager.save(remaining)
-        if self.vector_store and self.vector_store.healthy:
-            self.vector_store.remove(memory_id)
-        return True
+            # Vector DB deletion first to prevent ghost vectors
+            if self.vector_store and self.vector_store.healthy:
+                try:
+                    self.vector_store.remove(memory_id)
+                except Exception as e:
+                    logger.error(f"Failed to delete {memory_id} from vector DB. Aborting JSON delete. {e}")
+                    return False
+
+            self.manager.save(remaining)
+            return True
