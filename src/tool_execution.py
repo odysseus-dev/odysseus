@@ -867,6 +867,10 @@ async def _execute_tool_block_impl(
         else:
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
+
+    elif tool in __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"]).TOOL_HANDLERS:
+        handlers = __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"]).TOOL_HANDLERS
+        desc, result = handlers[tool](content)
     else:
         desc = f"unknown: {tool}"
         result = {"error": f"Unknown tool type: {tool}", "exit_code": 1}
