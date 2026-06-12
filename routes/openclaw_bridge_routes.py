@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -29,6 +30,12 @@ from src.tool_policy import build_effective_tool_policy
 CHAT_SCOPES = {"chat"}
 CONVERGE_READ_SCOPES = {"converge:read"}
 WORKFLOW_TRIGGER_SCOPES = {"workflows:trigger"}
+WEB_READ_SCOPES = {"web:read"}
+RESEARCH_RUN_SCOPES = {"research:run"}
+TOOLS_USE_SCOPES = {"tools:use"}
+MEMORY_WRITE_SCOPES = {"memory:write"}
+
+logger = logging.getLogger(__name__)
 
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:
@@ -42,6 +49,13 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
             raise HTTPException(403, "API token has no owner")
         return owner
     return require_user(request)
+
+
+def _has_scope(request: Request, allowed: set[str]) -> bool:
+    if not getattr(request.state, "api_token", False):
+        return True
+    scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+    return bool(scopes.intersection(allowed))
 
 
 def _session_part(value: str | None, fallback: str) -> str:
@@ -68,8 +82,63 @@ def _converge_config() -> tuple[str, str]:
     if not api_key:
         missing.append("CONVERGE_API_KEY")
     if missing:
-        raise HTTPException(503, f"Converge bridge not configured: missing {', '.join(missing)}")
+        missing_text = ", ".join(missing)
+        raise HTTPException(503, "Converge bridge not configured: missing " + missing_text)
     return base_url, api_key
+
+
+def _allowed_workflows() -> set[str] | None:
+    raw = (os.getenv("OPENCLAW_ALLOWED_WORKFLOWS") or "").strip()
+    if not raw:
+        return None
+    return {item.strip() for item in raw.replace(";", ",").split(",") if item.strip()}
+
+
+def _workflow_allowed(name: str, task_id: str | None = None, task_name: str | None = None) -> bool:
+    allowed = _allowed_workflows()
+    if allowed is None:
+        return True
+    if "*" in allowed:
+        return True
+    candidates = {name}
+    if task_id:
+        candidates.add(task_id)
+    if task_name:
+        candidates.add(task_name)
+    return bool(candidates.intersection(allowed))
+
+
+def _sanitize_ticket_payload(value: Any, depth: int = 0) -> Any:
+    if depth > 4:
+        return "[truncated]"
+    if isinstance(value, dict):
+        allowed = {
+            "id", "redmine_id", "redmineId", "subject", "title", "description",
+            "status", "status_name", "priority", "project", "project_name",
+            "tracker", "author", "assignee", "assigned_to", "created_on",
+            "updated_on", "closed_on", "due_date", "start_date", "done_ratio",
+            "estimated_hours", "spent_hours", "journals", "notes", "comments",
+            "changes", "relations", "children", "parent", "custom_fields",
+            "url", "external_url",
+        }
+        redacted_key_parts = ("token", "secret", "password", "authorization", "api_key", "apikey", "cookie")
+        sanitized = {}
+        for key, item in value.items():
+            key_text = str(key)
+            key_lc = key_text.lower()
+            if any(part in key_lc for part in redacted_key_parts):
+                continue
+            if depth == 0 and key_text not in allowed:
+                continue
+            sanitized[key_text] = _sanitize_ticket_payload(item, depth + 1)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_ticket_payload(item, depth + 1) for item in value[:20]]
+    if isinstance(value, str):
+        return value[:4000]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return str(value)[:1000]
 
 
 def _ensure_session(session_manager, session_id: str, owner: str, title: str):
@@ -129,10 +198,8 @@ def setup_openclaw_bridge_routes(
     chat_processor,
     memory_manager,
     research_handler,
-    upload_handler,
     memory_vector=None,
     webhook_manager=None,
-    skills_manager=None,
     task_scheduler=None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/openclaw", tags=["openclaw"])
@@ -146,10 +213,15 @@ def setup_openclaw_bridge_routes(
             "owner": owner,
             "odysseus": {"ok": True},
             "task_runner": {"configured": task_scheduler is not None},
-            "converge": {"configured": False, "ok": False},
         }
         if task_scheduler is not None:
             result["task_runner"]["running"] = bool(getattr(task_scheduler, "_running", False))
+        return result
+
+    @router.get("/converge/health")
+    async def converge_health(request: Request):
+        _scope_owner(request, CONVERGE_READ_SCOPES)
+        result: dict[str, Any] = {"status": "ok", "converge": {"configured": False, "ok": False}}
         try:
             base_url, api_key = _converge_config()
             result["converge"]["configured"] = True
@@ -173,6 +245,11 @@ def setup_openclaw_bridge_routes(
     @router.post("/ask")
     async def ask(request: Request, body: OpenClawAskRequest):
         owner = _scope_owner(request, CHAT_SCOPES)
+        web_allowed = _has_scope(request, WEB_READ_SCOPES)
+        research_allowed = _has_scope(request, RESEARCH_RUN_SCOPES)
+        tools_allowed = _has_scope(request, TOOLS_USE_SCOPES)
+        memory_read_allowed = _has_scope(request, {"memory:read"})
+        memory_write_allowed = _has_scope(request, MEMORY_WRITE_SCOPES)
         session_id = openclaw_session_id(body.channel, body.thread, body.session_id)
         sess = _ensure_session(session_manager, session_id, owner, f"OpenClaw Slack {body.channel or ''}".strip())
 
@@ -189,10 +266,15 @@ def setup_openclaw_bridge_routes(
         try:
             _enforce_chat_privileges(request, sess)
             tool_policy = build_effective_tool_policy(last_user_message=body.message)
-            allow_tool_preprocessing = not tool_policy.block_all_tool_calls
+            warnings: list[str] = []
+            if body.use_web and not web_allowed:
+                raise HTTPException(403, "API token missing required scope: web:read")
+            if body.use_research and not research_allowed:
+                raise HTTPException(403, "API token missing required scope: research:run")
+            allow_tool_preprocessing = not tool_policy.block_all_tool_calls and tools_allowed
 
             memory_response = None
-            if not tool_policy.blocks("manage_memory"):
+            if not tool_policy.blocks("manage_memory") and memory_write_allowed:
                 memory_response = await chat_handler.handle_memory_command(sess, body.message)
             if memory_response:
                 return {
@@ -202,6 +284,7 @@ def setup_openclaw_bridge_routes(
                     "task_id": None,
                     "run_id": None,
                     "links": [],
+                    "warnings": warnings,
                     "requires_approval": False,
                 }
 
@@ -216,6 +299,7 @@ def setup_openclaw_bridge_routes(
                 att_ids=[],
                 use_web=body.use_web,
                 time_filter=body.time_filter,
+                no_memory=not memory_read_allowed,
                 webhook_manager=webhook_manager,
                 allow_tool_preprocessing=allow_tool_preprocessing,
             )
@@ -232,8 +316,9 @@ def setup_openclaw_bridge_routes(
                         len(ctx.preface),
                         untrusted_context_message("research context", research_ctx),
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("OpenClaw bridge research failed: %s", exc, exc_info=True)
+                    warnings.append("Research context unavailable: " + str(exc)[:200])
 
             reply = await llm_call_async(
                 sess.endpoint_url,
@@ -271,6 +356,7 @@ def setup_openclaw_bridge_routes(
                 "task_id": None,
                 "run_id": None,
                 "links": [],
+                "warnings": warnings,
                 "requires_approval": False,
             }
         finally:
@@ -329,10 +415,11 @@ def setup_openclaw_bridge_routes(
         if resp.status_code >= 400:
             raise HTTPException(resp.status_code, resp.text[:500])
         ticket = resp.json()
+        sanitized_ticket = _sanitize_ticket_payload(ticket)
         prompt = (
             "Summarize this Redmine ticket for a Slack operations thread. "
             "Include status, owner, project, what is being asked, recent risk, and next action.\n\n"
-            f"{json.dumps(ticket, ensure_ascii=False)}"
+            f"{json.dumps(sanitized_ticket, ensure_ascii=False)}"
         )
         session_id = openclaw_session_id("converge", f"ticket-{ticket_id}")
         sess = _ensure_session(session_manager, session_id, owner, f"Converge ticket {ticket_id}")
@@ -372,6 +459,7 @@ def setup_openclaw_bridge_routes(
                 "run_id": None,
                 "links": [],
                 "ticket": ticket,
+                "ticket_for_summary": sanitized_ticket,
                 "requires_approval": False,
             }
         finally:
@@ -399,6 +487,8 @@ def setup_openclaw_bridge_routes(
             )
             if not task:
                 raise HTTPException(404, "Workflow not found")
+            if not _workflow_allowed(name, task_id=task.id, task_name=task.name):
+                raise HTTPException(403, "Workflow is not allowed for OpenClaw bridge")
             task_id = task.id
         finally:
             db.close()
