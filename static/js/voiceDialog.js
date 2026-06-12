@@ -10,6 +10,7 @@
  */
 
 import { createVadEngine } from './vadEngine.js';
+import { createSttStream } from './sttStream.js';
 
 const BARGE_SUSTAIN_MS = 500;       // speech must persist this long during playback
 const THRESHOLD_LISTEN = 0.5;
@@ -27,6 +28,8 @@ let _bargeTimer = null;
 let _watchTimer = null;
 let _watchStartedAt = 0;
 let _sawTTSActivity = false;
+let _stt = null;        // sttStream instance or null
+let _useStream = false; // false → v1 single-shot POST fallback
 
 const ICON_DIALOG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/></svg>';
 
@@ -119,6 +122,7 @@ function _float32ToWavBlob(f32, sampleRate = 16000) {
 // ── Speech events ──
 
 function _onSpeechStart() {
+  if (_useStream && _stt && _state === 'listening') _stt.abortUtterance();
   if (_state === 'speaking') {
     // Barge-in candidate: must sustain BARGE_SUSTAIN_MS
     if (_bargeTimer) clearTimeout(_bargeTimer);
@@ -135,15 +139,21 @@ function _onSpeechStart() {
 
 async function _onSpeechEnd(audio) {
   if (_bargeTimer) { clearTimeout(_bargeTimer); _bargeTimer = null; }
-  if (_state !== 'listening') return; // utterances during 'speaking' that didn't barge are dropped
+  if (_state !== 'listening') return;
 
   _state = 'transcribing';
   _setUI('vd-transcribing', 'transcribing', 'Voice dialog: transcribing…');
   _engine.pause();
 
+  if (_useStream && _stt && _stt.connected) {
+    _stt.endUtterance(); // final arrives via onFinal → _send
+    return;
+  }
+
+  // v1 single-shot fallback
   let blob;
-  if (audio instanceof Blob) blob = audio;                       // RMS engine
-  else if (audio && audio.length) blob = _float32ToWavBlob(audio); // silero
+  if (audio instanceof Blob) blob = audio;
+  else if (audio && audio.length) blob = _float32ToWavBlob(audio);
   else { _resumeListening(); return; }
 
   let text = '';
@@ -242,6 +252,37 @@ async function start() {
     return;
   }
   if (_state === 'off') return;
+  try {
+    _stt = await createSttStream({
+      onPartial: (text) => {
+        if (_state !== 'listening') return;
+        const input = document.getElementById('message');
+        if (input) {
+          input.value = text;
+          input.style.opacity = '0.55';
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      },
+      onFinal: (text) => {
+        const input = document.getElementById('message');
+        if (input) input.style.opacity = '';
+        if (_state !== 'transcribing') return;
+        if (!text || !text.trim()) { _toast('Heard nothing — listening again'); _resumeListening(); return; }
+        _send(text.trim());
+      },
+      onError: (err) => {
+        console.warn('Voice dialog: stt stream degraded → single-shot fallback', err);
+        _useStream = false;
+      },
+    });
+    const micStream = _engine && _engine._vad ? _engine._vad.stream
+                    : (_engine && _engine._stream) ? _engine._stream : null;
+    if (micStream) { await _stt.attach(micStream); _useStream = true; }
+  } catch (err) {
+    console.warn('Voice dialog: stt stream unavailable → single-shot fallback', err);
+    _useStream = false;
+    _stt = null;
+  }
   _setUI('vd-listening', `listening (${_engine.kind})`, 'Voice dialog: listening… (click to stop)');
   _startWave();
 }
@@ -254,6 +295,10 @@ function stop() {
   if (_engine) { try { _engine.stop(); } catch (_) {} _engine = null; }
   const mgr = _mgr();
   if (mgr) { mgr.autoPlay = false; try { mgr.stop(); } catch (_) {} }
+  if (_stt) { try { _stt.close(); } catch (_) {} _stt = null; }
+  _useStream = false;
+  const inputEl = document.getElementById('message');
+  if (inputEl) inputEl.style.opacity = '';
   _setUI(null, '', 'Voice dialog mode');
 }
 
