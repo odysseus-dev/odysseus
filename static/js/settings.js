@@ -2,6 +2,7 @@
 // User-facing preferences: AI models, search, appearance
 
 import uiModule from './ui.js';
+import i18nModule, { t } from './i18n.js';
 import searchModule from './search.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
@@ -1612,7 +1613,22 @@ async function initAgentSettings() {
 /* ═══════════════════════════════════════════
    APPEARANCE TAB
    ═══════════════════════════════════════════ */
+function initLanguage() {
+  const sel = el('settings-locale-select');
+  if (!sel || sel.dataset.bound === '1') return;
+  sel.dataset.bound = '1';
+  sel.value = i18nModule.getLocale();
+  sel.addEventListener('change', async () => {
+    await i18nModule.setLocale(sel.value);
+  });
+  window.addEventListener('odysseus-locale-change', () => {
+    sel.value = i18nModule.getLocale();
+    if (typeof window._refreshShortcutsPanel === 'function') window._refreshShortcutsPanel();
+  });
+}
+
 function initAppearance() {
+  initLanguage();
   syncAppearanceCheckboxes();
   syncPrivacyCheckboxes();
 
@@ -1623,7 +1639,7 @@ function initAppearance() {
       if (window.UI_VIS_ADMIN_ONLY && window.UI_VIS_ADMIN_ONLY.has(key) && !chk.checked && !window._isAdmin) {
         chk.checked = true;
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Only admins can hide Settings.');
+          uiModule.showToast(t('toast.onlyAdminsHideSettings', 'Only admins can hide Settings.'));
         }
         return;
       }
@@ -1636,17 +1652,17 @@ function initAppearance() {
         try {
           ok = await (uiModule && uiModule.styledConfirm
             ? uiModule.styledConfirm(
-                'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.',
-                { confirmText: 'Hide', cancelText: 'Cancel' }
+                t('toast.hideSettingsConfirm', 'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.'),
+                { confirmText: t('toast.hideSettingsConfirmBtn', 'Hide'), cancelText: t('common.cancel', 'Cancel') }
               )
-            : Promise.resolve(window.confirm('Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.')));
+            : Promise.resolve(window.confirm(t('toast.hideSettingsConfirm', 'Hide the Settings cog?\n\nYou can re-open this panel any time by typing /settings in the chat input.'))));
         } catch (_) { ok = false; }
         if (!ok) {
           chk.checked = true;
           return;
         }
         if (uiModule && uiModule.showToast) {
-          uiModule.showToast('Settings cog hidden — type /settings to bring it back.', 5000);
+          uiModule.showToast(t('toast.settingsCogHidden', 'Settings cog hidden — type /settings to bring it back.'), 5000);
         }
       }
 
@@ -1745,34 +1761,62 @@ const SHORTCUT_ICONS = {
   open_theme:     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg>',
 };
 
-const SHORTCUT_LABELS = {
-  search:         'Search conversations',
-  toggle_sidebar: 'Toggle sidebar',
-  new_session:    'New session',
-  fav_session:    'Favorite session',
-  delete_session: 'Delete session',
-  cancel:         'Cancel / close',
-  tts:            'Play/stop TTS',
-  incognito:      'Toggle incognito',
-  settings:       'Toggle Window',
-  focus_input:    'Focus chat input',
-  open_calendar:  'Open Calendar',
-  open_compare:   'Open Compare',
-  open_cookbook:  'Open Cookbook',
-  open_research:  'Open Deep Research',
-  open_gallery:   'Open Gallery',
-  open_library:   'Open Library',
-  open_memory:    'Open Memory',
-  open_notes:     'Open Notes',
-  open_tasks:     'Open Tasks',
-  open_theme:     'Open Theme',
+const SHORTCUT_LABEL_KEYS = {
+  search: 'shortcut.search',
+  toggle_sidebar: 'shortcut.toggleSidebar',
+  new_session: 'shortcut.newSession',
+  fav_session: 'shortcut.favSession',
+  delete_session: 'shortcut.deleteSession',
+  cancel: 'shortcut.cancel',
+  tts: 'shortcut.tts',
+  incognito: 'shortcut.incognito',
+  settings: 'shortcut.settings',
+  focus_input: 'shortcut.focusInput',
+  open_calendar: 'shortcut.openCalendar',
+  open_compare: 'shortcut.openCompare',
+  open_cookbook: 'shortcut.openCookbook',
+  open_research: 'shortcut.openResearch',
+  open_gallery: 'shortcut.openGallery',
+  open_library: 'shortcut.openLibrary',
+  open_memory: 'shortcut.openMemory',
+  open_notes: 'shortcut.openNotes',
+  open_tasks: 'shortcut.openTasks',
+  open_theme: 'shortcut.openTheme',
 };
 
+const SHORTCUT_FALLBACK_LABELS = {
+  search: 'Search conversations',
+  toggle_sidebar: 'Toggle sidebar',
+  new_session: 'New session',
+  fav_session: 'Favorite session',
+  delete_session: 'Delete session',
+  cancel: 'Cancel / close',
+  tts: 'Play/stop TTS',
+  incognito: 'Toggle incognito',
+  settings: 'Toggle Window',
+  focus_input: 'Focus chat input',
+  open_calendar: 'Open Calendar',
+  open_compare: 'Open Compare',
+  open_cookbook: 'Open Cookbook',
+  open_research: 'Open Deep Research',
+  open_gallery: 'Open Gallery',
+  open_library: 'Open Library',
+  open_memory: 'Open Memory',
+  open_notes: 'Open Notes',
+  open_tasks: 'Open Tasks',
+  open_theme: 'Open Theme',
+};
+
+function _shortcutLabel(action) {
+  const key = SHORTCUT_LABEL_KEYS[action];
+  return key ? t(key, SHORTCUT_FALLBACK_LABELS[action] || action) : action;
+}
+
 const SHORTCUT_CATEGORIES = [
-  { name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
-  { name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
-  { name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
-  { name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
+  { nameKey: 'shortcut.cat.navigation', name: 'Navigation', keys: ['search', 'toggle_sidebar', 'focus_input', 'settings'] },
+  { nameKey: 'shortcut.cat.sessions', name: 'Sessions', keys: ['new_session', 'fav_session', 'delete_session'] },
+  { nameKey: 'shortcut.cat.tools', name: 'Tools', keys: ['incognito', 'tts', 'cancel'] },
+  { nameKey: 'shortcut.cat.openTools', name: 'Open Tools', keys: ['open_calendar', 'open_compare', 'open_cookbook', 'open_research', 'open_gallery', 'open_library', 'open_memory', 'open_notes', 'open_tasks', 'open_theme'] },
 ];
 
 function _formatKeyCaps(combo) {
@@ -1840,7 +1884,7 @@ async function initShortcuts() {
     for (const cat of SHORTCUT_CATEGORIES) {
       const catHeader = document.createElement('div');
       catHeader.className = 'shortcut-category';
-      catHeader.textContent = cat.name;
+      catHeader.textContent = t(cat.nameKey, cat.name);
       listEl.appendChild(catHeader);
 
       for (const action of cat.keys) {
@@ -1848,7 +1892,7 @@ async function initShortcuts() {
         const combo = keybinds[action];
         // Unbound shortcuts (empty combo) still render so the user can
         // assign one \u2014 they show a "Set" affordance instead of keycaps.
-        const label = SHORTCUT_LABELS[action] || action;
+        const label = _shortcutLabel(action);
         const icon = SHORTCUT_ICONS[action] || '';
         const isCustom = combo !== (SHORTCUT_DEFAULTS[action] || '');
         const hasConflict = combo && conflicts.has(action);
@@ -1996,6 +2040,7 @@ async function initShortcuts() {
   }
 
   render();
+  window._refreshShortcutsPanel = render;
 }
 
 /* ═══════════════════════════════════════════

@@ -3,6 +3,7 @@
 // ES6 module — entry point, no exports (wires all modules together)
 // ============================================
 import Storage from './js/storage.js';
+import i18nModule from './js/i18n.js';
 import uiModule from './js/ui.js';
 import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js';
@@ -3346,9 +3347,10 @@ function initializeEventListeners() {
 // ============================================
 // INITIALIZATION ON PAGE LOAD
 // ============================================
-function startOdysseusApp() {
+async function startOdysseusApp() {
   if (window.__odysseusAppStarted) return;
   window.__odysseusAppStarted = true;
+  try { await i18nModule.initI18n(); } catch (e) { console.warn('[i18n] init failed', e); }
   // Set CSS variables
   document.documentElement.style.setProperty('--line-height', '20px');
 

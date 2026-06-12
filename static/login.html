@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script nonce="{{CSP_NONCE}}">(function(){try{var l=localStorage.getItem('odysseus-locale')||'en';document.documentElement.lang=(l==='pt-BR'?'pt-BR':'en');}catch(e){}})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
 <title>Odysseus — Login</title>
@@ -257,25 +258,25 @@
   <div class="error" id="error" role="alert" aria-live="assertive"></div>
 
   <form id="authForm" autocomplete="on">
-    <label for="username">Username</label>
+    <label for="username" data-i18n="login.username">Username</label>
     <div class="pw-wrapper">
       <input id="username" name="username" type="text" required autofocus autocomplete="username">
       <label class="remember-toggle" id="rememberToggle" title="Remember me">
-        <input type="checkbox" class="remember-check" id="remember" checked aria-label="Remember me">
+        <input type="checkbox" class="remember-check" id="remember" checked data-i18n-aria-label="login.rememberMe" aria-label="Remember me">
         <span class="remember-dot" aria-hidden="true"></span>
       </label>
     </div>
 
-    <label for="password">Password</label>
+    <label for="password" data-i18n="login.password">Password</label>
     <div class="pw-wrapper">
       <input id="password" name="password" type="password" required autocomplete="current-password">
-      <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1" aria-label="Show password">
+      <button type="button" class="pw-toggle" id="pwToggle" tabindex="-1" data-i18n-aria-label="login.showPassword" aria-label="Show password">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>
       </button>
     </div>
 
     <div id="confirmGroup" style="display:none">
-      <label for="confirmPassword">Confirm Password</label>
+      <label for="confirmPassword" data-i18n="login.confirmPassword">Confirm Password</label>
       <div class="pw-wrapper">
         <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password">
         <button type="button" class="pw-toggle" id="pwToggleConfirm" tabindex="-1" aria-label="Show password">
@@ -284,7 +285,7 @@
       </div>
     </div>
 
-    <button type="submit" id="submitBtn">Sign In</button>
+    <button type="submit" id="submitBtn" data-i18n="login.signIn">Sign In</button>
   </form>
 
   <div class="toggle" id="toggleArea" style="display:none">
@@ -418,13 +419,13 @@
     if (mode === 'setup' || mode === 'signup') {
       const confirm = document.getElementById('confirmPassword').value;
       if (password !== confirm) {
-        errEl.textContent = 'Passwords do not match';
+        errEl.textContent = (window.t && window.t('login.passwordsMismatch')) || 'Passwords do not match';
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;
       }
       if (password.length < 8) {
-        errEl.textContent = 'Password must be at least 8 characters';
+        errEl.textContent = (window.t && window.t('login.passwordMin')) || 'Password must be at least 8 characters';
         errEl.style.display = 'block';
         submitBtn.disabled = false;
         return;
@@ -559,6 +560,10 @@ if (window.visualViewport) {
 }
 </script>
 <script type="module" nonce="{{CSP_NONCE}}">
+try {
+  const i18n = await import('/static/js/i18n.js');
+  await i18n.initI18n();
+} catch (e) { console.warn('[login i18n]', e); }
 // Drive the login page's bg effect off the user's saved theme. The
 // sync bootstrap above already set the body class + effect CSS vars so
 // the static-gradient patterns (dots, synapse) paint immediately; this

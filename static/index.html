@@ -93,6 +93,9 @@
     } catch(e){}
   })();
   </script>
+  <script nonce="{{CSP_NONCE}}">
+  (function(){try{var l=localStorage.getItem('odysseus-locale')||'en';document.documentElement.lang=(l==='pt-BR'?'pt-BR':'en');}catch(e){}})();
+  </script>
   <!-- Per-route favicon. Bookmarking /calendar shows a calendar icon,
        /notes a notes icon, etc. Each shape is rendered in the current
        theme accent color. Falls back to the boat logo on the root path. -->
@@ -242,10 +245,10 @@
   </script>
   <!-- Memory Management Modal -->
   <div id="memory-modal" class="modal hidden">
-    <div class="modal-content memory-modal-content" role="dialog" aria-label="Brain" style="background:var(--bg)">
+    <div class="modal-content memory-modal-content" role="dialog" aria-label="Brain" data-i18n-aria-label="memory.title" style="background:var(--bg)">
       <div class="modal-header">
-        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg>Brain</h4>
-        <button class="close-btn" id="close-memory-modal" aria-label="Close memory modal">✖</button>
+        <h4><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/></svg><span data-i18n="memory.title">Brain</span></h4>
+        <button class="close-btn" id="close-memory-modal" data-i18n-aria-label="memory.closeAria" aria-label="Close memory modal">✖</button>
       </div>
       <div class="modal-body memory-modal-body">
         <div class="memory-tabs">
@@ -649,14 +652,14 @@
   <div id="mobile-backdrop"></div>
   <button id="mobile-menu-btn" aria-label="Toggle sidebar">&#x2630;</button>
 
-  <button class="hamburger-btn" id="hamburger-btn" title="Show sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+  <button class="hamburger-btn" id="hamburger-btn" data-i18n-title="sidebar.showSidebar" title="Show sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
   <!-- new session button removed — use + in send button instead -->
   <div class="icon-rail" id="icon-rail">
     <div class="rail-resize-handle" id="rail-resize-handle"></div>
     <!-- Static: core actions -->
-    <button class="icon-rail-btn" id="rail-search-btn" title="Search conversations (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg></button>
-    <button class="icon-rail-btn rail-new-chat" id="rail-new-session" title="New chat"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-    <button class="icon-rail-btn" id="rail-delete-session" title="Delete session">&#x2715;</button>
+    <button class="icon-rail-btn" id="rail-search-btn" data-i18n-title="rail.search" title="Search conversations (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg></button>
+    <button class="icon-rail-btn rail-new-chat" id="rail-new-session" data-i18n-title="rail.newChat" title="New chat"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+    <button class="icon-rail-btn" id="rail-delete-session" data-i18n-title="rail.deleteSession" title="Delete session">&#x2715;</button>
     <div class="rail-separator"></div>
     <!-- Dynamic contextual indicators (shown only while active) -->
     <button class="icon-rail-btn rail-dynamic" id="rail-chats" title="Chat ready" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
@@ -675,25 +678,25 @@
     <button class="icon-rail-btn" id="rail-theme" title="Theme"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a10 10 0 0 0 0 20 5 5 0 0 0 5-5 3 3 0 0 0-3-3h-2a3 3 0 0 1-3-3 5 5 0 0 1 5-5"/></svg></button>
     <div style="flex:1"></div>
     <!-- Static: bottom -->
-    <button class="icon-rail-btn" id="rail-settings" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <button class="icon-rail-btn" id="rail-settings" data-i18n-title="rail.settings" title="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
   </div>
 
   <nav class="sidebar" id="sidebar" role="navigation" aria-label="Sidebar">
     <div class="sidebar-resize-handle" id="sidebar-resize-handle"></div>
     <div class="sidebar-header">
-      <button class="sidebar-hamburger" id="sidebar-toggle-btn" title="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+      <button class="sidebar-hamburger" id="sidebar-toggle-btn" data-i18n-title="sidebar.toggleSidebar" title="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <div class="sidebar-brand" id="sidebar-brand-btn" style="cursor:pointer;" title="New chat">
         <span class="sidebar-brand-title">Odysseus</span>
       </div>
     </div>
     <div class="sidebar-inner">
-      <div class="list-item" id="sidebar-new-chat-btn" title="New chat">
+      <div class="list-item" id="sidebar-new-chat-btn" data-i18n-title="rail.newChat" title="New chat">
         <svg class="sidebar-action-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="position:relative;left:-2px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-        <span class="grow" style="position:relative;left:-3px;">New Chat</span>
+        <span class="grow" style="position:relative;left:-3px;" data-i18n="sidebar.newChat">New Chat</span>
       </div>
-      <div class="list-item" id="sidebar-search-btn" title="Search conversations (Ctrl+K)">
+      <div class="list-item" id="sidebar-search-btn" data-i18n-title="rail.search" title="Search conversations (Ctrl+K)">
         <svg class="sidebar-action-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
-        <span class="grow" style="position:relative;left:-1px;">Search</span>
+        <span class="grow" style="position:relative;left:-1px;" data-i18n="sidebar.search">Search</span>
       </div>
       <!-- Assistant sidebar entry removed — its log + settings live inside
            the Tasks modal (Activity + Settings tabs). The backend
@@ -702,7 +705,7 @@
 
       <div class="section" id="sessions-section">
         <div class="section-header-flex">
-          <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
+          <span class="section-title" id="chats-section-title"><svg class="section-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span id="chats-section-label" class="section-title-label" data-i18n="sidebar.chats">Chats</span><span id="chats-notif-dot" class="sidebar-notif-dot" style="display:none"></span></span>
           <div style="position:relative; display:inline-block; display:flex; gap:4px; align-items:center;">
             <button type="button" class="section-header-btn chats-manage-btn" id="chats-library-btn" title="Manage Chats (Library)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -950,7 +953,7 @@
         <svg class="eye-blinded" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/>
         </svg>
-        <span class="incognito-label">Nobody</span>
+        <span class="incognito-label" data-i18n="chat.nobody">Nobody</span>
       </button>
       <div id="welcome-setup" style="display:none"></div>
     </div>
@@ -973,7 +976,9 @@
       ];
       var tips = mobile ? phone : desktop;
       var el = document.getElementById('welcome-tip');
-      if (el) {
+      if (el && window.t) {
+        el.textContent = window.t('welcome.tip', 'Type /setup, then choose Local models or API.');
+      } else if (el) {
         el.textContent = 'Type /setup, then choose Local models or API.';
       }
       fetch('/api/version').then(function(r){return r.json()}).then(function(d){
@@ -996,10 +1001,10 @@
     <div class="chat-input-bar">
       <div class="chat-input-top">
         <div id="message-ghost" class="ghost-text-overlay" aria-hidden="true"></div>
-        <textarea id="message" placeholder="Message Odysseus..." required autocomplete="off" aria-label="Message input" rows="1" autofocus></textarea>
+        <textarea id="message" data-i18n-placeholder="chat.messagePlaceholder" placeholder="Message Odysseus..." required autocomplete="off" data-i18n-aria-label="chat.messageAria" aria-label="Message input" rows="1" autofocus></textarea>
         <!-- Model picker (inside chatbox, top-right) -->
         <div class="model-picker-wrap" id="model-picker-wrap">
-          <button type="button" class="model-picker-btn" id="model-picker-btn" title="Switch model"><span id="model-picker-label">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
+          <button type="button" class="model-picker-btn" id="model-picker-btn" data-i18n-title="chat.switchModel" title="Switch model"><span id="model-picker-label" data-i18n="chat.selectModel">Select model</span> <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg></button>
           <div class="model-picker-menu hidden" id="model-picker-menu">
             <div class="model-picker-search-row">
               <input type="text" id="model-picker-search" placeholder="Search models..." autocomplete="off" aria-label="Search models">
@@ -1321,30 +1326,30 @@
 
   <!-- Settings Modal (all users) -->
   <div id="settings-modal" class="modal hidden">
-    <div class="modal-content settings-modal-content" role="dialog" aria-label="Settings">
+    <div class="modal-content settings-modal-content" role="dialog" aria-label="Settings" data-i18n-aria-label="settings.title">
       <div class="modal-header">
-        <h4><span style="vertical-align:-1px;margin-right:6px;font-size:15px">&#x2699;</span>Settings</h4>
-        <button type="button" class="theme-opacity-wrap theme-opacity-toggle hidden" id="settings-opacity-wrap" title="Fade this window to preview the page behind it" aria-pressed="false">
+        <h4><span style="vertical-align:-1px;margin-right:6px;font-size:15px">&#x2699;</span><span data-i18n="settings.title">Settings</span></h4>
+        <button type="button" class="theme-opacity-wrap theme-opacity-toggle hidden" id="settings-opacity-wrap" data-i18n-title="settings.peekTitle" title="Fade this window to preview the page behind it" aria-pressed="false">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-          <span class="theme-opacity-label">Peek</span>
+          <span class="theme-opacity-label" data-i18n="common.peek">Peek</span>
         </button>
-        <button class="close-btn" aria-label="Close settings">✖</button>
+        <button class="close-btn" data-i18n-aria-label="settings.closeAria" aria-label="Close settings">✖</button>
       </div>
-      <div class="admin-toggle-sub" style="padding:0 12px 8px;opacity:0.6;font-size:11px;">Toggle on/off visibility of tools and modules across the interface.</div>
+      <div class="admin-toggle-sub" data-i18n="settings.visibilityHint" style="padding:0 12px 8px;opacity:0.6;font-size:11px;">Toggle on/off visibility of tools and modules across the interface.</div>
       <div class="settings-layout">
         <div class="settings-sidebar">
           <!-- Section 1: AI plumbing (Add Models → AI Defaults → Search) -->
           <button class="settings-nav-item active" data-settings-tab="services">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>
-            <span>Add Models</span>
+            <span data-i18n="settings.nav.addModels">Add Models</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="ai">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h-2V6a4 4 0 0 0-4-4z"/></svg>
-            <span>AI Defaults</span>
+            <span data-i18n="settings.nav.aiDefaults">AI Defaults</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="search">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <span>Search</span>
+            <span data-i18n="settings.nav.search">Search</span>
           </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 2: Comms (Integrations → Email → Reminders).
@@ -1352,45 +1357,45 @@
                accounts the other two tabs depend on actually live. -->
           <button class="settings-nav-item" data-settings-tab="integrations">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            <span>Integrations</span>
+            <span data-i18n="settings.nav.integrations">Integrations</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="email">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
-            <span>Email</span>
+            <span data-i18n="settings.nav.email">Email</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="reminders">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            <span>Reminders</span>
+            <span data-i18n="settings.nav.reminders">Reminders</span>
           </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 3: UX (Appearance → Shortcuts) -->
           <button class="settings-nav-item" data-settings-tab="appearance">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0 0 20 4 4 0 0 1 0-8 4 4 0 0 0 0-8"/></svg>
-            <span>Appearance</span>
+            <span data-i18n="settings.nav.appearance">Appearance</span>
           </button>
           <button class="settings-nav-item" data-settings-tab="shortcuts">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
-            <span>Shortcuts</span>
+            <span data-i18n="settings.nav.shortcuts">Shortcuts</span>
           </button>
           <div class="settings-sidebar-divider"></div>
           <!-- Section 4: Account (sits at the bottom of the user section) -->
           <button class="settings-nav-item" data-settings-tab="account">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span>Account</span>
+            <span data-i18n="settings.nav.account">Account</span>
           </button>
           <div class="settings-sidebar-divider admin-only"></div>
-          <div class="settings-sidebar-label admin-only">Admin</div>
+          <div class="settings-sidebar-label admin-only" data-i18n="common.admin">Admin</div>
           <button class="settings-nav-item admin-only" data-settings-tab="tools">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-            <span>Agent Tools</span>
+            <span data-i18n="settings.nav.agentTools">Agent Tools</span>
           </button>
           <button class="settings-nav-item admin-only" data-settings-tab="users">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            <span>Users</span>
+            <span data-i18n="settings.nav.users">Users</span>
           </button>
           <button class="settings-nav-item admin-only" data-settings-tab="system">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            <span>System</span>
+            <span data-i18n="settings.nav.system">System</span>
           </button>
         </div>
         <div class="settings-panels">
@@ -1653,8 +1658,19 @@
 
         <!-- ═══ APPEARANCE TAB ═══ -->
         <div data-settings-panel="appearance" class="settings-appearance-panel hidden">
+          <div class="admin-card" id="settings-language-card" style="padding-bottom:10px;">
+            <h2 data-i18n="settings.language.title">Language</h2>
+            <p class="admin-toggle-sub" data-i18n="settings.language.desc" style="margin-bottom:8px;">Interface language. English is the default; your choice is saved in this browser.</p>
+            <div class="settings-row">
+              <label class="settings-label" for="settings-locale-select" data-i18n="settings.language.label">Display language</label>
+              <select id="settings-locale-select" class="settings-select">
+                <option value="en">English</option>
+                <option value="pt-BR">Português (Brasil)</option>
+              </select>
+            </div>
+          </div>
           <div class="admin-card" style="padding-bottom:6px;">
-            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>Sidebar</h2>
+            <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg><span data-i18n="settings.appearance.sidebar">Sidebar</span></h2>
             <div class="vis-toggles">
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M8 12l2.5 2.5L16 9"/></svg></span>
@@ -2333,6 +2349,7 @@
 
 
 <!-- Load modules in this order -->
+<script type="module" src="/static/js/i18n.js"></script>
 <script type="module" src="/static/js/storage.js"></script>
 <script type="module" src="/static/js/ui.js"></script>
 <script type="module" src="/static/js/markdown.js"></script>

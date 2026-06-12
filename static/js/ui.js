@@ -8,6 +8,7 @@ import themeModule from './theme.js';
 import * as Modals from './modalManager.js';
 import spinnerModule from './spinner.js';
 import { registerMenuDismiss, dismissTopMenu, dismissOrRemove } from './escMenuStack.js';
+import { t } from './i18n.js';
 
 let toastEl = null;
 let autoScrollEnabled = true;
@@ -219,7 +220,7 @@ _initHoverCardSpaceToggle();
 export async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
-    showToast('Copied');
+    showToast(t('toast.copied', 'Copied'));
   }
   catch {
     const ta = document.createElement('textarea');
@@ -229,7 +230,7 @@ export async function copyToClipboard(text) {
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    showToast('Copied');
+    showToast(t('toast.copied', 'Copied'));
   }
 }
 
@@ -376,8 +377,8 @@ export function showToast(msg, durationOrOpts) {
     // the user already acted (or just doesn't want the banner sitting there).
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
-    closeBtn.setAttribute('aria-label', 'Dismiss');
-    closeBtn.title = 'Dismiss';
+    closeBtn.setAttribute('aria-label', t('common.dismiss', 'Dismiss'));
+    closeBtn.title = t('common.dismiss', 'Dismiss');
     closeBtn.textContent = '×';
     closeBtn.style.cssText = 'margin-left:8px;padding:0;width:20px;height:20px;line-height:1;border:none;background:none;color:var(--fg);opacity:0.55;cursor:pointer;font-size:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;pointer-events:auto;';
     closeBtn.addEventListener('mouseenter', () => { closeBtn.style.opacity = '1'; });
@@ -570,7 +571,9 @@ export function el(id) {
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean>.
  */
-export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+export function styledConfirm(message, { confirmText, cancelText, danger = false } = {}) {
+  confirmText = confirmText ?? t('common.confirm', 'Confirm');
+  cancelText = cancelText ?? t('common.cancel', 'Cancel');
   return new Promise(resolve => {
     // Reuse or create the modal
     let overlay = document.getElementById('styled-confirm-overlay');
@@ -580,7 +583,7 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay.className = 'modal';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="styled-confirm-title" aria-describedby="styled-confirm-msg">' +
-          '<div class="modal-header"><h4 id="styled-confirm-title">Confirm</h4></div>' +
+          '<div class="modal-header"><h4 id="styled-confirm-title">' + t('confirm.title', 'Confirm') + '</h4></div>' +
           '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
@@ -591,9 +594,11 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
     }
 
     const msgEl = document.getElementById('styled-confirm-msg');
+    const titleEl = document.getElementById('styled-confirm-title');
     const okBtn = document.getElementById('styled-confirm-ok');
     const cancelBtn = document.getElementById('styled-confirm-cancel');
 
+    if (titleEl) titleEl.textContent = t('confirm.title', 'Confirm');
     msgEl.textContent = message;
     okBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
