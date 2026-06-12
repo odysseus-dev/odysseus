@@ -178,16 +178,22 @@ async def test_suggested_actions(mock_event_store):
 @pytest.mark.asyncio
 async def test_route_save_failure_500(mock_event_store, monkeypatch):
     router = setup_event_routes()
-    ack_event = _endpoint(router, "/api/events/{event_id}/ack", "POST")
+    ack = _endpoint(router, "/api/events/{event_id}/ack", "POST")
+    investigate = _endpoint(router, "/api/events/{event_id}/investigate", "POST")
+    resolve = _endpoint(router, "/api/events/{event_id}/resolve", "POST")
+    ignore = _endpoint(router, "/api/events/{event_id}/ignore", "POST")
+    
     e = mock_event_store.record_event("src", "s1", "critical", "t", "s", "k1")
     
     def mock_save(*args):
         raise IOError("fail")
     monkeypatch.setattr("src.event_store.EventStore._save", mock_save)
     
-    with pytest.raises(HTTPException) as exc:
-        await ack_event(_request(scopes=["events:ack"]), event_id=e["id"])
-    assert exc.value.status_code == 500
+    for ep, scope in [(ack, "events:ack"), (investigate, "events:ack"),
+                      (resolve, "events:resolve"), (ignore, "events:resolve")]:
+        with pytest.raises(HTTPException) as exc:
+            await ep(_request(scopes=[scope]), event_id=e["id"])
+        assert exc.value.status_code == 500
 
 @pytest.mark.asyncio
 async def test_missing_event_returns_404(mock_event_store):
