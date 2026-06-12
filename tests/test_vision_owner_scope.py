@@ -85,8 +85,8 @@ def test_vision_analysis_uses_owner_scoped_primary_and_fallback(monkeypatch, tmp
 
 
 def test_request_vision_call_sites_pass_owner():
-    chat_source = (ROOT / "src" / "chat_handler.py").read_text()
-    processor_source = (ROOT / "src" / "document_processor.py").read_text()
+    chat_source = (ROOT / "src" / "domain" / "chat" / "chat_handler.py").read_text()
+    processor_source = (ROOT / "src" / "domain" / "document" / "document_processor.py").read_text()
     upload_source = (ROOT / "src" / "api" / "router" / "upload_routes.py").read_text()
     document_source = (ROOT / "src" / "api" / "router" / "document_routes.py").read_text()
     gallery_source = (ROOT / "src" / "api" / "router" / "gallery_routes.py").read_text()

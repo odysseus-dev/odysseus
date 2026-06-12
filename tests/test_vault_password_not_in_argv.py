@@ -34,6 +34,7 @@ if "src.infra.database.database" not in sys.modules:
 if "src.api.middleware.security_headers" not in sys.modules:
     _mw = types.ModuleType("src.api.middleware.security_headers")
     _mw.require_admin = MagicMock()
+    _mw.SecurityHeadersMiddleware = MagicMock()
     sys.modules["src.api.middleware.security_headers"] = _mw
 if "src.pkg.platform_compat" not in sys.modules:
     _pc = types.ModuleType("src.pkg.platform_compat")
@@ -102,7 +103,7 @@ def test_unlock_handler_feeds_password_on_stdin_not_argv():
 
 
 def test_tool_vault_unlock_feeds_password_on_stdin_not_argv():
-    text = open("src/tool_implementations.py", encoding="utf-8").read()
+    text = open("src/domain/agent/tools/tool_implementations.py", encoding="utf-8").read()
 
     assert '["unlock", master_password, "--raw"]' not in text
     assert '_run_bw(["unlock", master_password' not in text
