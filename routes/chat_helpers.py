@@ -13,6 +13,13 @@ from core.database import SessionLocal
 from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
+from src.constants import LOCAL_LLM_ROUTER_AUTO_MODEL_ID
+from src.local_llm_router_routing import (
+    LocalLlmRouterNotReady,
+    is_local_llm_router_active,
+    is_local_llm_router_auto_model,
+    resolve_local_llm_router,
+)
 from src.context_compactor import maybe_compact, trim_for_context
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
@@ -100,7 +107,10 @@ def _enforce_chat_privileges(request, sess) -> None:
     allowed = allowed_raw if isinstance(allowed_raw, list) else []
     restricted = bool(privs.get("allowed_models_restricted")) or bool(allowed)
     if restricted and sess.model and sess.model not in allowed:
-        raise HTTPException(403, f"Your account is not allowed to use model '{sess.model}'.")
+        if sess.model == LOCAL_LLM_ROUTER_AUTO_MODEL_ID:
+            pass
+        else:
+            raise HTTPException(403, f"Your account is not allowed to use model '{sess.model}'.")
 
     cap = int(privs.get("max_messages_per_day") or 0)
     if cap <= 0:
@@ -159,9 +169,26 @@ async def auto_name_session(session_manager, sess):
             return
 
         owner = getattr(sess, "owner", None)
-        t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers, owner=owner,
-        )
+        if is_local_llm_router_auto_model(sess.model):
+            if not is_local_llm_router_active(sess):
+                logger.debug("[auto-name] Auto (Local LLMs) inactive, skipping")
+                return
+            try:
+                res = resolve_local_llm_router(
+                    prompt=first_msg or "New chat",
+                    endpoint_url=sess.endpoint_url,
+                    headers=sess.headers,
+                    owner=owner,
+                    mode="chat",
+                )
+                t_url, t_model, t_headers = res.endpoint_url, res.model, res.headers
+            except (LocalLlmRouterNotReady, ValueError, RuntimeError) as exc:
+                logger.debug("[auto-name] Auto (Local LLMs) resolve failed, skipping: %s", exc)
+                return
+        else:
+            t_url, t_model, t_headers = resolve_task_endpoint(
+                sess.endpoint_url, sess.model, sess.headers, owner=owner,
+            )
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
             return
@@ -604,13 +631,14 @@ async def build_chat_context(
 
     # Normalize model ID. Prefer cached endpoint models so group chat does not
     # re-hit slow local /models endpoints on every participant turn.
-    norm = _normalize_model_id_from_cache(sess) or normalize_model_id(
-        sess.endpoint_url,
-        sess.model,
-        owner=getattr(sess, "owner", None),
-    )
-    if norm:
-        sess.model = norm
+    if not is_local_llm_router_auto_model(getattr(sess, "model", None)):
+        norm = _normalize_model_id_from_cache(sess) or normalize_model_id(
+            sess.endpoint_url,
+            sess.model,
+            owner=getattr(sess, "owner", None),
+        )
+        if norm:
+            sess.model = norm
 
     # Build messages
     messages = preface + sess.get_context_messages()
@@ -879,9 +907,16 @@ def save_assistant_response(
 
     requested_model = _model_value(md.get("requested_model") or md.get("selected_model") or getattr(sess, "model", ""))
     actual_model = _model_value(md.get("model") or md.get("actual_model") or requested_model)
+    resolved_model = _model_value(md.get("resolved_model") or "")
     if requested_model:
         md["requested_model"] = requested_model
-    if actual_model:
+    if is_local_llm_router_auto_model(sess.model):
+        if resolved_model and not is_local_llm_router_auto_model(resolved_model):
+            md["resolved_model"] = resolved_model
+        elif actual_model and not is_local_llm_router_auto_model(actual_model):
+            md["resolved_model"] = actual_model
+        md["model"] = sess.model
+    elif actual_model:
         md["model"] = actual_model
     if character_name:
         md["character_name"] = character_name
