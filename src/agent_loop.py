@@ -951,11 +951,12 @@ def _build_system_prompt(
                 f"## Workspace\n"
                 f"Your current project workspace is: {_ws_path}\n"
                 f"This is the root directory for all file operations. "
-                f"When the user mentions files or directories, resolve "
-                f"relative paths against this workspace. Use ls, read_file, "
-                f"write_file, edit_file, glob, and grep here first — not "
-                f"the Odysseus data directory. If you need to find where "
-                f"something lives, start from this directory."
+                f"You have full shell access (bash) — you CAN run git clone, "
+                f"git checkout, npm install, bun build, rm, mkdir, and any "
+                f"other shell commands. For destructive commands (rm -rf, "
+                f"git reset --hard, etc.), you'll need to confirm with the "
+                f"user first. When the user mentions files or directories, "
+                f"resolve relative paths against this workspace."
             ),
             "_protected": True,
         }
