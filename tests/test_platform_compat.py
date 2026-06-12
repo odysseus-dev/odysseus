@@ -47,6 +47,20 @@ def test_find_bash_checks_local_app_data_git_install(monkeypatch):
     assert platform_compat.find_bash() == expected
 
 
+def test_find_bash_checks_local_app_data_programs_git_install(monkeypatch):
+    _reset_bash_cache(monkeypatch)
+    monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
+    monkeypatch.setattr(platform_compat.shutil, "which", lambda _name: None)
+    for env_name in platform_compat._WINDOWS_BASH_ROOT_ENV_VARS:
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setenv("LocalAppData", r"C:\Users\alice\AppData\Local")
+
+    expected = r"C:\Users\alice\AppData\Local\Programs\Git\bin\bash.exe"
+    monkeypatch.setattr(platform_compat.os.path, "exists", lambda path: path == expected)
+
+    assert platform_compat.find_bash() == expected
+
+
 def test_find_bash_skips_windows_wsl_stub(monkeypatch):
     _reset_bash_cache(monkeypatch)
     monkeypatch.setattr(platform_compat, "IS_WINDOWS", True)
@@ -69,6 +83,7 @@ def test_is_wsl_true_when_proc_version_mentions_microsoft(monkeypatch):
     def fake_open(path, mode="r", *args, **kwargs):
         assert path == "/proc/version"
         assert mode == "r"
+        assert kwargs == {"encoding": "utf-8", "errors": "ignore"}
         return io.StringIO("Linux version 6.6.0 microsoft standard")
 
     monkeypatch.setattr("builtins.open", fake_open)

@@ -249,6 +249,41 @@ def _uid_from_fetch_meta(meta_b: bytes) -> str:
     return m.group(1).decode() if m else ""
 
 
+_FETCH_SEQ_RE = re.compile(rb"^(\d+)\s+\(")
+
+
+def _group_uid_fetch_records(msg_data) -> list:
+    """Group an imaplib UID FETCH response into per-message (meta, payload).
+
+    imaplib yields an interleaved list: ``(meta, literal)`` tuples for
+    attributes that carry a literal (``RFC822.HEADER {n}`` etc.) plus bare
+    ``bytes`` elements for everything the server sends outside a literal.
+    Where each attribute lands is server-specific: Dovecot sends FLAGS
+    *before* the header literal (so it ends up inside the tuple meta), while
+    Gmail sends FLAGS *after* it, arriving as a bare ``b' FLAGS (\\Seen))'``
+    element. Dropping bare elements therefore silently loses FLAGS on Gmail
+    and every message renders as unread/unflagged.
+
+    A tuple whose meta starts with a sequence number opens a new record;
+    every other part — continuation tuple or bare bytes — is folded into the
+    current record's meta so attribute regexes see the full meta text.
+    Plain ``b')'`` terminators get folded in too, which is harmless.
+    """
+    grouped: list = []  # list of (meta_bytes, payload_bytes_or_None)
+    for part in (msg_data or []):
+        if isinstance(part, tuple):
+            meta_b = part[0] if isinstance(part[0], (bytes, bytearray)) else str(part[0]).encode()
+            if _FETCH_SEQ_RE.match(meta_b):
+                grouped.append((meta_b, part[1]))
+            elif grouped:
+                cur_meta, cur_payload = grouped[-1]
+                grouped[-1] = (cur_meta + b" " + meta_b, cur_payload or part[1])
+        elif isinstance(part, (bytes, bytearray)) and grouped:
+            cur_meta, cur_payload = grouped[-1]
+            grouped[-1] = (cur_meta + b" " + bytes(part), cur_payload)
+    return grouped
+
+
 def _smtp_ready(cfg: dict) -> bool:
     return bool(cfg.get("smtp_host") and cfg.get("smtp_user") and cfg.get("smtp_password"))
 
@@ -799,20 +834,11 @@ def setup_email_routes():
                 except Exception as e:
                     logger.warning(f"Batch fetch failed, falling back to per-UID: {e}")
                     status, msg_data = "NO", []
-                # imaplib batch responses interleave (meta, payload) tuples and
-                # `b')'` terminators. Group by message: each tuple where the
-                # meta begins with a seq number starts a new message record.
-                seq_re = re.compile(rb'^(\d+)\s+\(')
-                grouped = []  # list of (meta_str, payload_bytes)
-                for part in (msg_data or []):
-                    if isinstance(part, tuple):
-                        meta_b = part[0] if isinstance(part[0], (bytes, bytearray)) else str(part[0]).encode()
-                        if seq_re.match(meta_b):
-                            grouped.append((meta_b, part[1]))
-                        elif grouped:
-                            # continuation of previous message — concatenate meta info if any
-                            cur_meta, cur_payload = grouped[-1]
-                            grouped[-1] = (cur_meta + b" " + meta_b, cur_payload or part[1])
+                # Group the batched response into per-message (meta, payload)
+                # records. Bare bytes parts must be kept: Gmail returns FLAGS
+                # after the header literal as a bare element, and dropping it
+                # rendered every Gmail message as unread/unflagged.
+                grouped = _group_uid_fetch_records(msg_data)
 
                 if status != "OK" and not grouped:
                     conn.logout()
@@ -1098,14 +1124,15 @@ def setup_email_routes():
                             continue
                         raw_header = None
                         flags = ""
-                        for part in msg_data:
-                            if isinstance(part, tuple):
-                                meta = part[0].decode() if isinstance(part[0], bytes) else str(part[0])
-                                if b"RFC822.HEADER" in part[0] if isinstance(part[0], bytes) else "RFC822.HEADER" in meta:
-                                    raw_header = part[1]
-                                flag_match = re.search(r'FLAGS \(([^)]*)\)', meta)
-                                if flag_match:
-                                    flags = flag_match.group(1)
+                        # Same Gmail caveat as the list route: FLAGS may
+                        # arrive after the header literal, so group bare
+                        # parts back into the message meta before scanning.
+                        for meta_b, payload in _group_uid_fetch_records(msg_data):
+                            if payload and b"RFC822.HEADER" in meta_b:
+                                raw_header = payload
+                            flag_match = re.search(rb'FLAGS \(([^)]*)\)', meta_b)
+                            if flag_match:
+                                flags = flag_match.group(1).decode(errors="replace")
                         if not raw_header:
                             continue
                         msg = email_mod.message_from_bytes(raw_header)
@@ -1247,8 +1274,9 @@ def setup_email_routes():
                 try:
                     if sender_addr:
                         _rs = _c.execute(
-                            "SELECT signature_text FROM sender_signatures WHERE from_address = ?",
-                            (sender_addr.lower().strip(),),
+                            f"SELECT signature_text FROM sender_signatures "
+                            f"WHERE from_address = ? AND {owner_clause}",
+                            (sender_addr.lower().strip(), *owner_params),
                         ).fetchone()
                         if _rs and _rs[0]:
                             cached_sender_sig = _rs[0]
