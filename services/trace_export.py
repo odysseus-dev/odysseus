@@ -7,9 +7,50 @@ repo_root = Path(__file__).resolve().parents[1]
 if str(repo_root) not in sys.path:
     sys.path.insert(0, str(repo_root))
 
-# SessionLocal is imported ONLY for temporary testing.
 from typing import List
-from core.database import Session as DbSession, ChatMessage as DbChatMessage, SessionLocal
+from core.database import Session as DbSession, ChatMessage as DbChatMessage
+
+def redact_sensitive_data(session_properties: dict) -> dict:
+    """Scrub known API keys from message content and metadata."""
+    
+    try:
+        with open("data/settings.json", "r") as f:
+            settings = json.load(f)
+    except FileNotFoundError:
+        print("Warning: /data/settings.json not found. Skipping redaction.")
+        return session_properties
+
+    raw_secrets = [
+        settings.get("brave_api_key"),
+        settings.get("google_pse_key"),
+        settings.get("google_pse_cx"),
+        settings.get("tavily_api_key"),
+        settings.get("serper_api_key")
+    ]
+    
+    secrets_to_hide = [s for s in raw_secrets if s and isinstance(s, str)]
+
+    if not secrets_to_hide:
+        return session_properties
+
+    def scrub_text(text: str) -> str:
+        if not text:
+            return text
+        for secret in secrets_to_hide:
+            text = text.replace(secret, "[REDACTED]")
+        return text
+
+    for msg in session_properties.get("messages", []):
+        
+        if isinstance(msg.get("content"), str):
+            msg["content"] = scrub_text(msg["content"])
+            
+        if msg.get("metadata"):
+            meta_str = json.dumps(msg["metadata"])
+            scrubbed_meta_str = scrub_text(meta_str)
+            msg["metadata"] = json.loads(scrubbed_meta_str)
+
+    return session_properties
 
 def build_trace_records(
     db,
@@ -98,75 +139,4 @@ def build_trace_records(
 
     print(f"✓ Exported trace for session '{session_id}' user '{current_user}'")
     
-    return session_properties
-
-# Tests:
-def inspect_messages(session_id: str):
-    db = SessionLocal()
-
-    try:
-        messages = (
-            db.query(DbChatMessage)
-            .filter(DbChatMessage.session_id == session_id)
-            .all()
-        )
-
-        print(f"Found {len(messages)} messages:\n")
-
-        for m in messages[:10]:
-            print({
-                "id": m.id,
-                "role": m.role,
-                "content": (
-                    m.content[:50]
-                    if m.content else None
-                )
-            })
-
-    finally:
-        db.close()
-
-def inspect_sessions():
-    db = SessionLocal()
-
-    try:
-        sessions = db.query(DbSession).all()
-
-        print(f"Found {len(sessions)} sessions:\n")
-
-        for s in sessions[:10]:
-            print({
-                "id": s.id,
-                "name": s.name,
-                "owner": s.owner,
-                "model": s.model,
-            })
-
-    finally:
-        db.close()
-
-
-def test_build_trace_records():
-    db = SessionLocal()
-    try:
-        build_trace_records(
-            db=db,
-            current_user="admin",
-            session_id="8571ae67-b6f8-471c-bba7-6ce26e786d8d",
-            message_ids=[
-                "6b19fa1a-df3c-49cf-95b2-6c7ffe37c975",
-                # "adcadbf1-d197-491d-b7b6-63fba7c273e6",
-                "6b19fa1a-df3c-49cf-95b2-6c7ffe37c975",
-            ],
-            label="success",
-            note="needs review",
-        )
-
-        print("Test completed successfully")
-    finally:
-        db.close()
-
-if __name__ == "__main__":
-    # inspect_sessions()
-    # inspect_messages("8571ae67-b6f8-471c-bba7-6ce26e786d8d")
-    test_build_trace_records()
+    return redact_sensitive_data(session_properties) 
