@@ -773,6 +773,7 @@ function _rerenderCachedModels() {
       // button can sit at its top-right corner — same pattern as the chat
       // run-output panel.
       panelHtml += `<div class="hwfit-serve-cmd-wrap">`;
+      panelHtml += `<div class="hwfit-serve-cmd-override-bar"><button type="button" class="cookbook-btn hwfit-serve-override-toggle" title="Toggle custom command - type your own launch command instead of the auto-generated one">Custom</button><span class="hwfit-serve-override-hint" style="display:none;">Editing command manually - UI options are disabled</span></div>`;
       panelHtml += `<textarea class="hwfit-serve-cmd" spellcheck="false" rows="2"></textarea>`;
       panelHtml += `<button type="button" class="cookbook-btn hwfit-serve-copy hwfit-serve-copy-inline" title="Copy launch command" aria-label="Copy"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>`;
       panelHtml += `</div>`;
@@ -810,6 +811,13 @@ function _rerenderCachedModels() {
       // Scroll the serve panel into view within its nearest scrollable ancestor
       requestAnimationFrame(() => panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
 
+      // Override state: when _cmdOverride is true the textarea holds a
+      // user-written command that takes precedence over the auto-generated one.
+      // Only restore from per-repo state — NOT from _lastUsed, which would
+      // leak the override flag from a different model's launch.
+      const _repoState = (_byRepo[repo] && typeof _byRepo[repo] === 'object') ? _byRepo[repo] : {};
+      panel._cmdOverride = !!(_repoState._cmdOverride);
+      panel._customCmd = _repoState._customCmd || '';
       // Build command preview
       function updateCmd() {
         const f = {};
@@ -822,23 +830,13 @@ function _rerenderCachedModels() {
         if (backend === 'llamacpp') {
           const ggufChoices = _runnableGgufFiles(m);
           const selectedGguf = ggufChoices.find(file => file.rel_path === f.gguf_file);
-          // For multi-part GGUFs, llama.cpp requires the first split
-          // (-00001-of-NNNNN.gguf). Prefer it (sorted, so UD-IQ4_XS/001 comes
-          // before Q4_K_M/001 etc); fall back to any single GGUF sorted.
           const dir = _ggufSearchDirExpr(m, repo);
-          // GGUF needs the actual .gguf FILE, not the folder. For a custom-dir
-          // model the file lives under "<path>/<repo>" — search there just like we
-          // search the HF snapshots dir, so serving a GGUF from a custom dir works
-          // instead of handing llama.cpp a directory (which fails).
           const _ldir = m.path ? _shellQuote(`${m.path}/${repo}`) : '""';
           f._gguf_path = selectedGguf
             ? _selectedGgufExpr(m, repo, selectedGguf.rel_path)
             : m.is_local_dir && m.path
             ? `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`
             : `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-          // Vision: auto-find the mmproj (CLIP/projector) file in the same dir.
-          // Resolved at runtime so the toggle just works if an mmproj-*.gguf is
-          // present (downloaded alongside the model). Empty if none → cmd omits it.
           const _vsearchdir = (m.is_local_dir && m.path) ? _ldir : dir;
           f._mmproj_path = `$(find ${_vsearchdir} -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)`;
         }
@@ -848,12 +846,23 @@ function _rerenderCachedModels() {
         }
         let cmd = _buildServeCmd(f, serveModel, backend);
         if (f.extra && f.extra.trim()) cmd += ' ' + f.extra.trim();
-        const _ce2 = panel.querySelector('.hwfit-serve-cmd'); _ce2.value = cmd; _ce2.style.height = 'auto'; _ce2.style.height = _ce2.scrollHeight + 'px';
-        panel._cmd = cmd;
+        panel._cmdAutoGen = cmd;
         panel._host = f.host || '';
+        const _ce2 = panel.querySelector('.hwfit-serve-cmd');
+        if (panel._cmdOverride) {
+          cmd = panel._customCmd || cmd;
+        }
+        _ce2.value = cmd; _ce2.style.height = 'auto'; _ce2.style.height = _ce2.scrollHeight + 'px';
+        panel._cmd = cmd;
         return cmd;
       }
       updateCmd();
+      // If restoring an override, populate textarea with the custom command
+      if (panel._cmdOverride && panel._customCmd) {
+        const _ce3 = panel.querySelector('.hwfit-serve-cmd');
+        if (_ce3) { _ce3.value = panel._customCmd; _ce3.style.height = 'auto'; _ce3.style.height = _ce3.scrollHeight + 'px'; }
+        panel._cmd = panel._customCmd;
+      }
 
       // Context clamp. Two ceilings:
       //  - ABSOLUTE_CTX_MAX: a hard sanity cap (no LLM trains past ~1M tokens),
@@ -1084,7 +1093,27 @@ function _rerenderCachedModels() {
         if (_gf) _gf.value = activeGpus.join(',');
         updateBackendVisibility();
         updateRuntimeReadinessNote();
+        // Restore custom-command override state from the saved preset
+        if (p.fields && p.fields._cmdOverride) {
+          panel._cmdOverride = true;
+          panel._customCmd = p.fields._customCmd || cmd;
+        } else {
+          panel._cmdOverride = false;
+          panel._customCmd = '';
+        }
         updateCmd();
+        // After updateCmd (which respects override), if override is active
+        // force the textarea to show the saved custom command.
+        if (panel._cmdOverride && panel._customCmd) {
+          const _ce4 = panel.querySelector('.hwfit-serve-cmd');
+          if (_ce4) {
+            _ce4.value = panel._customCmd;
+            _ce4.style.height = 'auto';
+            _ce4.style.height = _ce4.scrollHeight + 'px';
+          }
+          panel._cmd = panel._customCmd;
+        }
+        _updateOverrideVisuals();
         panel.querySelectorAll('.cookbook-slot-btn').forEach(b => b.classList.remove('active'));
         panel.querySelector(`.cookbook-slot-btn[data-slot="${slotIdx}"]`)?.classList.add('active');
       }
@@ -1105,8 +1134,8 @@ function _rerenderCachedModels() {
       async function _saveCurrentConfig() {
         const presets = _loadPresets();
         const modelSlots = _presetsForModel(presets, repo);
-        // Compute the current launch command first so we can detect a no-op save.
-        updateCmd();
+        // Use the current command — when override is active, this is the
+        // user's custom command, NOT the auto-generated one.
         const cmd = panel._cmd;
         // Already saved? If an existing preset for this model has the identical
         // launch command, don't make a duplicate — tell the user via a popup.
@@ -1127,6 +1156,10 @@ function _rerenderCachedModels() {
           if (el.type === 'checkbox') fields[el.dataset.field] = el.checked;
           else fields[el.dataset.field] = el.value;
         });
+        if (panel._cmdOverride) {
+          fields._cmdOverride = true;
+          fields._customCmd = panel._customCmd || cmd;
+        }
         presets.push({ name: shortName, model: repo, cmd, remoteHost: host, port: fields.port || '8000', label, fields });
         _savePresets(presets);
         uiModule.showToast(`Saved "${label}"`);
@@ -1685,6 +1718,64 @@ function _rerenderCachedModels() {
       const _cmdTextarea = panel.querySelector('.hwfit-serve-cmd');
       if (_cmdTextarea) _cmdTextarea.addEventListener('input', () => { _cmdManuallyEdited = true; });
 
+      // ── Custom command override ──
+      const _overrideBtn = panel.querySelector('.hwfit-serve-override-toggle');
+      const _overrideHint = panel.querySelector('.hwfit-serve-override-hint');
+      function _setFieldsDisabled(disabled) {
+        panel.querySelectorAll('.hwfit-sf').forEach(el => {
+          if (el.type === 'checkbox') el.disabled = disabled;
+          else if (el.tagName === 'SELECT' || el.tagName === 'INPUT') el.disabled = disabled;
+        });
+        panel.querySelectorAll('.cookbook-gpu-btn').forEach(b => { b.disabled = disabled; });
+        const adv = panel.querySelector('.hwfit-serve-advanced');
+        if (adv) {
+          adv.querySelectorAll('.hwfit-sf').forEach(el => {
+            if (el.type === 'checkbox') el.disabled = disabled;
+            else if (el.tagName === 'SELECT' || el.tagName === 'INPUT') el.disabled = disabled;
+          });
+          adv.querySelectorAll('.cookbook-gpu-btn').forEach(b => { b.disabled = disabled; });
+          adv.querySelectorAll('.hwfit-numstep-btn').forEach(b => { b.disabled = disabled; });
+        }
+      }
+      function _updateOverrideVisuals() {
+        const on = !!panel._cmdOverride;
+        if (_overrideBtn) {
+          _overrideBtn.classList.toggle('active', on);
+          _overrideBtn.textContent = on ? 'Custom ✓' : 'Custom';
+        }
+        if (_overrideHint) _overrideHint.style.display = on ? '' : 'none';
+        if (_cmdTextarea) {
+          _cmdTextarea.classList.toggle('hwfit-serve-cmd-override', on);
+          _cmdTextarea.readOnly = !on;
+        }
+        _setFieldsDisabled(on);
+      }
+      _updateOverrideVisuals();
+      if (_overrideBtn) {
+        _overrideBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (!panel._cmdOverride) {
+            panel._cmdOverride = true;
+            panel._customCmd = _cmdTextarea ? _cmdTextarea.value : panel._cmdAutoGen || '';
+            _cmdManuallyEdited = true;
+          } else {
+            panel._cmdOverride = false;
+            panel._customCmd = '';
+            _cmdManuallyEdited = false;
+            updateCmd();
+          }
+          _updateOverrideVisuals();
+        });
+      }
+      if (_cmdTextarea) {
+        _cmdTextarea.addEventListener('input', () => {
+          if (panel._cmdOverride) {
+            panel._customCmd = _cmdTextarea.value;
+            panel._cmd = _cmdTextarea.value;
+          }
+        });
+      }
+
       // Cancel button — collapses the serve config panel (same effect as
       // tapping the row to toggle it shut). Mobile users wanted an explicit
       // "back out" affordance next to Launch.
@@ -1734,9 +1825,10 @@ function _rerenderCachedModels() {
         // limit (or the absolute sanity ceiling when the limit is unknown). A
         // stale preset or typo (e.g. 16000000) overflows and, with a quantized
         // KV cache, can crash the GPU. Skip only if the user hand-edited the raw
-        // command (then we respect their literal text).
-        if (!_cmdManuallyEdited) _clampCtx(true);
-        if (!_cmdManuallyEdited) updateCmd();
+        // command or is using custom override (then we respect their literal text).
+        const _isOverride = !!panel._cmdOverride;
+        if (!_cmdManuallyEdited && !_isOverride) _clampCtx(true);
+        if (!_cmdManuallyEdited && !_isOverride) updateCmd();
         // Pasted commands often carry hidden newlines / CRs / tabs from copies
         // out of model cards or wrapped help text. The backend cmd allowlist
         // rejects \n / \r outright (`Invalid characters in cmd`), so collapse
@@ -1856,6 +1948,10 @@ function _rerenderCachedModels() {
           try { cur = JSON.parse(localStorage.getItem(SERVE_STATE_KEY)) || {}; } catch {}
           const byRepo = (cur && cur._byRepo && typeof cur._byRepo === 'object') ? cur._byRepo : {};
           const _saved = { ...serveState, _forceBackend: true };
+          if (panel._cmdOverride) {
+            _saved._cmdOverride = true;
+            _saved._customCmd = panel._customCmd || launchCmd;
+          }
           byRepo[repo] = _saved;
           localStorage.setItem(SERVE_STATE_KEY, JSON.stringify({ _byRepo: byRepo, _lastUsed: _saved }));
         } catch {}
