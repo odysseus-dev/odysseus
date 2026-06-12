@@ -1,8 +1,11 @@
-# Code owners.
+# Critical-path code owners.
 #
-# Every file is owned by the maintainer, so that when branch protection has
-# "Require review from Code Owners" turned on, no pull request can be merged
-# without the maintainer's review. This is the human gate that backs up the
-# automated security checks. See docs/security-ci.md for how to turn it on.
+# Code Owner review is limited to repo-control and security-CI paths. General
+# application changes should rely on normal branch protection and maintainer
+# review instead of requiring the project owner on every pull request.
 
-*       @pewdiepie-archdaemon
+/.github/CODEOWNERS        @pewdiepie-archdaemon
+/.github/dependabot.yml    @pewdiepie-archdaemon
+/.github/scripts/          @pewdiepie-archdaemon
+/.github/workflows/        @pewdiepie-archdaemon
+/docs/security-ci.md       @pewdiepie-archdaemon

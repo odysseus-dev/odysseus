@@ -75,8 +75,9 @@ This makes the **Merge** button refuse to work until the gating checks pass.
    security suite. Leave pytest, pip-audit, Trivy, and CodeQL unchecked so they
    stay advisory.
 7. Also enable **Require a pull request before merging** and **Require review
-   from Code Owners** (this uses the `.github/CODEOWNERS` file so every change
-   needs your sign-off).
+   from Code Owners**. This uses `.github/CODEOWNERS` for the critical
+   repo-control and security-CI paths listed there; ordinary application changes
+   still rely on the normal pull-request review rule.
 8. Click **Create** / **Save changes**.
 
 Note: a check name only appears in the list after it has run at least once, so
