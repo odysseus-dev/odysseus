@@ -189,6 +189,11 @@ function dispatchSyntheticMove(sourceEvent, clientY) {
 
 function forceSortableDragOver(listRoot) {
   const sortable = sortableForList(listRoot);
+  // _emulateDragOver is a private Sortable internal (verified against the
+  // vendored 1.15.7), it re-runs hit-testing using the last synthetic move,
+  // which Sortable won't do on its own since the real pointer never entered
+  // the edge slot. No public API covers this; re-verify before upgrading
+  // static/lib/Sortable.min.js.
   if (!sortable || typeof sortable._emulateDragOver !== 'function') return;
   sortable._emulateDragOver();
 }
@@ -254,10 +259,15 @@ function handleSidebarPointerEvent(event, phase) {
 }
 
 function onSidebarPointerProxy(event) {
+  // Ignore our own dispatchSyntheticMove() events (isTrusted === false)
+  // re-entering would re-dispatch and recurse until the stack overflows.
+  // Only Sortable is meant to consume the synthetic moves.
+  if (!event.isTrusted) return;
   handleSidebarPointerEvent(event, 'move');
 }
 
 function onSidebarPointerProxyUp(event) {
+  if (!event.isTrusted) return; // see onSidebarPointerProxy
   handleSidebarPointerEvent(event, 'up');
 }
 
