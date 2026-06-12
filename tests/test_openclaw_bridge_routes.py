@@ -37,6 +37,7 @@ def test_openclaw_bridge_token_profile_is_read_only_by_default():
         "web:read",
         "research:run",
         "tools:use",
+        "memory:read",
         "memory:write",
     }.issubset(ALLOWED_SCOPES)
 
@@ -215,6 +216,64 @@ async def test_ask_gates_tool_preprocessing_on_tools_scope(monkeypatch):
     await ask(_bridge_request(["chat", "tools:use"]), OpenClawAskRequest(message="question"))
 
     assert seen == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_ask_without_memory_read_passes_no_memory_true(monkeypatch):
+    monkeypatch.setattr("routes.openclaw_bridge_routes.resolve_endpoint", lambda *a, **k: ("http://llm", "model", {}))
+    monkeypatch.setattr("routes.openclaw_bridge_routes._clear_orphaned_session_endpoint", lambda *a, **k: False)
+
+    async def fake_llm(*args, **kwargs):
+        return "ok"
+
+    seen = []
+
+    async def fake_context(*args, **kwargs):
+        seen.append(kwargs["no_memory"])
+        return SimpleNamespace(
+            messages=[{"role": "user", "content": "question"}],
+            preface=[],
+            preset=SimpleNamespace(temperature=0.1, max_tokens=100, character_name=None),
+            uprefs={},
+            user="alice",
+        )
+
+    monkeypatch.setattr("routes.openclaw_bridge_routes.llm_call_async", fake_llm)
+    monkeypatch.setattr("routes.openclaw_bridge_routes.build_chat_context", fake_context)
+    ask = _endpoint(_router(), "/api/openclaw/ask", "POST")
+
+    await ask(_bridge_request(["chat"]), OpenClawAskRequest(message="question"))
+
+    assert seen == [True]
+
+
+@pytest.mark.asyncio
+async def test_ask_with_memory_read_passes_no_memory_false(monkeypatch):
+    monkeypatch.setattr("routes.openclaw_bridge_routes.resolve_endpoint", lambda *a, **k: ("http://llm", "model", {}))
+    monkeypatch.setattr("routes.openclaw_bridge_routes._clear_orphaned_session_endpoint", lambda *a, **k: False)
+
+    async def fake_llm(*args, **kwargs):
+        return "ok"
+
+    seen = []
+
+    async def fake_context(*args, **kwargs):
+        seen.append(kwargs["no_memory"])
+        return SimpleNamespace(
+            messages=[{"role": "user", "content": "question"}],
+            preface=[],
+            preset=SimpleNamespace(temperature=0.1, max_tokens=100, character_name=None),
+            uprefs={},
+            user="alice",
+        )
+
+    monkeypatch.setattr("routes.openclaw_bridge_routes.llm_call_async", fake_llm)
+    monkeypatch.setattr("routes.openclaw_bridge_routes.build_chat_context", fake_context)
+    ask = _endpoint(_router(), "/api/openclaw/ask", "POST")
+
+    await ask(_bridge_request(["chat", "memory:read"]), OpenClawAskRequest(message="question"))
+
+    assert seen == [False]
 
 
 @pytest.mark.asyncio
