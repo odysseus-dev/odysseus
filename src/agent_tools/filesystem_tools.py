@@ -15,6 +15,8 @@ _CODENAV_SKIP_DIRS = frozenset({
 })
 _CODENAV_MAX_HITS = 200
 _CODENAV_MAX_LINE = 400
+_GLOB_TIMEOUT_SECS = 15   # hard timeout for glob -> return what we have
+_GLOB_MAX_DIRS = 5000     # bail after visiting this many directories
 
 def _walk_matches(base, pattern: str, max_depth: int, _fnmatch, skip_dirs, max_hits: int, matched: list):
     """Bounded-depth file matcher. Walk only to *max_depth* levels below *base*,
@@ -322,33 +324,24 @@ class GlobTool:
             base = Path(root)
             if not base.is_dir():
                 return None, f"glob: {root}: not a directory"
-            matched = []
-            # Determine max depth from the pattern to avoid unbounded rglob.
-            # rglob walks EVERY file recursively, which explodes on large
-            # monorepos. For patterns without **, we can use a bounded glob
-            # that stops at the required depth.
             has_recursive = "**" in pattern
             depth = None
             if not has_recursive:
-                # Count single-* segments to determine the max depth needed.
-                # "apps/*/package.json" → depth from base + 2 levels
                 rel_pattern = pattern.replace("\\", "/")
-                # Split the pattern's directory parts
                 pattern_parts = rel_pattern.rsplit("/", 1)
                 dir_parts = pattern_parts[0].split("/") if len(pattern_parts) > 1 else []
-                # Count wildcard segments (each * or ** adds one level)
                 wildcard_dirs = sum(1 for p in dir_parts if "*" in p and "**" not in p)
                 fixed_dirs = sum(1 for p in dir_parts if "*" not in p)
-                depth = fixed_dirs + wildcard_dirs + 1  # +1 for the filename level
+                depth = fixed_dirs + wildcard_dirs + 1
             try:
                 if has_recursive or depth is None:
-                    # Recursive pattern (**): use os.walk with dir pruning.
-                    # rglob enters every subdirectory before filtering, which
-                    # hangs on large trees. os.walk with dirs[:] pruning skips
-                    # entire subtrees (node_modules, .git, etc.).
                     from fnmatch import fnmatch as _fnmatch2
                     file_pattern = pattern.split("/")[-1]
+                    dirs_visited = 0
                     for dirpath, dirnames, filenames in os.walk(str(base)):
+                        dirs_visited += 1
+                        if dirs_visited > _GLOB_MAX_DIRS:
+                            break
                         dirnames[:] = [d for d in dirnames if d not in _CODENAV_SKIP_DIRS]
                         for fn in filenames:
                             if _fnmatch2(fn, file_pattern):
@@ -362,17 +355,29 @@ class GlobTool:
                         if len(matched) > _CODENAV_MAX_HITS * 5:
                             break
                 else:
-                        # Bounded walk: use glob() at the right level plus
-                        # targeted descent. Much faster than rglob for
-                        # patterns like "apps/*/package.json" on large trees.
-                        from fnmatch import fnmatch as _fnmatch
-                        _walk_matches(base, pattern, depth, _fnmatch, _CODENAV_SKIP_DIRS, _CODENAV_MAX_HITS, matched)
+                    from fnmatch import fnmatch as _fnmatch
+                    _walk_matches(base, pattern, depth, _fnmatch, _CODENAV_SKIP_DIRS, _CODENAV_MAX_HITS, matched)
             except (OSError, ValueError) as _e:
                 return None, f"glob: {_e}"
             matched.sort(key=lambda t: t[0], reverse=True)
             return [pth for _, pth in matched[:_CODENAV_MAX_HITS]], None
 
-        paths, err = await asyncio.to_thread(_glob)
+        # Shared mutable list so timeout handler can access partial results.
+        matched = []
+        try:
+            paths, err = await asyncio.wait_for(
+                asyncio.to_thread(_glob),
+                timeout=_GLOB_TIMEOUT_SECS,
+            )
+        except asyncio.TimeoutError:
+            partial = [pth for _, pth in sorted(matched, key=lambda t: t[0], reverse=True)[:100]]
+            if partial:
+                out = "\n".join(partial)
+                return {
+                    "output": out + f"\n... [glob timed out after {_GLOB_TIMEOUT_SECS}s; showing partial results from {len(partial)} files]",
+                    "exit_code": 0,
+                }
+            return {"error": f"glob: timed out after {_GLOB_TIMEOUT_SECS}s — tree too large", "exit_code": 1}
         if err:
             return {"error": err, "exit_code": 1}
         if not paths:
