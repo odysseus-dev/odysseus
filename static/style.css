@@ -761,21 +761,11 @@ body.bg-pattern-sparkles {
     body.sidebar-tool-reorder-dragging * {
       cursor: grabbing !important;
     }
-    body.sidebar-tool-reorder-dragging #sidebar-tools-list .tool-reorderable:not(.tool-sortable-ghost),
-    body.sidebar-tool-reorder-dragging #sidebar-tools-list .tool-reorderable:not(.tool-sortable-ghost):hover,
-    body.sidebar-tool-reorder-dragging #sidebar-tools-list .tool-reorderable:not(.tool-sortable-ghost):active,
-    body.sidebar-tool-reorder-dragging #sidebar-tools-list .tool-reorderable:not(.tool-sortable-ghost):focus,
-    body.sidebar-tool-reorder-dragging #sidebar-tools-list .tool-reorderable:not(.tool-sortable-ghost):focus-visible {
-      background: transparent !important;
-      border-color: transparent !important;
-      box-shadow: none !important;
-      outline: none !important;
-    }
-    body.sidebar-tool-reorder-dragging #rail-tools-list .tool-reorderable:not(.tool-sortable-ghost),
-    body.sidebar-tool-reorder-dragging #rail-tools-list .tool-reorderable:not(.tool-sortable-ghost):hover,
-    body.sidebar-tool-reorder-dragging #rail-tools-list .tool-reorderable:not(.tool-sortable-ghost):active,
-    body.sidebar-tool-reorder-dragging #rail-tools-list .tool-reorderable:not(.tool-sortable-ghost):focus,
-    body.sidebar-tool-reorder-dragging #rail-tools-list .tool-reorderable:not(.tool-sortable-ghost):focus-visible {
+    body.sidebar-tool-reorder-dragging :is(#sidebar-tools-list, #rail-tools-list) .tool-reorderable:not(.tool-sortable-ghost),
+    body.sidebar-tool-reorder-dragging :is(#sidebar-tools-list, #rail-tools-list) .tool-reorderable:not(.tool-sortable-ghost):hover,
+    body.sidebar-tool-reorder-dragging :is(#sidebar-tools-list, #rail-tools-list) .tool-reorderable:not(.tool-sortable-ghost):active,
+    body.sidebar-tool-reorder-dragging :is(#sidebar-tools-list, #rail-tools-list) .tool-reorderable:not(.tool-sortable-ghost):focus,
+    body.sidebar-tool-reorder-dragging :is(#sidebar-tools-list, #rail-tools-list) .tool-reorderable:not(.tool-sortable-ghost):focus-visible {
       background: transparent !important;
       border-color: transparent !important;
       box-shadow: none !important;
@@ -787,15 +777,13 @@ body.bg-pattern-sparkles {
       background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
       border-radius: 6px;
     }
-    .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable,
-    .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable:hover,
+    .tool-reorder-is-dragging :is(#sidebar-tools-list, #rail-tools-list) .tool-reorderable,
+    .tool-reorder-is-dragging :is(#sidebar-tools-list, #rail-tools-list) .tool-reorderable:hover,
     .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable:active,
     .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable:focus,
     .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable:focus-visible,
     .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable:focus-within,
-    .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable.active,
-    .tool-reorder-is-dragging #rail-tools-list .tool-reorderable,
-    .tool-reorder-is-dragging #rail-tools-list .tool-reorderable:hover {
+    .tool-reorder-is-dragging #sidebar-tools-list .tool-reorderable.active {
       background: transparent !important;
       border-color: transparent !important;
       box-shadow: none !important;
@@ -822,8 +810,7 @@ body.bg-pattern-sparkles {
       visibility: hidden;
     }
     /* Collapse stale chosen slot if Sortable leaves it behind the ghost row. */
-    .tool-reorder-is-dragging #sidebar-tools-list > .tool-reorderable.tool-sortable-chosen:not(.tool-sortable-ghost),
-    .tool-reorder-is-dragging #rail-tools-list > .tool-reorderable.tool-sortable-chosen:not(.tool-sortable-ghost) {
+    .tool-reorder-is-dragging :is(#sidebar-tools-list, #rail-tools-list) > .tool-reorderable.tool-sortable-chosen:not(.tool-sortable-ghost) {
       opacity: 0 !important;
       height: 0 !important;
       min-height: 0 !important;
