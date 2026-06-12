@@ -4649,7 +4649,7 @@ body.bg-pattern-sparkles {
       #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
       .email-reader-tab-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
       .email-window-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn {
-        width: 44px !important;
+        width: auto !important;
         height: 44px !important;
         flex: 0 0 auto !important;
         display: inline-flex !important;
