@@ -665,6 +665,16 @@ app.include_router(setup_task_routes(task_scheduler))
 from routes.assistant_routes import setup_assistant_routes
 app.include_router(setup_assistant_routes(task_scheduler))
 
+from routes.openclaw_bridge_routes import setup_openclaw_bridge_routes
+app.include_router(setup_openclaw_bridge_routes(
+    session_manager, chat_handler, chat_processor,
+    memory_manager, research_handler, upload_handler,
+    memory_vector=memory_vector,
+    webhook_manager=webhook_manager,
+    skills_manager=skills_manager,
+    task_scheduler=task_scheduler,
+))
+
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
 calendar_router = setup_calendar_routes()

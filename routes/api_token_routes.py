@@ -14,6 +14,8 @@ MAX_NAME_LEN = 100
 DEFAULT_SCOPES = "chat"
 ALLOWED_SCOPES = {
     "chat",
+    "converge:read",
+    "workflows:trigger",
     "todos:read",
     "todos:write",
     "documents:read",
@@ -30,6 +32,7 @@ ALLOWED_SCOPES = {
 }
 TOKEN_PROFILES = {
     "chat": ["chat"],
+    "openclaw_bridge": ["chat", "converge:read"],
     "codex_todos": ["todos:read", "todos:write"],
     "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
 }
