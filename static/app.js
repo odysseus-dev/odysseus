@@ -2027,6 +2027,16 @@ function initializeEventListeners() {
       try { window.__odysseusModelControlDefaults = { ...modelControlDefaults }; } catch (_) {}
     }
 
+    async function refreshModelControlDefaults() {
+      try {
+        const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+        if (!res.ok) return { ...modelControlDefaults };
+        const settings = await res.json();
+        if (settings) setModelControlDefaults(settings);
+      } catch (_) {}
+      return { ...modelControlDefaults };
+    }
+
     const isThinkingModel = model => {
       const m = String(model || '').toLowerCase();
       return ['qwen3', 'qwq', 'deepseek-r1', 'deepseek-reasoner', 'minimax', 'm2-reap', 'gemma']
@@ -2108,8 +2118,8 @@ function initializeEventListeners() {
       return { supported: false, allowed: new Set(['auto']), reason: '' };
     }
 
-    async function persistSessionControl(key, value) {
-      const sid = sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+    async function persistSessionControl(key, value, sessionId = null) {
+      const sid = sessionId || (sessionModule && sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null);
       if (!sid) return;
       const fd = new FormData();
       fd.append(key, value || 'auto');
@@ -2145,6 +2155,52 @@ function initializeEventListeners() {
       Object.values(registry).forEach(api => api.refreshCapability(override));
     }
 
+    function resolveControlForContext(key, value, contextOverride = null) {
+      const config = controls.find(item => item.key === key);
+      if (!config) return 'auto';
+      const capability = capabilitiesFor(key, contextOverride);
+      const normalized = normalizeDefaultControl(key, value);
+      return capability.allowed.has(normalized) ? normalized : 'auto';
+    }
+
+    function resolveDefaultsForContext(contextOverride = null) {
+      return {
+        reasoning_effort: resolveControlForContext(
+          'reasoning_effort',
+          modelControlDefaults.reasoning_effort,
+          contextOverride,
+        ),
+        verbosity: resolveControlForContext(
+          'verbosity',
+          modelControlDefaults.verbosity,
+          contextOverride,
+        ),
+      };
+    }
+
+    async function applyDefaultsForContext(contextOverride = null, options = {}) {
+      if (options.refresh !== false) {
+        await refreshModelControlDefaults();
+      }
+      const resolved = resolveDefaultsForContext(contextOverride);
+      if (registry.reasoning_effort) {
+        registry.reasoning_effort.setValue(resolved.reasoning_effort, {
+          persist: options.persist !== false,
+          contextOverride,
+          sessionId: options.sessionId || null,
+        });
+      }
+      if (registry.verbosity) {
+        registry.verbosity.setValue(resolved.verbosity, {
+          persist: options.persist !== false,
+          contextOverride,
+          sessionId: options.sessionId || null,
+        });
+      }
+      refreshCapabilities(contextOverride);
+      return resolved;
+    }
+
     controls.forEach(config => {
       const btn = el(config.btnId);
       const menu = el(config.menuId);
@@ -2172,7 +2228,7 @@ function initializeEventListeners() {
           opt.classList.toggle('active', opt.dataset.value === normalized);
         });
         if (optionsArg.persist !== false) {
-          persistSessionControl(config.key, normalized);
+          persistSessionControl(config.key, normalized, optionsArg.sessionId || null);
         }
       }
 
@@ -2266,9 +2322,12 @@ function initializeEventListeners() {
       getDefaults() {
         return { ...modelControlDefaults };
       },
+      resolveDefaultsForContext,
+      applyDefaultsForContext,
       setDefaults(values = {}) {
         setModelControlDefaults(values);
       },
+      refreshDefaults: refreshModelControlDefaults,
       refreshCapabilities,
     };
 
