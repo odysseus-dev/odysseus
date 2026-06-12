@@ -1,3 +1,15 @@
+# Podman Compose variant of the Odysseus stack.
+#
+# Differences from docker-compose.yml:
+#   - No extra_hosts: Podman does not support host-gateway; reach host services
+#     via the pod network gateway instead (find with: ip route show | grep podman,
+#     typically 10.88.0.1). Set OLLAMA_BASE_URL=http://10.88.0.1:11434/v1 in .env.
+#   - Bind-mount volumes carry :z for SELinux relabeling (Fedora/RHEL/Arch).
+#
+# Usage:
+#   cp .env.example.podman .env   # fill in your values
+#   podman compose -f podman-compose.yml up -d --build
+
 services:
   odysseus:
     build: .
@@ -9,17 +21,13 @@ services:
       # Cookbook remote-server SSH identity. Odysseus can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
       - ./data/ssh:/app/.ssh:z
-      # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
-      # container, so persist its HuggingFace cache under ./data/huggingface.
+      # Cookbook local model cache. Inside the container, persist the HuggingFace
+      # cache under ./data/huggingface so it survives container recreation.
       - ./data/huggingface:/app/.cache/huggingface:z
       # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ./data/local:/app/.local:z
-    extra_hosts:
-      # Lets the container reach local services on the Docker host, including
-      # Ollama at http://host.docker.internal:11434.
-      - "host.docker.internal:host-gateway"
     environment:
       - LLM_HOST=${LLM_HOST:-localhost}
       - LLM_HOSTS=${LLM_HOSTS:-}
