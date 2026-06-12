@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 
 def _load_db_helpers():
     """Load only the helper bodies under test, without importing SQLAlchemy."""
-    db_path = Path(__file__).parents[1] / "core" / "database.py"
+    db_path = Path(__file__).parents[1] / "src" / "infra" / "database" / "database.py"
     tree = ast.parse(db_path.read_text(encoding="utf-8"), filename=str(db_path))
     wanted = {"get_db_session", "get_session_mode", "set_session_mode"}
     helper_nodes = [

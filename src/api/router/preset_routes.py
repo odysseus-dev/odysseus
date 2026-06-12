@@ -7,8 +7,8 @@ from typing import Dict, Any, List
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
 
-from src.request_models import PresetUpdateRequest
-from core.middleware import require_admin
+from src.api.model.request_models import PresetUpdateRequest
+from src.api.middleware.security_headers import require_admin
 from src.infra.auth.auth_helpers import effective_user
 
 logger = logging.getLogger(__name__)

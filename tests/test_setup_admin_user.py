@@ -2,6 +2,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _load_setup_module():
     spec = importlib.util.spec_from_file_location("odysseus_setup_under_test", Path("setup.py"))
@@ -11,6 +13,7 @@ def _load_setup_module():
     return module
 
 
+@pytest.mark.skip(reason="setup.py was removed in Phase 0; create_default_admin no longer exists")
 def test_create_default_admin_normalizes_env_username(tmp_path, monkeypatch):
     setup_module = _load_setup_module()
     monkeypatch.setattr(setup_module, "AUTH_FILE", str(tmp_path / "auth.json"))

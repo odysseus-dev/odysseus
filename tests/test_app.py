@@ -23,9 +23,9 @@ class TestAppStructure:
         assert os.path.exists(static_path), "static directory should exist"
 
     def test_routes_directory_exists(self):
-        """Test that routes directory exists"""
-        routes_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "routes")
-        assert os.path.exists(routes_path), "routes directory should exist"
+        """Test that src/api/router directory exists"""
+        routes_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "src", "api", "router")
+        assert os.path.exists(routes_path), "src/api/router directory should exist"
 
     def test_src_directory_exists(self):
         """Test that src directory exists"""
@@ -77,20 +77,20 @@ class TestRouteFiles:
 
     def test_auth_routes_exist(self):
         """Test auth_routes.py exists"""
-        routes_path = os.path.dirname(os.path.dirname(__file__))
-        auth_routes = os.path.join(routes_path, "routes", "auth_routes.py")
+        app_path = os.path.dirname(os.path.dirname(__file__))
+        auth_routes = os.path.join(app_path, "src", "api", "router", "auth_routes.py")
         assert os.path.exists(auth_routes), "auth_routes.py should exist"
 
     def test_chat_routes_exist(self):
         """Test chat_routes.py exists"""
-        routes_path = os.path.dirname(os.path.dirname(__file__))
-        chat_routes = os.path.join(routes_path, "routes", "chat_routes.py")
+        app_path = os.path.dirname(os.path.dirname(__file__))
+        chat_routes = os.path.join(app_path, "src", "api", "router", "chat_routes.py")
         assert os.path.exists(chat_routes), "chat_routes.py should exist"
 
     def test_memory_routes_exist(self):
         """Test memory_routes.py exists"""
-        routes_path = os.path.dirname(os.path.dirname(__file__))
-        mem_routes = os.path.join(routes_path, "routes", "memory_routes.py")
+        app_path = os.path.dirname(os.path.dirname(__file__))
+        mem_routes = os.path.join(app_path, "src", "api", "router", "memory_routes.py")
         assert os.path.exists(mem_routes), "memory_routes.py should exist"
 
 

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Form, Request
 
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
 from src.pkg.constants import DEFAULT_HOST
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 
 logger = logging.getLogger(__name__)
 

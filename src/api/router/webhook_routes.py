@@ -25,7 +25,7 @@ MAX_SECRET_LEN = 256
 MAX_MESSAGE_LEN = 32_000
 
 
-from core.middleware import require_admin as _require_admin
+from src.api.middleware.security_headers import require_admin as _require_admin
 
 
 def _select_api_chat_fallback_endpoint(db, token_owner: Optional[str]):

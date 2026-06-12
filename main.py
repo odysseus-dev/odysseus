@@ -481,7 +481,7 @@ else:
     )
 
 # ========= IMPORT CONFIG =========
-from src.config import config
+from conf.config import config
 
 # ========= COMPONENT INITIALIZATION =========
 from src.app_initializer import initialize_managers
@@ -1083,7 +1083,7 @@ async def _startup_event():
         from datetime import timedelta
         while True:
             try:
-                from src.settings import get_setting
+                from conf.settings import get_setting
                 hour = int(get_setting("skill_audit_hour", 2) or 2)
             except Exception:
                 hour = 2
@@ -1093,7 +1093,7 @@ async def _startup_event():
                 nxt += timedelta(days=1)
             await asyncio.sleep(max(60, (nxt - now).total_seconds()))
             try:
-                from src.settings import get_setting
+                from conf.settings import get_setting
                 if not get_setting("skill_audit_nightly", True):
                     continue
                 batch = int(get_setting("skill_audit_batch", 8) or 8)

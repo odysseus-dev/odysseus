@@ -268,7 +268,7 @@ def test_atomic_write_primitives_present_in_production_code():
     ``_atomic_write_json`` and ``self._index_lock`` are all present and
     the two RMW sites no longer use a bare ``open(path, "w") + json.dump``.
     """
-    src_path = PROJECT_ROOT / "src" / "upload_handler.py"
+    src_path = PROJECT_ROOT / "src" / "infra" / "storage" / "upload_handler.py"
     text = src_path.read_text(encoding="utf-8")
 
     assert "os.replace" in text, (

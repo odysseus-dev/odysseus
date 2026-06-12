@@ -767,7 +767,7 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
 
                                     # Deep-link to open the original email in Odysseus (if public URL is configured).
                                     # Hash format `#email=FOLDER:UID` is handled by static/js/emailInbox.js:_maybeOpenFromHash.
-                                    from src.settings import load_settings as _ls
+                                    from conf.settings import load_settings as _ls
                                     _pub = (_ls().get("app_public_url") or "").rstrip("/")
                                     uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
                                     from urllib.parse import quote as _url_q

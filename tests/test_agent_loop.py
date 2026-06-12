@@ -2,13 +2,13 @@
 and _append_tool_results. Uses mock imports to avoid loading the full app stack."""
 
 import sys
+import types
 from unittest.mock import MagicMock
 
 _MOCKED_IMPORTS = [
     'sqlalchemy', 'sqlalchemy.orm', 'sqlalchemy.ext', 'sqlalchemy.ext.declarative',
     'sqlalchemy.ext.hybrid', 'sqlalchemy.sql', 'sqlalchemy.sql.expression',
     'src.database',
-    'src.domain.agent.tools',
     'src.infra.database.models', 'src.infra.database.database',
 ]
 _INJECTED_IMPORT_STUBS = {}
@@ -31,6 +31,15 @@ for mod in _MOCKED_IMPORTS:
         stub = MagicMock()
         sys.modules[mod] = stub
         _INJECTED_IMPORT_STUBS[mod] = stub
+
+# src.domain.agent.tools must be a proper package (ModuleType with __path__)
+# so that "from src.domain.agent.tools.tool_security import ..." can resolve
+# subpackages. A plain MagicMock lacks __path__ and breaks subpackage imports.
+if "src.domain.agent.tools" not in sys.modules:
+    _tools_pkg = types.ModuleType("src.domain.agent.tools")
+    _tools_pkg.__path__ = []
+    sys.modules["src.domain.agent.tools"] = _tools_pkg
+    _INJECTED_IMPORT_STUBS["src.domain.agent.tools"] = _tools_pkg
 
 _IMPORTED_AGENT_LOOP = None
 try:

@@ -272,7 +272,7 @@ class ResearchHandler:
         # bounded to [60, 86400] so a misconfigured settings.json can't
         # explode into a multi-day hang.
         if hard_timeout is None:
-            from src.settings import get_setting
+            from conf.settings import get_setting
             try:
                 raw_timeout = int(get_setting("research_run_timeout_seconds", 1800))
             except (TypeError, ValueError):
@@ -787,7 +787,7 @@ class ResearchHandler:
         try:
             from src.domain.research.deep_research import DeepResearcher
 
-            from src.settings import get_setting
+            from conf.settings import get_setting
             _max_report_tokens = int(get_setting("research_max_tokens", 16384))
             _extraction_timeout = _bounded_int(
                 extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),
@@ -944,7 +944,7 @@ class ResearchHandler:
         """Handle research failure with fallback to basic search."""
         try:
             logger.info("Attempting fallback to basic web search...")
-            from src.search import comprehensive_web_search
+            from src.infra.search import comprehensive_web_search
 
             search_result = comprehensive_web_search(query)
 

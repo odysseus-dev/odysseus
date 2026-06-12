@@ -12,7 +12,7 @@ import logging
 import httpx
 
 from src.infra.database.database import McpServer, SessionLocal
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 from src.pkg.constants import DATA_DIR, MCP_OAUTH_DIR
 from src.infra.mcp.mcp_manager import McpManager
 

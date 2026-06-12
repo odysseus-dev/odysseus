@@ -37,8 +37,8 @@ REPO = Path(__file__).resolve().parents[1]
 # is a discrete LLM HTTP entry point and intentional. Any addition must
 # come with its own justification in code review.
 ALLOWED_CALLERS = frozenset({
-    "src/llm_core.py",          # shared AsyncClient used by stream_llm
-    "routes/model_routes.py",   # _probe_endpoint + _ping_endpoint
+    "src/infra/llm/llm_core.py",          # shared AsyncClient used by stream_llm
+    "src/api/router/model_routes.py",   # _probe_endpoint + _ping_endpoint
 })
 
 
@@ -52,7 +52,7 @@ def _grep_files(pattern: str) -> set[str]:
         rel = path.relative_to(REPO).as_posix()
         if rel.startswith("tests/"):
             continue
-        if rel == "src/tls_overrides.py":  # definition site, not a caller
+        if rel == "src/pkg/tls_overrides.py":  # definition site, not a caller
             continue
         if rel.startswith(".claude/") or "/.claude/" in rel:
             continue
@@ -104,7 +104,7 @@ def test_tls_overrides_does_not_weaken_global_tls():
     bundle into an ssl.SSLContext built on top of the system default. It
     must never silently disable verification.
     """
-    body = (REPO / "src" / "tls_overrides.py").read_text(encoding="utf-8")
+    body = (REPO / "src" / "pkg" / "tls_overrides.py").read_text(encoding="utf-8")
     forbidden = [
         r"_create_default_https_context\s*=",
         r"_create_unverified_context",

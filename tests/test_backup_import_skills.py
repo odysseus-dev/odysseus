@@ -78,11 +78,11 @@ def test_import_adds_new_skill_via_add_skill(monkeypatch):
         m.setattr(br, "load_features", lambda: {})
         m.setattr(br, "save_features", lambda f: None)
         m.setattr(
-            "routes.prefs_routes._load_for_user",
+            "src.api.router.prefs_routes._load_for_user",
             lambda user: {},
         )
         m.setattr(
-            "routes.prefs_routes._save_for_user",
+            "src.api.router.prefs_routes._save_for_user",
             lambda user, prefs: None,
         )
         result = asyncio.run(endpoint(_Req(body)))

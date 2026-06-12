@@ -22,7 +22,7 @@ from pathlib import Path
 
 try:
     from sqlalchemy import text
-    from core.database import engine
+    from src.infra.database.database import engine
     quiet_logs()
 except ModuleNotFoundError as e:
     sys.stderr.write(f"error: {e}\nhint: run from repo root with venv active.\n")

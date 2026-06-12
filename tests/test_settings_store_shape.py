@@ -1,4 +1,4 @@
-from src import settings
+from conf import settings
 
 
 def test_load_settings_falls_back_for_non_object_json(tmp_path, monkeypatch):

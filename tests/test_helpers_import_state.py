@@ -25,6 +25,8 @@ _RESOLVER_NAMES = (
     "routes",
     "routes.model_routes",
     "src.api.router.chat_routes",
+    "src.api",
+    "src.api.router",
 )
 
 
@@ -342,16 +344,19 @@ def test_clear_fake_resolver_removes_extra_modules_when_resolver_fake():
         sys.modules["src"] = fake_src
         sys.modules["src.infra.llm.endpoint_resolver"] = fake_resolver
 
-        fake_routes = types.ModuleType("routes")
+        fake_api = types.ModuleType("src.api")
+        fake_api_router = types.ModuleType("src.api.router")
+        fake_api.router = fake_api_router
         chat_routes = types.ModuleType("src.api.router.chat_routes")
-        fake_routes.chat_routes = chat_routes
-        sys.modules["routes"] = fake_routes
+        fake_api_router.chat_routes = chat_routes
+        sys.modules["src.api"] = fake_api
+        sys.modules["src.api.router"] = fake_api_router
         sys.modules["src.api.router.chat_routes"] = chat_routes
 
         clear_fake_endpoint_resolver_modules("src.api.router.chat_routes")
 
         assert "src.api.router.chat_routes" not in sys.modules
-        assert not hasattr(fake_routes, "chat_routes")
+        assert not hasattr(fake_api_router, "chat_routes")
 
 
 def test_clear_fake_resolver_keeps_dependents_when_resolver_real():

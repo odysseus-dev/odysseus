@@ -157,7 +157,7 @@ def setup_codex_routes(
     @router.get("/plugin.zip")
     def plugin_zip(request: Request):
         require_authenticated_request(request)
-        root = Path(__file__).resolve().parent.parent / "integrations" / "codex"
+        root = Path(__file__).resolve().parents[4] / "integrations" / "codex"
         if not root.exists():
             raise HTTPException(404, "Codex plugin bundle not found")
         buf = BytesIO()
@@ -286,7 +286,7 @@ def setup_codex_routes(
         owner = _scope_owner(request, MEMORY_WRITE_SCOPES)
         if memory_add_endpoint is None:
             raise HTTPException(503, "Memory integration is not available")
-        from src.request_models import MemoryAddRequest
+        from src.api.model.request_models import MemoryAddRequest
 
         try:
             memory_data = MemoryAddRequest(
@@ -775,7 +775,7 @@ def setup_claude_routes() -> APIRouter:
         require_authenticated_request(request)
         # Only ship the skills/ subtree so extracting at ~/.claude/ doesn't dump
         # README.md or other bundle metadata into the user's claude config dir.
-        skills_root = Path(__file__).resolve().parent.parent / "integrations" / "claude" / "skills"
+        skills_root = Path(__file__).resolve().parents[4] / "integrations" / "claude" / "skills"
         if not skills_root.exists():
             raise HTTPException(404, "Claude skill bundle not found")
         bundle_root = skills_root.parent

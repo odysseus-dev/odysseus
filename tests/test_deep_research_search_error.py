@@ -27,13 +27,13 @@ def _make_researcher():
 
 
 def _install_search_fakes(monkeypatch, *, chain, call_provider):
-    providers_mod = types.ModuleType("src.search.providers")
+    providers_mod = types.ModuleType("src.infra.search.providers")
     providers_mod._get_search_settings = lambda: {"search_provider": chain[0]}
-    core_mod = types.ModuleType("src.search.core")
+    core_mod = types.ModuleType("src.infra.search.core")
     core_mod._build_provider_chain = lambda provider: list(chain)
     core_mod._call_provider = call_provider
-    monkeypatch.setitem(sys.modules, "src.search.providers", providers_mod)
-    monkeypatch.setitem(sys.modules, "src.search.core", core_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.search.providers", providers_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.search.core", core_mod)
 
 
 def test_empty_results_without_exception_record_reason(monkeypatch):

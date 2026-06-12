@@ -5,6 +5,8 @@ import types
 import importlib.util
 from unittest.mock import MagicMock
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Importing core.database below runs init_db() at import time, and its default
@@ -26,6 +28,7 @@ try:
     import sqlalchemy  # noqa: F401
     import sqlalchemy.orm  # noqa: F401
     import src.infra.database.database  # noqa: F401
+    import src.domain.agent.tools  # noqa: F401
 except ImportError:
     pass  # not installed - the stubs below will handle it
 
@@ -49,11 +52,35 @@ for mod_name in [
     if mod_name not in sys.modules and not _has_module(mod_name):
         sys.modules[mod_name] = MagicMock()
 
+class _AutoStubModule(types.ModuleType):
+    """A ModuleType that auto-creates MagicMock attributes on first access."""
+    def __getattr__(self, name: str):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        mock = MagicMock()
+        object.__setattr__(self, name, mock)
+        return mock
+
 if "src.database" not in sys.modules:
-    _db = types.ModuleType("src.database")
+    _db = _AutoStubModule("src.database")
     _db.SessionLocal = MagicMock()
     _db.ModelEndpoint = MagicMock()
     sys.modules["src.database"] = _db
+
+# Tests that monkeypatch "src.database" need the same stub at the canonical
+# import path so that production code (which now imports from
+# src.infra.database.database) sees the patched attributes.
+if "src.infra.database.database" not in sys.modules:
+    _canonical_db = _AutoStubModule("src.infra.database.database")
+    _canonical_db.SessionLocal = MagicMock()
+    _canonical_db.Base = MagicMock()
+    _canonical_db.ModelEndpoint = MagicMock()
+    _canonical_db.Session = MagicMock()
+    _canonical_db.GalleryImage = MagicMock()
+    _canonical_db.Webhook = MagicMock()
+    _canonical_db.Document = MagicMock()
+    _canonical_db.DocumentVersion = MagicMock()
+    sys.modules["src.infra.database.database"] = _canonical_db
 
 # Pre-import src.infra.database.models before test_agent_loop.py's module-level stubs
 # run (it replaces sys.modules['src.infra.database.models'] with a MagicMock during
@@ -92,3 +119,76 @@ def pytest_collection_modifyitems(config, items):
         path = getattr(item, "path", None) or item.fspath
         for marker_name in markers_for_path(path):
             item.add_marker(getattr(pytest.mark, marker_name))
+
+
+_CRITICAL_MODULES = (
+    "src.infra.database.database", "src.infra.database.models",
+    "src.infra.auth.auth", "src.infra.llm.endpoint_resolver",
+    "src.domain.agent.tools",
+)
+
+
+def _restore_critical_modules(verbose: bool = False):
+    """Restore real modules that may have been corrupted by test stubs.
+
+    Some test files replace critical modules in ``sys.modules`` with MagicMock
+    stubs, plain ModuleType placeholders, or delete them entirely (via
+    ``clear_module`` or ``sys.modules.pop``). This restores the real modules.
+
+    Cheap when modules are healthy — only a handful of dict lookups per call.
+    The expensive ``__import__`` only fires when corruption is actually detected.
+    """
+    import importlib
+
+    for mod_name in _CRITICAL_MODULES:
+        mod = sys.modules.get(mod_name)
+        if mod is None:
+            if verbose:
+                print(f"\n[conftest] {mod_name} is None, re-importing...", flush=True)
+            try:
+                __import__(mod_name)
+            except ImportError:
+                pass
+        elif isinstance(mod, MagicMock):
+            if verbose:
+                print(f"\n[conftest] {mod_name} is MagicMock, re-importing...", flush=True)
+            sys.modules.pop(mod_name, None)
+            importlib.invalidate_caches()
+            try:
+                __import__(mod_name)
+            except ImportError:
+                pass
+        elif not getattr(mod, "__file__", None):
+            if verbose:
+                print(f"\n[conftest] {mod_name} has no __file__ (type={type(mod).__name__}), re-importing...", flush=True)
+            sys.modules.pop(mod_name, None)
+            importlib.invalidate_caches()
+            try:
+                __import__(mod_name)
+            except ImportError:
+                pass
+
+
+@pytest.fixture(autouse=True)
+def _restore_modules_before_each_test():
+    """Ensure critical modules are healthy before every test function.
+
+    Complements ``pytest_collection_finish``: that hook repairs collection-time
+    corruption (module-level stubs), but some tests mutate ``sys.modules`` during
+    execution (``clear_module``, ``sys.modules.pop``, or ``monkeypatch`` on
+    non-critical paths). This fixture catches execution-time leaks so the next
+    test always sees the real modules.
+
+    The check is O(1) per module — a handful of dict lookups. The expensive
+    ``__import__`` only fires when corruption is detected.
+    """
+    _restore_critical_modules(verbose=False)
+
+
+def pytest_collection_finish(session):
+    """Restore real modules after all collection is done.
+
+    See ``_restore_critical_modules`` for the repair logic and
+    ``_restore_modules_before_each_test`` for the per-test safety net.
+    """
+    _restore_critical_modules(verbose=True)

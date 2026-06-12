@@ -1482,7 +1482,7 @@ def setup_email_routes():
                 if not doc_id_to_tag:
                     return
                 try:
-                    from src.database import SessionLocal as _SL, Document as _Doc
+                    from src.infra.database.database import SessionLocal as _SL, Document as _Doc
                     _db = _SL()
                     try:
                         d = _db.query(_Doc).filter(_Doc.id == doc_id_to_tag).first()
@@ -1506,7 +1506,7 @@ def setup_email_routes():
             _doc_user = _gcu(request)
             def _resolve_doc_session():
                 try:
-                    from src.database import SessionLocal as _SL, Session as _Sess
+                    from src.infra.database.database import SessionLocal as _SL, Session as _Sess
                     _db = _SL()
                     try:
                         _q2 = _db.query(_Sess)
@@ -1604,7 +1604,7 @@ def setup_email_routes():
                     lines.append("")
                 content = "\n".join(lines).strip() or f"_(empty {base})_"
 
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
+                from src.infra.database.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
                 doc_id = str(uuid.uuid4())
                 ver_id = str(uuid.uuid4())
                 _db = _SL()
@@ -1631,7 +1631,7 @@ def setup_email_routes():
                     content = filepath.read_text(encoding="utf-8", errors="replace")
                 except Exception as e:
                     return {"error": f"Failed to read text file: {e}", "filename": base}
-                from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
+                from src.infra.database.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
                 doc_id = str(uuid.uuid4())
                 ver_id = str(uuid.uuid4())
                 _db = _SL()

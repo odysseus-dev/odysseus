@@ -67,15 +67,15 @@ quiet_logs()
 # Defer the heavy imports until after path setup so a friendlier error
 # message can be printed if the venv isn't activated.
 try:
-    from routes.email_helpers import (
+    from src.api.handler.email_helpers import (
         _imap, _get_email_config, _decode_header,
         _extract_text, _extract_html,
         _list_attachments_from_msg,
     )
-    from routes.email_pollers import (
+    from src.api.handler.email_pollers import (
         _scheduled_poll_once, _run_auto_summarize_once,
     )
-    from core.database import SessionLocal, EmailAccount
+    from src.infra.database.database import SessionLocal, EmailAccount
     # Re-apply: some submodules call basicConfig during their own
     # import, which raises root level back to INFO. Quench again.
     quiet_logs()

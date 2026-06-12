@@ -8,7 +8,7 @@ import importlib
 
 
 def test_src_search_core_aliases_services_core():
-    src_core = importlib.import_module("src.search.core")
+    src_core = importlib.import_module("src.infra.search.core")
     service_core = importlib.import_module("services.search.core")
 
     assert src_core is service_core
@@ -17,7 +17,7 @@ def test_src_search_core_aliases_services_core():
 
 
 def test_src_search_providers_aliases_services_providers():
-    src_providers = importlib.import_module("src.search.providers")
+    src_providers = importlib.import_module("src.infra.search.providers")
     service_providers = importlib.import_module("services.search.providers")
 
     assert src_providers is service_providers
@@ -37,6 +37,6 @@ def test_src_search_package_exports_still_resolve():
 
 def test_src_search_cache_content_query_alias_services():
     for name in ("cache", "content", "query"):
-        src_mod = importlib.import_module(f"src.search.{name}")
+        src_mod = importlib.import_module(f"src.infra.search.{name}")
         svc_mod = importlib.import_module(f"services.search.{name}")
         assert src_mod is svc_mod, f"src.search.{name} should alias services.search.{name}"

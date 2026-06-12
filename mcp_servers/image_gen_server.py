@@ -56,7 +56,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     try:
         import httpx
-        from src.settings import load_settings, get_setting
+        from conf.settings import load_settings, get_setting
         from src.domain.agent.ai_interaction import _resolve_model
 
         if not get_setting("image_gen_enabled", True):
@@ -132,7 +132,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
                 # Save to gallery
                 try:
-                    from src.database import SessionLocal, GalleryImage
+                    from src.infra.database.database import SessionLocal, GalleryImage
                     db = SessionLocal()
                     db.add(GalleryImage(
                         id=str(uuid.uuid4()),

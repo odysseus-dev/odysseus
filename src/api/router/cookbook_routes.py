@@ -18,7 +18,7 @@ from src.infra.auth.auth_helpers import require_user
 from src.pkg.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 from src.api.validator import validate_remote_host, validate_ssh_port
 from src.pkg.platform_compat import (
     IS_WINDOWS,

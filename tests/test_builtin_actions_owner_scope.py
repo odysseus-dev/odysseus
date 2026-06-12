@@ -71,7 +71,7 @@ def _resolver_spy(monkeypatch, utility_result=("", "", {}), default_result=("htt
 
 @pytest.mark.asyncio
 async def test_classify_events_resolves_llm_for_task_owner(monkeypatch):
-    from core import database
+    from src.infra.database import database
     from src.domain.agent.builtin_actions import action_classify_events
 
     class FakeCalendarEvent:
@@ -130,7 +130,7 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_check_email_urgency_resolves_llm_candidates_for_task_owner(monkeypatch, tmp_path):
-    from core import database
+    from src.infra.database import database
     from src.domain.agent.builtin_actions import TaskNoop, action_check_email_urgency
 
     class FakeEmailAccount:

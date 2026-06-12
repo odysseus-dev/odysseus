@@ -23,7 +23,7 @@ def _strip_list_prefix(text: str) -> str:
 
 from services.memory import MemoryManager
 from src.infra.database.session_manager import SessionManager
-from src.request_models import MemoryAddRequest
+from src.api.model.request_models import MemoryAddRequest
 from src.infra.database.database import SessionLocal
 from src.infra.llm.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories

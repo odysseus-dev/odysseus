@@ -24,7 +24,7 @@ import argparse, json, logging, os, sys
 from pathlib import Path
 
 try:
-    from src.personal_docs import PersonalDocsManager
+    from src.domain.rag.personal_docs import PersonalDocsManager
     quiet_logs()
 except ModuleNotFoundError as e:
     sys.stderr.write(f"error: {e}\nhint: run from repo root with venv active.\n")

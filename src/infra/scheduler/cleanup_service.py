@@ -51,7 +51,7 @@ async def archive_inactive_sessions(session_manager, owner: Optional[str] = None
     cutoff_date = _utcnow() - timedelta(days=CleanupConfig.ARCHIVE_AFTER_DAYS)
     archived_count = 0
 
-    from src.database import SessionLocal, Session as DbSession
+    from src.infra.database.database import SessionLocal, Session as DbSession
     db = SessionLocal()
     try:
         q = db.query(DbSession).filter(
@@ -93,7 +93,7 @@ async def cleanup_old_sessions(session_manager, owner: Optional[str] = None) -> 
     deleted_count = 0
     space_freed = 0
 
-    from src.database import SessionLocal, Session as DbSession, ChatMessage as DbChatMessage
+    from src.infra.database.database import SessionLocal, Session as DbSession, ChatMessage as DbChatMessage
     db = SessionLocal()
     try:
         recent_q = db.query(DbSession).order_by(DbSession.created_at.desc())
@@ -176,7 +176,7 @@ async def get_cleanup_preview(owner: Optional[str] = None) -> Dict[str, Any]:
     estimated_space_freed = 0
     preserved_sessions = []
 
-    from src.database import SessionLocal, Session as DbSession
+    from src.infra.database.database import SessionLocal, Session as DbSession
     db = SessionLocal()
     try:
         archive_q = db.query(DbSession).filter(

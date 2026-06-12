@@ -560,8 +560,8 @@ class DeepResearcher:
     async def _search(self, query: str) -> List[Dict]:
         """Run a search query using the configured research search provider."""
         try:
-            from src.search.providers import _get_search_settings
-            from src.search.core import _call_provider, _build_provider_chain
+            from src.infra.search.providers import _get_search_settings
+            from src.infra.search.core import _call_provider, _build_provider_chain
 
             settings = _get_search_settings()
             provider = (self.search_provider_override or "").strip()
@@ -613,7 +613,7 @@ class DeepResearcher:
         self._emit(phase="reading", url=url, title=display,
                    total_sources=len(self.urls_fetched))
         try:
-            from src.search import fetch_webpage_content
+            from src.infra.search import fetch_webpage_content
             page = await asyncio.to_thread(fetch_webpage_content, url, 10)
         except Exception as e:
             logger.warning(f"Failed to fetch {url}: {e}")

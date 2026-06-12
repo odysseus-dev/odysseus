@@ -25,12 +25,12 @@ def test_wipe_gallery_clears_albums(monkeypatch):
     assert db.query(GalleryAlbum).count() == 1
     db.close()
     
-    # 4. Patch SessionLocal in routes/admin_wipe_routes.py to use our in-memory DB
-    import routes.admin_wipe_routes
-    monkeypatch.setattr(routes.admin_wipe_routes, "SessionLocal", TestSessionLocal)
-    
+    # 4. Patch SessionLocal in admin_wipe_routes.py to use our in-memory DB
+    import src.api.router.admin_wipe_routes as admin_wipe_routes
+    monkeypatch.setattr(admin_wipe_routes, "SessionLocal", TestSessionLocal)
+
     # Mock require_admin to bypass auth check (using standard pytest monkeypatch)
-    monkeypatch.setattr(routes.admin_wipe_routes, "require_admin", lambda r: None)
+    monkeypatch.setattr(admin_wipe_routes, "require_admin", lambda r: None)
     
     # Construct a real FastAPI Request object
     request = Request(scope={"type": "http"})

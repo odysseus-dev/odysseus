@@ -37,9 +37,9 @@ def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    cached_modules = {name: sys.modules.pop(name, None) for name in ("fcntl", "pty")}
+    cached_modules = {name: sys.modules.pop(name, None) for name in ("fcntl", "pty", "src.api.router.shell_routes")}
 
-    module_path = Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py"
+    module_path = Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "shell_routes.py"
     spec = importlib.util.spec_from_file_location(
         "_shell_routes_without_pty", module_path
     )

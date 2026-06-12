@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
 from src.infra.auth.auth_helpers import get_current_user
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -497,7 +497,7 @@ def _audit_auto_publish_policy(owner) -> tuple[bool, float]:
     except Exception:
         prefs = {}
     try:
-        from src.settings import get_setting
+        from conf.settings import get_setting
         default_min = get_setting("skill_autosave_min_confidence", 0.85)
     except Exception:
         default_min = 0.85
@@ -1015,7 +1015,7 @@ def _resolve_audit_models(owner=None):
 
     teacher = None
     try:
-        from src.settings import get_setting
+        from conf.settings import get_setting
         if get_setting("teacher_enabled", False):
             spec = (get_setting("teacher_model", "") or "").strip()
             if spec:
@@ -1215,7 +1215,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         text = (body or {}).get("text", "")
         if not isinstance(text, str) or not text.strip():
             raise HTTPException(400, "text is required")
-        from src.settings import get_setting, save_settings, load_settings
+        from conf.settings import get_setting, save_settings, load_settings
         settings = load_settings()
         ov = settings.get("builtin_tool_overrides")
         if not isinstance(ov, dict):
@@ -1229,7 +1229,7 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     async def reset_builtin_override(name: str, request: Request):
         """Revert a built-in tool to its shipped instruction block."""
         require_admin(request)
-        from src.settings import load_settings, save_settings
+        from conf.settings import load_settings, save_settings
         settings = load_settings()
         ov = settings.get("builtin_tool_overrides")
         if isinstance(ov, dict) and name in ov:

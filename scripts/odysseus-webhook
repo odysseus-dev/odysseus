@@ -23,7 +23,7 @@ import argparse, json, logging, os, secrets, sys
 from pathlib import Path
 
 try:
-    from core.database import SessionLocal, ScheduledTask
+    from src.infra.database.database import SessionLocal, ScheduledTask
     quiet_logs()
 except ModuleNotFoundError as e:
     sys.stderr.write(f"error: {e}\nhint: run from repo root with venv active.\n")

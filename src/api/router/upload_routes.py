@@ -6,7 +6,7 @@ import asyncio
 from fastapi import APIRouter, Request, File, UploadFile, HTTPException
 from typing import List
 import logging
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 from src.infra.auth.auth_helpers import get_current_user
 from src.infra.storage.upload_handler import count_recent_uploads
 

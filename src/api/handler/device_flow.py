@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 
 from fastapi import APIRouter, Form, HTTPException, Request
 
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 
 
 @dataclass(frozen=True)

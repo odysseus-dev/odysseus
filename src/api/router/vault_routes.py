@@ -15,7 +15,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 from src.pkg.platform_compat import IS_WINDOWS, safe_chmod, which_tool
 from src.pkg.constants import VAULT_FILE as _VAULT_FILE
 

@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 from src.infra.llm.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.domain.context.model_context import estimate_tokens
-from src.settings import get_setting
+from conf.settings import get_setting
 from src.pkg.security.prompt_security import untrusted_context_message
 from src.domain.agent.tools.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.domain.agent.tools.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
@@ -504,7 +504,7 @@ def get_builtin_overrides() -> dict:
     Stored globally in settings.json so the user can preview + edit how
     the assistant is told to use a native tool, with a revert path."""
     try:
-        from src.settings import get_setting
+        from conf.settings import get_setting
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
     except Exception as e:
@@ -1061,7 +1061,7 @@ def _build_system_prompt(
         _inject_style = any(tok in _last_user_text for tok in ("email", "mail", "reply", "send", "inbox"))
     if _inject_style and not suppress_local_context:
         try:
-            from src.settings import load_settings as _load_settings
+            from conf.settings import load_settings as _load_settings
             _style = (_load_settings().get("email_writing_style", "") or "").strip()
             if _style:
                 agent_prompt += (
@@ -1982,7 +1982,7 @@ async def stream_agent_loop(
     try:
         from src.domain.context.context_compactor import trim_for_context
         from src.domain.context.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
-        from src.settings import is_setting_overridden
+        from conf.settings import is_setting_overridden
 
         soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
         if soft_budget > 0:

@@ -93,7 +93,7 @@ async def register_builtin_servers(mcp_manager):
         logger.info("Built-in MCP servers disabled via ODYSSEUS_DISABLE_MCP")
         return
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     python = sys.executable
 
     async def _connect_python_server(server_id: str, script_path: str, name: str):

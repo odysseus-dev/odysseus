@@ -27,7 +27,7 @@ import pytest
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
-with preserve_import_state("src.infra.database.database", "src.database", "src.infra.database.session_manager", "routes.model_routes"):
+with preserve_import_state("src.infra.database.database", "src.database", "src.infra.database.session_manager", "src.api.router.model_routes"):
     # Match test_model_routes.py: if another test stubbed src.endpoint_resolver
     # during collection, drop the stub so the real URL helpers load here.
     clear_fake_endpoint_resolver_modules()
@@ -129,14 +129,14 @@ class TestProbeEndpointParsing:
             calls.append((access_token, timeout))
             return ["gpt-5.5"]
 
-        monkeypatch.setattr("src.chatgpt_subscription.fetch_available_models", fake_fetch)
+        monkeypatch.setattr("src.infra.integration.chatgpt_subscription.fetch_available_models", fake_fetch)
 
         assert _probe_endpoint("https://chatgpt.com/backend-api/codex", "ACCESS", timeout=7) == ["gpt-5.5"]
         assert calls == [("ACCESS", 7)]
 
     def test_chatgpt_subscription_probe_without_discovery_returns_empty(self, monkeypatch):
         _patch_resolve(monkeypatch)
-        monkeypatch.setattr("src.chatgpt_subscription.fetch_available_models", lambda access_token, timeout=5: [])
+        monkeypatch.setattr("src.infra.integration.chatgpt_subscription.fetch_available_models", lambda access_token, timeout=5: [])
 
         assert _probe_endpoint("https://chatgpt.com/backend-api/codex", "ACCESS") == []
         assert _probe_endpoint("https://chatgpt.com/backend-api/codex") == []

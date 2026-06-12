@@ -33,9 +33,9 @@ def test_omitted_memory_survives_only_explicit_drop(monkeypatch):
     import src.infra.llm.llm_core
 
     _FakeMM.saved = None
-    monkeypatch.setattr(src.memory, "MemoryManager", _FakeMM)
+    monkeypatch.setattr(src.domain.memory.memory, "MemoryManager", _FakeMM)
     monkeypatch.setattr(
-        src.endpoint_resolver, "resolve_endpoint",
+        src.infra.llm.endpoint_resolver, "resolve_endpoint",
         lambda kind, owner=None: ("http://x/v1", "model", {}),
     )
 
@@ -46,7 +46,7 @@ def test_omitted_memory_survives_only_explicit_drop(monkeypatch):
             "drop": [{"id": "b", "reason": "duplicate of a"}],
         })
 
-    monkeypatch.setattr(src.llm_core, "llm_call_async", fake_llm)
+    monkeypatch.setattr(src.infra.llm.llm_core, "llm_call_async", fake_llm)
 
     msg, ok = asyncio.run(ba.action_consolidate_memory("alice"))
 

@@ -28,7 +28,7 @@ class STTService:
     # ── Settings ──
 
     def _load_settings(self) -> dict:
-        from src.settings import load_settings
+        from conf.settings import load_settings
         saved = load_settings()
         return {
             "stt_enabled": saved.get("stt_enabled", False),
@@ -117,7 +117,7 @@ class STTService:
     # ── API endpoint ──
 
     def _transcribe_api(self, audio_bytes: bytes, endpoint_id: str, model: str, language: str = "") -> Optional[str]:
-        from src.database import SessionLocal, ModelEndpoint
+        from src.infra.database.database import SessionLocal, ModelEndpoint
 
         db = SessionLocal()
         try:

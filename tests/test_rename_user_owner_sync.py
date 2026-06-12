@@ -48,10 +48,10 @@ def rename_endpoint(monkeypatch, tmp_path):
     monkeypatch.setattr(cdb, "SessionLocal", lambda: MagicMock())
     monkeypatch.setattr(cdb, "Base", SimpleNamespace(registry=SimpleNamespace(mappers=[])), raising=False)
     # Neutralize the JSON-prefs rename.
-    pr = types.ModuleType("routes.prefs_routes")
+    pr = types.ModuleType("src.api.router.prefs_routes")
     pr._load = lambda: {}
     pr._save = lambda d: None
-    monkeypatch.setitem(sys.modules, "routes.prefs_routes", pr)
+    monkeypatch.setitem(sys.modules, "src.api.router.prefs_routes", pr)
     # Patch the module-level constants so file-update steps write to tmp_path.
     # (Patching sc.DATA_DIR wouldn't work — auth_routes binds DEEP_RESEARCH_DIR
     # and MEMORY_FILE at import time, so we must patch those names on the module.)
@@ -355,10 +355,10 @@ def test_rename_research_respects_custom_data_dir(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cdb, "SessionLocal", lambda: MagicMock())
     monkeypatch.setattr(cdb, "Base", SimpleNamespace(registry=SimpleNamespace(mappers=[])), raising=False)
-    pr = types.ModuleType("routes.prefs_routes")
+    pr = types.ModuleType("src.api.router.prefs_routes")
     pr._load = lambda: {}
     pr._save = lambda d: None
-    monkeypatch.setitem(sys.modules, "routes.prefs_routes", pr)
+    monkeypatch.setitem(sys.modules, "src.api.router.prefs_routes", pr)
     monkeypatch.setattr(ar, "DEEP_RESEARCH_DIR", str(custom_dr))
     monkeypatch.setattr(ar, "MEMORY_FILE", str(tmp_path / "memory.json"))
 
@@ -596,10 +596,10 @@ def test_rejected_rename_does_not_mutate_files(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cdb, "SessionLocal", lambda: MagicMock())
     monkeypatch.setattr(cdb, "Base", SimpleNamespace(registry=SimpleNamespace(mappers=[])), raising=False)
-    pr = types.ModuleType("routes.prefs_routes")
+    pr = types.ModuleType("src.api.router.prefs_routes")
     pr._load = lambda: {}
     pr._save = lambda d: None
-    monkeypatch.setitem(sys.modules, "routes.prefs_routes", pr)
+    monkeypatch.setitem(sys.modules, "src.api.router.prefs_routes", pr)
     monkeypatch.setattr(ar, "DEEP_RESEARCH_DIR", str(tmp_path / "deep_research"))
     monkeypatch.setattr(ar, "MEMORY_FILE", str(tmp_path / "memory.json"))
     monkeypatch.setattr(ar, "SKILLS_DIR", str(tmp_path / "skills"))

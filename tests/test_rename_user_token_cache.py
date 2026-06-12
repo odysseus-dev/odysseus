@@ -35,6 +35,7 @@ def rename_endpoint(monkeypatch):
     pr._load = lambda: {}
     pr._save = lambda d: None
     monkeypatch.setitem(sys.modules, "routes.prefs_routes", pr)
+    monkeypatch.setitem(sys.modules, "src.api.router.prefs_routes", pr)
 
     am = MagicMock()
     am.is_admin.return_value = True

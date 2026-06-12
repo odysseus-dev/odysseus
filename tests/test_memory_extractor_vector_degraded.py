@@ -61,9 +61,9 @@ def test_extraction_persists_facts_when_vector_store_fails_at_runtime(monkeypatc
     async def _fake_llm(url, model, messages, **kwargs):
         return facts_json
 
-    monkeypatch.setattr(src.llm_core, "llm_call_async", _fake_llm)
+    monkeypatch.setattr(src.infra.llm.llm_core, "llm_call_async", _fake_llm)
     # fire_event touches an async event loop / disk — neutralize it.
-    monkeypatch.setattr(src.event_bus, "fire_event", lambda *a, **k: None)
+    monkeypatch.setattr(src.infra.scheduler.event_bus, "fire_event", lambda *a, **k: None)
 
     with tempfile.TemporaryDirectory() as data_dir:
         mgr = MemoryManager(data_dir)
@@ -96,8 +96,8 @@ def test_healthy_vector_store_still_dedups_normally(monkeypatch):
     async def _fake_llm(url, model, messages, **kwargs):
         return '[{"text": "Alice lives in Lisbon", "category": "fact"}]'
 
-    monkeypatch.setattr(src.llm_core, "llm_call_async", _fake_llm)
-    monkeypatch.setattr(src.event_bus, "fire_event", lambda *a, **k: None)
+    monkeypatch.setattr(src.infra.llm.llm_core, "llm_call_async", _fake_llm)
+    monkeypatch.setattr(src.infra.scheduler.event_bus, "fire_event", lambda *a, **k: None)
 
     with tempfile.TemporaryDirectory() as data_dir:
         mgr = MemoryManager(data_dir)

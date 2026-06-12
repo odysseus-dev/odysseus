@@ -224,7 +224,7 @@ class CreateDocumentTool:
         2) XML-like tags: <title>...</title><language>...</language><content>...</content>
         Some models mix them — strip any XML-style tags and fall back to line parsing."""
         import uuid, re as _re
-        from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
+        from src.infra.database.database import SessionLocal, Document, DocumentVersion, Session as DbSession
 
         raw = content or ""
         session_id = ctx.get("session_id")
@@ -340,7 +340,7 @@ class UpdateDocumentTool:
     async def execute(self, content: str, ctx: dict) -> Dict:
         """Update an existing document. Content = full new document text."""
         import uuid
-        from src.database import SessionLocal, Document, DocumentVersion
+        from src.infra.database.database import SessionLocal, Document, DocumentVersion
 
         target_id = ctx.get("doc_id", None) or _active_document_id
         owner = ctx.get("owner")
@@ -396,7 +396,7 @@ class EditDocumentTool:
     async def execute(self, content: str, ctx: dict) -> Dict:
         """Apply targeted FIND/REPLACE edits to an existing document."""
         import uuid
-        from src.database import SessionLocal, Document, DocumentVersion
+        from src.infra.database.database import SessionLocal, Document, DocumentVersion
 
         target_id = ctx.get("doc_id", None) or _active_document_id
         owner = ctx.get("owner")
@@ -481,7 +481,7 @@ class EditDocumentTool:
 class SuggestDocumentTool:
     async def execute(self, content: str, ctx: dict) -> Dict:
         """Create inline suggestions for the active document WITHOUT modifying it."""
-        from src.database import SessionLocal, Document
+        from src.infra.database.database import SessionLocal, Document
 
         target_id = ctx.get("doc_id", None) or _active_document_id
         owner = ctx.get("owner")

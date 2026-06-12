@@ -181,7 +181,7 @@ def test_extra_roots_opt_in(tmp_path):
     target = extra_dir / "file.txt"
     target.write_text("ok")
 
-    with patch("src.settings.get_setting", return_value=[str(extra_dir)]):
+    with patch("conf.settings.get_setting", return_value=[str(extra_dir)]):
         resolved = _resolve_tool_path(str(target))
         assert resolved == os.path.realpath(str(target))
 
@@ -191,7 +191,7 @@ def test_extra_root_still_blocks_sensitive(tmp_path):
     must still be rejected by the sensitive-subpath deny list."""
     from src.domain.agent.tools.tool_execution import _resolve_tool_path
     home = os.path.expanduser("~")
-    with patch("src.settings.get_setting", return_value=[home]):
+    with patch("conf.settings.get_setting", return_value=[home]):
         with pytest.raises(ValueError, match="sensitive directory"):
             _resolve_tool_path("~/.ssh/authorized_keys")
 
@@ -213,7 +213,7 @@ async def test_read_file_dispatch_blocks_etc_shadow(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: _AdminAuth())
     monkeypatch.setattr(
-        "src.tool_execution.owner_is_admin_or_single_user",
+        "src.domain.agent.tools.tool_execution.owner_is_admin_or_single_user",
         lambda owner: True,
     )
 
@@ -241,7 +241,7 @@ async def test_write_file_dispatch_blocks_authorized_keys(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: _AdminAuth())
     monkeypatch.setattr(
-        "src.tool_execution.owner_is_admin_or_single_user",
+        "src.domain.agent.tools.tool_execution.owner_is_admin_or_single_user",
         lambda owner: True,
     )
 
@@ -269,7 +269,7 @@ async def test_write_file_dispatch_blocks_cron(monkeypatch):
 
     monkeypatch.setattr(auth_mod, "AuthManager", lambda: _AdminAuth())
     monkeypatch.setattr(
-        "src.tool_execution.owner_is_admin_or_single_user",
+        "src.domain.agent.tools.tool_execution.owner_is_admin_or_single_user",
         lambda owner: True,
     )
 

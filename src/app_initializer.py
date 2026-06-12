@@ -21,7 +21,7 @@ from src.infra.llm.model_discovery import ModelDiscovery
 from src.domain.chat.chat_handler import ChatHandler
 from src.domain.research.research_handler import ResearchHandler
 from src.infra.storage.upload_handler import UploadHandler
-from src.search import update_search_config
+from src.infra.search import update_search_config
 
 logger = logging.getLogger(__name__)
 

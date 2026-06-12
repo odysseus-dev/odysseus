@@ -173,7 +173,7 @@ class ChatHandler:
         vision_enabled = False
         main_is_vision = False
         if effective_att_ids:
-            from src.settings import get_setting
+            from conf.settings import get_setting
             vision_enabled = get_setting("vision_enabled", True)
             if vision_enabled:
                 main_is_vision = await asyncio.to_thread(
@@ -311,7 +311,7 @@ class ChatHandler:
                 ChatMessage("assistant", f"Saved to memory: {memory_text}")
             )
 
-            from src.database import update_session_last_accessed
+            from src.infra.database.database import update_session_last_accessed
 
             update_session_last_accessed(session.id)
             self.session_manager.save_sessions()

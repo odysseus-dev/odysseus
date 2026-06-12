@@ -15,7 +15,7 @@ class TestEmbeddingClient:
         resp.raise_for_status = MagicMock()
         return resp
 
-    @patch("src.embeddings.httpx.Client")
+    @patch("src.domain.embedding.embeddings.httpx.Client")
     def test_bearer_header_sent_when_api_key_set(self, mock_httpx):
         """
         Test that the EmbeddingClient sends the Authorization header with the correct value when api_key is set.
@@ -32,7 +32,7 @@ class TestEmbeddingClient:
         headers = mock_httpx.return_value.post.call_args.kwargs["headers"]
         assert headers.get("Authorization") == "Bearer secret-key"
 
-    @patch("src.embeddings.httpx.Client")
+    @patch("src.domain.embedding.embeddings.httpx.Client")
     def test_no_bearer_header_when_api_key_none(self, mock_httpx):
         """
         Test that the EmbeddingClient does not send the Authorization header when api_key is None.

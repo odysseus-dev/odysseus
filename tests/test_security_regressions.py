@@ -388,11 +388,11 @@ def test_chat_preprocess_does_not_surface_cross_owner_attachment(tmp_path, monke
     _stub_core_database_for_route_imports(monkeypatch)
     from src.domain.chat.chat_handler import ChatHandler
     from src.infra.storage.upload_handler import UploadHandler
-    from src import settings
+    from conf import settings
 
     upload_dir, _alice_id, bob_id = _make_upload_store(tmp_path)
     handler = UploadHandler(str(tmp_path), str(upload_dir))
-    monkeypatch.setattr("src.chat_handler.UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setattr("src.domain.chat.chat_handler.UPLOAD_DIR", str(upload_dir))
     monkeypatch.setattr(
         settings,
         "get_setting",
@@ -505,10 +505,10 @@ def test_require_user_rejects_unauthenticated(monkeypatch):
     didn't attach a user AND auth is configured. Mirrors the
     defense-in-depth check on /api/contacts/*, /api/personal/*,
     /api/email/*."""
-    sys.modules.pop("src.auth_helpers", None)
+    sys.modules.pop("src.infra.auth.auth_helpers", None)
     from fastapi import HTTPException
 
-    from src import auth_helpers  # noqa: WPS433
+    from src.infra.auth import auth_helpers  # noqa: WPS433
 
     class _State:
         current_user = None  # middleware didn't set anyone
@@ -541,7 +541,8 @@ def test_inprocess_pollers_gate(monkeypatch):
     on the same SQLite would mark scheduled rows as 'sent' twice."""
     import sys as _sys
     _sys.modules.pop("routes.email_pollers", None)
-    from routes.email_pollers import _inprocess_pollers_enabled  # noqa: WPS433
+    _sys.modules.pop("src.api.handler.email_pollers", None)
+    from src.api.handler.email_pollers import _inprocess_pollers_enabled  # noqa: WPS433
 
     # Defaults to enabled (preserves single-process deployments).
     monkeypatch.delenv("ODYSSEUS_INPROCESS_POLLERS", raising=False)
@@ -562,8 +563,8 @@ def test_require_user_accepts_loopback_when_unconfigured(monkeypatch):
     """First-run mode (no users set up yet) must still let loopback
     callers through — otherwise the install can't bootstrap. Public
     callers in the same mode are rejected."""
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    sys.modules.pop("src.infra.auth.auth_helpers", None)
+    from src.infra.auth import auth_helpers  # noqa: WPS433
 
     class _State:
         current_user = None
@@ -593,8 +594,8 @@ def test_require_user_accepts_anyone_when_auth_disabled(monkeypatch):
     the frontend's global 401 redirect doesn't bounce the user to /login
     despite the operator turning auth off (issue #622)."""
     monkeypatch.setenv("AUTH_ENABLED", "false")
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    sys.modules.pop("src.infra.auth.auth_helpers", None)
+    from src.infra.auth import auth_helpers  # noqa: WPS433
 
     class _State:
         current_user = None
@@ -627,8 +628,8 @@ def test_require_user_localhost_bypass_admits_loopback(monkeypatch):
     through."""
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("LOCALHOST_BYPASS", "true")
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    sys.modules.pop("src.infra.auth.auth_helpers", None)
+    from src.infra.auth import auth_helpers  # noqa: WPS433
 
     class _State:
         current_user = None
@@ -658,8 +659,8 @@ def test_require_user_localhost_bypass_still_rejects_lan(monkeypatch):
     from fastapi import HTTPException
     monkeypatch.setenv("AUTH_ENABLED", "true")
     monkeypatch.setenv("LOCALHOST_BYPASS", "true")
-    sys.modules.pop("src.auth_helpers", None)
-    from src import auth_helpers  # noqa: WPS433
+    sys.modules.pop("src.infra.auth.auth_helpers", None)
+    from src.infra.auth import auth_helpers  # noqa: WPS433
 
     class _State:
         current_user = None
@@ -943,7 +944,7 @@ def test_attachment_extract_dir_normal_inputs_unchanged():
 def test_diagnostics_routes_are_admin_gated():
     """db/rag stats + test endpoints must require admin (they relied only on
     the global session check before)."""
-    src = Path(__file__).resolve().parents[1] / "routes" / "diagnostics_routes.py"
+    src = Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "diagnostics_routes.py"
     text = src.read_text()
     for handler in ("get_database_stats", "get_rag_stats", "test_youtube", "test_research"):
         assert f"def {handler}(request: Request" in text, handler
@@ -961,7 +962,7 @@ def test_email_thread_rendering_sanitizes_body_html():
 
 
 def test_session_html_export_escapes_name():
-    src = Path(__file__).resolve().parents[1] / "routes" / "session_routes.py"
+    src = Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "session_routes.py"
     text = src.read_text()
     assert "safe_title = html.escape(session.name" in text
     assert "<title>{session.name}" not in text
@@ -969,7 +970,7 @@ def test_session_html_export_escapes_name():
 
 
 def test_mcp_oauth_page_escapes_reflected_values():
-    src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
+    src = Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "mcp_routes.py"
     text = src.read_text()
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
     for var in ("auth_url", "server_id", "host"):
@@ -978,7 +979,8 @@ def test_mcp_oauth_page_escapes_reflected_values():
 
 def _import_mcp_routes():
     sys.modules.pop("routes.mcp_routes", None)
-    return importlib.import_module("routes.mcp_routes")
+    sys.modules.pop("src.api.router.mcp_routes", None)
+    return importlib.import_module("src.api.router.mcp_routes")
 
 
 def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):
@@ -1123,7 +1125,7 @@ def test_chat_active_document_lookup_is_owner_scoped():
     state is process-global)."""
     import re
 
-    src = Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py"
+    src = Path(__file__).resolve().parents[1] / "src" / "api" / "router" / "chat_routes.py"
     text = src.read_text()
     # The frontend-supplied id is resolved through the shared owner filter.
     assert "_owner_session_filter(_doc_q, ctx.user)" in text

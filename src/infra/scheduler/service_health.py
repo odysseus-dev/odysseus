@@ -418,7 +418,7 @@ def _gather_inputs() -> Dict[str, Any]:
     accounts: List[Dict[str, Any]] = []
     endpoints: List[Dict[str, Any]] = []
     try:
-        from src.settings import load_settings
+        from conf.settings import load_settings
         settings = load_settings() or {}
     except Exception as e:
         logger.debug(f"service_health: settings load failed: {e}")

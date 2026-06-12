@@ -138,6 +138,7 @@ def clear_fake_endpoint_resolver_modules(*extra_modules):
     if parent is not None and attr is mod:
         delattr(parent, "endpoint_resolver")
     clear_module("routes.model_routes")
+    clear_module("src.api.router.model_routes")
     for name in extra_modules:
         clear_module(name)
 

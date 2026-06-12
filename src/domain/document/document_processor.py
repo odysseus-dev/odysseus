@@ -248,7 +248,7 @@ def strip_pdf_content_marker(text: str) -> str:
 def _load_vl_settings() -> dict:
     """Load admin settings from disk."""
     try:
-        from src.settings import load_settings
+        from conf.settings import load_settings
         return load_settings()
     except Exception:
         return {}
@@ -498,7 +498,7 @@ def build_user_content(
                                     )
 
                         if doc_id and auto_opened_docs is not None:
-                            from src.database import SessionLocal, Document
+                            from src.infra.database.database import SessionLocal, Document
                             _db = SessionLocal()
                             try:
                                 _d = _db.query(Document).filter(

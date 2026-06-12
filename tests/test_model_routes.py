@@ -14,7 +14,7 @@ from fastapi import HTTPException
 
 from tests.helpers.import_state import clear_fake_endpoint_resolver_modules, preserve_import_state
 
-with preserve_import_state("src.infra.database.database", "src.database", "src.infra.database.session_manager", "routes.model_routes"):
+with preserve_import_state("src.infra.database.database", "src.infra.database.session_manager", "src.api.router.model_routes"):
     # Other tests stub this module during collection. These helper tests need
     # the real URL normalization helpers so Anthropic /v1 handling is covered.
     clear_fake_endpoint_resolver_modules()
@@ -32,7 +32,7 @@ with preserve_import_state("src.infra.database.database", "src.database", "src.i
         sys.modules["src.infra.database.database"] = _core_db
 
     import src.api.router.model_routes as model_routes
-    import src.database as src_database
+    import src.infra.database.database as src_database
     import src.infra.llm.endpoint_resolver as endpoint_resolver
     import src.infra.llm.llm_core as llm_core
     from src.api.router.model_routes import (
@@ -715,7 +715,8 @@ if "python_multipart" not in sys.modules:
     except ImportError:
         _mp_stub = types.ModuleType("python_multipart")
         _mp_stub.__version__ = "0.0.13"
-        sys.modules["python_multipart"] = _mp_stub
+        _mp_stub.parse_options_header = lambda value: (value, {})
+        sys.modules.setdefault("python_multipart", _mp_stub)
 
 
 class _RouteCondition:
@@ -1433,7 +1434,7 @@ def test_explicit_proxy_add_fetches_and_caches_models_with_long_timeout(monkeypa
     monkeypatch.setattr(model_routes, "require_admin", lambda request: None)
     monkeypatch.setattr(model_routes, "_load_settings", lambda: {})
     monkeypatch.setattr(model_routes, "_save_settings", lambda settings: None)
-    monkeypatch.setattr("src.auth_helpers.get_current_user", lambda request: None)
+    monkeypatch.setattr("src.infra.auth.auth_helpers.get_current_user", lambda request: None)
     monkeypatch.setattr(model_routes, "_ping_endpoint", lambda *a, **k: (_ for _ in ()).throw(AssertionError("ping should not run when model listing succeeds")))
 
     calls = []

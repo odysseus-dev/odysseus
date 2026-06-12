@@ -76,7 +76,7 @@ def _resolve_model(spec: str, owner: Optional[str] = None) -> Tuple[str, str, Di
     Raises ValueError if model not found.
     """
     import httpx
-    from src.database import SessionLocal, ModelEndpoint
+    from src.infra.database.database import SessionLocal, ModelEndpoint
     from src.infra.llm.llm_core import _detect_provider, ANTHROPIC_MODELS
     from src.infra.auth.auth_helpers import owner_filter
 
@@ -216,7 +216,7 @@ async def do_ask_teacher(content: str, session_id: Optional[str] = None, owner: 
       Line 2+: the problem description
     """
     from src.infra.llm.llm_core import llm_call_async
-    from src.settings import get_setting
+    from conf.settings import get_setting
 
     lines = content.strip().split("\n", 1)
     model_spec = lines[0].strip() if lines else "auto"
@@ -726,7 +726,7 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
     if not _session_manager:
         return {"error": "Session manager not available"}
 
-    from src.database import SessionLocal, Session as DbSession
+    from src.infra.database.database import SessionLocal, Session as DbSession
 
     # Accept BOTH the structured JSON args the tool schema advertises
     # ({action, session_id, value}) AND the legacy line-based format
@@ -1115,7 +1115,7 @@ async def do_list_models(content: str, session_id: Optional[str] = None, owner: 
     Content = optional filter keyword.
     """
     import httpx
-    from src.database import SessionLocal, ModelEndpoint
+    from src.infra.database.database import SessionLocal, ModelEndpoint
     from src.infra.llm.llm_core import _detect_provider, ANTHROPIC_MODELS
     from src.infra.auth.auth_helpers import owner_filter
 
@@ -1360,7 +1360,7 @@ async def do_ui_control(content: str, session_id: Optional[str] = None, owner: O
 
         # Update current session's model if we have a session
         if session_id and _session_manager:
-            from src.database import SessionLocal as SL2, Session as DbSess2
+            from src.infra.database.database import SessionLocal as SL2, Session as DbSess2
             db2 = SL2()
             try:
                 db_s = db2.query(DbSess2).filter(DbSess2.id == session_id).first()
@@ -1594,7 +1594,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     # Load admin settings for defaults
     try:
-        from src.settings import load_settings
+        from conf.settings import load_settings
         _settings = load_settings()
     except Exception:
         _settings = {}
@@ -1617,7 +1617,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
         # Fallback: find any locally registered image-type endpoint
         if not model_spec:
             try:
-                from src.database import SessionLocal, ModelEndpoint
+                from src.infra.database.database import SessionLocal, ModelEndpoint
                 from src.infra.auth.auth_helpers import owner_filter
                 import httpx as _req
                 _idb = SessionLocal()
@@ -1715,7 +1715,7 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
             def _save_to_gallery(filename: str) -> str:
                 """Insert a GalleryImage row and return the new id (or '')."""
                 try:
-                    from src.database import SessionLocal as _GallerySL, GalleryImage
+                    from src.infra.database.database import SessionLocal as _GallerySL, GalleryImage
                     new_id = str(uuid.uuid4())
                     _gdb = _GallerySL()
                     _gdb.add(GalleryImage(

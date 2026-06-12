@@ -378,7 +378,7 @@ async def escalate_and_learn(
     Returns the saved skill name (or None if the teacher couldn't
     write one). Logs but doesn't raise — escalation is best-effort.
     """
-    from src.settings import get_setting
+    from conf.settings import get_setting
     teacher_spec = (get_setting("teacher_model", "") or "").strip()
     if not teacher_spec:
         return None
@@ -449,7 +449,7 @@ def maybe_escalate(
     # (No self-hosted-only gate — users run cheap cloud students like
     # deepseek-v4-flash with a SOTA teacher; the toggle is the control.)
     try:
-        from src.settings import get_setting
+        from conf.settings import get_setting
         if not get_setting("teacher_enabled", False):
             return None
         if not (get_setting("teacher_model", "") or "").strip():
@@ -489,7 +489,7 @@ async def run_teacher_inline(
     toggle on, teacher_model configured, Tier 1 regex flags failure.
     """
     import json
-    from src.settings import get_setting
+    from conf.settings import get_setting
 
     # Gates
     try:

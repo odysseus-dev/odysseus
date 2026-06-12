@@ -1049,7 +1049,7 @@ def _configured_cached_model_ids(
     if not target:
         return []
     try:
-        from src.database import SessionLocal, ModelEndpoint
+        from src.infra.database.database import SessionLocal, ModelEndpoint
     except Exception:
         return []
     db = SessionLocal()

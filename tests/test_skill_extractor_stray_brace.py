@@ -41,7 +41,7 @@ async def test_maybe_extract_skill_recovers_json_past_stray_braces(monkeypatch, 
     async def fake_llm_call_async(*args, **kwargs):
         return response
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", fake_llm_call_async)
 
     skills_manager = _FakeSkillsManager()
     entry = await skill_extractor.maybe_extract_skill(
@@ -76,7 +76,7 @@ async def test_maybe_extract_skill_recovers_json_after_leading_invalid_brace(mon
     async def fake_llm_call_async(*args, **kwargs):
         return response
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", fake_llm_call_async)
 
     skills_manager = _FakeSkillsManager()
     entry = await skill_extractor.maybe_extract_skill(
@@ -99,7 +99,7 @@ async def test_maybe_extract_skill_drops_when_no_candidate_parses(monkeypatch):
     async def fake_llm_call_async(*args, **kwargs):
         return 'Some commentary with {unbalanced and { nested } braces } but no real JSON object'
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", fake_llm_call_async)
 
     skills_manager = _FakeSkillsManager()
     entry = await skill_extractor.maybe_extract_skill(

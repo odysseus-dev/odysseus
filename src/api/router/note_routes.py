@@ -156,7 +156,7 @@ async def dispatch_reminder(
     the in-memory notification queue picked up by the frontend poller, so
     nothing is "sent" synchronously for it — the channel just routes there.
     """
-    from src.settings import load_settings
+    from conf.settings import load_settings
     settings = {**load_settings(), **(settings_override or {})}
     channel = settings.get("reminder_channel", "browser")
     llm_on = bool(settings.get("reminder_llm_synthesis", False))

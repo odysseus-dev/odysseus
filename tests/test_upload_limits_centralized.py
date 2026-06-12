@@ -80,15 +80,15 @@ def test_non_positive_env_rejected(monkeypatch, env):
 def test_routes_import_from_upload_limits_not_local_defs():
     """Routes must import the constant, not redefine it via raw getenv / literal."""
     forbidden = {
-        "routes/gallery_routes.py": [
+        "src/api/router/gallery_routes.py": [
             'int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES"',
             'int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES"',
         ],
-        "routes/memory_routes.py": ['int(os.getenv("ODYSSEUS_MEMORY_IMPORT_MAX_BYTES"'],
-        "routes/personal_routes.py": ['os.getenv("ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES"'],
-        "routes/email_routes.py": ["EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024"],
-        "routes/stt_routes.py": ["STT_MAX_AUDIO_BYTES = 25 * 1024 * 1024"],
-        "routes/calendar_routes.py": ["_ICS_MAX_BYTES = 10 * 1024 * 1024"],
+        "src/api/router/memory_routes.py": ['int(os.getenv("ODYSSEUS_MEMORY_IMPORT_MAX_BYTES"'],
+        "src/api/router/personal_routes.py": ['os.getenv("ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES"'],
+        "src/api/router/email_routes.py": ["EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024"],
+        "src/api/router/stt_routes.py": ["STT_MAX_AUDIO_BYTES = 25 * 1024 * 1024"],
+        "src/api/router/calendar_routes.py": ["_ICS_MAX_BYTES = 10 * 1024 * 1024"],
     }
     for path, needles in forbidden.items():
         text = (REPO / path).read_text(encoding="utf-8")
@@ -97,12 +97,12 @@ def test_routes_import_from_upload_limits_not_local_defs():
 
     # And each imports from upload_limits.
     imports = {
-        "routes/gallery_routes.py": "GALLERY_UPLOAD_MAX_BYTES",
-        "routes/memory_routes.py": "MEMORY_IMPORT_MAX_BYTES",
-        "routes/personal_routes.py": "PERSONAL_UPLOAD_MAX_BYTES",
-        "routes/email_routes.py": "EMAIL_COMPOSE_UPLOAD_MAX_BYTES",
-        "routes/stt_routes.py": "STT_MAX_AUDIO_BYTES",
-        "routes/calendar_routes.py": "ICS_MAX_BYTES",
+        "src/api/router/gallery_routes.py": "GALLERY_UPLOAD_MAX_BYTES",
+        "src/api/router/memory_routes.py": "MEMORY_IMPORT_MAX_BYTES",
+        "src/api/router/personal_routes.py": "PERSONAL_UPLOAD_MAX_BYTES",
+        "src/api/router/email_routes.py": "EMAIL_COMPOSE_UPLOAD_MAX_BYTES",
+        "src/api/router/stt_routes.py": "STT_MAX_AUDIO_BYTES",
+        "src/api/router/calendar_routes.py": "ICS_MAX_BYTES",
     }
     for path, const in imports.items():
         text = (REPO / path).read_text(encoding="utf-8")

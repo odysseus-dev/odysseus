@@ -409,7 +409,7 @@ class McpManager:
 
     async def connect_all_enabled(self):
         """Connect to all enabled MCP servers from the database."""
-        from src.database import McpServer, SessionLocal
+        from src.infra.database.database import McpServer, SessionLocal
 
         db = SessionLocal()
         try:
@@ -508,7 +508,7 @@ class McpManager:
             return False
 
         script_rel, name = _BUILTIN_SERVERS[server_id]
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         script_path = os.path.join(base_dir, script_rel)
 
         # Clean up old connection

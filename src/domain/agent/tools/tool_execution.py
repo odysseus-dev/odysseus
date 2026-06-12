@@ -113,7 +113,7 @@ def _tool_path_roots() -> list[str]:
 
     # Opt-in extra roots from settings.
     try:
-        from src.settings import get_setting
+        from conf.settings import get_setting
         extra = get_setting("tool_path_extra_roots")
         if isinstance(extra, list):
             roots.extend(str(r) for r in extra if r)
@@ -208,7 +208,7 @@ def _resolve_tool_path_in_workspace(workspace: str, raw_path: str) -> str:
 
 
 def get_mcp_manager():
-    from src.domain.agent import agent_tools
+    from src.domain.agent import tools as agent_tools
     return agent_tools.get_mcp_manager()
 
 

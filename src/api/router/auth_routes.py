@@ -15,8 +15,8 @@ from src.infra.storage.atomic_io import atomic_write_json, atomic_write_text
 from src.infra.auth.auth import AuthManager
 from src.pkg.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, SKILLS_DIR
 from src.pkg.security.rate_limiter import RateLimiter
-from src.settings_scrub import scrub_settings
-from src.settings import (
+from conf.settings_scrub import scrub_settings
+from conf.settings import (
     load_settings as _load_settings,
     save_settings as _save_settings,
     load_features as _load_features,

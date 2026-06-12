@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 
-_MODULE_PATH = Path(__file__).resolve().parents[1] / "core" / "platform_compat.py"
+_MODULE_PATH = Path(__file__).resolve().parents[1] / "src" / "pkg" / "platform_compat.py"
 _SPEC = importlib.util.spec_from_file_location("platform_compat_under_test", _MODULE_PATH)
 platform_compat = importlib.util.module_from_spec(_SPEC)
 assert _SPEC and _SPEC.loader

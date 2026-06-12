@@ -233,7 +233,7 @@ def test_get_vision_text_denies_cross_owner_before_image_analysis(tmp_path, monk
     def fail_analysis(_path):
         raise AssertionError("owner gate should run before image analysis")
 
-    monkeypatch.setattr("src.document_processor.analyze_image_with_vl", fail_analysis)
+    monkeypatch.setattr("src.domain.document.document_processor.analyze_image_with_vl", fail_analysis)
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -258,7 +258,7 @@ def test_get_vision_text_rejects_upload_symlink_escape_before_analysis(tmp_path,
     def fail_analysis(_path):
         raise AssertionError("upload root gate should run before image analysis")
 
-    monkeypatch.setattr("src.document_processor.analyze_image_with_vl", fail_analysis)
+    monkeypatch.setattr("src.domain.document.document_processor.analyze_image_with_vl", fail_analysis)
 
     with pytest.raises(HTTPException) as exc:
         asyncio.run(

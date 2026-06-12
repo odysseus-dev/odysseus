@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from src.database import SessionLocal, Webhook
+from src.infra.database.database import SessionLocal, Webhook
 
 logger = logging.getLogger(__name__)
 

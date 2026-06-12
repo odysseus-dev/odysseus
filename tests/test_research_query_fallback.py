@@ -30,7 +30,7 @@ async def _raise(*args, **kwargs):
 @pytest.mark.asyncio
 async def test_bare_yes_falls_back_to_original_ask(handler, monkeypatch):
     # original ask + assistant clarification + user "yes" => original ask
-    monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", _raise)
     sess = _session([
         ("user", "What is the best electric car for a cold climate?"),
         ("assistant", "Happy to research that — should I go ahead?"),
@@ -41,7 +41,7 @@ async def test_bare_yes_falls_back_to_original_ask(handler, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_continuation_phrase_falls_back_to_original_ask(handler, monkeypatch):
-    monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", _raise)
     sess = _session([
         ("user", "Summarize recent advances in fusion energy."),
         ("assistant", "Want me to go ahead and research this?"),
@@ -53,7 +53,7 @@ async def test_continuation_phrase_falls_back_to_original_ask(handler, monkeypat
 @pytest.mark.asyncio
 async def test_short_country_answer_is_kept(handler, monkeypatch):
     # original ask + assistant asks "which country?" + user "UK" => "UK"
-    monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", _raise)
     sess = _session([
         ("user", "Compare national healthcare systems."),
         ("assistant", "Which country should I focus on?"),
@@ -65,7 +65,7 @@ async def test_short_country_answer_is_kept(handler, monkeypatch):
 @pytest.mark.asyncio
 async def test_short_language_answer_is_kept(handler, monkeypatch):
     # original ask + assistant asks "which language?" + user "C++" => "C++"
-    monkeypatch.setattr("src.llm_core.llm_call_async", _raise)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", _raise)
     sess = _session([
         ("user", "Find the fastest sorting library."),
         ("assistant", "Which language are you targeting?"),
@@ -90,7 +90,7 @@ async def test_multiword_followup_uses_synthesis(handler, monkeypatch):
     async def _synth(*args, **kwargs):
         return synthesized
 
-    monkeypatch.setattr("src.llm_core.llm_call_async", _synth)
+    monkeypatch.setattr("src.infra.llm.llm_core.llm_call_async", _synth)
     sess = _session([
         ("user", "What is the best electric car for a cold climate?"),
         ("assistant", "Any constraints on range or charging?"),

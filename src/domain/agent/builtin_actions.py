@@ -1420,7 +1420,7 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         pass
                 body = "\n\n".join(p for p in body_parts if p) or title
                 try:
-                    from routes.note_routes import dispatch_reminder
+                    from src.api.router.note_routes import dispatch_reminder
                     await dispatch_reminder(
                         title=title, note_body=body, note_id=n.id,
                         owner=n.owner or owner or "",
@@ -1465,7 +1465,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
     - Re-notify gate: only when at least one UID NEW to `notified_uids` scores ≥2.
       Repeat scans where the set is unchanged stay silent.
     """
-    from src.settings import load_settings
+    from conf.settings import load_settings
 
     try:
         settings = load_settings()
@@ -1913,7 +1913,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                 # Call dispatch_reminder DIRECTLY (no HTTP/auth roundtrip — the
                 # endpoint version 401's the background scheduler because it
                 # has no session cookie).
-                from routes.note_routes import dispatch_reminder
+                from src.api.router.note_routes import dispatch_reminder
                 dispatch_result = await dispatch_reminder(
                     title=title, note_body=body, note_id="urgent-email",
                     owner=owner or "",
@@ -2043,7 +2043,7 @@ async def action_cookbook_serve(
     import time as _time
     import httpx
     from pathlib import Path
-    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    from src.api.middleware.security_headers import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
     from src.infra.storage.atomic_io import atomic_write_json
 
     headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}

@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from src.infra.database.models import ChatMessage
-from src.request_models import ChatRequest
+from src.api.model.request_models import ChatRequest
 from src.infra.llm.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.domain.agent.agent_loop import stream_agent_loop
 from src.domain.agent import agent_runs
@@ -693,7 +693,7 @@ def setup_chat_routes(
                 _effective_mode = 'chat'
                 chat_mode = 'chat'
         # Global admin disabled tools
-        from src.settings import get_setting
+        from conf.settings import get_setting
         _global_disabled = get_setting("disabled_tools", [])
         if _global_disabled and isinstance(_global_disabled, list):
             disabled_tools.update(_global_disabled)
@@ -931,7 +931,7 @@ def setup_chat_routes(
             yield f'data: {json.dumps(_model_info)}\n\n'
 
             if _is_image_generation_session(sess, owner=_user):
-                from src.settings import get_setting
+                from conf.settings import get_setting
                 if tool_policy.blocks("generate_image"):
                     _blocked_msg = tool_policy.reason_for("generate_image")
                     yield f'data: {json.dumps({"delta": _blocked_msg})}\n\n'
@@ -1108,7 +1108,7 @@ def setup_chat_routes(
                 _requested_model = sess.model
                 _actual_model = None
                 try:
-                    from src.settings import get_setting
+                    from conf.settings import get_setting
                     from src.domain.agent.tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
                     _tool_budget = int(get_setting("agent_max_tool_calls", 0))
                     # Per-message round cap from settings; clamp defensively in

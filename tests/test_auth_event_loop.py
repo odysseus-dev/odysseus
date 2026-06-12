@@ -92,7 +92,7 @@ def test_login_offloads_bcrypt_bearing_calls(monkeypatch):
         calls.append(fn)
         return fn(*args, **kwargs)
 
-    monkeypatch.setattr("routes.auth_routes.asyncio.to_thread", fake_to_thread)
+    monkeypatch.setattr("src.api.router.auth_routes.asyncio.to_thread", fake_to_thread)
     auth.verify_password.return_value = True
     auth.totp_enabled.return_value = False
     auth.create_session_trusted.return_value = "tok-123"

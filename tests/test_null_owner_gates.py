@@ -18,6 +18,38 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+
+class _AutoStubModule(types.ModuleType):
+    """A ModuleType that auto-creates MagicMock attributes on first access.
+
+    This avoids the whack-a-mole of maintaining an exhaustive attribute
+    list when stubbing a module that many other modules import from.
+    """
+
+    def __getattr__(self, name: str):
+        # Let Python dunder lookups fail normally (e.g. __path__, __file__).
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        mock = MagicMock()
+        object.__setattr__(self, name, mock)
+        return mock
+
+
+def _install_auto_stub(module_name: str, monkeypatch, **explicit_attrs):
+    """Install *module_name* in sys.modules as an _AutoStubModule.
+
+    Always replaces any existing module so that __getattr__ fallback is
+    available. Explicit attributes (keyword args) are set directly so that
+    ``from X import *`` sees them in __dict__.
+    """
+    m = _AutoStubModule(module_name)
+    for n, v in explicit_attrs.items():
+        setattr(m, n, v)
+    sys.modules[module_name] = m
+    monkeypatch.setitem(sys.modules, module_name, m)
+    return m
+
+
 # `tests/conftest.py` stubs the heavy optional deps. We additionally
 # stub `core.database` here because the real module instantiates
 # SQLAlchemy declarative classes at import-time — which blows up under
@@ -26,36 +58,39 @@ from unittest.mock import MagicMock
 # happens to drag in at import-time.
 @pytest.fixture(autouse=True)
 def _null_owner_stubs(monkeypatch):
-    for _stub, _attrs in (
-        ("src.infra.database.database", (
-            "Base", "SessionLocal", "CalendarCal", "CalendarEvent",
-            "Document", "DocumentVersion", "Session", "ChatMessage",
-            "GalleryImage", "GalleryAlbum", "Note", "ScheduledTask",
-            "TaskRun", "ModelEndpoint", "Webhook",
-        )),
-        ("src.infra.auth.auth", ("AuthManager",)),
-        ("src.infra.llm.endpoint_resolver", ()),
-    ):
-        if _stub not in sys.modules:
-            m = types.ModuleType(_stub)
-            for _name in _attrs:
-                setattr(m, _name, MagicMock())
-            sys.modules[_stub] = m
-        else:
-            m = sys.modules[_stub]
-            for _name in _attrs:
-                if not hasattr(m, _name):
-                    setattr(m, _name, MagicMock())
-        monkeypatch.setitem(sys.modules, _stub, m)
+    _install_auto_stub(
+        "src.infra.database.database", monkeypatch,
+        Base=MagicMock(), SessionLocal=MagicMock(),
+        CalendarCal=MagicMock(), CalendarEvent=MagicMock(),
+        Document=MagicMock(), DocumentVersion=MagicMock(),
+        Session=MagicMock(), ChatMessage=MagicMock(),
+        GalleryImage=MagicMock(), GalleryAlbum=MagicMock(),
+        Note=MagicMock(), ScheduledTask=MagicMock(),
+        TaskRun=MagicMock(), ModelEndpoint=MagicMock(),
+        Webhook=MagicMock(),
+    )
+    _install_auto_stub(
+        "src.infra.auth.auth", monkeypatch,
+        AuthManager=MagicMock(),
+    )
+    _install_auto_stub("src.infra.llm.endpoint_resolver", monkeypatch)
+
+    # conftest creates a bare src.database stub with only SessionLocal +
+    # ModelEndpoint. Replace it with an _AutoStubModule so that the shim
+    # (src/database.py) or direct imports from src.database always resolve.
+    _install_auto_stub(
+        "src.database", monkeypatch,
+        SessionLocal=MagicMock(), ModelEndpoint=MagicMock(),
+    )
 
     # src.webhook_manager is only dragged in by _import_webhook_helper().
-    if "src.webhook_manager" not in sys.modules:
-        wm = types.ModuleType("src.webhook_manager")
+    if "src.infra.scheduler.webhook_manager" not in sys.modules:
+        wm = _AutoStubModule("src.infra.scheduler.webhook_manager")
         wm.WebhookManager = MagicMock()
         wm.validate_webhook_url = MagicMock()
         wm.validate_events = MagicMock()
-        sys.modules["src.webhook_manager"] = wm
-        monkeypatch.setitem(sys.modules, "src.webhook_manager", wm)
+        sys.modules["src.infra.scheduler.webhook_manager"] = wm
+        monkeypatch.setitem(sys.modules, "src.infra.scheduler.webhook_manager", wm)
 
 from fastapi import HTTPException
 
@@ -194,11 +229,14 @@ def test_gallery_owner_filter_passes_user():
 # calendar/notes/gallery gates above and _verify_session_owner.
 
 def _import_webhook_helper():
-    """Import routes.webhook_routes. Stubs for core.database (ChatMessage,
-    Webhook) and src.webhook_manager are provided by the _null_owner_stubs
-    autouse fixture."""
+    """Import the private gate helpers from the canonical webhook routes module.
+
+    Stubs for core.database (ChatMessage, Webhook) and src.webhook_manager
+    are provided by the _null_owner_stubs autouse fixture.
+    """
     return __import__(
-        "routes.webhook_routes", fromlist=["_caller_owns_session"]
+        "src.api.router.webhook_routes",
+        fromlist=["_caller_owns_session", "_select_api_chat_fallback_endpoint"],
     )
 
 

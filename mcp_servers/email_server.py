@@ -1195,7 +1195,7 @@ async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account
         return {"error": "No email body available for AI reply"}
 
     try:
-        from routes.email_helpers import (
+        from src.api.handler.email_helpers import (
             _EMAIL_REPLY_SYS_PROMPT_BASE,
             _apply_email_style_mechanics,
             _extract_reply,

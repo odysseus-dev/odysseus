@@ -34,7 +34,7 @@ PROVIDER_INFO = {
 def _get_search_settings() -> dict:
     """Return search settings from admin config, falling back to env defaults."""
     try:
-        from src.settings import load_settings
+        from conf.settings import load_settings
         return load_settings()
     except Exception:
         return {}

@@ -98,7 +98,7 @@ def test_change_password_route_revokes_other_sessions_after_success(monkeypatch)
     auth.change_password.return_value = True
     endpoint, ChangePasswordRequest = _change_password_endpoint(auth)
     monkeypatch.setattr(
-        "routes.auth_routes.asyncio.to_thread",
+        "src.api.router.auth_routes.asyncio.to_thread",
         lambda fn, *args, **kwargs: _immediate_to_thread(fn, *args, **kwargs),
     )
     request = SimpleNamespace(cookies={"odysseus_session": "current-token"})
@@ -117,7 +117,7 @@ def test_change_password_route_wrong_password_does_not_revoke(monkeypatch):
     auth.change_password.return_value = False
     endpoint, ChangePasswordRequest = _change_password_endpoint(auth)
     monkeypatch.setattr(
-        "routes.auth_routes.asyncio.to_thread",
+        "src.api.router.auth_routes.asyncio.to_thread",
         lambda fn, *args, **kwargs: _immediate_to_thread(fn, *args, **kwargs),
     )
     request = SimpleNamespace(cookies={"odysseus_session": "current-token"})

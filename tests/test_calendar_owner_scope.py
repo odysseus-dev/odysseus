@@ -24,7 +24,7 @@ from fastapi import HTTPException
 
 
 def test_get_upcoming_events_is_owner_scoped():
-    source = Path("core/database.py").read_text()
+    source = Path("src/infra/database/database.py").read_text()
     tree = ast.parse(source)
     fn = next(
         node for node in tree.body

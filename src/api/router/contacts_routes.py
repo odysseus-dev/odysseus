@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from fastapi import APIRouter, Query, Depends, Response, HTTPException
 from typing import List, Dict, Optional
 
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 from src.pkg.security.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)

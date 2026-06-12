@@ -900,7 +900,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
         # set/get/list/delete operate on the REAL app settings (the same store
         # the Settings panel writes), so changing a model / voice / search
         # engine / reminder channel from chat actually takes effect.
-        from src.settings import load_settings, save_settings, DEFAULT_SETTINGS
+        from conf.settings import load_settings, save_settings, DEFAULT_SETTINGS
 
         # Secrets/credentials the agent must NOT write — kept read-only (masked)
         # so API keys never flow through chat. User sets these in the panel.
@@ -1081,7 +1081,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             # "search" -> "web_search", "browser" -> "builtin_browser",
             # "documents" -> the document tool set, "memory" ->
             # manage_memory, etc.
-            from src.settings import get_setting, save_settings, load_settings
+            from conf.settings import get_setting, save_settings, load_settings
             _ALIASES = {
                 "shell": ["bash"],
                 "terminal": ["bash"],
@@ -1936,7 +1936,7 @@ _INTERNAL_BASE = internal_api_base()
 
 
 def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
-    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    from src.api.middleware.security_headers import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
     headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
     if owner:
         headers["X-Odysseus-Owner"] = owner

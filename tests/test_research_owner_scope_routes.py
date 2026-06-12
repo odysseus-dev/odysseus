@@ -16,7 +16,7 @@ def _redirect_research_dir(tmp_path, monkeypatch):
     # Deep-research paths are resolved from an import-time constant now, so chdir
     # no longer redirects them. Point the constant the routes read at the temp dir.
     monkeypatch.setattr(
-        "routes.research_routes.DEEP_RESEARCH_DIR",
+        "src.api.router.research_routes.DEEP_RESEARCH_DIR",
         str(tmp_path / "data" / "deep_research"),
     )
 

@@ -20,7 +20,7 @@ def _load_builtin_mcp(monkeypatch):
 
     spec = importlib.util.spec_from_file_location(
         "builtin_mcp_under_test",
-        ROOT / "src" / "builtin_mcp.py",
+        ROOT / "src" / "infra" / "mcp" / "builtin_mcp.py",
     )
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None

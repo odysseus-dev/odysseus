@@ -9,7 +9,7 @@ import logging
 
 from src.infra.database.session_manager import SessionManager
 from src.infra.database.models import ChatMessage
-from src.request_models import SessionResponse
+from src.api.model.request_models import SessionResponse
 from src.infra.database.database import Session as DbSession, SessionLocal, Document, GalleryImage, utcnow_naive
 from src.infra.auth.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
 from src.domain.agent.session_actions import is_session_recently_active
@@ -612,7 +612,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.delete("/sessions/all")
     def delete_all_sessions(request: Request):
         """Admin only: permanently delete ALL sessions and their messages."""
-        from core.middleware import require_admin
+        from src.api.middleware.security_headers import require_admin
         require_admin(request)
 
         db = SessionLocal()

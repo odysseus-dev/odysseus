@@ -15,7 +15,7 @@ import os
 import shutil
 from fastapi import APIRouter, HTTPException, Request
 
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 from src.infra.database.database import (
     SessionLocal,
     Session as DbSession,

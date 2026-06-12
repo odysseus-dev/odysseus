@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def _internal_headers() -> dict:
-    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    from src.api.middleware.security_headers import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
     return {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
 
 

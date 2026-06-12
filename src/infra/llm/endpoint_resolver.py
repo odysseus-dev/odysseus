@@ -238,7 +238,7 @@ def resolve_endpoint(
         (endpoint_url, model, headers) — resolved or fallback values.
     """
     try:
-        from src.settings import get_user_setting, load_settings
+        from conf.settings import get_user_setting, load_settings
         settings = load_settings()
     except Exception:
         return fallback_url, fallback_model, fallback_headers
@@ -375,7 +375,7 @@ def resolve_chat_fallback_candidates(owner: Optional[str] = None) -> list:
 def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
     """Configured fallback chain for the Utility model (`utility_model_fallbacks`)."""
     try:
-        from src.settings import get_user_setting, load_settings
+        from conf.settings import get_user_setting, load_settings
         settings = load_settings()
         utility_ep = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
         if not utility_ep:
@@ -393,7 +393,7 @@ def resolve_vision_fallback_candidates(owner: Optional[str] = None) -> list:
 def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) -> list:
     out = []
     try:
-        from src.settings import get_user_setting, load_settings
+        from conf.settings import get_user_setting, load_settings
         settings = load_settings()
         chain = get_user_setting(setting_key, owner or "", settings.get(setting_key) or []) or []
     except Exception:

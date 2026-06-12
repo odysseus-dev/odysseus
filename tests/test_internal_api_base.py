@@ -38,10 +38,10 @@ def test_no_hardcoded_loopback_left_in_call_sites():
     # Regression guard: the converted files must not reintroduce the literal.
     root = pathlib.Path(__file__).resolve().parent.parent
     for rel in (
-        "src/tool_implementations.py",
-        "src/cookbook_serve_lifecycle.py",
-        "src/builtin_actions.py",
-        "routes/task_routes.py",
+        "src/domain/agent/tools/tool_implementations.py",
+        "src/infra/scheduler/cookbook_serve_lifecycle.py",
+        "src/domain/agent/builtin_actions.py",
+        "src/api/router/task_routes.py",
     ):
         text = (root / rel).read_text(encoding="utf-8")
         # Allow it only inside comments; flag any code occurrence.

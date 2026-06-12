@@ -63,20 +63,39 @@ def _load_webhook_routes_for_test(monkeypatch):
     core_db.ModelEndpoint = object
     core_middleware = types.ModuleType("src.api.middleware.security_headers")
     core_middleware.require_admin = lambda request: None
-    webhook_manager = types.ModuleType("src.webhook_manager")
+    webhook_manager = types.ModuleType("src.infra.scheduler.webhook_manager")
     webhook_manager.WebhookManager = object
     webhook_manager.validate_webhook_url = lambda url: url
     webhook_manager.validate_events = lambda events: events
 
+    # Also stub src.database (which conftest creates as a bare ModuleType) so
+    # the shim can resolve imports from it.
+    if "src.database" not in sys.modules or not hasattr(sys.modules["src.database"], "Webhook"):
+        class _AutoStubModule(types.ModuleType):
+            def __getattr__(self, name: str):
+                if name.startswith("__") and name.endswith("__"):
+                    raise AttributeError(name)
+                from unittest.mock import MagicMock
+                mock = MagicMock()
+                object.__setattr__(self, name, mock)
+                return mock
+        _db = _AutoStubModule("src.database")
+        _db.SessionLocal = object
+        _db.ModelEndpoint = object
+        _db.Webhook = object
+        _db.ChatMessage = object
+        _db.Session = object
+        monkeypatch.setitem(sys.modules, "src.database", _db)
+
     monkeypatch.setitem(sys.modules, "core", core_pkg)
     monkeypatch.setitem(sys.modules, "src.infra.database.database", core_db)
     monkeypatch.setitem(sys.modules, "src.api.middleware.security_headers", core_middleware)
-    monkeypatch.setitem(sys.modules, "src.webhook_manager", webhook_manager)
+    monkeypatch.setitem(sys.modules, "src.infra.scheduler.webhook_manager", webhook_manager)
 
     module_name = "routes.webhook_routes_under_test"
     spec = importlib.util.spec_from_file_location(
         module_name,
-        Path(__file__).resolve().parent.parent / "routes" / "webhook_routes.py",
+        Path(__file__).resolve().parent.parent / "src" / "api" / "router" / "webhook_routes.py",
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

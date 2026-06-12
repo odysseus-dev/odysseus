@@ -43,7 +43,7 @@ def test_convert_returns_none_on_conversion_failure(monkeypatch):
         def convert(self, path):
             raise ValueError("bad file")
 
-    monkeypatch.setattr("src.markitdown_runtime.load_markitdown", lambda: Boom)
+    monkeypatch.setattr("src.domain.document.markitdown_runtime.load_markitdown", lambda: Boom)
     assert convert_to_markdown("anything.docx") is None
 
 

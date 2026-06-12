@@ -260,7 +260,7 @@ def get_user_setting(key: str, owner: str = "", default: Any = None) -> Any:
     """
     if owner and key in _PER_USER_KEYS:
         try:
-            from routes.prefs_routes import _load_for_user
+            from src.api.router.prefs_routes import _load_for_user
             prefs = _load_for_user(owner) or {}
             if key in prefs and prefs[key] not in (None, ""):
                 return prefs[key]

@@ -258,7 +258,7 @@ class ResearchHandler:
 
         try:
             from src.domain.research.deep_research import DeepResearcher
-            from src.settings import get_setting
+            from conf.settings import get_setting
 
             researcher = DeepResearcher(
                 llm_endpoint=llm_endpoint,
@@ -438,7 +438,7 @@ class ResearchHandler:
         """Handle research failure with fallback to basic search."""
         try:
             logger.info("Attempting fallback to basic web search...")
-            from src.search import comprehensive_web_search
+            from src.infra.search import comprehensive_web_search
 
             search_result = comprehensive_web_search(query)
 

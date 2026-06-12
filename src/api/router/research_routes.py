@@ -67,7 +67,7 @@ def _owned_enabled_endpoint(db, owner, endpoint_id=None):
     session_routes._owned_endpoint. A null/empty owner is a no-op (single-user /
     legacy mode).
     """
-    from src.database import ModelEndpoint
+    from src.infra.database.database import ModelEndpoint
     from src.infra.auth.auth_helpers import owner_filter
     q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
     if endpoint_id:
@@ -402,7 +402,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
 
         if body.endpoint_id:
-            from src.database import SessionLocal
+            from src.infra.database.database import SessionLocal
             db = SessionLocal()
             try:
                 # Owner-scoped: never resolve another user's private endpoint
@@ -430,7 +430,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             if not ep_url:
                 ep_url, ep_model, ep_headers = resolve_endpoint("chat", owner=user)
             if not ep_url:
-                from src.database import SessionLocal
+                from src.infra.database.database import SessionLocal
                 db = SessionLocal()
                 try:
                     # Owner-scoped first-enabled fallback: the caller's own rows
@@ -595,7 +595,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             _merge(*resolve_endpoint("utility", owner=user))
         if not ep_url or not ep_model:
             # Last resort: this user's enabled endpoint, plus legacy shared rows.
-            from src.database import SessionLocal
+            from src.infra.database.database import SessionLocal
             from src.infra.llm.endpoint_resolver import normalize_base, build_chat_url, build_headers
             db = SessionLocal()
             try:

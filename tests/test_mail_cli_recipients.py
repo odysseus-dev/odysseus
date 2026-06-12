@@ -14,12 +14,12 @@ def _load_mail_cli(monkeypatch):
     helpers._extract_html = lambda msg: ""
     helpers._list_attachments_from_msg = lambda msg: []
 
-    pollers = ModuleType("routes.email_pollers")
+    pollers = ModuleType("src.api.handler.email_pollers")
     pollers._scheduled_poll_once = lambda: {}
     pollers._run_auto_summarize_once = lambda **kwargs: ""
 
     monkeypatch.setitem(sys.modules, "src.api.handler.email_helpers", helpers)
-    monkeypatch.setitem(sys.modules, "routes.email_pollers", pollers)
+    monkeypatch.setitem(sys.modules, "src.api.handler.email_pollers", pollers)
     make_core_db_stub(
         monkeypatch,
         attributes={"SessionLocal": object, "EmailAccount": object},

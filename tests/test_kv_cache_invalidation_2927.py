@@ -39,10 +39,12 @@ def _install_chat_helpers_stubs(monkeypatch):
         "src.infra.database.database",
         "routes.prefs_routes",
         "routes.research_routes",
+        "src.api.router.prefs_routes",
+        "src.api.router.research_routes",
         "src.infra.llm.llm_core",
         "src.domain.context.context_compactor",
         "src.domain.context.model_context",
-        "src.auth_helpers",
+        "src.infra.auth.auth_helpers",
     ]:
         if mod_name not in sys.modules:
             monkeypatch.setitem(sys.modules, mod_name, MagicMock())

@@ -66,7 +66,7 @@ def _ep(base_url, owner):
 
 
 def _resolve(monkeypatch, rows, base_url, owner):
-    monkeypatch.setattr(core.database, "ModelEndpoint", _ModelEndpoint)
+    monkeypatch.setattr(src.infra.database.database, "ModelEndpoint", _ModelEndpoint)
     return _owned_endpoint_by_url(_DB(rows), base_url, owner)
 
 

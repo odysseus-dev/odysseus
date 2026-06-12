@@ -120,7 +120,7 @@ def test_manage_documents_read_filters_to_calling_owner(monkeypatch):
 
 def test_update_document_active_id_filters_to_calling_owner(monkeypatch):
     query = _Query()
-    _install_database_stub(monkeypatch, "src.database", query)
+    _install_database_stub(monkeypatch, "src.infra.database.database", query)
     set_active_document("doc-bob")
     try:
         result = asyncio.run(
@@ -136,7 +136,7 @@ def test_update_document_active_id_filters_to_calling_owner(monkeypatch):
 
 def test_suggest_document_active_id_filters_to_calling_owner(monkeypatch):
     query = _Query()
-    _install_database_stub(monkeypatch, "src.database", query)
+    _install_database_stub(monkeypatch, "src.infra.database.database", query)
     set_active_document("doc-bob")
     try:
         result = asyncio.run(

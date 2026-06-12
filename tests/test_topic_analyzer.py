@@ -78,8 +78,8 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
     # 4. Patch SessionLocal to use our in-memory DB
     import src.infra.database.session_manager
     import src.infra.database.database
-    monkeypatch.setattr(core.session_manager, "SessionLocal", TestSessionLocal)
-    monkeypatch.setattr(core.database, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(src.infra.database.session_manager, "SessionLocal", TestSessionLocal)
+    monkeypatch.setattr(src.infra.database.database, "SessionLocal", TestSessionLocal)
     
     # 5. Initialize the real SessionManager and load metadata (seeds sessions with empty history)
     sm = SessionManager()

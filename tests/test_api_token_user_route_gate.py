@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from src import auth_helpers
+from src.infra.auth import auth_helpers
 
 
 def _request(*, current_user="api", api_token=True, api_token_owner="alice"):

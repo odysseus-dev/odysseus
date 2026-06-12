@@ -62,7 +62,7 @@ async def test_search_and_extract_tracks_all_urls_selected_for_analysis():
 @pytest.mark.asyncio
 async def test_fetch_and_extract_uses_configured_timeout(monkeypatch):
     captured = {}
-    search_mod = types.ModuleType("src.search")
+    search_mod = types.ModuleType("src.infra.search")
 
     def fake_fetch_webpage_content(url, timeout):
         return {
@@ -73,7 +73,7 @@ async def test_fetch_and_extract_uses_configured_timeout(monkeypatch):
         }
 
     search_mod.fetch_webpage_content = fake_fetch_webpage_content
-    monkeypatch.setitem(sys.modules, "src.search", search_mod)
+    monkeypatch.setitem(sys.modules, "src.infra.search", search_mod)
 
     async def immediate_to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)

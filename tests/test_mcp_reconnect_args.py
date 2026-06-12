@@ -28,8 +28,8 @@ def test_reconnect_passes_full_server_config():
     fake_db = MagicMock()
     fake_db.query.return_value.filter.return_value.first.return_value = fake_srv
 
-    with patch("src.tool_implementations.get_mcp_manager", return_value=fake_mcp), \
-         patch("core.database.SessionLocal", return_value=fake_db):
+    with patch("src.domain.agent.tools.tool_implementations.get_mcp_manager", return_value=fake_mcp), \
+         patch("src.infra.database.database.SessionLocal", return_value=fake_db):
         result = asyncio.run(do_manage_mcp(
             json.dumps({"action": "reconnect", "server_id": "srv-123"})
         ))

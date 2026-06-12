@@ -6,7 +6,7 @@ with native tool-calling. These tests pin the three host-list integrations:
   - teacher escalation treats Venice as SOTA (loop OFF, no added latency).
 """
 from src.domain.agent import agent_loop
-from src import teacher_escalation
+from src.domain.agent import teacher_escalation
 
 
 class TestAgentToolHosts:

@@ -47,7 +47,7 @@ _STATE_PATH = _DATA_DIR / "cookbook_state.json"
 import tempfile
 _TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
 
-from core.platform_compat import NVIDIA_PATH_CANDIDATES, SSH_PATH_OVERRIDE
+from src.pkg.platform_compat import NVIDIA_PATH_CANDIDATES, SSH_PATH_OVERRIDE
 
 
 

@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 try:
-    from core.database import SessionLocal, Note
+    from src.infra.database.database import SessionLocal, Note
     quiet_logs()
 except ModuleNotFoundError as e:
     sys.stderr.write(f"error: {e}\nhint: run from repo root with venv active.\n")

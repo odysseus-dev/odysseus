@@ -78,8 +78,19 @@ def _ep(eid, owner, *, is_enabled=True):
 
 
 def _resolve(rows, owner, endpoint_id=None):
+    _saved = sys.modules["src.database"].ModelEndpoint
     sys.modules["src.database"].ModelEndpoint = _ModelEndpoint
-    return _owned_enabled_endpoint(_DB(rows), owner, endpoint_id)
+    # Also protect the new DDD path in case code imports from there directly.
+    _infra = sys.modules.get("src.infra.database.database")
+    _saved_infra = getattr(_infra, "ModelEndpoint", None) if _infra is not None else None
+    if _infra is not None:
+        _infra.ModelEndpoint = _ModelEndpoint
+    try:
+        return _owned_enabled_endpoint(_DB(rows), owner, endpoint_id)
+    finally:
+        sys.modules["src.database"].ModelEndpoint = _saved
+        if _infra is not None:
+            _infra.ModelEndpoint = _saved_infra
 
 
 # --- explicit endpoint_id (POST /api/research/start, body.endpoint_id) --------
@@ -143,7 +154,7 @@ def test_runtime_resolution_uses_provider_auth_for_chatgpt_subscription(monkeypa
     )
 
     monkeypatch.setattr(
-        "src.chatgpt_subscription.resolve_runtime_credentials",
+        "src.infra.integration.chatgpt_subscription.resolve_runtime_credentials",
         lambda auth_id, owner=None: {
             "base_url": "https://chatgpt.com/backend-api/codex",
             "api_key": "fresh-access-token",

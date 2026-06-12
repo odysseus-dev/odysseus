@@ -1,7 +1,7 @@
 import pytest
 from fastapi import HTTPException
 
-from routes._validators import validate_remote_host, validate_ssh_port
+from src.api.validator import validate_remote_host, validate_ssh_port
 
 
 def test_validate_ssh_port_rejects_shell_payload():

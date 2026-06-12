@@ -21,7 +21,9 @@ def make_core_db_stub(
     Returns the stub module for optional further configuration.
     """
     if install_core_package:
-        monkeypatch.setitem(sys.modules, "core", types.ModuleType("core"))
+        core_pkg = types.ModuleType("core")
+        core_pkg.__path__ = []  # Make it a proper package so submodules can be imported
+        monkeypatch.setitem(sys.modules, "core", core_pkg)
 
     db = types.ModuleType("src.infra.database.database")
     db.SessionLocal = MagicMock()

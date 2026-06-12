@@ -1695,7 +1695,7 @@ class TaskScheduler:
         from src.domain.research.deep_research import DeepResearcher
         from src.domain.research.research_handler import RESEARCH_DATA_DIR, ResearchHandler
         from src.domain.research.research_utils import strip_thinking
-        from src.settings import get_setting
+        from conf.settings import get_setting
 
         # Resolve endpoint/model: research settings > task settings > session defaults
         endpoint_url = task.endpoint_url

@@ -9,7 +9,7 @@ import types
 
 import pytest
 
-from src import service_health as sh
+from src.infra.scheduler import service_health as sh
 
 
 def _resp(status_code):

@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, Form, Depends
 from src.pkg.constants import EMBEDDING_ENDPOINT_FILE, FASTEMBED_CACHE_DIR
-from core.middleware import require_admin
+from src.api.middleware.security_headers import require_admin
 
 logger = logging.getLogger(__name__)
 

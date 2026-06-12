@@ -14,8 +14,16 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import src.api.handler.chat_helpers as chat_helpers
-import src.infra.llm.endpoint_resolver as endpoint_resolver
 from src.infra.database.database import Base, ModelEndpoint, Session as DbSession
+
+# NOTE: Do NOT import src.infra.llm.endpoint_resolver at module level.
+# Some test files pop it from sys.modules; the autouse fixture in
+# conftest.py re-imports a fresh copy before each test.  A module-level
+# import would hold a reference to a potentially stale (or soon-to-be-
+# stale) module object, causing monkeypatch.setattr to patch the wrong
+# instance.  Every test that needs it imports it inside the function
+# body instead, so the import always resolves to the sys.modules copy
+# that the code under test will see.
 
 _CODEX_BASE = "https://chatgpt.com/backend-api/codex"
 
@@ -45,6 +53,7 @@ def test_chatgpt_subscription_auth_is_not_written_to_sessions_table(monkeypatch)
     finally:
         db.close()
 
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
     # A live access token is resolved at request time.
     monkeypatch.setattr(
         endpoint_resolver, "resolve_endpoint_runtime",
@@ -97,6 +106,7 @@ def test_non_subscription_auth_is_still_persisted_to_sessions_table(monkeypatch)
     finally:
         db.close()
 
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
     monkeypatch.setattr(
         endpoint_resolver, "resolve_endpoint_runtime",
         lambda ep, owner=None: (base, "sk-static"),
@@ -141,6 +151,7 @@ def test_chatgpt_subscription_clears_previously_persisted_bearer(monkeypatch):
     finally:
         db.close()
 
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
     monkeypatch.setattr(
         endpoint_resolver,
         "resolve_endpoint_runtime",
@@ -183,6 +194,7 @@ def test_chatgpt_subscription_fallback_auth_is_not_written_to_sessions_table(mon
     finally:
         db.close()
 
+    import src.infra.llm.endpoint_resolver as endpoint_resolver
     monkeypatch.setattr(
         endpoint_resolver,
         "resolve_endpoint_runtime",

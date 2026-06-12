@@ -45,7 +45,7 @@ class TTSService:
     # ── Settings ──
 
     def _load_settings(self) -> dict:
-        from src.settings import load_settings
+        from conf.settings import load_settings
         saved = load_settings()
         return {
             "tts_enabled": saved.get("tts_enabled", True),
@@ -106,7 +106,7 @@ class TTSService:
     # ── API endpoint ──
 
     def _synthesize_api(self, text: str, endpoint_id: str, model: str, voice: str, speed: float = 1.0) -> Optional[bytes]:
-        from src.database import SessionLocal, ModelEndpoint
+        from src.infra.database.database import SessionLocal, ModelEndpoint
 
         db = SessionLocal()
         try:

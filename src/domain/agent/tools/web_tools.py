@@ -6,7 +6,7 @@ from src.pkg.constants import MAX_OUTPUT_CHARS
 
 class WebSearchTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.search import comprehensive_web_search
+        from src.infra.search import comprehensive_web_search
         raw = content.strip()
         query = raw
         time_filter = None
@@ -56,7 +56,7 @@ class WebSearchTool:
 
 class WebFetchTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.search.content import fetch_webpage_content
+        from src.infra.search.content import fetch_webpage_content
         raw = content.strip()
         url = ""
         if raw.startswith("{"):

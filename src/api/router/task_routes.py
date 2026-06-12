@@ -39,7 +39,7 @@ def _maybe_cascade_calendar_event(task) -> None:
         return
 
     import httpx
-    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
+    from src.api.middleware.security_headers import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
     headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
     if task.owner:
         headers["X-Odysseus-Owner"] = task.owner

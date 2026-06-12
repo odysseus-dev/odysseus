@@ -228,7 +228,7 @@ def test_session_search_excludes_archived_by_default():
 
 
 def test_chat_messages_fts_migration_backfills_and_tracks_inserts(tmp_path, monkeypatch):
-    from core import database as cdb
+    from src.infra.database import database as cdb
 
     db_path = tmp_path / "app.db"
     conn = sqlite3.connect(db_path)

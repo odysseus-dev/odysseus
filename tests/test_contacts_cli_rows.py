@@ -11,6 +11,7 @@ def _load_cli(monkeypatch):
     routes._fetch_contacts = MagicMock()
     routes._create_contact = MagicMock()
     monkeypatch.setitem(sys.modules, "routes.contacts_routes", routes)
+    monkeypatch.setitem(sys.modules, "src.api.router.contacts_routes", routes)
     return load_script("odysseus-contacts")
 
 

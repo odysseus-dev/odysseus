@@ -16,6 +16,15 @@ import pytest
 
 from tests.helpers.import_state import clear_module
 
+# Pre-import Base/DbSession at module level to avoid sys.modules corruption
+# from other test files' module-level MagicMock stubs (which run during
+# collection after this file but before this test function executes).
+try:
+    from src.infra.database.database import Base, Session as DbSession  # noqa: F401
+except ImportError:
+    Base = None  # type: ignore[assignment]
+    DbSession = None  # type: ignore[assignment]
+
 
 def _real_core_package():
     root = Path(__file__).resolve().parent.parent
@@ -58,8 +67,6 @@ def _has_real_sqlalchemy():
 def test_rename_owner_db_filter_is_case_insensitive():
     from sqlalchemy import create_engine, func
     from sqlalchemy.orm import sessionmaker
-
-    from src.infra.database.database import Base, Session as DbSession
 
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)

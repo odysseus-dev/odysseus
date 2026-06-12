@@ -47,7 +47,7 @@ def quiet_logs() -> None:
 quiet_logs()
 
 try:
-    from core.database import SessionLocal, CalendarCal, CalendarEvent
+    from src.infra.database.database import SessionLocal, CalendarCal, CalendarEvent
     quiet_logs()
 except ModuleNotFoundError as e:
     sys.stderr.write(

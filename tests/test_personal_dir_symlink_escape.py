@@ -14,7 +14,7 @@ import ast
 import os
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "routes" / "personal_routes.py"
+SRC = Path(__file__).resolve().parent.parent / "src" / "api" / "router" / "personal_routes.py"
 
 
 def _function_source(src_text, name):
