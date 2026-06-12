@@ -37,12 +37,15 @@ def _safe_actions(actions: list[str]) -> list[str]:
     """Filter to only allowed actions before returning to OpenClaw."""
     return [a for a in actions if a in _ALLOWED_ACTIONS]
 
+import re
+
 def _sanitize_dict(data: dict) -> dict:
     """Recursively redact sensitive keys from a dictionary."""
     redact_keys = {'token', 'secret', 'password', 'api_key', 'authorization', 'headers', 'auth'}
     clean = {}
     for k, v in data.items():
-        if any(rk in k.lower() for rk in redact_keys):
+        k_lower = k.lower()
+        if any(re.search(rf'(^|[-_]){re.escape(rk)}s?([-_]|$)', k_lower) for rk in redact_keys):
             clean[k] = '***REDACTED***'
         elif isinstance(v, dict):
             clean[k] = _sanitize_dict(v)

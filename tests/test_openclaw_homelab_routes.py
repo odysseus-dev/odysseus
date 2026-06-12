@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from types import SimpleNamespace
 
 import pytest
@@ -93,9 +94,10 @@ def test_sanitize_service_redacts_sensitive_fields():
         'secrets': ['a', 'b'],
         'nested': [{'token': 'abc', 'public': 'yes'}],
         'public_list': ['one', 'two'],
+        'author': 'Jane Doe',
     }
     # Original dict should not be mutated
-    raw_copy = dict(raw)
+    raw_copy = copy.deepcopy(raw)
     
     clean = _sanitize_service(raw)
     assert clean['name'] == 'pihole'
@@ -107,6 +109,7 @@ def test_sanitize_service_redacts_sensitive_fields():
     assert clean['nested'][0]['token'] == '***REDACTED***'
     assert clean['nested'][0]['public'] == 'yes'
     assert clean['public_list'] == ['one', 'two']
+    assert clean['author'] == 'Jane Doe'
     
     assert raw == raw_copy
 
