@@ -11,6 +11,7 @@ from typing import Any, Iterable
 from sqlalchemy import text
 
 from core.database import ChatMessage as DBChatMessage
+from core.database import GroupChatState
 from core.database import Session as DBSession
 from core.database import SessionLocal
 
@@ -134,6 +135,30 @@ def _owner_filter(query, owner: str | None, include_legacy_owner: bool):
     return query.filter((DBSession.owner == owner) | (DBSession.owner.is_(None)))
 
 
+def _group_participant_ids_from_state(state) -> set[str]:
+    if not isinstance(state, dict):
+        return set()
+    participants = state.get("participantSessions")
+    if not isinstance(participants, list):
+        return set()
+    return {str(session_id) for session_id in participants if session_id}
+
+
+def _hidden_group_participant_ids(db, owner: str | None, restrict_owner: bool, include_legacy_owner: bool) -> set[str]:
+    q = db.query(GroupChatState.state)
+    if restrict_owner:
+        if owner is None:
+            q = q.filter(GroupChatState.owner.is_(None))
+        elif include_legacy_owner:
+            q = q.filter((GroupChatState.owner == owner) | (GroupChatState.owner.is_(None)))
+        else:
+            q = q.filter(GroupChatState.owner == owner)
+    participant_ids: set[str] = set()
+    for (state,) in q.all():
+        participant_ids.update(_group_participant_ids_from_state(state))
+    return participant_ids
+
+
 def _context_for_message(db, msg: DBChatMessage, count: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if count <= 0 or not msg.timestamp:
         return [], []
@@ -209,6 +234,9 @@ def _search_like(
         q = q.filter(DBSession.archived == False)
     if restrict_owner:
         q = _owner_filter(q, owner, include_legacy_owner)
+    hidden_participant_ids = _hidden_group_participant_ids(db, owner, restrict_owner, include_legacy_owner)
+    if hidden_participant_ids:
+        q = q.filter(~DBChatMessage.session_id.in_(hidden_participant_ids))
     rows = q.order_by(DBChatMessage.timestamp.desc()).limit(limit).all()
     shaped = ((msg, session_name, _snippet(msg.content or "", query)) for msg, session_name in rows)
     return _rows_to_results(db, shaped, query, context_messages)
@@ -276,6 +304,8 @@ def _search_fts(
         """
     )
 
+    hidden_participant_ids = _hidden_group_participant_ids(db, owner, restrict_owner, include_legacy_owner)
+
     try:
         hits = db.execute(sql, params).fetchall()
     except Exception as e:
@@ -291,6 +321,8 @@ def _search_fts(
         found = by_id.get(hit[0])
         if found:
             msg, session_name = found
+            if msg.session_id in hidden_participant_ids:
+                continue
             rows.append((msg, session_name, hit[1] or ""))
     return _rows_to_results(db, rows, query, context_messages)
 

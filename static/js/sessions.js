@@ -145,10 +145,24 @@ function getFolderNames() {
 async function moveToFolder(sessionId, folderName) {
   const fd = new FormData();
   fd.append('folder', folderName || '');
-  await fetch(`${API_BASE}/api/session/${sessionId}`, { method: 'PATCH', body: fd });
+  const res = await fetch(`${API_BASE}/api/session/${sessionId}`, {
+    method: 'PATCH',
+    body: fd,
+    credentials: 'same-origin',
+  });
+  if (!res.ok) {
+    let message = 'Failed to move session';
+    try {
+      const data = await res.json();
+      message = data.detail || data.message || message;
+    } catch (e) {}
+    uiModule.showError(message);
+    throw new Error(message);
+  }
+  const data = await res.json().catch(() => ({}));
   // Update local data
   const s = sessions.find(x => x.id === sessionId);
-  if (s) s.folder = folderName || null;
+  if (s) s.folder = data.folder !== undefined ? data.folder : (folderName || null);
   renderSessionList();
 }
 

@@ -269,6 +269,58 @@ def _normalize_group_state(raw_state, parent_session_id: str) -> dict:
     }
 
 
+def _group_participant_ids_from_state(state) -> set[str]:
+    if not isinstance(state, dict):
+        return set()
+    raw_participants = state.get("participantSessions")
+    if not isinstance(raw_participants, list):
+        return set()
+    return {str(session_id) for session_id in raw_participants if session_id}
+
+
+def _group_state_query_for_user(db, user):
+    q = db.query(GroupChatState.parent_session_id, GroupChatState.state)
+    if user is not None:
+        q = q.filter(GroupChatState.owner == user)
+    return q
+
+
+def _group_session_links_for_user(db, user) -> tuple[set[str], set[str]]:
+    parent_ids: set[str] = set()
+    participant_ids: set[str] = set()
+    for parent_id, state in _group_state_query_for_user(db, user).all():
+        if parent_id:
+            parent_ids.add(parent_id)
+        participant_ids.update(_group_participant_ids_from_state(state))
+    return parent_ids, participant_ids
+
+
+def _group_parent_for_participant(db, session_id: str, user) -> str | None:
+    for parent_id, state in _group_state_query_for_user(db, user).all():
+        if session_id in _group_participant_ids_from_state(state):
+            return parent_id
+    return None
+
+
+def _set_group_participant_folders(db, participant_ids: set[str], folder: str | None, user) -> None:
+    if not participant_ids:
+        return
+    q = db.query(DbSession).filter(DbSession.id.in_(participant_ids))
+    if user is not None:
+        q = q.filter(DbSession.owner == user)
+    now = datetime.utcnow()
+    for participant in q.all():
+        participant.folder = folder
+        participant.updated_at = now
+
+
+def _sync_group_participant_folder(db, parent_session_id: str, folder: str | None, user) -> None:
+    row = db.query(GroupChatState.state).filter(GroupChatState.parent_session_id == parent_session_id).first()
+    if row is None:
+        return
+    _set_group_participant_folders(db, _group_participant_ids_from_state(row.state), folder, user)
+
+
 _HIDDEN_SYSTEM_SESSION_NAMES = {
     "[Task] Chat Sessions Tidy",
     "[Task] Documents Tidy",
@@ -356,6 +408,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             last_msg_map = {}
             mode_map = {}
             msg_count_map = {}
+            _, group_participant_ids = _group_session_links_for_user(db, user)
             q = db.query(DbSession.id, DbSession.folder, DbSession.total_input_tokens, DbSession.total_output_tokens, DbSession.is_important, DbSession.created_at, DbSession.updated_at, DbSession.last_message_at, DbSession.mode, DbSession.message_count).filter(DbSession.archived == False)
             q = owner_filter(q, DbSession, user)
             rows = q.all()
@@ -409,6 +462,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                      "message_count": msg_count_map.get(s.id, 0)}
                     for s in user_sessions.values()
                     if not s.archived
+                    and s.id not in group_participant_ids
                     and (s.name or "").strip() not in ("Nobody", "Incognito")
                     and (s.name or "").strip() not in _HIDDEN_SYSTEM_SESSION_NAMES]
 
@@ -565,12 +619,24 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if folder is not None:
             db = SessionLocal()
             try:
+                user = effective_user(request)
+                parent_id = _group_parent_for_participant(db, sid, user)
+                if parent_id:
+                    raise HTTPException(403, "Move the parent group chat instead")
                 db_session = db.query(DbSession).filter(DbSession.id == sid).first()
                 if db_session:
-                    db_session.folder = folder if folder else None
+                    folder_value = folder if folder else None
+                    db_session.folder = folder_value
                     db_session.updated_at = datetime.utcnow()
+                    _sync_group_participant_folder(db, sid, folder_value, user)
                     db.commit()
-                    result["folder"] = folder if folder else None
+                    result["folder"] = folder_value
+            except HTTPException:
+                db.rollback()
+                raise
+            except Exception:
+                db.rollback()
+                raise
             finally:
                 db.close()
         # Switch model/endpoint mid-session
@@ -669,6 +735,13 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             group_state.mode = state["mode"]
             group_state.state = state
             group_state.updated_at = utcnow_naive()
+            parent_folder = db.query(DbSession.folder).filter(DbSession.id == sid).first()
+            _set_group_participant_folders(
+                db,
+                participant_ids,
+                parent_folder.folder if parent_folder else None,
+                user,
+            )
             db.commit()
             return {"ok": True, "group_state": state}
         except HTTPException:
@@ -869,6 +942,9 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             if not user:
                 raise HTTPException(403, "Authentication required")
             q = q.filter(DbSession.owner == user)
+            _, group_participant_ids = _group_session_links_for_user(db, user)
+            if group_participant_ids:
+                q = q.filter(~DbSession.id.in_(group_participant_ids))
             if search:
                 safe_search = search.replace('%', r'\%').replace('_', r'\_')
                 q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))
@@ -1170,6 +1246,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         db = SessionLocal()
         deleted_empty = 0
         deleted_throwaway = 0
+        group_parent_ids: set[str] = set()
+        group_participant_ids: set[str] = set()
         # Names that indicate a throwaway/test session (case-insensitive exact or prefix match)
         _THROWAWAY_NAMES = {
             "test", "testing", "asdf", "asd", "hello", "hi", "hey",
@@ -1182,6 +1260,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
             rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).limit(2000).all()
+            group_parent_ids, group_participant_ids = _group_session_links_for_user(db, user)
+            protected_group_ids = group_parent_ids | group_participant_ids
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row
@@ -1194,6 +1274,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             )
             cleanup_now = utcnow_naive()
             for row in rows:
+                if row.id in protected_group_ids:
+                    continue
                 # Never delete important sessions
                 if getattr(row, 'is_important', False):
                     continue
@@ -1271,6 +1353,8 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         all_candidates = []
         for s in user_sessions.values():
             if s.archived or s.name == "Incognito":
+                continue
+            if s.id in group_participant_ids:
                 continue
             if folder_map.get(s.id):
                 # Already in a folder — skip on this pass.
@@ -1405,6 +1489,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 if db_session:
                     db_session.folder = folder_name
                     db_session.updated_at = datetime.utcnow()
+                    _sync_group_participant_folder(db, sid, folder_name, user)
                     updated += 1
             db.commit()
         except Exception as e:
