@@ -1044,18 +1044,17 @@ def _build_system_prompt(
 
     # Inject writing style for any email writing path. This is deliberately
     # broader than read/list: models may compose via send_email, reply_to_email,
-    # or ui_control open_email_reply after the first tool round.
+    # or ui_control open_email_reply after the first tool round. Derived from
+    # BUILTIN_EMAIL_TOOLS in both spellings so newly exposed email tools — the
+    # draft path in particular, which is the PREFERRED way to write email —
+    # can't miss the saved writing style and the identity/mechanical rules
+    # the way the old hand-maintained list did (PR #3681 review follow-up).
     _inject_style = False
-    _EMAIL_TOOL_HINTS = {
-        "list_email_accounts", "send_email", "reply_to_email", "list_emails", "read_email",
-        "bulk_email", "archive_email", "delete_email", "mark_email_read",
-        "resolve_contact", "ui_control",
-        "mcp__email__list_email_accounts",
-        "mcp__email__send_email", "mcp__email__reply_to_email",
-        "mcp__email__list_emails", "mcp__email__read_email",
-        "mcp__email__bulk_email", "mcp__email__archive_email",
-        "mcp__email__delete_email", "mcp__email__mark_email_read",
-    }
+    _EMAIL_TOOL_HINTS = (
+        set(BUILTIN_EMAIL_TOOLS)
+        | {f"mcp__email__{_t}" for _t in BUILTIN_EMAIL_TOOLS}
+        | {"resolve_contact", "ui_control"}
+    )
     if active_document and active_document.language == "email":
         _inject_style = True
     elif relevant_tools and (_EMAIL_TOOL_HINTS & set(relevant_tools)):
