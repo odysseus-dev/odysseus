@@ -13,7 +13,7 @@ from dateutil.rrule import rrulestr
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import require_user
-from src.upload_limits import read_upload_limited
+from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,17 @@ def parse_due_for_user(s: str) -> str:
         if not rest:
             return base.isoformat()
         t = _parse_time(rest)
+        if t is not None:
+            return base.replace(hour=t[0], minute=t[1]).isoformat()
+
+    # Time-first: "3pm today", "11pm today", "9am tomorrow"
+    m = _re.match(r'^(.+?)\s+(today|tonight|tomorrow|tmrw|yesterday)$', lower)
+    if m:
+        time_part, word = m.group(1).strip(), m.group(2)
+        base = today
+        if word in ("tomorrow", "tmrw"): base = today + _td(days=1)
+        elif word == "yesterday":        base = today - _td(days=1)
+        t = _parse_time(time_part)
         if t is not None:
             return base.replace(hour=t[0], minute=t[1]).isoformat()
 
@@ -840,27 +851,26 @@ def setup_calendar_routes() -> APIRouter:
         from src.caldav_sync import sync_caldav
         return await sync_caldav(owner)
 
+
     @router.delete("/calendars/{cal_id}")
-    async def delete_calendar(cal_id: str, request: Request):
+    async def delete_calendar(request: Request, cal_id: str):
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            cal = db.query(CalendarCal).filter(
-                CalendarCal.id == cal_id,
-                CalendarCal.owner == owner,
-            ).first()
-            if not cal:
-                raise HTTPException(404, "Calendar not found")
+            cal = _get_or_404_calendar(db, cal_id, owner)
+            db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
             db.delete(cal)
             db.commit()
             return {"ok": True}
         except HTTPException:
             raise
         except Exception as e:
+            db.rollback()
             logger.error("Failed to delete calendar %s: %s", cal_id, e)
             raise HTTPException(500, "Failed to delete calendar")
         finally:
             db.close()
+
 
     @router.get("/calendars")
     async def list_calendars(request: Request):
@@ -1141,27 +1151,10 @@ def setup_calendar_routes() -> APIRouter:
         finally:
             db.close()
 
-    @router.delete("/calendars/{cal_id}")
-    async def delete_calendar(request: Request, cal_id: str):
-        owner = _require_user(request)
-        db = SessionLocal()
-        try:
-            cal = _get_or_404_calendar(db, cal_id, owner)
-            db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
-            db.delete(cal)
-            db.commit()
-            return {"ok": True}
-        except HTTPException:
-            raise
-        except Exception as e:
-            db.rollback()
-            return {"error": str(e)}
-        finally:
-            db.close()
 
-    # 10 MB hard cap on ICS upload. Loading the whole file into memory is
-    # unavoidable with python-icalendar, so an unbounded upload would OOM.
-    _ICS_MAX_BYTES = 10 * 1024 * 1024
+    # Hard cap on ICS upload (ICS_MAX_BYTES, default 10 MB). Loading the whole
+    # file into memory is unavoidable with python-icalendar, so an unbounded
+    # upload would OOM.
 
     @router.post("/import")
     async def import_ics(request: Request, file: UploadFile = File(...), calendar_name: str = ""):
@@ -1171,7 +1164,7 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            content = await read_upload_limited(file, _ICS_MAX_BYTES, "ICS file")
+            content = await read_upload_limited(file, ICS_MAX_BYTES, "ICS file")
             try:
                 cal_data = iCal.from_ical(content)
             except Exception as e:
@@ -1368,7 +1361,7 @@ def setup_calendar_routes() -> APIRouter:
         "tomorrow", "next Tuesday", "in 30 minutes" resolve correctly.
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
-        _require_user(request)
+        owner = _require_user(request)
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think
@@ -1394,9 +1387,9 @@ def setup_calendar_routes() -> APIRouter:
         if tz_hint:
             set_user_tz_name(tz_hint)
 
-        url, model, headers = resolve_endpoint("utility")
+        url, model, headers = resolve_endpoint("utility", owner=owner or None)
         if not url:
-            url, model, headers = resolve_endpoint("default")
+            url, model, headers = resolve_endpoint("default", owner=owner or None)
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 

@@ -63,6 +63,46 @@ def _has_duplicate_title(skills, title: str) -> bool:
     return False
 
 
+def _extract_json_object(text: str) -> Optional[dict]:
+    """Best-effort extraction of a JSON object from an LLM response.
+
+    The response may be wrapped in code fences or surrounded by prose, and some
+    models emit a stray brace in the prose before the real object
+    (e.g. "uses {placeholder} then {...}"). Slicing first-'{' .. last-'}' then
+    grabs an unparseable span and the skill is silently lost. Try the whole
+    string first, then each '{' start position in turn, returning the first
+    candidate that parses to a JSON object (dict). Returns None if none do.
+    """
+    if not text:
+        return None
+    s = text.strip()
+    if s.startswith("```"):
+        s = s.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+    end = s.rfind("}")
+    if end == -1:
+        return None
+
+    def _as_dict(candidate):
+        try:
+            obj = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    # The clean, common case: the whole (de-fenced) string is the object.
+    obj = _as_dict(s)
+    if obj is not None:
+        return obj
+    # Otherwise scan each '{' candidate up to the last '}'.
+    start = s.find("{")
+    while 0 <= start < end:
+        obj = _as_dict(s[start : end + 1])
+        if obj is not None:
+            return obj
+        start = s.find("{", start + 1)
+    return None
+
+
 async def maybe_extract_skill(
     session,
     skills_manager,
@@ -169,21 +209,14 @@ async def maybe_extract_skill(
         except Exception:
             pass
 
-        # Parse JSON
-        text = response.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        # After strip_think, the JSON may still be embedded inside surrounding
-        # commentary — slice from the first '{' to the matching last '}'.
-        if text and text[0] != "{":
-            _start = text.find("{")
-            _end = text.rfind("}")
-            if 0 <= _start < _end:
-                text = text[_start : _end + 1]
-
-        data = json.loads(text)
-        if not data or not isinstance(data, dict):
-            logger.debug("[skill-extract] parsed JSON not a dict, dropping")
+        # Parse JSON. The object may be wrapped in code fences or surrounded by
+        # commentary (and may contain a stray/invalid brace fragment before
+        # the real object — including one that makes the response itself look
+        # like it starts with '{'), so use a tolerant extractor that tries the
+        # whole string first and then each '{' candidate left-to-right.
+        data = _extract_json_object(response)
+        if not data:
+            logger.debug("[skill-extract] no JSON object found in response, dropping")
             return None
 
         title = data.get("title", "").strip()
@@ -210,6 +243,20 @@ async def maybe_extract_skill(
             logger.debug("[skill-extract] '%s' already exists — dropped as duplicate", title)
             return None
 
+        # Auto-publish gate: if the user has `auto_approve_skills` on, the
+        # newly-extracted skill is created `published` immediately rather
+        # than waiting for the next audit batch. The audit still runs later
+        # and can demote it back to `draft` (or delete) on failure. Default
+        # ON matches the UI label "Auto-approve skills".
+        _initial_status = "draft"
+        try:
+            from routes.prefs_routes import _load_for_user as _load_prefs
+            _prefs = _load_prefs(owner) or {}
+            if _prefs.get("auto_approve_skills", True):
+                _initial_status = "published"
+        except Exception:
+            pass
+
         entry = skills_manager.add_skill(
             title=title,
             problem=data.get("problem", ""),
@@ -220,6 +267,7 @@ async def maybe_extract_skill(
             confidence=data.get("confidence", 0.7),
             session_id=getattr(session, "session_id", None),
             owner=owner,
+            status=_initial_status,
         )
         try:
             from src.event_bus import fire_event

@@ -32,9 +32,10 @@ from email.mime.multipart import MIMEMultipart
 
 from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
+from src.constants import DATA_DIR
 
 from src.llm_core import llm_call_async
-from src.upload_limits import read_upload_limited
+from src.upload_limits import read_upload_limited, EMAIL_COMPOSE_UPLOAD_MAX_BYTES
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -47,6 +48,7 @@ from routes.email_helpers import (
     _extract_attachment_to_disk, _extract_html, _extract_text,
     _fetch_sender_thread_context, _pre_retrieve_context,
     _EMAIL_REPLY_SYS_PROMPT_BASE, _POOL_HOOKS,
+    _friendly_email_auth_error,
     SendEmailRequest, ExtractStyleRequest,
     ATTACHMENTS_DIR, COMPOSE_UPLOADS_DIR, SCHEDULED_DB,
     attachment_extract_dir, _email_cache_owner_clause,
@@ -56,7 +58,6 @@ from routes.email_pollers import _start_poller
 logger = logging.getLogger(__name__)
 
 ODYSSEUS_MAIL_ORIGIN = "odysseus-ui"
-EMAIL_COMPOSE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
 
 
 def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[str]:
@@ -246,6 +247,41 @@ def _imap_uid_fetch(conn, uid_set: str | bytes, query: str):
 def _uid_from_fetch_meta(meta_b: bytes) -> str:
     m = re.search(rb"\bUID\s+(\d+)\b", meta_b)
     return m.group(1).decode() if m else ""
+
+
+_FETCH_SEQ_RE = re.compile(rb"^(\d+)\s+\(")
+
+
+def _group_uid_fetch_records(msg_data) -> list:
+    """Group an imaplib UID FETCH response into per-message (meta, payload).
+
+    imaplib yields an interleaved list: ``(meta, literal)`` tuples for
+    attributes that carry a literal (``RFC822.HEADER {n}`` etc.) plus bare
+    ``bytes`` elements for everything the server sends outside a literal.
+    Where each attribute lands is server-specific: Dovecot sends FLAGS
+    *before* the header literal (so it ends up inside the tuple meta), while
+    Gmail sends FLAGS *after* it, arriving as a bare ``b' FLAGS (\\Seen))'``
+    element. Dropping bare elements therefore silently loses FLAGS on Gmail
+    and every message renders as unread/unflagged.
+
+    A tuple whose meta starts with a sequence number opens a new record;
+    every other part — continuation tuple or bare bytes — is folded into the
+    current record's meta so attribute regexes see the full meta text.
+    Plain ``b')'`` terminators get folded in too, which is harmless.
+    """
+    grouped: list = []  # list of (meta_bytes, payload_bytes_or_None)
+    for part in (msg_data or []):
+        if isinstance(part, tuple):
+            meta_b = part[0] if isinstance(part[0], (bytes, bytearray)) else str(part[0]).encode()
+            if _FETCH_SEQ_RE.match(meta_b):
+                grouped.append((meta_b, part[1]))
+            elif grouped:
+                cur_meta, cur_payload = grouped[-1]
+                grouped[-1] = (cur_meta + b" " + meta_b, cur_payload or part[1])
+        elif isinstance(part, (bytes, bytearray)) and grouped:
+            cur_meta, cur_payload = grouped[-1]
+            grouped[-1] = (cur_meta + b" " + bytes(part), cur_payload)
+    return grouped
 
 
 def _smtp_ready(cfg: dict) -> bool:
@@ -798,20 +834,11 @@ def setup_email_routes():
                 except Exception as e:
                     logger.warning(f"Batch fetch failed, falling back to per-UID: {e}")
                     status, msg_data = "NO", []
-                # imaplib batch responses interleave (meta, payload) tuples and
-                # `b')'` terminators. Group by message: each tuple where the
-                # meta begins with a seq number starts a new message record.
-                seq_re = re.compile(rb'^(\d+)\s+\(')
-                grouped = []  # list of (meta_str, payload_bytes)
-                for part in (msg_data or []):
-                    if isinstance(part, tuple):
-                        meta_b = part[0] if isinstance(part[0], (bytes, bytearray)) else str(part[0]).encode()
-                        if seq_re.match(meta_b):
-                            grouped.append((meta_b, part[1]))
-                        elif grouped:
-                            # continuation of previous message — concatenate meta info if any
-                            cur_meta, cur_payload = grouped[-1]
-                            grouped[-1] = (cur_meta + b" " + meta_b, cur_payload or part[1])
+                # Group the batched response into per-message (meta, payload)
+                # records. Bare bytes parts must be kept: Gmail returns FLAGS
+                # after the header literal as a bare element, and dropping it
+                # rendered every Gmail message as unread/unflagged.
+                grouped = _group_uid_fetch_records(msg_data)
 
                 if status != "OK" and not grouped:
                     conn.logout()
@@ -1097,14 +1124,15 @@ def setup_email_routes():
                             continue
                         raw_header = None
                         flags = ""
-                        for part in msg_data:
-                            if isinstance(part, tuple):
-                                meta = part[0].decode() if isinstance(part[0], bytes) else str(part[0])
-                                if b"RFC822.HEADER" in part[0] if isinstance(part[0], bytes) else "RFC822.HEADER" in meta:
-                                    raw_header = part[1]
-                                flag_match = re.search(r'FLAGS \(([^)]*)\)', meta)
-                                if flag_match:
-                                    flags = flag_match.group(1)
+                        # Same Gmail caveat as the list route: FLAGS may
+                        # arrive after the header literal, so group bare
+                        # parts back into the message meta before scanning.
+                        for meta_b, payload in _group_uid_fetch_records(msg_data):
+                            if payload and b"RFC822.HEADER" in meta_b:
+                                raw_header = payload
+                            flag_match = re.search(rb'FLAGS \(([^)]*)\)', meta_b)
+                            if flag_match:
+                                flags = flag_match.group(1).decode(errors="replace")
                         if not raw_header:
                             continue
                         msg = email_mod.message_from_bytes(raw_header)
@@ -1246,8 +1274,9 @@ def setup_email_routes():
                 try:
                     if sender_addr:
                         _rs = _c.execute(
-                            "SELECT signature_text FROM sender_signatures WHERE from_address = ?",
-                            (sender_addr.lower().strip(),),
+                            f"SELECT signature_text FROM sender_signatures "
+                            f"WHERE from_address = ? AND {owner_clause}",
+                            (sender_addr.lower().strip(), *owner_params),
                         ).fetchone()
                         if _rs and _rs[0]:
                             cached_sender_sig = _rs[0]
@@ -2904,7 +2933,7 @@ def setup_email_routes():
         from pathlib import Path as _P
         import json as _json
         _slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (owner or "default"))
-        path = _P(f"data/email_urgency_state_{_slug}.json")
+        path = _P(DATA_DIR) / f"email_urgency_state_{_slug}.json"
         if not path.exists():
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         try:
@@ -3162,7 +3191,7 @@ def setup_email_routes():
                     try: conn.logout()
                     except Exception: pass
             except Exception as e:
-                imap_result = {"ok": False, "error": str(e)[:200]}
+                imap_result = {"ok": False, "error": _friendly_email_auth_error("IMAP", imap_host, e)}
 
         smtp_host = (body.get("smtp_host") or "").strip()
         if smtp_host:
@@ -3184,7 +3213,7 @@ def setup_email_routes():
                     try: smtp.quit()
                     except Exception: pass
             except Exception as e:
-                smtp_result = {"ok": False, "error": str(e)[:200]}
+                smtp_result = {"ok": False, "error": _friendly_email_auth_error("SMTP", smtp_host, e)}
 
         return {
             "ok": imap_result["ok"] and (smtp_result is None or smtp_result["ok"]),
