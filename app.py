@@ -561,6 +561,14 @@ app.include_router(setup_session_routes(session_manager, session_config, webhook
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
+
+# Personas (Sub-Agents) - NEW
+try:
+    from src.persona_routes import router as persona_router
+    app.include_router(persona_router)
+    logger.info("[personas] Persona routes registered")
+except Exception as e:
+    logger.warning(f"[personas] Could not register persona routes: {e}")
 app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
