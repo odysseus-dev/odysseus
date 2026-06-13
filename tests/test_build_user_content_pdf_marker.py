@@ -56,3 +56,39 @@ def test_pdf_body_marker_stripped_without_eating_text(monkeypatch, tmp_path):
     assert "to the board, the agenda is set" in body_lines
     # The old lstrip(chars) corruption produced a line like "age 1 text]:" (missing "[P").
     assert "age 1 text]:" not in body_lines
+
+
+def test_pdf_auto_document_uses_original_upload_name(monkeypatch, tmp_path):
+    pdf_path = tmp_path / "0123456789abcdef0123456789abcdef.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 fake")
+
+    captured = {}
+    monkeypatch.setattr(dp, "_process_pdf", lambda path: "\n\n[PDF content]:\nbody")
+    monkeypatch.setattr(pdf_forms, "has_form_fields", lambda path: False)
+
+    def _capture_plain_pdf_document(**kw):
+        captured.update(kw)
+        return "doc-123"
+
+    monkeypatch.setattr(pdf_form_doc, "create_plain_pdf_document", _capture_plain_pdf_document)
+
+    resolved = {
+        "fid1": {
+            "path": str(pdf_path),
+            "mime": "application/pdf",
+            "name": "Quarterly Board Packet.pdf",
+        }
+    }
+
+    dp.build_user_content(
+        text="here is a pdf",
+        attachment_ids=["fid1"],
+        upload_dir=str(tmp_path),
+        upload_handler=_FakeUploadHandler(),
+        session_id="s1",
+        resolved_uploads=resolved,
+    )
+
+    assert captured["title"] == "Quarterly Board Packet"
+    assert captured["upload_id"] == pdf_path.name
+

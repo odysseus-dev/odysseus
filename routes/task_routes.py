@@ -11,7 +11,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
+from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
+from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
@@ -56,7 +58,7 @@ def _maybe_cascade_calendar_event(task) -> None:
         try:
             with httpx.Client(timeout=10) as client:
                 r = client.delete(
-                    f"http://localhost:7000/api/calendar/events/{uid}",
+                    f"{internal_api_base()}/api/calendar/events/{uid}",
                     headers=headers,
                 )
                 if r.status_code >= 400:
@@ -81,7 +83,7 @@ def _maybe_cascade_calendar_event(task) -> None:
     try:
         with httpx.Client(timeout=10) as client:
             # Find the Cookbook calendar.
-            cal_r = client.get("http://localhost:7000/api/calendar/calendars", headers=headers)
+            cal_r = client.get(f"{internal_api_base()}/api/calendar/calendars", headers=headers)
             if cal_r.status_code >= 400:
                 return
             cals = (cal_r.json() or {}).get("calendars", [])
@@ -98,7 +100,7 @@ def _maybe_cascade_calendar_event(task) -> None:
             start = (now - _td(days=30)).isoformat()
             end = (now + _td(days=365)).isoformat()
             ev_r = client.get(
-                "http://localhost:7000/api/calendar/events",
+                f"{internal_api_base()}/api/calendar/events",
                 params={"start": start, "end": end, "calendar": cal_href},
                 headers=headers,
             )
@@ -517,6 +519,15 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 else bool(req.notifications_enabled) if req.notifications_enabled is not None
                 else True
             )
+            # Validate chained task belongs to same owner
+            if req.then_task_id:
+                chain_target = db.query(ScheduledTask).filter(
+                    ScheduledTask.id == req.then_task_id
+                ).first()
+                if not chain_target:
+                    raise HTTPException(400, "Chained task not found")
+                if chain_target.owner != user:
+                    raise HTTPException(403, "Cannot chain to another user's task")
             task = ScheduledTask(
                 id=task_id,
                 owner=user,
@@ -620,7 +631,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         removed_files = 0
         if action == "check_email_urgency":
-            cache_dir = Path("data/email_urgency_cache")
+            cache_dir = Path(EMAIL_URGENCY_CACHE_DIR)
             if cache_dir.exists():
                 for child in cache_dir.glob("*.json"):
                     try:
@@ -629,7 +640,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     except Exception:
                         pass
             owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (user or "default"))
-            for state_path in [Path(f"data/email_urgency_state_{owner_slug}.json")]:
+            for state_path in [Path(DATA_DIR) / f"email_urgency_state_{owner_slug}.json"]:
                 try:
                     if state_path.exists():
                         state_path.unlink()
@@ -972,7 +983,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "tag", "label", "move", "archive", "delete", "mark", "schedule",
         )
         try:
-            from src.agent_tools import get_mcp_manager
+            from src.tool_utils import get_mcp_manager
             mcp = get_mcp_manager()
             if mcp:
                 for tool in mcp.get_all_tools():

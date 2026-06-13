@@ -22,6 +22,7 @@ import os
 import os.path
 from pathlib import Path
 from datetime import datetime, timedelta
+import uuid
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -31,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 server = Server("email")
 EMAIL_SOCKET_TIMEOUT = float(os.environ.get("EMAIL_SOCKET_TIMEOUT", "20"))
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from src.constants import DATA_DIR as _DATA_DIR, APP_DB, EMAIL_CACHE_DB, SETTINGS_FILE as _SETTINGS_FILE, MAIL_ATTACHMENTS_DIR
+DATA_DIR = Path(_DATA_DIR)
 
 
 def _b(value) -> bytes:
@@ -63,7 +65,60 @@ def _clean_header_value(value) -> str:
 
 
 def _db_path() -> Path:
-    return DATA_DIR / "app.db"
+    return Path(APP_DB)
+
+
+def _load_email_writing_style() -> str:
+    """Return the existing Settings > Email > Writing Style value."""
+    try:
+        settings_path = DATA_DIR / "settings.json"
+        if not settings_path.exists():
+            return ""
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        return str(settings.get("email_writing_style") or "").strip()
+    except Exception:
+        return ""
+
+
+def _writing_style_guidance() -> str:
+    style = _load_email_writing_style()
+    if not style:
+        return (
+            "No saved writing style is configured in Settings > Email > Writing Style. "
+            "Use a concise, natural tone and do not invent facts."
+        )
+    return (
+        "Use this saved writing style from Settings > Email > Writing Style when "
+        "drafting the body. It overrides generic tone guidance:\n"
+        f"{style}"
+    )
+
+
+def _default_document_owner() -> str | None:
+    """Best-effort owner for MCP-created documents.
+
+    MCP stdio tools do not receive the browser request's authenticated user,
+    but the document library is owner-filtered. Stamp drafts to the configured
+    single/default admin so assistant-created email drafts are visible.
+    """
+    owner = os.environ.get("ODYSSEUS_DOCUMENT_OWNER", "").strip()
+    if owner:
+        return owner
+    try:
+        auth_path = DATA_DIR / "auth.json"
+        if not auth_path.exists():
+            return None
+        users = (json.loads(auth_path.read_text(encoding="utf-8")).get("users") or {})
+        if not isinstance(users, dict) or not users:
+            return None
+        admins = [name for name, data in users.items() if isinstance(data, dict) and data.get("is_admin")]
+        if len(admins) == 1:
+            return admins[0]
+        if len(users) == 1:
+            return next(iter(users))
+        return admins[0] if admins else next(iter(users))
+    except Exception:
+        return None
 
 
 def _list_accounts_raw() -> list:
@@ -162,7 +217,7 @@ def _load_config(account: str | None = None) -> dict:
         "trash_folder": os.environ.get("TRASH_FOLDER", "Trash"),
         "cache_db": os.environ.get(
             "EMAIL_CACHE_DB",
-            str(DATA_DIR / "email_cache.db"),
+            EMAIL_CACHE_DB,
         ),
         "account_id": None,
         "account_name": None,
@@ -204,7 +259,7 @@ def _load_config(account: str | None = None) -> dict:
     else:
         # Legacy fallback: settings.json flat keys
         try:
-            settings_path = Path(__file__).resolve().parent.parent / "data" / "settings.json"
+            settings_path = Path(_SETTINGS_FILE)
             if settings_path.exists():
                 settings = json.loads(settings_path.read_text(encoding="utf-8"))
                 for key in (
@@ -244,10 +299,27 @@ def _imap_connect(account: str | None = None):
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
         if cfg["imap_starttls"]:
-            conn.starttls()
+            try:
+                conn.starttls()
+            except Exception:
+                # Don't leak the open plain socket on a rejected STARTTLS. (#3174)
+                try:
+                    conn.shutdown()
+                except Exception:
+                    pass
+                raise
     if getattr(conn, "sock", None):
         conn.sock.settimeout(EMAIL_SOCKET_TIMEOUT)
-    conn.login(cfg["imap_user"], cfg["imap_password"])
+    try:
+        conn.login(cfg["imap_user"], cfg["imap_password"])
+    except Exception:
+        # A failed login otherwise orphans the connected socket; close it
+        # before propagating (shutdown() is the pre-auth low-level close). (#3174)
+        try:
+            conn.shutdown()
+        except Exception:
+            pass
+        raise
     return conn
 
 
@@ -777,7 +849,16 @@ def _smtp_connect(account=None, cfg=None):
             port,
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
-        conn.starttls()
+        try:
+            conn.starttls()
+        except Exception:
+            # Don't leak the open plain socket on a rejected STARTTLS. SMTP has
+            # no shutdown(); close() is the low-level socket close (no QUIT). (#3174)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
     elif security == "ssl":
         conn = smtplib.SMTP_SSL(
             cfg["smtp_host"],
@@ -791,7 +872,16 @@ def _smtp_connect(account=None, cfg=None):
             timeout=EMAIL_SOCKET_TIMEOUT,
         )
     if cfg["smtp_user"] and cfg["smtp_password"]:
-        conn.login(cfg["smtp_user"], cfg["smtp_password"])
+        try:
+            conn.login(cfg["smtp_user"], cfg["smtp_password"])
+        except Exception:
+            # A failed login otherwise orphans the connected socket; close it
+            # before propagating (SMTP has no shutdown(); close() = socket close). (#3174)
+            try:
+                conn.close()
+            except Exception:
+                pass
+            raise
     return conn
 
 
@@ -858,6 +948,340 @@ def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, b
         "sent_uid": sent_uid,
         "message_id": msg.get("Message-ID", ""),
     }
+
+
+def _build_email_document_content(
+    to,
+    subject,
+    body,
+    *,
+    cc=None,
+    bcc=None,
+    in_reply_to=None,
+    references=None,
+    source_uid=None,
+    source_folder=None,
+):
+    header_lines = [f"To: {to or ''}"]
+    if cc:
+        header_lines.append(f"Cc: {cc}")
+    if bcc:
+        header_lines.append(f"Bcc: {bcc}")
+    header_lines.append(f"Subject: {subject or ''}")
+    if in_reply_to:
+        header_lines.append(f"In-Reply-To: {in_reply_to}")
+    if references:
+        header_lines.append(f"References: {references}")
+    if source_uid:
+        header_lines.append(f"X-Source-UID: {source_uid}")
+    if source_folder:
+        header_lines.append(f"X-Source-Folder: {source_folder}")
+    return "\n".join(header_lines) + "\n---\n" + (body or "")
+
+
+def _merge_email_reply_body(existing_content: str, reply_body: str) -> str:
+    """Preserve email headers and quoted chain while replacing the editable reply body."""
+    if "\n---\n" not in (existing_content or ""):
+        return reply_body or ""
+    head, body = existing_content.split("\n---\n", 1)
+    quote_markers = (
+        "---------- Previous message ----------",
+        "-----Original Message-----",
+        "----- Original Message -----",
+    )
+    quote_index = -1
+    for marker in quote_markers:
+        idx = body.find(marker)
+        if idx != -1 and (quote_index == -1 or idx < quote_index):
+            quote_index = idx
+    quote = body[quote_index:].strip() if quote_index != -1 else ""
+    merged_body = (reply_body or "").strip()
+    if quote:
+        merged_body = f"{merged_body}\n\n{quote}" if merged_body else quote
+    return f"{head}\n---\n{merged_body}"
+
+
+def _create_email_draft_document(
+    *,
+    to,
+    subject,
+    body,
+    title=None,
+    cc=None,
+    bcc=None,
+    in_reply_to=None,
+    references=None,
+    source_uid=None,
+    source_folder=None,
+    account=None,
+    source_message_id=None,
+):
+    """Create an Odysseus email compose document for user review. Does not send."""
+    from core.database import SessionLocal, Document, DocumentVersion
+    try:
+        from src.event_bus import fire_event
+    except Exception:
+        fire_event = None
+
+    cfg = _load_config(account) if account else _load_config(None)
+    content = _build_email_document_content(
+        to,
+        subject,
+        body,
+        cc=cc,
+        bcc=bcc,
+        in_reply_to=in_reply_to,
+        references=references,
+        source_uid=source_uid,
+        source_folder=source_folder,
+    )
+    doc_id = str(uuid.uuid4())
+    ver_id = str(uuid.uuid4())
+    doc_title = (title or subject or "Email draft").strip() or "Email draft"
+    doc_owner = _default_document_owner()
+
+    db = SessionLocal()
+    try:
+        if source_uid and source_folder:
+            existing = (
+                db.query(Document)
+                .filter(Document.is_active == True)
+                .filter(Document.language == "email")
+                .filter(Document.owner == doc_owner)
+                .filter(Document.source_email_uid == str(source_uid))
+                .filter(Document.source_email_folder == source_folder)
+                .order_by(Document.updated_at.desc())
+                .first()
+            )
+            if existing and "\n---\n" in (existing.current_content or ""):
+                existing.current_content = _merge_email_reply_body(existing.current_content, body or "")
+                existing.version_count = (existing.version_count or 0) + 1
+                ver = DocumentVersion(
+                    id=ver_id,
+                    document_id=existing.id,
+                    version_number=existing.version_count,
+                    content=existing.current_content,
+                    summary="Updated by email MCP draft tool",
+                    source="ai",
+                )
+                db.add(ver)
+                db.commit()
+                if fire_event:
+                    try:
+                        fire_event("document_updated", doc_owner)
+                    except Exception:
+                        pass
+                return {
+                    "draft": True,
+                    "updated": True,
+                    "doc_id": existing.id,
+                    "title": existing.title,
+                    "language": existing.language,
+                    "account": cfg.get("account_name"),
+                    "account_id": cfg.get("account_id"),
+                    "to": to,
+                    "subject": subject,
+                }
+
+        doc = Document(
+            id=doc_id,
+            session_id=None,
+            title=doc_title,
+            language="email",
+            current_content=content,
+            version_count=1,
+            is_active=True,
+            owner=doc_owner,
+            source_email_uid=source_uid,
+            source_email_folder=source_folder,
+            source_email_account_id=cfg.get("account_id"),
+            source_email_message_id=source_message_id,
+        )
+        ver = DocumentVersion(
+            id=ver_id,
+            document_id=doc_id,
+            version_number=1,
+            content=content,
+            summary="Created by email MCP draft tool",
+            source="ai",
+        )
+        db.add(doc)
+        db.add(ver)
+        db.commit()
+        if fire_event:
+            try:
+                fire_event("document_created", doc_owner)
+            except Exception:
+                pass
+        return {
+            "draft": True,
+            "doc_id": doc_id,
+            "title": doc_title,
+            "language": "email",
+            "account": cfg.get("account_name"),
+            "account_id": cfg.get("account_id"),
+            "to": to,
+            "subject": subject,
+        }
+    finally:
+        db.close()
+
+
+def _draft_reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None, title=None):
+    """Create a threaded Odysseus reply draft document. Does not send."""
+    conn = _imap_connect(account)
+    conn.select(_q(folder), readonly=True)
+    status, msg_data = conn.uid("FETCH", _b(uid), "(BODY.PEEK[])")
+    conn.logout()
+    if status != "OK" or not msg_data or not msg_data[0]:
+        return {"error": f"Failed to fetch email UID {uid}"}
+    raw = msg_data[0][1]
+    orig = email.message_from_bytes(raw)
+
+    orig_subject = _decode_header(orig.get("Subject", ""))
+    reply_subject = orig_subject if orig_subject.lower().startswith("re:") else f"Re: {orig_subject}"
+    orig_message_id = orig.get("Message-ID", "")
+    orig_references = orig.get("References", "")
+    new_references = (orig_references + " " + orig_message_id).strip() if orig_references else orig_message_id
+
+    sender = _decode_header(orig.get("From", ""))
+    _, sender_addr = email.utils.parseaddr(sender)
+    to_addrs = sender_addr
+
+    cc = None
+    if reply_all:
+        cc_addrs = []
+        cfg = _load_config(account)
+        own_addrs = {
+            (cfg.get("imap_user") or "").strip().lower(),
+            (cfg.get("from_address") or "").strip().lower(),
+        }
+        for header_name in ("To", "Cc"):
+            for _, addr in email.utils.getaddresses([orig.get(header_name, "")]):
+                addr_l = (addr or "").strip().lower()
+                if addr and addr != sender_addr and addr_l not in own_addrs:
+                    cc_addrs.append(addr)
+        if cc_addrs:
+            cc = ", ".join(dict.fromkeys(cc_addrs))
+
+    return _create_email_draft_document(
+        to=to_addrs,
+        subject=reply_subject,
+        body=body,
+        title=title or reply_subject,
+        cc=cc,
+        in_reply_to=orig_message_id,
+        references=new_references,
+        source_uid=uid,
+        source_folder=folder,
+        account=account,
+        source_message_id=orig_message_id,
+    )
+
+
+async def _ai_draft_reply_to_email(uid, folder="INBOX", reply_all=False, account=None, title=None):
+    """Generate a reply with Odysseus' AI-reply prompt/style, then create a compose doc."""
+    read_result = _read_email(uid=uid, folder=folder, account=account)
+    if "error" in read_result:
+        return read_result
+
+    to_addr = read_result.get("from_address") or email.utils.parseaddr(read_result.get("from") or "")[1]
+    subject = read_result.get("subject") or ""
+    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    original_body = read_result.get("body") or ""
+    message_id = read_result.get("message_id") or ""
+
+    if not original_body.strip():
+        return {"error": "No email body available for AI reply"}
+
+    try:
+        from routes.email_helpers import (
+            _EMAIL_REPLY_SYS_PROMPT_BASE,
+            _apply_email_style_mechanics,
+            _extract_reply,
+            _load_settings,
+        )
+        from src.endpoint_resolver import (
+            resolve_endpoint,
+            resolve_utility_fallback_candidates,
+            resolve_chat_fallback_candidates,
+        )
+        from src.llm_core import llm_call_async_with_fallback
+    except Exception as exc:
+        return {"error": f"AI reply helpers unavailable: {exc}"}
+
+    settings = _load_settings()
+    style = settings.get("email_writing_style", "")
+    system_prompt = _EMAIL_REPLY_SYS_PROMPT_BASE
+    if style:
+        system_prompt += f"\n\nWRITING STYLE TO MATCH:\n{style}"
+
+    user_msg = (
+        f"Recipient: {to_addr}\nSubject: {reply_subject}\n\n"
+        f"Original email and any current draft:\n{original_body[:6000]}\n\n"
+        "Draft a reply. Return only the reply body text."
+    )
+
+    candidates = []
+    seen = set()
+
+    def _add(url, model, headers):
+        key = (url or "", model or "")
+        if not url or not model or key in seen:
+            return
+        seen.add(key)
+        candidates.append((url, model, headers))
+
+    try:
+        _add(*resolve_endpoint("utility", owner=None))
+    except Exception:
+        pass
+    try:
+        _add(*resolve_endpoint("default", owner=None))
+    except Exception:
+        pass
+    try:
+        utility_fallbacks = resolve_utility_fallback_candidates(owner=None) or []
+    except TypeError:
+        utility_fallbacks = resolve_utility_fallback_candidates() or []
+    for cand in utility_fallbacks:
+        _add(*cand)
+    try:
+        chat_fallbacks = resolve_chat_fallback_candidates(owner=None) or []
+    except TypeError:
+        chat_fallbacks = resolve_chat_fallback_candidates() or []
+    for cand in chat_fallbacks:
+        _add(*cand)
+
+    if not candidates:
+        return {"error": "No LLM endpoint configured for AI reply"}
+
+    try:
+        raw_reply = await llm_call_async_with_fallback(
+            candidates,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.7,
+            max_tokens=1024,
+            timeout=60,
+        )
+    except Exception as exc:
+        return {"error": f"AI reply generation failed: {exc}"}
+
+    reply = _apply_email_style_mechanics(_extract_reply(raw_reply or ""))
+    if not reply:
+        return {"error": "AI reply generation returned an empty response"}
+
+    return _draft_reply_to_email(
+        uid=uid,
+        body=reply,
+        folder=folder,
+        reply_all=reply_all,
+        account=account,
+        title=title or reply_subject,
+    )
 
 
 def _reply_to_email(uid, body, folder="INBOX", reply_all=False, account=None):
@@ -1061,7 +1485,7 @@ def _download_attachment(uid, index, folder="INBOX", account=None):
     raw = msg_data[0][1]
     msg = email.message_from_bytes(raw)
 
-    target_dir = DATA_DIR / "mail-attachments" / f"{folder}_{uid}"
+    target_dir = Path(MAIL_ATTACHMENTS_DIR) / f"{folder}_{uid}"
     filepath = _extract_attachment_to_disk(msg, index, target_dir)
     if not filepath:
         return {"error": f"Attachment index {index} not found"}
@@ -1153,6 +1577,8 @@ async def list_tools() -> list[Tool]:
             name="send_email",
             description=(
                 "Send a new email via SMTP. Provide recipient(s), subject, and body. "
+                "This sends immediately; for normal assistant-written email, prefer "
+                "draft_email so the user can review and send from Odysseus. "
                 "For replying to an existing thread, use reply_to_email instead. "
                 "Pass `account` to send from a non-default mailbox."
             ),
@@ -1170,9 +1596,34 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="draft_email",
+            description=(
+                "Create a new Odysseus email compose draft document. This DOES NOT send. "
+                "Use this as the default way to write an email for the user: it opens "
+                "a reviewable email document with To/Cc/Bcc/Subject/body, and the user "
+                "can edit or press Send in Odysseus. "
+                f"{_writing_style_guidance()}"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address(es), comma-separated"},
+                    "subject": {"type": "string", "description": "Email subject line"},
+                    "body": {"type": "string", "description": "Draft body"},
+                    "cc": {"type": "string", "description": "CC address(es), comma-separated (optional)"},
+                    "bcc": {"type": "string", "description": "BCC address(es), comma-separated (optional)"},
+                    "title": {"type": "string", "description": "Optional Odysseus document title"},
+                    **ACCOUNT_PROP,
+                },
+                "required": ["to", "subject", "body"],
+            },
+        ),
+        Tool(
             name="reply_to_email",
             description=(
-                "Reply to an existing email by UID. Automatically threads the reply with "
+                "Reply to an existing email by UID. This sends immediately; for normal "
+                "assistant-written replies, prefer draft_email_reply so the user can "
+                "review and send from Odysseus. Automatically threads the reply with "
                 "In-Reply-To and References headers, prefixes 'Re:' on the subject, and "
                 "uses the original sender as the recipient. Set reply_all=true to also CC "
                 "the original To/Cc recipients. For follow-up 'reply ...' requests, use "
@@ -1188,6 +1639,49 @@ async def list_tools() -> list[Tool]:
                     **ACCOUNT_PROP,
                 },
                 "required": ["uid", "body"],
+            },
+        ),
+        Tool(
+            name="draft_email_reply",
+            description=(
+                "Create an Odysseus email reply draft document for an existing email UID. "
+                "This DOES NOT send. It threads the draft with In-Reply-To/References, "
+                "prefills the recipient and subject, and stores source email metadata so "
+                "the user can review and send from the normal email composer. "
+                f"{_writing_style_guidance()}"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string", "description": "Exact Email UID from list_emails/read_email; never invent UID 1"},
+                    "body": {"type": "string", "description": "Draft reply body text"},
+                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)", "default": "INBOX"},
+                    "reply_all": {"type": "boolean", "description": "Reply to all recipients (default: false)", "default": False},
+                    "title": {"type": "string", "description": "Optional Odysseus document title"},
+                    **ACCOUNT_PROP,
+                },
+                "required": ["uid", "body"],
+            },
+        ),
+        Tool(
+            name="ai_draft_email_reply",
+            description=(
+                "Generate an AI reply using Odysseus' existing AI Reply behavior, "
+                "including Settings > Email > Writing Style, then create an email "
+                "compose document for review. This DOES NOT send and does NOT save "
+                "to the mailbox Drafts folder. Use this when the user asks you to "
+                "write or draft a reply to an email without dictating the exact body."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string", "description": "Exact Email UID from list_emails/read_email; never invent UID 1"},
+                    "folder": {"type": "string", "description": "IMAP folder (default: INBOX)", "default": "INBOX"},
+                    "reply_all": {"type": "boolean", "description": "Reply to all recipients (default: false)", "default": False},
+                    "title": {"type": "string", "description": "Optional Odysseus document title"},
+                    **ACCOUNT_PROP,
+                },
+                "required": ["uid"],
             },
         ),
         Tool(
@@ -1516,6 +2010,31 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             acct_note = f" (from {result['account']})" if result.get("account") else ""
             return [TextContent(type="text", text=f"Sent email to {result['to']} with subject '{result['subject']}'{acct_note}.")]
 
+        elif name == "draft_email":
+            to = arguments.get("to")
+            subject = arguments.get("subject")
+            body = arguments.get("body")
+            if not to or not subject or body is None:
+                return [TextContent(type="text", text="Error: to, subject, and body are required")]
+            result = _create_email_draft_document(
+                to=to,
+                subject=subject,
+                body=body,
+                title=arguments.get("title"),
+                cc=arguments.get("cc"),
+                bcc=arguments.get("bcc"),
+                account=acct,
+            )
+            acct_note = f" from {result['account']}" if result.get("account") else ""
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Created Odysseus email draft `{result['title']}` "
+                    f"(document ID: {result['doc_id']}){acct_note}. "
+                    "It has not been sent; open the document in Odysseus to review and send."
+                ),
+            )]
+
         elif name == "reply_to_email":
             uid = arguments.get("uid")
             body = arguments.get("body")
@@ -1536,6 +2055,54 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             except Exception:
                 pass
             return [TextContent(type="text", text=f"Replied to UID {uid}: '{result['subject']}' → {result['to']}")]
+
+        elif name == "draft_email_reply":
+            uid = arguments.get("uid")
+            body = arguments.get("body")
+            if not uid or body is None:
+                return [TextContent(type="text", text="Error: uid and body are required")]
+            result = _draft_reply_to_email(
+                uid=uid,
+                body=body,
+                folder=arguments.get("folder", "INBOX"),
+                reply_all=bool(arguments.get("reply_all", False)),
+                account=acct,
+                title=arguments.get("title"),
+            )
+            if "error" in result:
+                return [TextContent(type="text", text=f"Error: {result['error']}")]
+            acct_note = f" from {result['account']}" if result.get("account") else ""
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Created Odysseus reply draft `{result['title']}` for UID {uid} "
+                    f"(document ID: {result['doc_id']}){acct_note}. "
+                    "It has not been sent; open the document in Odysseus to review and send."
+                ),
+            )]
+
+        elif name == "ai_draft_email_reply":
+            uid = arguments.get("uid")
+            if not uid:
+                return [TextContent(type="text", text="Error: uid is required")]
+            result = await _ai_draft_reply_to_email(
+                uid=uid,
+                folder=arguments.get("folder", "INBOX"),
+                reply_all=bool(arguments.get("reply_all", False)),
+                account=acct,
+                title=arguments.get("title"),
+            )
+            if "error" in result:
+                return [TextContent(type="text", text=f"Error: {result['error']}")]
+            acct_note = f" from {result['account']}" if result.get("account") else ""
+            return [TextContent(
+                type="text",
+                text=(
+                    f"Generated AI reply and created Odysseus compose draft "
+                    f"`{result['title']}` for UID {uid} (document ID: {result['doc_id']}){acct_note}. "
+                    "It has not been sent; open the document in Odysseus to review and send."
+                ),
+            )]
 
         elif name == "archive_email":
             uid = arguments.get("uid")

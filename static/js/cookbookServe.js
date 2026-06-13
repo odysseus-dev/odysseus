@@ -15,6 +15,7 @@ let _envState;
 let _sshCmd;
 let _getPort;
 let _sshPrefix;
+let _serverByVal;
 let _getPlatform;
 let _isWindows;
 let _isMetal;
@@ -97,14 +98,14 @@ function _selectedServeTarget(panel) {
   const select = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
   const servers = Array.isArray(_envState.servers) ? _envState.servers : [];
   let host = _envState.remoteHost || '';
-  let server = host ? servers.find(s => s.host === host) : null;
+  let server = host ? (_serverByVal?.(_envState.remoteServerKey || host) || servers.find(s => s.host === host)) : null;
   if (select && select.value != null) {
     if (select.value === 'local') {
       host = '';
       server = servers.find(s => !s.host || s.host === 'local') || null;
     } else {
       const idx = /^\d+$/.test(String(select.value)) ? parseInt(select.value, 10) : -1;
-      server = servers.find(s => s.host === select.value) || (idx >= 0 ? servers[idx] : null) || null;
+      server = _serverByVal?.(select.value) || (idx >= 0 ? servers[idx] : null) || null;
       host = server?.host || '';
     }
   }
@@ -116,6 +117,7 @@ function _selectedServeTarget(panel) {
     host,
     port: host ? (_getPort(host) || server?.port || '') : '',
     venv,
+    platform: server?.platform || _envState.platform || '',
     label,
   };
 }
@@ -242,21 +244,6 @@ function _shellPathExpr(path) {
 function _selectedGgufExpr(model, repo, relPath) {
   const rel = String(relPath || '').replace(/^\/+/, '');
   if (!rel) return '';
-  if (_isWindows()) {
-    // PowerShell: plain path — no bash $() syntax (backend validator rejects
-    // $( ) in non-prelude commands, and PowerShell doesn't have printf).
-    const relW = rel.replace(/\//g, '\\');
-    if (model.is_local_dir && model.path) {
-      const base = String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\');
-      return `${base}\\${repo.replace(/\//g, '\\')}\\${relW}`;
-    }
-    if (model.path) {
-      const base = String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\');
-      return `${base}\\models--${repo.replace(/\//g, '--')}\\snapshots\\${relW}`;
-    }
-    const cacheRepo = repo.replace(/\//g, '--');
-    return `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${cacheRepo}\\snapshots\\${relW}`;
-  }
   if (model.is_local_dir && model.path) {
     const base = String(model.path || '').replace(/\/+$/, '');
     return `$(printf %s ${_shellPathExpr(`${base}/${repo}/${rel}`)})`;
@@ -270,15 +257,6 @@ function _selectedGgufExpr(model, repo, relPath) {
 }
 
 function _ggufSearchDirExpr(model, repo) {
-  if (_isWindows()) {
-    if (model.is_local_dir && model.path) {
-      return `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\${repo.replace(/\//g, '\\')}`;
-    }
-    if (model.path) {
-      return `${String(model.path || '').replace(/\/+$/, '').replace(/\//g, '\\')}\\models--${repo.replace(/\//g, '--')}\\snapshots`;
-    }
-    return `$env:USERPROFILE\\.cache\\huggingface\\hub\\models--${repo.replace(/\//g, '--')}\\snapshots`;
-  }
   if (model.is_local_dir && model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/${repo}`);
   if (model.path) return _shellQuote(`${String(model.path || '').replace(/\/+$/, '')}/models--${repo.replace(/\//g, '--')}/snapshots`);
   return `"$HOME/.cache/huggingface/hub/models--${repo.replace(/\//g, '--')}/snapshots"`;
@@ -536,7 +514,7 @@ function _rerenderCachedModels() {
       // The venv set per-server in Settings (server.envPath). Used as the venv
       // field default when the global active env path isn't carrying it, so a
       // configured server venv shows up without re-typing it.
-      const _selSrv = (_es.servers || []).find(s => s.host === (_es.remoteHost || '')) || {};
+      const _selSrv = _serverByVal?.(_es.remoteServerKey || _es.remoteHost || '') || {};
       const _srvVenv = _selSrv.envPath || '';
       // Serve state schema: { _byRepo: { <repo>: {...} }, _lastUsed: {...} }.
       // Loading priority: this-repo's saved settings → last-used (from any
@@ -599,7 +577,7 @@ function _rerenderCachedModels() {
         + `<button type="button" class="cookbook-slot-btn cookbook-saved-arrow" title="${esc(_arrowTitle)}">${_arrowLabel}</button>`
         + `</div>`;
 
-      let panelHtml = `<div class="hwfit-serve-panel">${_slotsHtml}`;
+      let panelHtml = `<div class="hwfit-serve-panel">`;
       // Warn when serving a model whose download hasn't fully completed —
       // the user CAN still hit Launch (vLLM/llama-server will start, then
       // crash trying to read missing shards), but they should know.
@@ -632,26 +610,48 @@ function _rerenderCachedModels() {
         _gpuBtnsHtml += `<button type="button" class="cookbook-gpu-btn${on ? ' active' : ''}" data-gpu="${i}">${i}</button>`;
       }
       panelHtml += `<label>${_l('GPUs','Toggle which GPUs to use')}<div class="cookbook-gpu-group">${_gpuBtnsHtml}</div><input type="hidden" class="hwfit-sf" data-field="gpus" value="${esc(defaultGpus)}" /></label>`;
+      // Save / saved-configs split button — moved into Row 1 (next to GPUs)
+      // so it shares the same baseline as the rest of the top controls.
+      panelHtml += _slotsHtml;
       panelHtml += `</div>`;
       panelHtml += `<div class="hwfit-serve-runtime-note" style="display:none;font-size:11px;line-height:1.35;color:var(--fg-muted);margin-top:-4px;"></div>`;
       if (_ggufChoices.length > 1) {
-        panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
-        panelHtml += `<label class="hwfit-backend-llamacpp">${_l('GGUF File','Choose the exact GGUF artifact to serve from this cached model folder.')}<select class="hwfit-sf hwfit-sf-wide" data-field="gguf_file">${_ggufOptions}</select></label>`;
+        // Show the GGUF File dropdown for BOTH llama.cpp and Ollama — Ollama
+        // also needs to know which exact .gguf to import via the new
+        // `docker exec ollama-test ollama-import` auto-fill (otherwise the
+        // helper falls back to "first sorted gguf", which may not match what
+        // the user picked).
+        panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp hwfit-backend-ollama">`;
+        panelHtml += `<label class="hwfit-backend-llamacpp hwfit-backend-ollama">${_l('GGUF File','Choose the exact GGUF artifact to serve from this cached model folder.')}<select class="hwfit-sf hwfit-sf-wide" data-field="gguf_file">${_ggufOptions}</select></label>`;
         panelHtml += `</div>`;
       } else if (_defaultGguf) {
         panelHtml += `<input type="hidden" class="hwfit-sf" data-field="gguf_file" value="${esc(_defaultGguf)}" />`;
       }
-      // Row 2: Core settings
-      panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp">`;
+      // Row 2: Core settings — the handful you actually touch every launch.
+      // TP / Context / GPU / GPU Mem / Max Seqs / Dtype. Everything else
+      // (Swap, KV Cache, Attention backend, Env vars, llama.cpp batch/ubatch)
+      // moved to the Advanced fold below to keep this row scannable.
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp hwfit-backend-ollama">`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
       // ctx resets to the model's max on every panel open (the real ctx slider
       // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
       panelHtml += `<label>${_l('Context','Max tokens per request — resets to the model max on every open. Lower = less VRAM')}<input type="text" class="hwfit-sf" data-field="ctx" value="${esc(m.context_length || m.context || '20000')}" /></label>`;
       panelHtml += `<label>${_l('GPU','Which GPU to use. Leave empty for default')}<input type="text" class="hwfit-sf" data-field="gpu_id" value="${esc(sv('gpu_id', ''))}" placeholder="auto" style="width:50px;" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', '0.90'))}" /></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
       panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      panelHtml += `</div>`;
+      // ── Advanced (collapsed by default) ──
+      // Everything below the fold is tuning users only touch occasionally:
+      // vLLM kernel/env knobs, llama.cpp fit/cache/split controls, the
+      // GGUF batch sizes, the speculative-decoding row, and the live VRAM
+      // monitor. Wrapped in a native <details> so toggle state survives
+      // re-renders cheaply and a closed fold doesn't trigger any layout
+      // work for the dozens of nested inputs.
+      panelHtml += `<details class="hwfit-serve-advanced">`;
+      panelHtml += `<summary class="hwfit-serve-advanced-summary">Advanced</summary>`;
+      // Advanced vLLM/SGLang row (KV Cache, Attention, Swap, Env)
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang">`;
       panelHtml += `<label class="hwfit-backend-vllm">${_l('KV Cache','vLLM --kv-cache-dtype. auto uses the model/runtime default; fp8 reduces KV memory for long context.')}<select class="hwfit-sf" data-field="vllm_kv_cache_dtype" style="height:32px;">${vllmKvCacheOpts}</select></label>`;
       // Attention backend selector — pin the kernel impl. Default `auto` lets
       // vLLM pick FlashInfer (which JITs on first use and breaks on older
@@ -661,12 +661,19 @@ function _rerenderCachedModels() {
       const vllmAttnBackendOpts = ['auto', 'FLASH_ATTN', 'XFORMERS', 'FLASHINFER', 'TORCH_SDPA']
         .map(b => `<option value="${b === 'auto' ? '' : b}"${(sv('vllm_attn_backend','') === (b === 'auto' ? '' : b)) ? ' selected' : ''}>${b}</option>`).join('');
       panelHtml += `<label class="hwfit-backend-vllm">${_l('Attention','vLLM VLLM_ATTENTION_BACKEND. auto = vLLM picks (often FLASHINFER, which JITs and can fail on old nvcc). FLASH_ATTN skips the JIT entirely.')}<select class="hwfit-sf" data-field="vllm_attn_backend" style="height:32px;">${vllmAttnBackendOpts}</select></label>`;
+      panelHtml += `<label class="hwfit-backend-vllm">${_l('Swap','CPU swap space in GB. Leave empty to omit (removed in newer vLLM)')}<input type="text" class="hwfit-sf" data-field="swap" value="${esc(sv('swap', ''))}" placeholder="off" /></label>`;
       // Free-text env-vars field. Anything pasted here is prepended to the
       // launch command verbatim. Use for CUDACXX, PATH overrides, NCCL_*
       // tuning, or any other KEY=VALUE pair that doesn't have a dedicated
       // field. After the venv activate runs, $VIRTUAL_ENV / $PATH / etc. are
       // already exported so they expand correctly here.
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang" style="flex:1 1 100%;">${_l('Env','Extra KEY=VALUE env-var pairs prepended to the launch (space-separated). Example: CUDACXX=$VIRTUAL_ENV/lib/python3.10/site-packages/nvidia/cuda_nvcc/bin/nvcc — points flashinfer at the venv-bundled nvcc when the system one is too old for your GPU.')}<input type="text" class="hwfit-sf" data-field="extra_env" value="${esc(sv('extra_env',''))}" placeholder="CUDACXX=/path/to/nvcc NCCL_P2P_DISABLE=1" style="width:100%;" /></label>`;
+      panelHtml += `</div>`;
+      // Advanced llama.cpp row (Batch / UBatch — moved out of Core for the
+      // same "rarely touched" reason as the vLLM extras above).
+      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
+      panelHtml += `<label class="hwfit-backend-llamacpp">${_l('Batch','llama.cpp prompt batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_batch_size" value="${esc(sv('llama_batch_size', ''))}" placeholder="2048" /></label>`;
+      panelHtml += `<label class="hwfit-backend-llamacpp">${_l('UBatch','llama.cpp physical micro-batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_ubatch_size" value="${esc(sv('llama_ubatch_size', ''))}" placeholder="512" /></label>`;
       panelHtml += `</div>`;
       // Row 2b: Diffusers settings
       const diffDtypeOpts = ['bfloat16','float16','float32'].map(d => `<option value="${d}"${sv('diff_dtype','bfloat16')===d?' selected':''}>${d}</option>`).join('');
@@ -690,7 +697,7 @@ function _rerenderCachedModels() {
       const llamaFitOpts = ['', 'off', 'on'].map(d => `<option value="${d}"${sv('llama_fit','')===d?' selected':''}>${d||'default'}</option>`).join('');
       const llamaSplitModeOpts = ['', 'layer', 'tensor', 'row', 'none'].map(d => `<option value="${d}"${sv('llama_split_mode','')===d?' selected':''}>${d||'default'}</option>`).join('');
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
-      panelHtml += `<label>${_l('CPU MoE','n-cpu-moe: number of MoE expert layers to run on CPU when the model is bigger than VRAM. 0 = all on GPU. Set automatically by the Auto profiles below.')}<input type="text" class="hwfit-sf" data-field="n_cpu_moe" value="${esc(sv('n_cpu_moe',''))}" placeholder="0" style="width:54px;" /></label>`;
+      panelHtml += `<label>${_l('CPU MoE','n-cpu-moe: number of MoE expert layers to run on CPU when the model is bigger than VRAM. 0 = all on GPU. Set automatically by the Auto profiles below.')}<input type="text" class="hwfit-sf" data-field="n_cpu_moe" value="${esc(sv('n_cpu_moe',''))}" placeholder="0" style="width:54px;position:relative;top:-8px;" /></label>`;
       panelHtml += `<label>${_l('KV Cache','cache-type-k/v: quantize the KV cache. q4_0 = smallest (more context), q8_0 = sharp long-context, f16 = full. Blank = llama.cpp default.')}<select class="hwfit-sf" data-field="cache_type">${_kvOpts}</select></label>`;
       panelHtml += `<label class="hwfit-sf-cb" style="align-self:end;"><input type="checkbox" class="hwfit-sf" data-field="flash_attn"${sv('flash_attn',false)?' checked':''} /> Flash Attn${_h('--flash-attn on: faster attention + needed for quantized KV cache.')}</label>`;
       panelHtml += `<label class="hwfit-sf-cb" style="align-self:end;"><input type="checkbox" class="hwfit-sf" data-field="vision"${sv('vision',false)?' checked':''} /> Vision${_h('Serve with the vision encoder so the model can read images. Auto-finds an mmproj-*.gguf next to the model (download one into the model folder). Adds ~1 GB VRAM + a small per-image cost.')}</label>`;
@@ -700,19 +707,16 @@ function _rerenderCachedModels() {
       // explicit overrides for known-good advanced presets; blank keeps
       // llama.cpp/profile defaults.
       panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp">`;
-      panelHtml += `<label>${_l('Split Mode','llama.cpp GPU placement. layer is the usual default; tensor splits weights and KV across GPUs.')}<select class="hwfit-sf" data-field="llama_split_mode">${llamaSplitModeOpts}</select></label>`;
+      panelHtml += `<label>${_l('Split Mode','llama.cpp GPU placement. layer is the usual default; tensor splits weights and KV across GPUs.')}<select class="hwfit-sf" data-field="llama_split_mode" style="position:relative;top:-8px;">${llamaSplitModeOpts}</select></label>`;
       panelHtml += `<label>${_l('Tensor Split','GPU proportions for llama.cpp, e.g. 50,50 across two visible GPUs. Leave blank for auto.')}<input type="text" class="hwfit-sf" data-field="llama_tensor_split" value="${esc(sv('llama_tensor_split', ''))}" placeholder="50,50" /></label>`;
       panelHtml += `<label>${_l('Main GPU','llama.cpp --main-gpu index inside the visible GPU set. Mostly useful for split mode none/row.')}<input type="text" class="hwfit-sf" data-field="llama_main_gpu" value="${esc(sv('llama_main_gpu', ''))}" placeholder="auto" /></label>`;
       panelHtml += `<label>${_l('Parallel','llama.cpp parallel slots. Leave blank for llama.cpp default; 1 matches single-lane presets.')}<input type="text" class="hwfit-sf" data-field="llama_parallel" value="${esc(sv('llama_parallel', ''))}" placeholder="1" /></label>`;
-      panelHtml += `<label>${_l('Batch','llama.cpp prompt batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_batch_size" value="${esc(sv('llama_batch_size', ''))}" placeholder="2048" /></label>`;
-      panelHtml += `<label>${_l('UBatch','llama.cpp physical micro-batch size. Leave blank for llama.cpp default.')}<input type="text" class="hwfit-sf" data-field="llama_ubatch_size" value="${esc(sv('llama_ubatch_size', ''))}" placeholder="512" /></label>`;
       panelHtml += `</div>`;
-      // Row 2d: Auto profiles — computed from detected hardware (see profiles.py).
-      // Buttons are injected after the panel mounts (needs an async fetch).
-      panelHtml += `<div class="hwfit-serve-row hwfit-backend-llamacpp hwfit-serve-profiles" style="align-items:center;gap:8px;">`;
-      panelHtml += `<span style="opacity:0.7;font-size:11px;">Auto profiles:</span>`;
-      panelHtml += `<span class="hwfit-profile-btns" style="display:flex;gap:6px;flex-wrap:wrap;"><span style="opacity:0.5;font-size:11px;">computing…</span></span>`;
-      panelHtml += `</div>`;
+      // Auto-profile chips row removed — visual fit with the rest of the
+      // serve panel was off, and the manual ctx/n_cpu_moe/cache controls
+      // above are already sufficient. The hwfit profile API
+      // (/api/hwfit/profiles) is still available for any caller that
+      // wants it.
       // Live VRAM / RAM-spillover monitor for the serve target's GPU. Polls
       // /api/cookbook/gpus while the panel is open so you can SEE whether the
       // config fits VRAM (fast) or spills to system RAM (slow). Populated after mount.
@@ -744,7 +748,7 @@ function _rerenderCachedModels() {
       // even for models the auto-detector doesn't recognize. Expert-parallel,
       // reasoning-parser and MoE-env still only appear when auto-detected.
       const _opts2 = _detectModelOptimizations(repo);
-      panelHtml += `<div class="hwfit-serve-checks hwfit-backend-vllm" style="margin-top:2px;">`;
+      panelHtml += `<div class="hwfit-serve-checks hwfit-backend-vllm">`;
       if (_opts2.flags.includes('--enable-expert-parallel')) panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="expert_parallel" /> Expert Parallel</label>`;
       if (_opts2.flags.some(f => f.includes('--reasoning-parser'))) { const rp = _opts2.flags.find(f => f.includes('--reasoning-parser')).split(' ')[1]; panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="reasoning_parser" data-parser="${rp}" /> Reasoning Parser <span class="hwfit-parser-tag">${rp}</span></label>`; }
       {
@@ -763,6 +767,8 @@ function _rerenderCachedModels() {
       }
       if (_opts2.envVars.length) panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="moe_env" /> MoE Env Vars</label>`;
       panelHtml += `</div>`;
+      // ── End Advanced fold ──
+      panelHtml += `</details>`;
       // Command preview + actions. Wrap the textarea so a floating Copy
       // button can sit at its top-right corner — same pattern as the chat
       // run-output panel.
@@ -824,27 +830,17 @@ function _rerenderCachedModels() {
           // model the file lives under "<path>/<repo>" — search there just like we
           // search the HF snapshots dir, so serving a GGUF from a custom dir works
           // instead of handing llama.cpp a directory (which fails).
-          const _ldir = m.path
-            ? (_isWindows() ? `${m.path.replace(/\//g, '\\')}\\${repo.replace(/\//g, '\\')}` : _shellQuote(`${m.path}/${repo}`))
-            : (_isWindows() ? '' : '""');
-          if (selectedGguf) {
-            f._gguf_path = _selectedGgufExpr(m, repo, selectedGguf.rel_path);
-          } else if (_isWindows()) {
-            // Windows fallback: no bash $() available; validator rejects it.
-            // Return empty so the serve fails with a clear message.
-            f._gguf_path = '';
-          } else if (m.is_local_dir && m.path) {
-            f._gguf_path = `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-          } else {
-            f._gguf_path = `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-          }
+          const _ldir = m.path ? _shellQuote(`${m.path}/${repo}`) : '""';
+          f._gguf_path = selectedGguf
+            ? _selectedGgufExpr(m, repo, selectedGguf.rel_path)
+            : m.is_local_dir && m.path
+            ? `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`
+            : `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
           // Vision: auto-find the mmproj (CLIP/projector) file in the same dir.
           // Resolved at runtime so the toggle just works if an mmproj-*.gguf is
           // present (downloaded alongside the model). Empty if none → cmd omits it.
           const _vsearchdir = (m.is_local_dir && m.path) ? _ldir : dir;
-          f._mmproj_path = _isWindows()
-            ? (_vsearchdir ? `${_vsearchdir}\\mmproj*.gguf` : '')
-            : `$(find ${_vsearchdir} -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)`;
+          f._mmproj_path = `$(find ${_vsearchdir} -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)`;
         }
         if (f.reasoning_parser) {
           const _rpEl2 = panel.querySelector('[data-field="reasoning_parser"]');
@@ -885,13 +881,12 @@ function _rerenderCachedModels() {
         _clampCtx(false);   // fix any stale/preset value already present
       }
 
-      // Auto profiles — fetch hardware-computed llama.cpp profiles and render
-      // them as clickable chips. Clicking one fills the ctx/CPU-MoE/KV/flash
-      // fields and rebuilds the command. Computed from detected VRAM (see
-      // services/hwfit/profiles.py); rough on t/s, accurate on fit.
-      async function _loadServeProfiles() {
-        const wrap = panel.querySelector('.hwfit-profile-btns');
-        if (!wrap) return;
+      // Tighten the ctx slider's upper bound to the model's trained limit.
+      // Asking llama.cpp for ctx > n_ctx_train overflows and, with a quantized
+      // KV cache, can crash the GPU (radv ErrorDeviceLost). The auto-profile
+      // chip row that used to also live here was removed — visual fit with
+      // the rest of the serve panel was off — but this clamp is essential.
+      (async () => {
         try {
           const host = (_es.remoteHost || '').trim();
           const params = new URLSearchParams({ model: repo });
@@ -900,56 +895,15 @@ function _rerenderCachedModels() {
             const _sp = (_es.servers || []).find(s => s.host === host)?.port;
             if (_sp) params.set('ssh_port', _sp);
           }
-          // SERVE mode: this is a specific GGUF file already on disk, so its quant
-          // is fixed — tell the profiler the file's real size + quant so it varies
-          // only the serving knobs (KV/ctx/offload), not the quant. Parse the size
-          // from m.size (e.g. "20.6 GB") and the quant from the file/repo name.
-          const _sizeMatch = String(m.size || '').match(/([\d.]+)\s*GB/i);
-          if (_sizeMatch) params.set('serve_weights_gb', _sizeMatch[1]);
-          const _qMatch = String(repo).match(/(Q\d[\w]*|IQ\d[\w]*|F16|BF16|FP8)/i);
-          if (_qMatch) params.set('serve_quant', _qMatch[1]);
           const res = await fetch(`/api/hwfit/profiles?${params}`);
           const data = await res.json();
-          // Remember the model's trained context limit and clamp the ctx field
-          // to it — asking llama.cpp for ctx > n_ctx_train overflows and, with a
-          // quantized KV cache, can crash the GPU (radv ErrorDeviceLost).
           const ctxMax = Number(data && data.model_ctx_max) || 0;
           if (ctxMax > 0) {
-            panel._modelCtxMax = ctxMax;   // tighten the clamp to the real limit
-            _clampCtx(false);              // re-apply now that we know the model's max
+            panel._modelCtxMax = ctxMax;
+            _clampCtx(false);
           }
-          const profs = (data && Array.isArray(data.profiles)) ? data.profiles : [];
-          if (!profs.length) { wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">no auto profile for this model</span>`; return; }
-          wrap.innerHTML = '';
-          for (const p of profs) {
-            const b = document.createElement('button');
-            b.type = 'button';
-            b.className = 'cookbook-btn hwfit-profile-chip';
-            b.style.cssText = 'height:24px;padding:0 9px;font-size:11px;';
-            const off = p.offloads ? `, ncm${p.n_cpu_moe}` : ', all-GPU';
-            b.textContent = `${p.label} · ${p.quant} · ${Math.round(p.ctx/1024)}k${off}`;
-            b.title = `${p.note}\nKV ${p.cache_type}, ~${p.est_vram_gb} GB VRAM`;
-            b.addEventListener('click', () => {
-              const set = (field, val) => {
-                const el = panel.querySelector(`[data-field="${field}"]`);
-                if (!el) return;
-                if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
-              };
-              set('ctx', p.ctx);
-              set('n_cpu_moe', p.n_cpu_moe || '');
-              set('cache_type', p.cache_type || '');
-              set('flash_attn', true);   // required for a quantized KV cache
-              wrap.querySelectorAll('.hwfit-profile-chip').forEach(x => x.classList.remove('cookbook-btn-active'));
-              b.classList.add('cookbook-btn-active');
-              updateCmd();
-            });
-            wrap.appendChild(b);
-          }
-        } catch {
-          wrap.innerHTML = `<span style="opacity:0.5;font-size:11px;">profile compute failed</span>`;
-        }
-      }
-      _loadServeProfiles();
+        } catch { /* clamp falls back to the static default */ }
+      })();
 
       // Live GPU-memory monitor: poll /api/cookbook/gpus and show VRAM usage +
       // RAM-spillover, with a plain-language health/speed hint. Lets you tell at
@@ -1532,6 +1486,38 @@ function _rerenderCachedModels() {
           }
           panel._gpuProbe.byIdx = new Map(data.gpus.map(g => [g.index, g]));
           panel._gpuProbe.host = remoteHost;
+          // If the probe found more GPUs than the panel originally
+          // rendered (e.g. host switched from a 1-iGPU local box to an
+          // 8-GPU remote), append buttons for the missing indexes so the
+          // user can actually toggle them. Reuse the parent <div> from
+          // the first existing button as the insertion target.
+          try {
+            const _existing = Array.from(panel.querySelectorAll('.cookbook-gpu-btn'));
+            const _grp = _existing[0] && _existing[0].parentElement;
+            if (_grp) {
+              const _have = new Set(_existing.map(b => parseInt(b.dataset.gpu, 10)));
+              const _activeStr = (panel.querySelector('[data-field="gpus"]')?.value || '').split(',').map(s => s.trim());
+              data.gpus.forEach(g => {
+                if (_have.has(g.index)) return;
+                const _b = document.createElement('button');
+                _b.type = 'button';
+                _b.className = 'cookbook-gpu-btn' + (_activeStr.includes(String(g.index)) ? ' active' : '');
+                _b.dataset.gpu = String(g.index);
+                _b.textContent = String(g.index);
+                _grp.appendChild(_b);
+                // Re-wire the click handler the same way the panel did
+                // on first render. Toggles active + rewrites the hidden
+                // gpus input from the live set of active buttons.
+                _b.addEventListener('click', () => {
+                  _b.classList.toggle('active');
+                  const activeBtns = [...panel.querySelectorAll('.cookbook-gpu-btn.active')];
+                  const ids = activeBtns.map(x => x.dataset.gpu).sort((a, b) => +a - +b).join(',');
+                  const hidden = panel.querySelector('[data-field="gpus"]');
+                  if (hidden) { hidden.value = ids; hidden.dispatchEvent(new Event('change', { bubbles: true })); }
+                });
+              });
+            }
+          } catch (_) {}
           panel.querySelectorAll('.cookbook-gpu-btn').forEach(b => {
             const idx = parseInt(b.dataset.gpu);
             const g = panel._gpuProbe.byIdx.get(idx);
@@ -1787,7 +1773,7 @@ function _rerenderCachedModels() {
             const _probeParams = new URLSearchParams();
             if (_probeHost) {
               _probeParams.set('host', _probeHost);
-              const _sp = (_envState.servers || []).find(s => s.host === _probeHost)?.port;
+              const _sp = (_serverByVal?.(_envState.remoteServerKey || _probeHost) || {}).port;
               if (_sp) _probeParams.set('ssh_port', _sp);
             }
             const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
@@ -1858,12 +1844,20 @@ function _rerenderCachedModels() {
         }
         // Save in the { _byRepo, _lastUsed } schema — no legacy flat keys at
         // the root so per-model state doesn't leak between models.
+        // Stamp `_forceBackend: true` so the next open of this model defaults
+        // to the launched configuration end-to-end, even when the detector
+        // would have picked a different backend. Without this flag, the
+        // `savedMatchesBackend` gate inside sv() throws away every saved
+        // value when the detected backend doesn't match — the user opens
+        // Serve again and the panel looks like a fresh form despite a
+        // known-good prior launch.
         try {
           let cur = {};
           try { cur = JSON.parse(localStorage.getItem(SERVE_STATE_KEY)) || {}; } catch {}
           const byRepo = (cur && cur._byRepo && typeof cur._byRepo === 'object') ? cur._byRepo : {};
-          byRepo[repo] = serveState;
-          localStorage.setItem(SERVE_STATE_KEY, JSON.stringify({ _byRepo: byRepo, _lastUsed: serveState }));
+          const _saved = { ...serveState, _forceBackend: true };
+          byRepo[repo] = _saved;
+          localStorage.setItem(SERVE_STATE_KEY, JSON.stringify({ _byRepo: byRepo, _lastUsed: _saved }));
         } catch {}
         const origEnv = _envState.env;
         const origEnvPath = _envState.envPath;
@@ -1879,8 +1873,7 @@ function _rerenderCachedModels() {
         if (_ssEl && _ssEl.value != null) {
           if (_ssEl.value === 'local') serveHost = '';
           else {
-            // Values are host strings now; resolve by host (numeric fallback).
-            const _srv = _envState.servers.find(s => s.host === _ssEl.value) || _envState.servers[parseInt(_ssEl.value)];
+            const _srv = _serverByVal?.(_ssEl.value) || _envState.servers[parseInt(_ssEl.value)];
             if (_srv) {
               serveHost = _srv.host;
               _srvEnv = _srv.env || '';
@@ -1936,10 +1929,24 @@ function _rerenderCachedModels() {
 function _resolveCacheHost() {
   let host = _envState.remoteHost || '';
   const cacheSrv = document.getElementById('hwfit-cache-server');
+
+  function _serverByCacheValue(val) {
+    if (val === 'local') return null;
+    const found = _serverByVal?.(val)
+      || (/^\d+$/.test(String(val)) ? _envState.servers[parseInt(val)] : null)
+      || _envState.servers.find(x => x.name === val)
+      || null;
+    return found || null;
+  }
+
   if (cacheSrv) {
     const val = cacheSrv.value;
-    if (val === 'local') host = '';
-    else { const s = _envState.servers.find(x => x.host === val) || _envState.servers[parseInt(val)]; if (s) host = s.host; }
+    if (val === 'local') {
+      host = '';
+    } else {
+      const s = _serverByCacheValue(val);
+      if (s) host = s.host;
+    }
   }
   return host;
 }
@@ -2035,8 +2042,12 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
 function _retryCachedModel(repo, m) {
   const payload = { repo_id: repo };
   if (_envState.hfToken) payload.hf_token = _envState.hfToken;
-  if (_envState.remoteHost) { payload.remote_host = _envState.remoteHost; const _sp2 = _getPort(_envState.remoteHost); if (_sp2) payload.ssh_port = _sp2; }
-  if (_envState.platform) payload.platform = _envState.platform;
+  const _target = _selectedServeTarget(document.getElementById('cookbook-modal') || document);
+  if (_target.host) {
+    payload.remote_host = _target.host;
+    if (_target.port) payload.ssh_port = _target.port;
+  }
+  if (_target.platform) payload.platform = _target.platform;
   if (_isWindows()) {
     if (_envState.env === 'venv' && _envState.envPath) {
       payload.env_prefix = '& ' + _psQuote(_envState.envPath.endsWith('\\Scripts\\Activate.ps1') ? _envState.envPath : _envState.envPath + '\\Scripts\\Activate.ps1');
@@ -2069,8 +2080,12 @@ export async function openServePanelForRepo(repo, fields) {
       let cur = {};
       try { cur = JSON.parse(localStorage.getItem(SERVE_STATE_KEY)) || {}; } catch {}
       const byRepo = (cur && cur._byRepo && typeof cur._byRepo === 'object') ? cur._byRepo : {};
-      byRepo[repo] = fields;
-      localStorage.setItem(SERVE_STATE_KEY, JSON.stringify({ _byRepo: byRepo, _lastUsed: fields }));
+      // Mirror the launch-time save: stamp _forceBackend so the panel's
+      // sv() helper treats these seeded fields as authoritative, not as
+      // overridable defaults.
+      const _seeded = { ...fields, _forceBackend: true };
+      byRepo[repo] = _seeded;
+      localStorage.setItem(SERVE_STATE_KEY, JSON.stringify({ _byRepo: byRepo, _lastUsed: _seeded }));
     } catch {}
   }
   // Switch to the Serve tab (its click handler triggers _fetchCachedModels).
@@ -2097,7 +2112,18 @@ export async function openServePanelForRepo(repo, fields) {
              .find(el => (el.dataset.repo || '').split('/').pop() === _short);
     }
     if (card) {
-      if (!card.classList.contains('doclib-card-expanded')) card.click();
+      // If we were given fields to restore, force a fresh render of the
+      // serve panel so it reads the just-written _byRepo[repo] values
+      // from localStorage. Without this, an already-expanded card kept
+      // its stale form and the "Edit serve" → previous settings round-
+      // trip looked broken from the user's side.
+      if (fields && card.classList.contains('doclib-card-expanded')) {
+        card.click();
+        await new Promise(r => setTimeout(r, 40));
+        card.click();
+      } else if (!card.classList.contains('doclib-card-expanded')) {
+        card.click();
+      }
       try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
       return true;
     }
@@ -2128,6 +2154,14 @@ export async function _fetchCachedModels() {
   try {
     let host = _envState.remoteHost || '';
     let selectedServer = null;
+    const _serverByCacheValue = (val) => {
+      if (val === 'local') return null;
+      return _serverByVal?.(val)
+        || (/^\d+$/.test(String(val)) ? _envState.servers[parseInt(val)] : null)
+        || _envState.servers.find(x => x.name === val)
+        || null;
+    };
+
     const cacheSrv = document.getElementById('hwfit-cache-server');
     if (cacheSrv) {
       const val = cacheSrv.value;
@@ -2135,7 +2169,7 @@ export async function _fetchCachedModels() {
         host = '';
         selectedServer = _envState.servers.find(s => !s.host || s.host === 'local') || _envState.servers[0];
       } else {
-        const s = _envState.servers.find(x => x.host === val) || _envState.servers[parseInt(val)];
+        const s = _serverByCacheValue(val);
         if (s) { host = s.host; selectedServer = s; }
       }
     } else {
@@ -2169,7 +2203,18 @@ export async function _fetchCachedModels() {
     if (modelDirs.length) qp.set('model_dir', modelDirs.join(','));
     const params = qp.toString() ? `?${qp}` : '';
     const res = await fetch(`/api/model/cached${params}`);
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      let msg = '';
+      try {
+        const payload = JSON.parse(body);
+        msg = payload && (payload.detail || payload.error || payload.message);
+      } catch {
+        msg = body;
+      }
+      msg = typeof msg === 'string' ? msg.trim() : '';
+      throw new Error(`HTTP ${res.status} ${res.statusText}${msg ? `: ${msg}` : ''}`);
+    }
     const data = await res.json();
     _dlWp.destroy();
 
@@ -2267,6 +2312,7 @@ export function initServe(shared) {
   _sshCmd = shared._sshCmd;
   _getPort = shared._getPort;
   _sshPrefix = shared._sshPrefix;
+  _serverByVal = shared._serverByVal;
   _getPlatform = shared._getPlatform;
   _isWindows = shared._isWindows;
   _isMetal = shared._isMetal;

@@ -10,10 +10,11 @@ import httpx
 from core.atomic_io import atomic_write_json
 from core.platform_compat import safe_chmod
 from src.secret_storage import decrypt, encrypt, is_encrypted
+from src.constants import DATA_DIR, INTEGRATIONS_FILE, SETTINGS_FILE
 
 log = logging.getLogger(__name__)
 
-DATA_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "integrations.json")
+DATA_FILE = INTEGRATIONS_FILE
 
 # ---------------------------------------------------------------------------
 # Presets
@@ -410,17 +411,80 @@ async def execute_api_call(
         if "application/json" in content_type:
             try:
                 data = response.json()
-                formatted = json.dumps(data, indent=2, ensure_ascii=False)
+                full = json.dumps(data, indent=2, ensure_ascii=False)
+                if len(full) > 12000:
+                    if isinstance(data, list):
+                        # Binary-search for the largest prefix such that the
+                        # final array (prefix + sentinel) fits within the limit.
+                        # Pre-compute the sentinel so we know its serialized size.
+                        sentinel_placeholder = {
+                            "_truncated": True,
+                            "total_items": len(data),
+                            "shown_items": 0,
+                        }
+                        # Overhead: the sentinel appears as an extra array element.
+                        # Add a conservative padding for the separating comma,
+                        # newline, and indentation characters (~6 chars).
+                        sentinel_overhead = len(
+                            json.dumps(sentinel_placeholder, indent=2, ensure_ascii=False)
+                        ) + 6
+                        budget = 12000 - sentinel_overhead
+                        lo, hi = 0, len(data)
+                        while lo < hi:
+                            mid = (lo + hi + 1) // 2
+                            candidate = json.dumps(
+                                data[:mid], indent=2, ensure_ascii=False
+                            )
+                            if len(candidate) < budget:
+                                lo = mid
+                            else:
+                                hi = mid - 1
+                        sentinel = {
+                            "_truncated": True,
+                            "total_items": len(data),
+                            "shown_items": lo,
+                        }
+                        formatted = json.dumps(
+                            data[:lo] + [sentinel], indent=2, ensure_ascii=False
+                        )
+                    elif isinstance(data, dict):
+                        # Truncate dict entries until the result fits, then add
+                        # the _truncated marker.  Walk keys in insertion order.
+                        DICT_LIMIT = 12000
+                        kept: dict = {}
+                        for k, v in data.items():
+                            candidate = json.dumps(
+                                {**kept, k: v, "_truncated": True},
+                                indent=2,
+                                ensure_ascii=False,
+                            )
+                            if len(candidate) <= DICT_LIMIT:
+                                kept[k] = v
+                            else:
+                                break
+                        formatted = json.dumps(
+                            {**kept, "_truncated": True}, indent=2, ensure_ascii=False
+                        )
+                    else:
+                        total = len(full)
+                        formatted = full[:12000] + f"\n... (truncated, {total} chars total)"
+                else:
+                    formatted = full
             except (json.JSONDecodeError, ValueError):
                 formatted = response.text
+                if len(formatted) > 12000:
+                    total = len(formatted)
+                    formatted = formatted[:12000] + f"\n... (truncated, {total} chars total)"
         elif "text/html" in content_type:
             formatted = _strip_html_tags(response.text)
+            if len(formatted) > 12000:
+                total = len(formatted)
+                formatted = formatted[:12000] + f"\n... (truncated, {total} chars total)"
         else:
             formatted = response.text
-
-        # Truncate
-        if len(formatted) > 12000:
-            formatted = formatted[:12000] + "\n... (truncated)"
+            if len(formatted) > 12000:
+                total = len(formatted)
+                formatted = formatted[:12000] + f"\n... (truncated, {total} chars total)"
 
         output = f"HTTP {status}\n{formatted}"
 
@@ -471,7 +535,7 @@ def get_integrations_prompt() -> str:
 def migrate_from_settings() -> None:
     """If data/settings.json has miniflux_url and miniflux_api_key, create a
     Miniflux integration and clear those keys from settings."""
-    settings_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "settings.json")
+    settings_path = SETTINGS_FILE
     if not os.path.exists(settings_path):
         return
 

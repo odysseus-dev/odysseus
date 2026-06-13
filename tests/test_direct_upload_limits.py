@@ -48,7 +48,7 @@ def test_direct_upload_routes_use_bounded_reads():
             "read_upload_limited(file, MEMORY_IMPORT_MAX_BYTES",
         ],
         "routes/calendar_routes.py": [
-            "read_upload_limited(file, _ICS_MAX_BYTES",
+            "read_upload_limited(file, ICS_MAX_BYTES",
         ],
         "routes/email_routes.py": [
             "read_upload_limited(file, EMAIL_COMPOSE_UPLOAD_MAX_BYTES",

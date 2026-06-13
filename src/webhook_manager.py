@@ -202,6 +202,18 @@ class WebhookManager:
         self._client = httpx.AsyncClient(timeout=10, follow_redirects=False)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._api_key_manager = api_key_manager
+        # Strong references to in-flight fire-and-forget tasks. asyncio only
+        # keeps weak references to tasks, so without this the GC can collect a
+        # delivery task mid-flight and the webhook is silently never sent.
+        self._bg_tasks: set = set()
+
+    def _spawn_tracked(self, coro):
+        """Schedule a background task and hold a strong reference until it
+        finishes, so it can't be garbage-collected before delivery completes."""
+        task = asyncio.ensure_future(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+        return task
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
@@ -223,8 +235,8 @@ class WebhookManager:
         if event not in ALLOWED_EVENTS:
             return
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.fire(event, payload))
+            asyncio.get_running_loop()
+            self._spawn_tracked(self.fire(event, payload))
         except RuntimeError:
             # Called from a sync thread (e.g. sync FastAPI route in threadpool)
             if self._loop and self._loop.is_running():
@@ -243,7 +255,7 @@ class WebhookManager:
 
         for wh in matching:
             decrypted_secret = self._decrypt_secret(wh.secret)
-            asyncio.create_task(self._deliver(wh.id, wh.url, decrypted_secret, event, payload))
+            self._spawn_tracked(self._deliver(wh.id, wh.url, decrypted_secret, event, payload))
 
     async def deliver_test(self, webhook_id: str, url: str, encrypted_secret: Optional[str]):
         """Public method for the test-webhook route."""

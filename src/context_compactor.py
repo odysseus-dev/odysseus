@@ -381,7 +381,10 @@ async def maybe_compact(
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")
-        return system_msgs + recent, context_length, False
+        # Degrade gracefully: keep the conversation intact rather than
+        # silently dropping the older half. was_compacted=False signals the
+        # caller nothing was summarized; trim_for_context handles length.
+        return messages, context_length, False
 
     summary_msg = {
         "role": "system",
@@ -435,8 +438,8 @@ def _update_session_history(session, split_point: int, summary: str,
     )
     new_history = system_prefix + [summary_msg] + recent_history
     try:
-        from core import models as _core_models
-        manager = getattr(_core_models, "_session_manager", None)
+        from core.models import get_session_manager_instance
+        manager = get_session_manager_instance()
     except Exception:
         manager = None
     if manager and getattr(session, "id", None):

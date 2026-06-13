@@ -7,10 +7,11 @@ from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Form
 
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
+from src.constants import MAIL_ATTACHMENTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,19 @@ def _aggregate_language_facets(lang_rows):
         out[key] = out.get(key, 0) + cnt
     return out
 
+
+def _library_language_for_document(doc: Document) -> str:
+    """Return the display language used by the document library.
+
+    PDF documents are stored as markdown wrappers so the editor can preserve
+    extracted text, form fields, and annotations. The library should still
+    identify them as PDFs instead of exposing that internal wrapper format.
+    """
+    from src.pdf_form_doc import find_source_upload_id
+
+    if find_source_upload_id(doc.current_content or ""):
+        return "pdf"
+    return doc.language or "text"
 
 
 from routes.document_helpers import (
@@ -94,10 +108,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # to markdown for prose.
             language = req.language
             if not language:
-                from src.tool_implementations import _looks_like_email_document, _sniff_doc_language
+                from src.agent_tools.document_tools import _looks_like_email_document, _sniff_doc_language
                 language = _sniff_doc_language(req.content)
             else:
-                from src.tool_implementations import _looks_like_email_document
+                from src.agent_tools.document_tools import _looks_like_email_document
             if _looks_like_email_document(req.content, req.title):
                 language = "email"
 
@@ -260,18 +274,29 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             from sqlalchemy import or_
+            pdf_marker_cond = or_(
+                Document.current_content.like('%<!-- pdf_source upload_id="%'),
+                Document.current_content.like('%<!-- pdf_form_source upload_id="%'),
+            )
+            library_language_expr = case(
+                (pdf_marker_cond, "pdf"),
+                (Document.language.is_(None), "text"),
+                else_=Document.language,
+            )
             # Archived view shows ONLY archived docs; the default view excludes
             # them (NULL = legacy rows that predate the column = not archived).
             _arch_cond = (Document.archived == True) if archived else or_(
                 Document.archived == False, Document.archived.is_(None))
-            # Language facet counts (owner-filtered)
+            # Language facet counts (owner-filtered). PDF documents are stored
+            # as markdown wrappers, so group by the library display language
+            # instead of the raw stored language.
             lang_q = (
-                db.query(Document.language, func.count(Document.id))
+                db.query(library_language_expr, func.count(Document.id))
                 .outerjoin(DbSession, Document.session_id == DbSession.id)
                 .filter(Document.is_active == True).filter(_arch_cond)
             )
             lang_q = _owner_session_filter(lang_q, user)
-            lang_rows = lang_q.group_by(Document.language).all()
+            lang_rows = lang_q.group_by(library_language_expr).all()
             languages = _aggregate_language_facets(lang_rows)
 
             # Session count (owner-filtered)
@@ -303,12 +328,17 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         Document.title.ilike(term) | Document.current_content.ilike(term)
                     )
 
-            # Language filter
+            # Language filter. "pdf" is a display language derived from the
+            # source marker; "markdown" excludes those wrappers.
             if language:
                 if language == "text":
                     q = q.filter((Document.language == None) | (Document.language == "text"))
+                elif language == "pdf":
+                    q = q.filter(pdf_marker_cond)
                 else:
                     q = q.filter(Document.language == language)
+                    if language == "markdown":
+                        q = q.filter(~pdf_marker_cond)
 
             # Total before pagination
             total = q.count()
@@ -332,7 +362,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     "session_id": doc.session_id,
                     "session_name": session_name,
                     "title": doc.title,
-                    "language": doc.language or "text",
+                    "language": _library_language_for_document(doc),
                     "preview": (doc.current_content or "")[:500],
                     "version_count": doc.version_count,
                     "created_at": (doc.created_at.isoformat() + "Z") if doc.created_at else None,
@@ -613,7 +643,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     # in-memory active-doc pointer so the last-resort injection
                     # path doesn't re-surface this doc in a later chat (#1160).
                     try:
-                        from src.tool_implementations import clear_active_document
+                        from src.agent_tools.document_tools import clear_active_document
                         clear_active_document(doc_id)
                     except Exception:
                         pass
@@ -642,7 +672,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             # Closed/deleted — drop the in-memory active-doc pointer so it isn't
             # re-injected into a later, unrelated chat (#1160).
             try:
-                from src.tool_implementations import clear_active_document
+                from src.agent_tools.document_tools import clear_active_document
                 clear_active_document(doc_id)
             except Exception:
                 pass
@@ -664,8 +694,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             # Verify ownership before listing versions
             doc = db.query(Document).filter(Document.id == doc_id).first()
-            if doc:
-                _verify_doc_owner(db, doc, user)
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
             versions = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id
             ).order_by(DocumentVersion.version_number.desc()).all()
@@ -688,8 +719,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         try:
             # Verify ownership
             doc = db.query(Document).filter(Document.id == doc_id).first()
-            if doc:
-                _verify_doc_owner(db, doc, user)
+            if not doc:
+                raise HTTPException(404, "Document not found")
+            _verify_doc_owner(db, doc, user)
             ver = db.query(DocumentVersion).filter(
                 DocumentVersion.document_id == doc_id,
                 DocumentVersion.version_number == num,
@@ -1511,10 +1543,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         # don't import from a routes file (cycle-prone). Same env override
         # as email_routes (ODYSSEUS_MAIL_ATTACHMENTS_DIR).
         from pathlib import Path as _Path
-        import os as _os
-        _DATA_DIR = _Path(__file__).resolve().parent.parent / "data"
-        _BASE = _os.environ.get("ODYSSEUS_MAIL_ATTACHMENTS_DIR", str(_DATA_DIR / "mail-attachments"))
-        _COMPOSE_DIR = _Path(_BASE) / "_compose"
+        _COMPOSE_DIR = _Path(MAIL_ATTACHMENTS_DIR) / "_compose"
         _COMPOSE_DIR.mkdir(parents=True, exist_ok=True)
 
         user = get_current_user(request)

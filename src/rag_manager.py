@@ -7,6 +7,8 @@ A thin wrapper around VectorRAG for backward compatibility and additional featur
 import logging
 from typing import List, Dict, Any, Optional
 
+from src.constants import CHROMA_DIR
+
 # Try to import from different possible locations
 try:
     from rag_vector import VectorRAG
@@ -24,7 +26,7 @@ class RAGManager:
     Most methods delegate directly to VectorRAG.
     """
     
-    def __init__(self, persist_directory: str = "data/chroma"):
+    def __init__(self, persist_directory: str = CHROMA_DIR):
         """Initialize the RAGManager with VectorRAG."""
         self.vector_rag = VectorRAG(persist_directory=persist_directory)
         logger.info("RAGManager initialized as wrapper for VectorRAG")
