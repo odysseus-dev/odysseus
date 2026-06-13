@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Odysseus • Personas</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap');
+    
+    :root {
+      --primary: #6366f1;
+      --primary-light: #818cf8;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Inter', system_ui, sans-serif;
+      background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%);
+      color: #e2e8f0;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    
+    .header {
+      background: rgba(15, 15, 35, 0.95);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+      padding: 1.25rem 2rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    .header-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.025em;
+    }
+    
+    .logo-icon {
+      width: 42px;
+      height: 42px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 1.25rem;
+      box-shadow: 0 10px 15px -3px rgb(99 102 241 / 0.3);
+    }
+    
+    .title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      background: linear-gradient(to right, #e2e8f0, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    
+    .hero {
+      text-align: center;
+      padding: 3rem 1rem 2.5rem;
+    }
+    
+    .hero h1 {
+      font-size: 3rem;
+      font-weight: 700;
+      line-height: 1.1;
+      margin-bottom: 1rem;
+      background: linear-gradient(90deg, #e2e8f0, #c0c7d6, #e2e8f0);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: gradient-shift 6s ease infinite;
+      background-size: 200% 200%;
+    }
+    
+    @keyframes gradient-shift {
+      0%,100% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+    }
+    
+    .hero p {
+      font-size: 1.25rem;
+      color: #64748b;
+      max-width: 520px;
+      margin: 0 auto 2rem;
+    }
+    
+    .actions {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    
+    .btn {
+      padding: 0.75rem 1.75rem;
+      border-radius: 9999px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: none;
+      text-decoration: none;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: white;
+      box-shadow: 0 10px 15px -3px rgb(99 102 241 / 0.4),
+                  0 4px 6px -4px rgb(99 102 241 / 0.4);
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 20px 25px -5px rgb(99 102 241 / 0.5);
+    }
+    
+    .btn-secondary {
+      background: rgba(30, 41, 59, 0.6);
+      color: #cbd5e1;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+    
+    .btn-secondary:hover {
+      background: rgba(51, 65, 85, 0.8);
+      border-color: rgba(148, 163, 184, 0.4);
+    }
+    
+    .personas-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+    
+    .persona-card {
+      background: rgba(30, 41, 59, 0.5);
+      border: 1px solid rgba(99, 102, 241, 0.15);
+      border-radius: 20px;
+      padding: 1.5rem;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .persona-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(to right, #6366f1, #a855f7);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    
+    .persona-card:hover {
+      transform: translateY(-4px);
+      border-color: rgba(99, 102, 241, 0.3);
+      box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.4);
+    }
+    
+    .persona-card:hover::before {
+      opacity: 1;
+    }
+    
+    .persona-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    
+    .persona-avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: white;
+      flex-shrink: 0;
+      box-shadow: 0 10px 10px -3px rgb(0 0 0 / 0.3);
+    }
+    
+    .persona-avatar.researcher { background: linear-gradient(135deg, #06b6d4, #3b82f6); }
+    .persona-avatar.coder { background: linear-gradient(135deg, #8b5cf6, #ec4899); }
+    .persona-avatar.assistant { background: linear-gradient(135deg, #10b981, #14b8a6); }
+    .persona-avatar.default { background: linear-gradient(135deg, #6366f1, #a855f7); }
+    
+    .persona-meta {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+    
+    .persona-badge {
+      font-size: 0.7rem;
+      padding: 1px 9px;
+      border-radius: 9999px;
+      font-weight: 600;
+      letter-spacing: -.3px;
+    }
+    
+    .badge-active { background: rgba(16, 185, 129, 0.15); color: #4ade80; }
+    .badge-disabled { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+    
+    .persona-name {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    
+    .persona-category {
+      font-size: 0.75rem;
+      color: #64748b;
+      font-weight: 500;
+    }
+    
+    .persona-description {
+      font-size: 0.92rem;
+      line-height: 1.5;
+      color: #94a3b8;
+      margin-bottom: 1.25rem;
+      min-height: 52px;
+    }
+    
+    .persona-stats {
+      display: flex;
+      gap: 1.25rem;
+      font-size: 0.8rem;
+      color: #64748b;
+      margin-bottom: 1rem;
+    }
+    
+    .persona-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    
+    .btn-small {
+      padding: 6px 14px;
+      font-size: 0.8rem;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    
+    .btn-use {
+      background: rgba(99, 102, 241, 0.15);
+      color: #a5b4fc;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+    }
+    
+    .btn-use:hover {
+      background: rgba(99, 102, 241, 0.25);
+      color: white;
+    }
+    
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      backdrop-filter: blur(8px);
+    }
+    
+    .modal.active {
+      display: flex;
+      animation: fadeIn 0.2s ease;
+    }
+    
+    .modal-content {
+      background: #1e2937;
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      border-radius: 24px;
+      width: 100%;
+      max-width: 520px;
+      max-height: 92vh;
+      overflow-y: auto;
+      box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.5);
+    }
+    
+    .modal-header {
+      padding: 1.5rem 1.75rem 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+    
+    .modal-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+    
+    .modal-body {
+      padding: 1.75rem;
+    }
+    
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+    
+    .form-label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #cbd5e1;
+    }
+    
+    .form-input {
+      width: 100%;
+      padding: 12px 16px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 12px;
+      color: white;
+      font-size: 0.95rem;
+      transition: all 0.2s ease;
+    }
+    
+    .form-input:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+    }
+    
+    .form-input::placeholder {
+      color: #64748b;
+    }
+    
+    .colorful-gradient {
+      background: linear-gradient(90deg, #6366f1, #a855f7, #ec4899);
+      background-size: 200% 100%;
+      animation: gradient-move 3s linear infinite;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    
+    @keyframes gradient-move {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+    
+    .empty-state {
+      text-align: center;
+      padding: 4rem 2rem;
+      color: #64748b;
+    }
+    
+    .empty-state svg {
+      width: 64px;
+      height: 64px;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+    
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e2937;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 14px 24px;
+      border-radius: 999px;
+      box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.3);
+      display: none;
+      align-items: center;
+      gap: 10px;
+      z-index: 300;
+      animation: slideUp 0.3s ease;
+    }
+    
+    @keyframes slideUp {
+      from { transform: translate(-50%, 20px); opacity: 0; }
+      to { transform: translate(-50%, 0); opacity: 1; }
+    }
+    
+    .tag {
+      font-size: 0.7rem;
+      padding: 1px 8px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.15);
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <div class="logo">
+        <div class="logo-icon">O</div>
+        <div>
+          <span class="title">Odysseus</span>
+          <span style="color:#64748b; font-weight:400; font-size:0.9rem;">/ Personas</span>
+        </div>
+      </div>
+      <button onclick="showCreateModal()" class="btn btn-primary">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
+          <path d="M12 4v16m8-8H4"/>
+        </svg>
+        New Persona
+      </button>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="hero">
+      <h1>Meet your team of<br><span class="colorful-gradient">specialized agents</span></h1>
+      <p>Create dedicated personas with unique skills, tools, and personalities. Switch between them instantly.</p>
+      
+      <div class="actions">
+        <button onclick="seedDefaults()" class="btn btn-secondary">
+          Seed Default Personas
+        </button>
+        <button onclick="showCreateModal()" class="btn btn-primary">
+          Create Custom Persona
+        </button>
+      </div>
+    </div>
+
+    <div id="personas-grid" class="personas-grid">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
+  <!-- Create / Edit Modal -->
+  <div id="modal" class="modal" onclick="if (event.target.id === 'modal') hideModal()">
+    <div class="modal-content" onclick="event.stopImmediatePropagation()">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-title">Create New Persona</div>
+        <button onclick="hideModal()" style="background:none;border:none;color:#64748b;font-size:1.5rem;cursor:pointer;line-height:1;">×</button>
+      </div>
+      
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Name (slug)</label>
+          <input type="text" id="p-name" class="form-input" placeholder="researcher">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Display Name</label>
+          <input type="text" id="p-display" class="form-input" placeholder="Research Specialist">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <input type="text" id="p-category" class="form-input" value="research" placeholder="research / coding / personal">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea id="p-desc" class="form-input" rows="2" placeholder="What does this persona excel at?"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Allowed Tools (comma separated)</label>
+          <input type="text" id="p-tools" class="form-input" placeholder="web_search,read_file,create_document">
+          <small style="color:#64748b;font-size:0.75rem;">Leave empty to inherit main agent tools</small>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Personality / Extra Instructions</label>
+          <textarea id="p-prompt" class="form-input" rows="3" placeholder="You are a meticulous researcher..."></textarea>
+        </div>
+        
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="form-group">
+            <label class="form-label">Temperature</label>
+            <input type="number" id="p-temp" class="form-input" value="0.4" step="0.1" min="0" max="2">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select id="p-status" class="form-input">
+              <option value="active">Active</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      <div style="padding:1rem 1.75rem 1.75rem;display:flex;gap:10px;justify-content:flex-end;border-top:1px solid rgba(148,163,184,0.1);">
+        <button onclick="hideModal()" class="btn btn-secondary">Cancel</button>
+        <button onclick="savePersona()" class="btn btn-primary" id="save-btn">Create Persona</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast">
+    <span id="toast-text"></span>
+  </div>
+
+  <script>
+    let editingName = null;
+    
+    async function loadPersonas() {
+      const res = await fetch('/api/personas');
+      const personas = await res.json();
+      renderPersonas(personas);
+    }
+    
+    function renderPersonas(personas) {
+      const grid = document.getElementById('personas-grid');
+      grid.innerHTML = '';
+      
+      if (personas.length === 0) {
+        grid.innerHTML = `
+          <div class="empty-state" style="grid-column: 1 / -1;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="#64748b">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 01-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <h3 style="margin:12px 0 4px;font-weight:600;color:#cbd5e1;">No personas yet</h3>
+            <p>Create your first specialized agent.</p>
+          </div>
+        `;
+        return;
+      }
+      
+      personas.forEach(p => {
+        const card = document.createElement('div');
+        card.className = 'persona-card';
+        
+        const avatarClass = p.category === 'research' ? 'researcher' : 
+                           p.category === 'coding' ? 'coder' : 
+                           p.category === 'personal' ? 'assistant' : 'default';
+        
+        const statusBadge = p.status === 'active' 
+          ? `<span class="persona-badge badge-active">ACTIVE</span>` 
+          : `<span class="persona-badge badge-disabled">DISABLED</span>`;
+        
+        card.innerHTML = `
+          <div class="persona-header">
+            <div class="persona-avatar ${avatarClass}">
+              ${p.display_name ? p.display_name[0] : p.name[0]}
+            </div>
+            <div class="persona-meta">
+              ${statusBadge}
+              <span class="tag">${p.category}</span>
+            </div>
+          </div>
+          
+          <div class="persona-name">${p.display_name || p.name}</div>
+          <div class="persona-category">@${p.name}</div>
+          
+          <div class="persona-description">${p.description || 'No description provided.'}</div>
+          
+          <div class="persona-stats">
+            <div>Used <strong>${p.uses || 0}</strong> times</div>
+          </div>
+          
+          <div class="persona-actions">
+            <button onclick="usePersona('${p.name}')" class="btn btn-small btn-use">Use Persona</button>
+            <button onclick="editPersona('${p.name}')" class="btn btn-small btn-secondary">Edit</button>
+            <button onclick="deletePersona('${p.name}')" class="btn btn-small" style="color:#f87171;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);">Delete</button>
+          </div>
+        `;
+        
+        grid.appendChild(card);
+      });
+    }
+    
+    function showCreateModal() {
+      editingName = null;
+      document.getElementById('modal-title').textContent = 'Create New Persona';
+      document.getElementById('save-btn').textContent = 'Create Persona';
+      
+      // Reset form
+      ['p-name','p-display','p-desc','p-category','p-tools','p-prompt','p-temp'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = id === 'p-temp' ? '0.4' : '';
+      });
+      document.getElementById('p-category').value = 'general';
+      document.getElementById('p-status').value = 'active';
+      
+      document.getElementById('modal').classList.add('active');
+      document.getElementById('p-name').focus();
+    }
+    
+    async function editPersona(name) {
+      const res = await fetch(`/api/personas/${name}`);
+      const p = await res.json();
+      
+      editingName = name;
+      document.getElementById('modal-title').textContent = 'Edit Persona';
+      document.getElementById('save-btn').textContent = 'Save Changes';
+      
+      document.getElementById('p-name').value = p.name;
+      document.getElementById('p-display').value = p.display_name || '';
+      document.getElementById('p-desc').value = p.description || '';
+      document.getElementById('p-category').value = p.category || 'general';
+      document.getElementById('p-tools').value = (p.allowed_tools || []).join(', ');
+      document.getElementById('p-prompt').value = p.system_prompt_addition || '';
+      document.getElementById('p-temp').value = p.temperature || 0.4;
+      document.getElementById('p-status').value = p.status || 'active';
+      
+      document.getElementById('modal').classList.add('active');
+    }
+    
+    async function savePersona() {
+      const payload = {
+        name: document.getElementById('p-name').value.trim(),
+        display_name: document.getElementById('p-display').value.trim(),
+        description: document.getElementById('p-desc').value.trim(),
+        category: document.getElementById('p-category').value.trim(),
+        allowed_tools: document.getElementById('p-tools').value.split(',').map(s => s.trim()).filter(Boolean),
+        system_prompt_addition: document.getElementById('p-prompt').value.trim(),
+        temperature: parseFloat(document.getElementById('p-temp').value) || 0.4,
+      };
+      
+      if (!payload.name) {
+        alert('Name is required');
+        return;
+      }
+      
+      const url = editingName ? `/api/personas/${editingName}` : '/api/personas';
+      const method = editingName ? 'PATCH' : 'POST';
+      
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      
+      if (res.ok) {
+        hideModal();
+        showToast(editingName ? 'Persona updated!' : 'Persona created!');
+        loadPersonas();
+      } else {
+        const err = await res.json();
+        alert(err.detail || 'Failed to save persona');
+      }
+    }
+    
+    async function deletePersona(name) {
+      if (!confirm(`Delete persona "${name}"?`)) return;
+      
+      const res = await fetch(`/api/personas/${name}`, { method: 'DELETE' });
+      if (res.ok) {
+        showToast('Persona deleted');
+        loadPersonas();
+      }
+    }
+    
+    async function usePersona(name) {
+      // This would normally send a message to the main chat
+      // For now we just show a nice toast and copy the persona name
+      showToast(`Switched to ${name} persona (in real UI this would affect the current chat)`);
+      
+      // In a real implementation you would call the chat API to set active persona
+      // await fetch('/api/chat/set-persona', { method: 'POST', body: JSON.stringify({persona: name}) })
+    }
+    
+    async function seedDefaults() {
+      const res = await fetch('/api/personas/seed-defaults', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Seeded ${data.created.length} default personas`);
+        loadPersonas();
+      }
+    }
+    
+    function hideModal() {
+      document.getElementById('modal').classList.remove('active');
+      editingName = null;
+    }
+    
+    function showToast(text) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-text').textContent = text;
+      toast.style.display = 'flex';
+      
+      setTimeout(() => {
+        toast.style.display = 'none';
+      }, 2600);
+    }
+    
+    // Keyboard support
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const modal = document.getElementById('modal');
+        if (modal.classList.contains('active')) hideModal();
+      }
+      if (e.key === '/' && document.activeElement.tagName === 'BODY') {
+        e.preventDefault();
+        showCreateModal();
+      }
+    });
+    
+    // Init
+    window.onload = () => {
+      loadPersonas();
+    };
+  </script>
+</body>
+</html>
