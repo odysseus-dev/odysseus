@@ -650,6 +650,36 @@ FUNCTION_TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "action": {"type": "string", "enum": ["list", "view", "view_ref", "add", "edit", "patch", "publish", "delete", "search"], "description": "list = name+description summary; view = full SKILL.md; view_ref = sub-file under the skill dir; add = create; edit = full rewrite (content); patch = old_string→new_string; publish = flip status; delete; search = relevance match on published skills."},
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_personas",
+            "description": (
+                "Manage specialized sub-agents (Personas). Each persona is a focused agent with its own tools, skills, and personality. "
+                "Actions: list, view, add, edit, delete, activate, deactivate. "
+                "Use this when the user wants to create or switch to a specialized agent (e.g. 'create a coding persona', 'use researcher mode')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "view", "add", "edit", "delete", "activate", "deactivate"],
+                        "description": "Action to perform on personas"
+                    },
+                    "name": {"type": "string", "description": "Persona slug (e.g. 'researcher', 'coder')"},
+                    "display_name": {"type": "string", "description": "Human readable name"},
+                    "description": {"type": "string"},
+                    "category": {"type": "string"},
+                    "allowed_tools": {"type": "array", "items": {"type": "string"}},
+                    "system_prompt_addition": {"type": "string"},
+                    "temperature": {"type": "number"}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+
                     "name": {"type": "string", "description": "Slug/name of the skill. Required for add/view/view_ref/edit/patch/publish/delete. For add, choose the exact kebab-case name the user should see and report only the returned name."},
                     "path": {"type": "string", "description": "Sub-path under the skill directory for view_ref (e.g. 'references/example.md')."},
                     "description": {"type": "string", "description": "One-line summary surfaced in the skills index (for add)."},
