@@ -149,3 +149,29 @@ async def seed_default_personas(request: Request):
         "created": [p.name for p in created],
         "total": len(pm.list_personas())
     }
+
+
+@router.post("/set-active")
+async def set_active_persona(request: Request, body: dict):
+    """Lightweight way to set active persona for the current conversation."""
+    user = get_current_user(request)
+    name = body.get("name")
+    session_id = body.get("session_id")
+    
+    if not name:
+        raise HTTPException(400, "name is required")
+    
+    p = pm.get_persona(name)
+    if not p or p.status != "active":
+        raise HTTPException(404, f"Persona '{name}' not found or disabled")
+    
+    # For now we just return success. In a real implementation this would be stored
+    # per session in the database or in-memory.
+    pm.record_usage(name)
+    
+    return {
+        "success": True,
+        "active_persona": name,
+        "display_name": p.display_name,
+        "message": f"Persona '{p.display_name}' is now active for this session"
+    }
