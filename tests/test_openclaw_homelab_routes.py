@@ -163,13 +163,14 @@ def test_docker_logs_uses_socket_response(monkeypatch):
 
     def fake_request(path, timeout=8):
         calls['path'] = path
-        return {'status': 'ok', 'http_status': 200, 'body': 'recent logs'}
+        return {'status': 'ok', 'http_status': 200, 'body': '\x02\x00\x00recent logs'}
 
     monkeypatch.setattr('routes.openclaw_homelab_routes._docker_api_request', fake_request)
     from routes.openclaw_homelab_routes import _docker_container_logs
     result = _docker_container_logs('caddy', 50)
     assert 'tail=50' in calls['path']
     assert result['logs'] == 'recent logs'
+    assert 'body' not in result['check']
 
 
 
@@ -452,8 +453,8 @@ async def test_docker_unhealthy_endpoint_returns_containers(monkeypatch):
 @pytest.mark.asyncio
 async def test_tailscale_status_endpoint_returns_peer_count(monkeypatch):
     monkeypatch.setattr(
-        'routes.openclaw_homelab_routes._run_static_command',
-        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': '{"Peer":{"one":{}}}', 'stderr': ''},
+        'routes.openclaw_homelab_routes._tailscale_status',
+        lambda: {'status': 'ok', 'tailscale': {'Peer': {'one': {}}}, 'check': {'status': 'ok'}},
     )
     router = setup_openclaw_homelab_routes()
     ep = _endpoint(router, '/api/openclaw/homelab/ops/tailscale-status', 'GET')

@@ -45,6 +45,7 @@ BASE_URL = '/api/openclaw/homelab'
 PING_TARGET = os.getenv('HEIMDAL_PING_TARGET', '100.110.136.4')
 CADDY_CONTAINER = os.getenv('CADDY_CONTAINER', 'caddy')
 DOCKER_SOCKET = os.getenv('HOMELAB_DOCKER_SOCKET', '/var/run/docker.sock')
+TAILSCALE_SOCKET = os.getenv('HOMELAB_TAILSCALE_SOCKET', '/var/run/tailscale/tailscaled.sock')
 
 
 def _safe_actions(actions: list[str]) -> list[str]:
@@ -192,7 +193,41 @@ def _docker_container_logs(container: str, lines: int) -> dict[str, Any]:
         f'/containers/{safe_container}/logs?stdout=1&stderr=1&tail={lines}',
         timeout=10,
     )
-    return {'logs': (result.get('body') or '')[-12000:], 'check': result}
+    logs = re.sub(r'[\x00-\x08\x0b-\x1f]', '', result.get('body') or '')
+    check = {k: v for k, v in result.items() if k != 'body'}
+    return {'logs': logs[-12000:], 'check': check}
+
+
+def _tailscale_status() -> dict[str, Any]:
+    if os.path.exists(TAILSCALE_SOCKET):
+        conn = _UnixSocketHTTPConnection(TAILSCALE_SOCKET, timeout=8)
+        try:
+            conn.request('GET', '/localapi/v0/status', headers={'Host': 'local-tailscaled.sock'})
+            resp = conn.getresponse()
+            text = resp.read().decode('utf-8', errors='replace')
+            payload = json.loads(text) if resp.status < 400 else None
+            return {
+                'status': 'ok' if resp.status < 400 else 'degraded',
+                'http_status': resp.status,
+                'tailscale': _sanitize_dict(payload) if isinstance(payload, dict) else None,
+                'check': {'status': 'ok' if resp.status < 400 else 'degraded', 'http_status': resp.status},
+            }
+        except Exception as exc:
+            return {'status': 'degraded', 'error': str(exc), 'tailscale': None, 'check': {'status': 'degraded', 'error': str(exc)}}
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    result = _run_static_command(['tailscale', 'status', '--json'])
+    status_json = None
+    if result.get('status') == 'ok' and result.get('stdout'):
+        try:
+            status_json = _sanitize_dict(json.loads(result['stdout']))
+        except Exception:
+            status_json = None
+    return {'status': result.get('status'), 'tailscale': status_json, 'check': result}
 
 
 def _event_links(event_id: str) -> dict[str, str]:
@@ -370,17 +405,13 @@ def setup_openclaw_homelab_routes() -> APIRouter:
     async def openclaw_tailscale_status(request: Request) -> dict[str, Any]:
         """Return Tailscale status. Requires: homelab:read."""
         _scope_owner(request, HOMELAB_READ_SCOPES)
-        result = _run_static_command(['tailscale', 'status', '--json'])
-        status_json = None
-        if result.get('status') == 'ok' and result.get('stdout'):
-            try:
-                status_json = _sanitize_dict(json.loads(result['stdout']))
-            except Exception:
-                status_json = None
+        data = _tailscale_status()
+        result = data['check']
+        status_json = data.get('tailscale')
         peers = status_json.get('Peer', {}) if isinstance(status_json, dict) else {}
         message = (
             f"Tailscale status returned {len(peers)} peer(s)."
-            if result.get('status') == 'ok' else
+            if data.get('status') == 'ok' else
             f"Tailscale status degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
         )
         return _ops_result('tailscale_status', message, {'tailscale': status_json, 'check': result})
