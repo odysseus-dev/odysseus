@@ -183,7 +183,16 @@ def build_chat_url(base: str) -> str:
 
 
 def build_models_url(base: str) -> Optional[str]:
-    """Return the provider-specific model-list endpoint URL for a base."""
+    """Return the provider-specific model-list endpoint URL for a base.
+
+    For OpenAI-compatible servers (LM Studio, llama.cpp, vLLM,
+    text-generation-webui, etc.) the model list is exposed at ``/v1/models``.
+    When the user-supplied base has no path — e.g. ``http://localhost:1234`` —
+    we still need to land on ``/v1/models`` (issue #25); insert the ``/v1``
+    segment only when the path is empty, leaving any explicit non-empty path
+    untouched (so custom prefixes like ``/openai`` or ``/api/openai/v1`` keep
+    their semantics).
+    """
     base = normalize_base(resolve_url(base))
     provider = _detect_provider(base)
     if provider == "anthropic":
@@ -192,6 +201,12 @@ def build_models_url(base: str) -> Optional[str]:
         return _ollama_api_root(base) + "/tags"
     if provider == "chatgpt-subscription":
         return None
+    # Generic OpenAI-compatible fallback: ensure the path lands on /v1/models
+    # when the user omitted a path entirely. If a non-empty path is already
+    # present (e.g. /openai, /api/openai/v1, /v1), trust the caller — the
+    # /models suffix is appended as-is and the caller's prefix is preserved.
+    if not urlparse(base).path:
+        base = base + "/v1"
     return base + "/models"
 
 
