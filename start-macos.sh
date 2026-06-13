@@ -30,15 +30,9 @@ if [ -f .env ]; then
     done < .env
 fi
 
-# DATABASE_URL is project-scoped: force it from .env if explicitly set there,
-# so a shell-level DATABASE_URL for another project's Postgres doesn't take over.
-if [ -f .env ]; then
-    _db_url="$(grep -E '^DATABASE_URL=' .env | tail -1 | sed 's/^DATABASE_URL=//')"
-    if [ -n "$_db_url" ]; then
-        export DATABASE_URL="$_db_url"
-    fi
-    unset _db_url
-fi
+# Force SQLite for this native macOS run — overrides any DATABASE_URL already
+# set in the shell (e.g. a PSD Postgres URL exported from .zshrc).
+export DATABASE_URL="sqlite:///./data/app.db"
 
 # Shell overrides (ODYSSEUS_PORT / ODYSSEUS_HOST) take top priority, then .env
 # values (APP_PORT / APP_BIND), then built-in defaults.
