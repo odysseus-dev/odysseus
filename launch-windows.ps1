@@ -147,15 +147,23 @@ Write-Step ("Starting Odysseus at {0}" -f $url)
 
 # Start uvicorn as a background job so we can open the browser afterwards
 $serverJob = Start-Job -Name OdysseusServer -ScriptBlock {
-    param($PyExe, $HostAddr, $PortNum)
+    param($PyExe, $HostAddr, $PortNum, $WorkDir)
+    Set-Location -Path $WorkDir
     & $PyExe -m uvicorn app:app --host $HostAddr --port $PortNum
-} -ArgumentList $venvPy, $BindHost, $Port
+} -ArgumentList $venvPy, $BindHost, $Port, $PSScriptRoot
 
-# Poll until the server responds (up to 15 seconds)
+# Poll until the server responds (up to 30 seconds)
 Write-Host "Waiting for server to be ready..." -NoNewline
 $serverReady = $false
-foreach ($i in 1..15) {
+foreach ($i in 1..30) {
     Start-Sleep -Seconds 1
+    if ($serverJob.State -eq 'Failed') {
+        Write-Host ""
+        Write-Host "Server exited with an error:" -ForegroundColor Red
+        Receive-Job $serverJob -ErrorAction Continue
+        $serverReady = $false
+        break
+    }
     try {
         $request = [System.Net.WebRequest]::Create($url)
         $request.Timeout = 2000
@@ -171,22 +179,20 @@ foreach ($i in 1..15) {
 Write-Host ""
 if ($serverReady) {
     Write-Host "Server is ready."
-} else {
-    Write-Host "Server may not be ready yet -- opening browser anyway." -ForegroundColor Yellow
-}
-Start-Process $url
+    Start-Process $url
 
-Write-Host ""
-Write-Host "Odysseus is running. Close this window or press Ctrl+C to stop."
-Write-Host ""
+    Write-Host ""
+    Write-Host "Odysseus is running. Close this window or press Ctrl+C to stop."
+    Write-Host ""
 
-# Keep the script alive while the server runs
-while ($serverJob.State -eq 'Running') {
-    Start-Sleep -Milliseconds 500
-}
+    # Keep the script alive while the server runs
+    while ($serverJob.State -eq 'Running') {
+        Start-Sleep -Milliseconds 500
+    }
 
-# Show error output if the job failed
-if ($serverJob.State -eq 'Failed') {
-    Write-Host "Server exited with an error:" -ForegroundColor Red
-    Receive-Job $serverJob -ErrorAction Continue
+    # Show error output if the job failed
+    if ($serverJob.State -eq 'Failed') {
+        Write-Host "Server exited with an error:" -ForegroundColor Red
+        Receive-Job $serverJob -ErrorAction Continue
+    }
 }
