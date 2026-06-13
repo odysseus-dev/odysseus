@@ -34,10 +34,19 @@ from src.constants import DATA_DIR, AUTH_FILE, MEMORY_FILE, USER_PREFS_FILE, SET
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/app.db")
 
 # Create engine
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-)
+_engine_kwargs = {
+    "connect_args": {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+}
+# In-memory SQLite (test/CI) hands every thread its own DB under the default
+# SingletonThreadPool, so tables created on the import thread are invisible to
+# request handlers run in worker threads (e.g. Starlette TestClient). StaticPool
+# keeps one shared connection so the schema is visible everywhere. Only affects
+# ":memory:" URLs; file-based and non-SQLite deployments are unchanged.
+if "sqlite" in DATABASE_URL and ":memory:" in DATABASE_URL:
+    from sqlalchemy.pool import StaticPool
+    _engine_kwargs["poolclass"] = StaticPool
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
