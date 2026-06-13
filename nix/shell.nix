@@ -4,6 +4,7 @@
 # a bare `nix-shell nix/shell.nix` falls back to your <nixpkgs> channel.
 {
   pkgs ? import <nixpkgs> { },
+  extraInputs ? [ ],
 }:
 let
   inherit (import ./lib.nix) mkRuntimeLibs;
@@ -40,7 +41,8 @@ pkgs.mkShell {
     ++ lib.optionals pkgs.stdenv.isLinux [
       gosu
     ]
-    ++ runtimeLibs;
+    ++ runtimeLibs
+    ++ extraInputs;
 
   # Environment variables automatically injected into the shell
   env = {
@@ -56,38 +58,19 @@ pkgs.mkShell {
     PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = "true";
   };
 
-  # A bash script that executes automatically when a user runs `nix develop`
   shellHook = ''
-    # Fixes dynamic linking issues for Python libraries relying on C/C++ dependencies
     export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-    SESSION_NAME="odysseus"
-
     echo "Odysseus Nix shell for ${pkgs.stdenv.hostPlatform.system} is loaded."
-
-    # 1. First-time Setup Check
-    # If the database directory doesn't exist, we assume this is a fresh clone.
-    if [ ! -d "$ODYSSEUS_DATA_DIR" ]; then
-        echo "First configuration detected. Everything is being set-up!"
-
-        # Execute the initial setup to generate the admin account
-        ${lib.getExe' odysseus "odysseus-setup"}
-        echo "-----------------------------------------------------"
-        echo "Make sure you remember your admin username and temporary password!"
-    else
-        echo "Setup has already been executed..."
-    fi
-
     echo ""
-    echo "How to run Odysseus:"
+    echo "Available commands:"
+    echo "  odysseus-setup-wrapper  - Run first-time setup (create admin user)"
+    echo "  odysseus-run-tmux       - Start Chroma + Odysseus in a tmux session"
+    echo "  odysseus                - Start the app directly"
+    echo "  odysseus-chroma run     - Start ChromaDB only"
     echo ""
-    echo "  Keep it running after you close the terminal (detached tmux):"
-    echo "    tmux new-session -d -s $SESSION_NAME 'chroma run --path ./data/chroma --host 0.0.0.0 --port 8100' \\; split-window -h 'odysseus' \\; attach"
-    echo "    tmux attach -t $SESSION_NAME                     # reattach later"
-    echo "    tmux kill-session -t $SESSION_NAME               # stop everything"
-    echo ""
-    echo "  Or run the pieces manually in separate shells:"
-    echo "    chroma run --path ./data/chroma --host 0.0.0.0 --port 8100"
-    echo "    odysseus"
+    echo "Quick start:"
+    echo "  1. Run 'odysseus-setup wrapper' if this is a fresh clone"
+    echo "  2. Run 'odysseus-run-tmux' or start services manually"
   '';
 }

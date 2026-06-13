@@ -29,12 +29,19 @@
           src = ./.;
           extraPythonPackages = _ps: [ ];
         };
+        # Helper scripts for the dev shell
+        odysseus-setup-wrapper = pkgs.writeShellScriptBin "odysseus-setup-wrapper" (builtins.readFile ./nix/scripts/odysseus-setup-wrapper.sh);
+        odysseus-run-tmux = pkgs.writeShellScriptBin "odysseus-run-tmux" (builtins.readFile ./nix/scripts/odysseus-run-tmux.sh);
+        odysseus-cache-npx = pkgs.writeShellScriptBin "odysseus-cache-npx" (builtins.readFile ./nix/scripts/odysseus-cache-npx.sh);
       in
       {
         # The dev shell is defined in nix/shell.nix so it
         # also works via a bare `nix-shell nix/shell.nix`. Pass the flake's
         # pinned pkgs so `nix develop` uses the locked nixpkgs.
-        devShells.default = import ./nix/shell.nix { inherit pkgs; };
+        devShells.default = import ./nix/shell.nix {
+          inherit pkgs;
+          extraInputs = [ odysseus-setup-wrapper odysseus-run-tmux odysseus-cache-npx ];
+        };
 
         packages = {
           default = odysseus;
