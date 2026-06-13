@@ -250,6 +250,12 @@ def setup_openclaw_bridge_routes(
         tools_allowed = _has_scope(request, TOOLS_USE_SCOPES)
         memory_read_allowed = _has_scope(request, {"memory:read"})
         memory_write_allowed = _has_scope(request, MEMORY_WRITE_SCOPES)
+        
+        from routes.homelab_routes import HOMELAB_WRITE_SCOPES
+        from routes.n8n_routes import N8N_WRITE_SCOPES
+        homelab_write_allowed = _has_scope(request, HOMELAB_WRITE_SCOPES)
+        n8n_write_allowed = _has_scope(request, N8N_WRITE_SCOPES)
+        
         session_id = openclaw_session_id(body.channel, body.thread, body.session_id)
         sess = _ensure_session(session_manager, session_id, owner, f"OpenClaw Slack {body.channel or ''}".strip())
 
@@ -303,6 +309,14 @@ def setup_openclaw_bridge_routes(
                 webhook_manager=webhook_manager,
                 allow_tool_preprocessing=allow_tool_preprocessing,
             )
+            
+            gate_msg = ""
+            if homelab_write_allowed or n8n_write_allowed:
+                gate_msg = "You have permissions for write-heavy homelab or n8n actions. You MUST ask the user for explicit confirmation before generating tool calls or recommending commands that modify state (e.g., restart containers, rerun workflows)."
+            else:
+                gate_msg = "You do NOT have permissions for write-heavy actions like restarting containers or rerunning workflows. Do not attempt to use or recommend them."
+            
+            ctx.messages.insert(len(ctx.preface), {"role": "system", "content": gate_msg})
 
             if body.use_research and not tool_policy.blocks("trigger_research"):
                 try:
@@ -360,6 +374,7 @@ def setup_openclaw_bridge_routes(
                 "requires_approval": False,
             }
         finally:
+            session_manager.save_sessions()
             request.state.current_user = original_user
             if original_api_token is None:
                 try:
