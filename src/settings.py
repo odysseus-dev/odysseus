@@ -101,14 +101,21 @@ DEFAULT_SETTINGS = {
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
+    # Soft input-token budget for the agent loop. The DEFAULT value (6000) is the
+    # "auto" sentinel: it means "scale the budget to the model's context window"
+    # (#1230) — so long-context models aren't capped at 6000. Set ANY OTHER value
+    # to enforce an explicit cap (clamped to the window and to
+    # agent_input_token_hard_max); set 0 to disable soft-trimming entirely. The
+    # default is treated as auto because the settings-save path materializes
+    # defaults, so a persisted 6000 can't be told apart from a deliberate 6000 —
+    # to pin a budget near the default, use a nearby value (e.g. 5999).
     "agent_input_token_budget": 6000,
-    # Ceiling on the *auto-derived* input budget that #1230 introduced. Has
-    # no effect when `agent_input_token_budget` is explicitly set (the user's
-    # value is honoured regardless). Default matches
-    # `src.context_budget.DEFAULT_HARD_MAX`; lower this for cost-paranoid
-    # setups, raise it on premium APIs with very large windows that you
+    # Ceiling on the *auto-derived* input budget (#1230). No effect on an explicit
+    # `agent_input_token_budget` — a deliberate user value is honoured regardless
+    # (#1190). Default matches `src.context_budget.DEFAULT_HARD_MAX`; lower this for
+    # cost-paranoid setups, raise it on premium APIs with very large windows you
     # want to actually use (e.g. 900_000 to fill a 1M-context model). See
-    # `compute_input_token_budget` in src/context_budget.py.
+    # `compute_input_token_budget`.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
     # Extra directory roots that read_file / write_file may access, in
@@ -232,27 +239,6 @@ def is_setting_overridden(key: str) -> bool:
         return isinstance(saved, dict) and key in saved
     except (FileNotFoundError, json.JSONDecodeError):
         return False
-
-
-def is_setting_customized(key: str) -> bool:
-    """True if the saved file sets ``key`` to a value DIFFERENT from its default.
-
-    ``is_setting_overridden`` only checks presence, but the settings-save path
-    materializes every DEFAULT_SETTINGS key (``load_settings`` merges the
-    defaults and the save handlers persist the merged dict), so a persisted
-    default reads as "overridden" even though the user never chose it. Callers
-    that need "did the user deliberately change this away from the default"
-    (e.g. context-budget scaling, #1230) must compare against the default —
-    otherwise a materialized default silently defeats the adaptive path.
-    """
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            saved = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return False
-    if not isinstance(saved, dict) or key not in saved:
-        return False
-    return saved.get(key) != DEFAULT_SETTINGS.get(key)
 
 
 # Per-user settings (user prefs override the global admin default). Used for

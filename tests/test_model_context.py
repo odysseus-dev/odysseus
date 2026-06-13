@@ -192,7 +192,7 @@ class TestGetContextLength:
 
         def fake_query(endpoint_url, model):
             calls.append((endpoint_url, model))
-            return 8192 if len(calls) == 1 else 27000
+            return (8192, True) if len(calls) == 1 else (27000, True)
 
         monkeypatch.setattr(model_context, "_query_context_length", fake_query)
 
@@ -211,7 +211,7 @@ class TestGetContextLength:
 
         def fake_query(endpoint_url, model):
             calls.append((endpoint_url, model))
-            return 200000 if len(calls) == 1 else 12345
+            return (200000, True) if len(calls) == 1 else (12345, True)
 
         monkeypatch.setattr(model_context, "_query_context_length", fake_query)
 

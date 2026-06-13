@@ -31,16 +31,22 @@ def compute_input_token_budget(
 
     Args:
         configured: the value read from settings (may be the default).
-        context_length: the model's discovered context window (0/unknown if none).
-        explicit: True if the user explicitly set ``agent_input_token_budget``.
+        context_length: the model's discovered context window. Pass 0 when the
+            window is unknown / only a bare fallback — auto-scaling then stays
+            conservative instead of trusting an unproven window (review on #4122).
+        explicit: True if the user set a NON-default budget. The default value is
+            the "auto" sentinel (scale to the window); any other value is an
+            explicit cap. (A deliberately-chosen default can't be distinguished
+            from a materialized default by value, so the default reads as auto.)
 
     Rules:
         - Explicit user budget is honoured exactly, only clamped to the model's
-          window when that window is known (never send more than the model holds).
-        - Otherwise (default), scale to ``headroom`` of the context window, capped
-          at ``hard_max`` — so long-context models use their capacity.
-        - When the window is unknown, fall back to the configured/default value
-          (preserving the previous behaviour).
+          window when that window is known (the user's deliberate choice wins;
+          ``hard_max`` is an auto-budget ceiling only — see #1190).
+        - Otherwise (auto), scale to ``headroom`` of the context window, capped at
+          ``hard_max`` — so long-context models use their capacity.
+        - When the window is unknown (context_length <= 0), use the conservative
+          ``default`` budget and do NOT scale off the fallback.
     """
     configured = int(configured or 0)
     context_length = int(context_length or 0)

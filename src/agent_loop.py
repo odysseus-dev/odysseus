@@ -1998,35 +1998,40 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
-        from src.settings import is_setting_customized
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET
+        from src.model_context import get_context_length_known
 
-        soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
+        soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            # Honour the configurable ceiling for the auto-derived budget path.
-            # No-op when the user has an explicit `agent_input_token_budget`
-            # (that branch ignores hard_max). Falls back to DEFAULT_HARD_MAX
-            # on missing/malformed values so misconfig can't zero the budget.
+            # Ceiling for the auto-derived budget (no effect on an explicit budget;
+            # see #1190). Falls back to DEFAULT_HARD_MAX on missing/malformed values
+            # so misconfig can't zero the budget.
             try:
                 hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
             except (TypeError, ValueError):
                 hard_max = DEFAULT_HARD_MAX
             if hard_max <= 0:
                 hard_max = DEFAULT_HARD_MAX
-            # Scale the default budget to the model's context window so long-context
-            # models aren't silently capped at 6000; an explicit user setting is
-            # still honoured (clamped to the window). (#1170)
-            #
-            # Use is_setting_customized (value != default), NOT is_setting_overridden
-            # (mere presence): the settings-save path materializes every default into
-            # settings.json, so a persisted default 6000 would otherwise read as an
-            # explicit choice and silently re-cap long-context models at 6000.
+            # The DEFAULT budget value is the "auto" sentinel: scale to the model's
+            # context window so long-context models aren't capped (#1170). Any other
+            # value is an explicit cap. We use value-vs-default (not is_setting_overridden)
+            # because the settings-save path materializes every default into
+            # settings.json — a persisted default 6000 must still read as auto.
+            budget_is_explicit = soft_budget != DEFAULT_BUDGET
+            # Only scale off a context window we actually discovered: a bare
+            # DEFAULT_CONTEXT fallback isn't proof the model holds that much, so
+            # pass 0 there and let auto-scaling stay conservative (#4122 review).
+            try:
+                _, _ctx_known = get_context_length_known(endpoint_url, model)
+            except Exception:
+                _ctx_known = True  # fail open: behave as before if the probe errors
+            ctx_for_budget = context_length if _ctx_known else 0
             effective_budget = compute_input_token_budget(
                 soft_budget,
-                context_length,
-                is_setting_customized("agent_input_token_budget"),
+                ctx_for_budget,
+                budget_is_explicit,
                 hard_max=hard_max,
             )
             trimmed_messages = trim_for_context(
