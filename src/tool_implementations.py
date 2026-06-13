@@ -4030,3 +4030,91 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}
+
+
+
+# --------------------------------------------------------------------------- #
+# Personas (Sub-Agents) - NEW
+# --------------------------------------------------------------------------- #
+
+async def do_manage_personas(content: str, owner: Optional[str] = None) -> Dict:
+    """Handle manage_personas tool calls.
+
+    Actions supported:
+      - list
+      - view {name}
+      - add {name, display_name, ...}
+      - edit {name, ...}
+      - delete {name}
+      - activate / deactivate {name}
+    """
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    action = (args.get("action") or "").lower()
+
+    from src.persona_manager import PersonaManager, Persona
+    from src.constants import DATA_DIR
+
+    pm = PersonaManager(DATA_DIR)
+
+    if action == "list":
+        personas = pm.list_personas()
+        return {
+            "personas": [
+                {
+                    "name": p.name,
+                    "display_name": p.display_name,
+                    "category": p.category,
+                    "description": p.description,
+                    "status": p.status,
+                    "uses": p.uses,
+                }
+                for p in personas
+            ]
+        }
+
+    elif action == "view":
+        name = args.get("name") or ""
+        p = pm.get_persona(name)
+        if not p:
+            return {"error": f"Persona '{name}' not found"}
+        return p.to_dict()
+
+    elif action == "add":
+        name = (args.get("name") or "").strip().lower().replace(" ", "-")
+        if not name:
+            return {"error": "name is required"}
+
+        p = Persona(
+            name=name,
+            display_name=args.get("display_name") or name.title(),
+            description=args.get("description", ""),
+            category=args.get("category", "general"),
+            allowed_tools=args.get("allowed_tools", []),
+            system_prompt_addition=args.get("system_prompt_addition", ""),
+            temperature=args.get("temperature", 0.4),
+            source="user",
+        )
+        pm.save_persona(p, actor=owner or "agent")
+        return {"success": True, "name": p.name, "message": f"Persona '{p.name}' created"}
+
+    elif action in ("delete", "remove"):
+        name = args.get("name") or ""
+        if pm.delete_persona(name):
+            return {"success": True, "message": f"Persona '{name}' deleted"}
+        return {"error": f"Persona '{name}' not found"}
+
+    elif action in ("activate", "deactivate"):
+        name = args.get("name") or ""
+        p = pm.get_persona(name)
+        if not p:
+            return {"error": f"Persona '{name}' not found"}
+        p.status = "active" if action == "activate" else "disabled"
+        pm.save_persona(p, actor=owner or "agent")
+        return {"success": True, "name": p.name, "status": p.status}
+
+    else:
+        return {"error": f"Unknown action '{action}' for manage_personas"}
