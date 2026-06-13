@@ -46,24 +46,27 @@ _run_ctx: ContextVar[Optional[dict]] = ContextVar("subagent_run_ctx",
 def seed_run_context(*, endpoint_url: str, model: str,
                      headers: Optional[dict], owner: Optional[str],
                      session_id: Optional[str],
-                     coordinator_tools: Optional[set] = None):
-    """Seed (or refresh) the run context for one agent loop.
+                     coordinator_tools: Optional[set] = None,
+                     disabled_tools: Optional[set] = None):
+    """Seed the run context for a TOP-LEVEL agent loop (authoritative).
 
-    Depth and the ORIGINAL human owner survive re-seeding by nested loops:
-    the human is captured at the top level (where owner is the human) and
-    never replaced by a derived agent id.
+    Called once at ``stream_agent_loop`` entry. Deliberately does NOT inherit
+    a previously-set context: a stale ``human_owner``/``depth`` left over from
+    an earlier loop in the same async context must never carry into a new
+    request (cross-user identity bleed). Depth starts at 0 and the human is
+    derived fresh from this loop's owner. Nested loops re-seed deeper inside
+    ``_default_run_loop`` (token-balanced), never through here.
+
+    Returns the contextvar token so the caller can reset on the way out.
     """
-    cur = _run_ctx.get()
-    human = cur["human_owner"] if cur else (
-        None if (owner or "").startswith("agent:") else owner)
+    human = None if (owner or "").startswith("agent:") else owner
     return _run_ctx.set({
         "endpoint_url": endpoint_url, "model": model, "headers": headers,
         "session_id": session_id,
-        "depth": cur["depth"] if cur else 0,
+        "depth": 0,
         "human_owner": human,
-        "coordinator_tools": (coordinator_tools
-                              if coordinator_tools is not None
-                              else (cur or {}).get("coordinator_tools")),
+        "coordinator_tools": coordinator_tools,
+        "disabled_tools": set(disabled_tools or set()),
     })
 
 
@@ -96,15 +99,24 @@ async def _default_run_loop(*, binding: dict, messages: list,
                             session_id: Optional[str]) -> str:
     """Drain a nested stream_agent_loop into the final assistant text."""
     from src.agent_loop import stream_agent_loop
-    disabled = {"spawn_agent"} if disable_spawn else set()
+    cur = _run_ctx.get() or {}
+    # Inherit the parent's disabled tools: a tool the coordinator could not
+    # use (user toggle / plan / guide policy) must stay unavailable to the
+    # subagent, even if the agent profile lists it. spawn_agent is also
+    # stripped at the last allowed depth.
+    parent_disabled = set(cur.get("disabled_tools") or set())
+    disabled = set(parent_disabled)
+    if disable_spawn:
+        disabled.add("spawn_agent")
     chunks: list[str] = []
     # Nested run context: one level deeper, same human, child's tool set
-    # becomes the coordinator set for any further (allowed) spawns.
-    cur = _run_ctx.get() or {}
+    # becomes the coordinator set for any further (allowed) spawns; the
+    # disabled set propagates so it cannot be widened by a grandchild.
     token = _run_ctx.set({**cur,
                           "depth": int(cur.get("depth", 0)) + 1,
                           "session_id": session_id,
-                          "coordinator_tools": set(tools)})
+                          "coordinator_tools": set(tools),
+                          "disabled_tools": disabled})
     try:
         agen = stream_agent_loop(
             endpoint_url=endpoint_url,

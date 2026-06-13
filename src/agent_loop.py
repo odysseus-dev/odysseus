@@ -1772,7 +1772,8 @@ async def stream_agent_loop(
     seed_run_context(endpoint_url=endpoint_url, model=model, headers=headers,
                      owner=owner, session_id=session_id,
                      coordinator_tools=set(relevant_tools)
-                     if relevant_tools else None)
+                     if relevant_tools else None,
+                     disabled_tools=set(disabled_tools))
 
     if plan_mode:
         # Plan mode: investigate read-only, propose a plan, don't execute. The

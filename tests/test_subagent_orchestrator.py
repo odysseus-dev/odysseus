@@ -35,6 +35,34 @@ def _runner(record=None, fail_names=(), delay=0.0):
     return run_loop, record
 
 
+def test_default_run_loop_inherits_parent_disabled_tools(monkeypatch,
+                                                         profiles_root):
+    """A tool the coordinator could not use must stay disabled for the
+    subagent even when the agent profile lists it (security: no tool
+    laundering via spawn_agent)."""
+    captured = {}
+
+    async def fake_stream(*, disabled_tools, **kw):
+        captured["disabled"] = set(disabled_tools)
+        yield 'data: {"delta": "ok"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr("src.agent_loop.stream_agent_loop", fake_stream)
+    # parent disabled bash; seo profile does not list bash, but the disabled
+    # set must still propagate verbatim into the child loop.
+    token = orch.seed_run_context(
+        endpoint_url="e", model="m", headers=None, owner="oleg",
+        session_id="s", disabled_tools={"bash"})
+    try:
+        asyncio.run(orch.spawn(
+            {"agents": [{"agent": "general_office-seo", "task": "x"}]},
+            human_owner="oleg", endpoint_url="e", model="m",
+            data_dir=profiles_root))
+    finally:
+        orch.reset_run_context(token)
+    assert "bash" in captured["disabled"]
+
+
 def _spawn(args, root, runner, **kw):
     return asyncio.run(orch.spawn(
         args, human_owner="oleg", endpoint_url="http://e", model="m",

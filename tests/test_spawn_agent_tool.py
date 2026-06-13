@@ -82,20 +82,19 @@ def test_execute_spawn_agent_malformed_json(profiles_in_data):
     assert result["status"] == "error" and "JSON" in result["error"]
 
 
-def test_seed_run_context_preserves_human_and_depth():
+def test_seed_run_context_is_authoritative_no_stale_bleed():
+    """Top-level seed must NOT inherit a leftover context: a stale human/
+    depth from a prior loop in the same async context must never carry into
+    a new request (cross-user identity bleed)."""
     t1 = orch.seed_run_context(endpoint_url="e", model="m", headers=None,
                                owner="oleg", session_id="s1")
-    try:
-        ctx1 = orch.get_run_context()
-        assert ctx1["human_owner"] == "oleg" and ctx1["depth"] == 0
-        # nested loop re-seeds with the AGENT as owner — human must survive
-        t2 = orch.seed_run_context(endpoint_url="e", model="m", headers=None,
-                                   owner="agent:oleg/researcher",
-                                   session_id="s2")
-        try:
-            ctx2 = orch.get_run_context()
-            assert ctx2["human_owner"] == "oleg"
-        finally:
-            orch.reset_run_context(t2)
-    finally:
-        orch.reset_run_context(t1)
+    ctx1 = orch.get_run_context()
+    assert ctx1["human_owner"] == "oleg" and ctx1["depth"] == 0
+    # token of the first seed deliberately NOT reset (simulates the loop that
+    # ignored its token). A new top-level seed for a DIFFERENT user must fully
+    # overwrite — not preserve oleg.
+    orch.seed_run_context(endpoint_url="e", model="m", headers=None,
+                          owner="bob", session_id="s2")
+    ctx2 = orch.get_run_context()
+    assert ctx2["human_owner"] == "bob" and ctx2["depth"] == 0
+    orch.reset_run_context(t1)
