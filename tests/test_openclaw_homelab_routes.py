@@ -647,6 +647,29 @@ async def test_ollama_models_endpoint_returns_table(monkeypatch):
     assert 'llama3' in result['ops']['table']
 
 
+@pytest.mark.asyncio
+async def test_daily_brief_endpoint(monkeypatch, mock_event_store):
+    monkeypatch.setattr('routes.openclaw_inbox_routes._triage_state', lambda o: {'total_unread': 5, 'total_urgent': 1})
+    mock_event_store.record_event('source', 'svc', 'critical', 'T', 'S', 'k')
+    
+    class MockN8nClient:
+        configured = True
+        async def get_failed_executions_summary(self):
+            return {'failed_count': 3}
+    monkeypatch.setattr('src.n8n_client.N8nClient', MockN8nClient)
+    
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/daily-brief', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    
+    assert result['ops']['kind'] == 'daily_brief'
+    brief = result['ops']
+    assert brief['inbox']['total_unread'] == 5
+    assert brief['events']['critical'] == 1
+    assert brief['n8n']['failed_count'] == 3
+    assert 'overall_status' in brief['health']
+
+
 # ---------------------------------------------------------------------------
 # Write Ops
 # ---------------------------------------------------------------------------

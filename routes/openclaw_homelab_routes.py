@@ -414,6 +414,49 @@ def setup_openclaw_homelab_routes() -> APIRouter:
             'links': {'health': f'{BASE_URL}/health', 'events': f'{BASE_URL}/events'},
         }
 
+    @router.get('/ops/daily-brief')
+    async def openclaw_daily_brief(request: Request) -> dict[str, Any]:
+        """Aggregate daily briefing info (inbox, homelab events, n8n failures). Requires: homelab:read."""
+        owner = _scope_owner(request, HOMELAB_READ_SCOPES)
+        
+        from routes.openclaw_inbox_routes import _triage_state
+        inbox_state = _triage_state(owner)
+        
+        store = EventStore()
+        events = store.get_events(status="open")
+        
+        from src.n8n_client import N8nClient
+        n8n_client = N8nClient()
+        n8n_summary = {}
+        if n8n_client.configured:
+            n8n_summary = await n8n_client.get_failed_executions_summary()
+            
+        services = _load_services()
+        results, _, overall = await execute_health_checks(
+            services, record_events=False, owner=owner, source_name='openclaw_health'
+        )
+        
+        brief = {
+            'inbox': {
+                'total_unread': inbox_state.get('total_unread', 0),
+                'total_urgent': inbox_state.get('total_urgent', 0),
+            },
+            'events': {
+                'open_count': len(events),
+                'critical': sum(1 for e in events if e.get('severity') == 'critical'),
+            },
+            'n8n': {
+                'failed_count': n8n_summary.get('failed_count', 0),
+                'configured': n8n_client.configured,
+            },
+            'health': {
+                'overall_status': overall,
+                'unhealthy_count': sum(1 for r in results if r.get('status') != 'ok'),
+            }
+        }
+        
+        return _ops_result('daily_brief', "Daily briefing aggregated successfully.", brief)
+
     # ------------------------------------------------------------------
     # Service read routes
     # ------------------------------------------------------------------
