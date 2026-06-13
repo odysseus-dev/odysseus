@@ -211,3 +211,28 @@ class PersonaManager:
 
         allowed = set(p.allowed_tools)
         return base_tools & allowed
+
+
+    def get_persona_context(self, name: Optional[str]) -> str:
+        """Return system prompt addition + personality for a persona."""
+        if not name:
+            return ""
+        p = self.get_persona(name)
+        if not p:
+            return ""
+        parts = []
+        if p.personality:
+            parts.append(f"You are acting as: {p.personality}")
+        if p.system_prompt_addition:
+            parts.append(p.system_prompt_addition)
+        if p.allowed_tools:
+            parts.append(f"You have access to these specialized tools: {', '.join(p.allowed_tools)}")
+        return "\n\n".join(parts) if parts else ""
+
+    def record_usage(self, name: str):
+        """Increment usage counter for a persona."""
+        p = self.get_persona(name)
+        if p:
+            p.uses = (p.uses or 0) + 1
+            p.last_used = datetime.utcnow().isoformat() + "Z"
+            self.save_persona(p, actor="system")
