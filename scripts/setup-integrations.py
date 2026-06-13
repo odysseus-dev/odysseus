@@ -257,6 +257,37 @@ def setup_drive_mcp(db, dry_run: bool) -> None:
         db.commit()
 
 
+def setup_fallow_mcp(db, dry_run: bool) -> None:
+    """Create a Fallow MCP server entry (enabled by default — no auth needed).
+
+    Fallow provides deterministic JS/TS codebase analysis: dead code detection,
+    complexity scoring, duplication, PR risk, and dependency hygiene. Agents can
+    invoke it against any JS/TS project on disk via the registered MCP tools.
+    Idempotent: skips if already present.
+    """
+    from core.database import McpServer
+
+    existing = db.query(McpServer).filter(McpServer.name == "Fallow").first()
+    if existing:
+        print("  Fallow MCP entry already exists — skipping")
+        return
+
+    print("  Creating Fallow MCP entry (enabled — JS/TS codebase analysis)")
+    if not dry_run:
+        srv = McpServer(
+            id=str(uuid.uuid4()),
+            name="Fallow",
+            transport="stdio",
+            command="npx",
+            # fallow-mcp binary ships inside the 'fallow' npm package, not as its own package
+            args=json.dumps(["-y", "--package=fallow", "fallow-mcp"]),
+            env=json.dumps({}),
+            is_enabled=True,
+        )
+        db.add(srv)
+        db.commit()
+
+
 def setup_filesystem_mcp(db, dry_run: bool) -> None:
     """Create a Filesystem MCP server entry (enabled by default — no OAuth needed).
 
@@ -301,6 +332,7 @@ def print_next_steps(has_spm: bool) -> None:
     print("     • Sign in with maylortaylor@gmail.com (primary account)")
     print("     • For StPeteMusic Drive content: share folders/docs with maylortaylor@gmail.com")
     print("  5. Filesystem MCP: active immediately — AI can read Obsidian vault + personal_docs")
+    print("  6. Fallow MCP: active immediately — AI can analyze any JS/TS project on disk")
     if not has_spm:
         print()
         print("  ⚠ StPeteMusic account skipped.")
@@ -370,6 +402,9 @@ def main():
 
         print("→ Filesystem MCP")
         setup_filesystem_mcp(db, dry_run=args.dry_run)
+
+        print("→ Fallow MCP (JS/TS codebase analysis)")
+        setup_fallow_mcp(db, dry_run=args.dry_run)
     finally:
         db.close()
 
