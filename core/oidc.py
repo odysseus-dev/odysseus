@@ -260,14 +260,32 @@ class OidcManager:
 
         claims = self._verify_id_token(id_token, nonce)
 
-        # Optionally merge userinfo if we got an access_token
+        # Optionally merge userinfo if we got an access_token.
+        # Per OIDC spec, userinfo is authoritative for profile claims (name,
+        # email, picture, etc.) but MUST NOT overwrite verified identity
+        # claims from the id_token (sub, iss, aud, exp, iat, nonce, azp).
         access_token = token_data.get("access_token")
         if access_token:
             try:
                 userinfo = self._fetch_userinfo(access_token)
-                # userinfo claims supplement the id_token (per OIDC spec, userinfo
-                # is the authoritative source for profile claims)
-                claims.update(userinfo)
+                # Reject mismatched sub — the subject in UserInfo must match
+                # the already-verified id_token subject.
+                ui_sub = userinfo.get("sub")
+                if ui_sub and ui_sub != claims.get("sub"):
+                    raise OidcError(
+                        f"UserInfo sub mismatch: id_token={claims.get('sub')!r} "
+                        f"userinfo={ui_sub!r}"
+                    )
+                # Merge only safe profile claims — never overwrite verified
+                # identity/security fields.
+                _IDENTITY_CLAIMS = frozenset({
+                    "sub", "iss", "aud", "exp", "iat", "nonce", "azp",
+                })
+                for k, v in userinfo.items():
+                    if k not in _IDENTITY_CLAIMS:
+                        claims[k] = v
+            except OidcError:
+                raise
             except Exception as exc:
                 logger.warning("Failed to fetch userinfo: %s", exc)
 

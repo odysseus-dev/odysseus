@@ -293,3 +293,20 @@ def test_set_oidc_user_admin_rejects_non_oidc_user(tmp_path):
 def test_set_oidc_user_admin_rejects_nonexistent(tmp_path):
     mgr = _make_manager(tmp_path)
     assert not mgr.set_oidc_user_admin("ghost", True)
+
+
+def test_first_user_bootstrap_suppressed_when_admin_groups_configured(
+    tmp_path, monkeypatch,
+):
+    """When OIDC_ADMIN_GROUPS is set, the first OIDC user must be in a
+    group to get admin — bootstrap does NOT override group-based policy."""
+    monkeypatch.setenv("OIDC_ADMIN_GROUPS", "odysseus-admins")
+    mgr = _make_manager(tmp_path)
+    username = mgr.create_user_oidc(
+        "alice", sub="abc", issuer="https://idp.example.com", is_admin=False,
+    )
+    assert username == "alice"
+    assert not mgr.is_admin("alice"), (
+        "First OIDC user should NOT be admin when OIDC_ADMIN_GROUPS is set "
+        "and they are not in a group"
+    )
