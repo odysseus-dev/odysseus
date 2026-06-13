@@ -1756,6 +1756,28 @@ async def stream_agent_loop(
     # We will inject persona system prompt addition if a persona is active
     _active_persona_name = None  # will be set from outside or via context
 
+    
+    # === PERSONAS INTEGRATION ===
+    active_persona = None
+    # Try to detect requested persona from the latest user message or context
+    last_user_msg = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            last_user_msg = m.get("content", "")
+            break
+    
+    # Simple detection: if user says "use researcher" or similar
+    import re
+    persona_match = re.search(r'(?:use|switch to|as|persona|mode)\s+([a-zA-Z0-9_-]+)', last_user_msg, re.IGNORECASE)
+    if persona_match:
+        candidate = persona_match.group(1).lower()
+        from src.persona_manager import PersonaManager
+        pm = PersonaManager(DATA_DIR)
+        if pm.get_persona(candidate):
+            active_persona = candidate
+            pm.record_usage(candidate)
+            logger.info(f"[personas] Agent switched to persona: {active_persona}")
+
         mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
@@ -1990,7 +2012,15 @@ async def stream_agent_loop(
     elif approved_plan and approved_plan.strip() and not guide_only:
         # EXECUTING an approved plan. Pin the checklist as a top-of-context
         # system note so a long plan on a weak model survives history
-        # truncation — the agent can always re-read the plan instead of losing
+        # truncation — the a
+    # Inject persona personality if active
+    if active_persona:
+        from src.persona_manager import PersonaManager
+        pm = PersonaManager(DATA_DIR)
+        persona_context = pm.get_persona_context(active_persona)
+        if persona_context and messages and messages[0].get("role") == "system":
+            messages[0]["content"] = messages[0].get("content", "") + "\n\n" + persona_context
+gent can always re-read the plan instead of losing
         # the thread. (The first system message is kept by the context trimmer.)
         _plan_note = build_active_plan_note(approved_plan)
         if messages and messages[0].get("role") == "system":
