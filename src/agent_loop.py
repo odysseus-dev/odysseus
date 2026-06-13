@@ -1875,33 +1875,7 @@ async def stream_agent_loop(
                 _relevant_tools.update(tools)
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
 
-<<<<<<< HEAD
-    # If deterministic domain detection fired, seed the corresponding domain
-    # tools into the selected tool set. This is not direct prompt-pack
-    # injection: `_assemble_prompt()` still derives domain rules from the final
-    # tool names. It prevents obvious requests like "last 5 emails" from
-    # collapsing to only ask_user/manage_memory when vector retrieval misses or
-    # times out.
-    if not guide_only and _relevant_tools is not None:
-        for _domain in (_intent.get("domains") or set()):
-            _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
-        if "cookbook" in (_intent.get("domains") or set()):
-            _relevant_tools.update({
-                "list_served_models",
-                "list_downloads",
-                "list_cached_models",
-                "list_cookbook_servers",
-                "list_serve_presets",
-            })
-        if "email" in (_intent.get("domains") or set()):
-            _relevant_tools.add("ui_control")
-        if "web" in (_intent.get("domains") or set()):
-            _relevant_tools.update({"web_search", "web_fetch"})
-        if "ui" in (_intent.get("domains") or set()):
-            _relevant_tools.add("ui_control")
-=======
-    _relevant_tools = _apply_agent_loop_tool_hints(_relevant_tools, _retrieval_query)
->>>>>>> 5cd7dbf (Fix Polish web-search intent detection)
+
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
