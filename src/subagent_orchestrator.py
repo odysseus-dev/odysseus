@@ -25,11 +25,54 @@ import json
 import logging
 import re
 import uuid
+from contextvars import ContextVar
 from typing import Awaitable, Callable, Optional
 
 from services.agents.profile import ProfileError, resolve_binding
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Run context — how spawn_agent (executed deep inside tool dispatch, which
+# only sees owner/session_id) learns the coordinator's endpoint/model/depth.
+# stream_agent_loop seeds it at loop start; _default_run_loop re-seeds one
+# level deeper around each nested run and restores on the way out.
+# ---------------------------------------------------------------------------
+
+_run_ctx: ContextVar[Optional[dict]] = ContextVar("subagent_run_ctx",
+                                                  default=None)
+
+
+def seed_run_context(*, endpoint_url: str, model: str,
+                     headers: Optional[dict], owner: Optional[str],
+                     session_id: Optional[str],
+                     coordinator_tools: Optional[set] = None):
+    """Seed (or refresh) the run context for one agent loop.
+
+    Depth and the ORIGINAL human owner survive re-seeding by nested loops:
+    the human is captured at the top level (where owner is the human) and
+    never replaced by a derived agent id.
+    """
+    cur = _run_ctx.get()
+    human = cur["human_owner"] if cur else (
+        None if (owner or "").startswith("agent:") else owner)
+    return _run_ctx.set({
+        "endpoint_url": endpoint_url, "model": model, "headers": headers,
+        "session_id": session_id,
+        "depth": cur["depth"] if cur else 0,
+        "human_owner": human,
+        "coordinator_tools": (coordinator_tools
+                              if coordinator_tools is not None
+                              else (cur or {}).get("coordinator_tools")),
+    })
+
+
+def get_run_context() -> Optional[dict]:
+    return _run_ctx.get()
+
+
+def reset_run_context(token) -> None:
+    _run_ctx.reset(token)
 
 # A loop runner executes one nested agent run and returns the final text.
 # Injected for tests; the default drains src.agent_loop.stream_agent_loop.
@@ -55,28 +98,38 @@ async def _default_run_loop(*, binding: dict, messages: list,
     from src.agent_loop import stream_agent_loop
     disabled = {"spawn_agent"} if disable_spawn else set()
     chunks: list[str] = []
-    agen = stream_agent_loop(
-        endpoint_url=endpoint_url,
-        model=binding.get("model") or model,
-        messages=messages,
-        headers=headers,
-        owner=binding["owner"],
-        relevant_tools=set(tools),
-        disabled_tools=disabled,
-        session_id=session_id,
-    )
-    async for ev in agen:
-        if not ev.startswith("data: "):
-            continue
-        payload = ev[len("data: "):].strip()
-        if payload == "[DONE]":
-            break
-        try:
-            data = json.loads(payload)
-        except ValueError:
-            continue
-        if isinstance(data, dict) and isinstance(data.get("delta"), str):
-            chunks.append(data["delta"])
+    # Nested run context: one level deeper, same human, child's tool set
+    # becomes the coordinator set for any further (allowed) spawns.
+    cur = _run_ctx.get() or {}
+    token = _run_ctx.set({**cur,
+                          "depth": int(cur.get("depth", 0)) + 1,
+                          "session_id": session_id,
+                          "coordinator_tools": set(tools)})
+    try:
+        agen = stream_agent_loop(
+            endpoint_url=endpoint_url,
+            model=binding.get("model") or model,
+            messages=messages,
+            headers=headers,
+            owner=binding["owner"],
+            relevant_tools=set(tools),
+            disabled_tools=disabled,
+            session_id=session_id,
+        )
+        async for ev in agen:
+            if not ev.startswith("data: "):
+                continue
+            payload = ev[len("data: "):].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                data = json.loads(payload)
+            except ValueError:
+                continue
+            if isinstance(data, dict) and isinstance(data.get("delta"), str):
+                chunks.append(data["delta"])
+    finally:
+        _run_ctx.reset(token)
     text = "".join(chunks)
     # strip reasoning blocks so the coordinator joins clean output
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()

@@ -748,6 +748,30 @@ async def _execute_tool_block_impl(
         query = content.split("\n")[0].strip()
         desc = f"search_chats: {query[:80]}"
         result = await do_search_chats(query, owner=owner)
+    elif tool == "spawn_agent":
+        from src.subagent_orchestrator import get_run_context, spawn
+        try:
+            args = json.loads(content) if (content or "").strip() else {}
+        except ValueError as e:
+            args = None
+            result = {"status": "error",
+                      "error": f"spawn_agent args must be JSON: {e}"}
+        if args is not None:
+            ctx = get_run_context() or {}
+            human = ctx.get("human_owner") or (
+                None if (owner or "").startswith("agent:") else owner)
+            result = await spawn(
+                args,
+                human_owner=human,
+                endpoint_url=ctx.get("endpoint_url") or "",
+                model=ctx.get("model") or "",
+                headers=ctx.get("headers"),
+                parent_session_id=session_id or ctx.get("session_id"),
+                coordinator_tools=ctx.get("coordinator_tools"),
+                depth=int(ctx.get("depth", 0)),
+            )
+        n = len((args or {}).get("agents", []) or []) if isinstance(args, dict) else 0
+        desc = f"spawn_agent: {n} agent(s)"
     elif tool in ("chat_with_model", "create_session", "list_sessions",
                   "send_to_session", "pipeline",
                   "manage_session", "manage_memory", "list_models",

@@ -58,6 +58,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "chat_with_model", "create_session", "list_sessions",
              "send_to_session",
              "pipeline",
+             "spawn_agent",
              "manage_session", "manage_memory", "list_models",
              "ui_control", "generate_image", "ask_user", "update_plan",
              "manage_tasks", "api_call", "ask_teacher", "manage_skills",
