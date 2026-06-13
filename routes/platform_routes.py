@@ -12,9 +12,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.middleware import require_admin
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, effective_user
 from services.business_platform.envelope import Envelope
-from services.business_platform import hub, registry, approval
+from services.business_platform import hub, registry, approval, mission
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,17 @@ class CompanyIn(BaseModel):
 class IngestIn(BaseModel):
     envelope: Envelope
     signature: str
+
+
+class MissionTaskIn(BaseModel):
+    company: str
+    intent: str
+    task: str
+
+
+class MissionIn(BaseModel):
+    goal: str
+    tasks: list[MissionTaskIn]
 
 
 def setup_platform_routes() -> APIRouter:
@@ -96,5 +107,34 @@ def setup_platform_routes() -> APIRouter:
             return approval.deny(intent_id, user)
         except approval.ApprovalError as e:
             raise HTTPException(status_code=403, detail=str(e))
+
+    # --- Big Boss mission loop -----------------------------------------------
+    @router.post("/missions")
+    def create_mission(request: Request, body: MissionIn):
+        require_admin(request)
+        owner = effective_user(request) or get_current_user(request) or "local"
+        try:
+            m = mission.create_mission(
+                body.goal, owner,
+                [t.model_dump() for t in body.tasks])
+            return mission.dispatch_mission(m["id"])
+        except mission.MissionError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @router.get("/missions/{mission_id}")
+    def get_mission(request: Request, mission_id: str):
+        require_admin(request)
+        m = mission.get_mission(mission_id)
+        if not m:
+            raise HTTPException(status_code=404, detail="mission not found")
+        return m
+
+    @router.post("/missions/{mission_id}/refresh")
+    def refresh_mission(request: Request, mission_id: str):
+        require_admin(request)
+        try:
+            return mission.refresh_mission(mission_id)
+        except mission.MissionError as e:
+            raise HTTPException(status_code=404, detail=str(e))
 
     return router
