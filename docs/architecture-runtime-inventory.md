@@ -16,13 +16,11 @@ This document maps the current runtime module structure, identifies high-risk bo
 ```
 odysseus/
 ├── app.py                    # FastAPI app entrypoint (1,145 lines)
-├── main.py                   # (future) renamed from app.py post-refactor
 ├── conf/                     # Configuration (config.py, settings.py, settings_scrub.py)
-├── src/                      # ~60 flat .py files + 3 subdirectories
+├── src/                      # 91 flat .py files + 2 subdirectories
 │   ├── agent_tools/          # Tool helpers: document, filesystem, subprocess, web
-│   ├── agent/                # Empty (placeholder)
-│   └── search/               # (exists)
-├── routes/                   # 52 flat .py files — HTTP route handlers
+│   └── search/               # Search subsystem
+├── routes/                   # 54 flat .py files — HTTP route handlers
 ├── core/                     # 10 files — database models, auth, middleware, session
 ├── mcp_servers/              # 4 files — MCP server implementations
 ├── scripts/                  # CLI tools and one-shot scripts
@@ -35,8 +33,8 @@ odysseus/
 
 | Directory | Flat `.py` Files | Subdirectories | Concern |
 |-----------|-----------------|----------------|---------|
-| `src/` | **~60** | 3 (`agent_tools/`, `agent/`, `search/`) | No domain grouping; 60 files in one directory |
-| `routes/` | **52** | 0 | All route handlers in one flat directory |
+| `src/` | **91** | 2 (`agent_tools/`, `search/`) | No domain grouping; 91 files in one directory |
+| `routes/` | **54** | 0 | All route handlers in one flat directory |
 | `core/` | 10 | 0 | Manageable, but `database.py` is oversized |
 
 ---
@@ -86,7 +84,7 @@ odysseus/
 
 ### 3.1 Who Depends on `core/database.py`
 
-**49 files** import from `core.database` — this is the most depended-upon module:
+**94 files** import from `core.database` — this is the most depended-upon module:
 
 - All route handlers (`routes/*.py`)
 - Most `src/*.py` files
@@ -104,9 +102,11 @@ odysseus/
 
 ### 3.3 Who Depends on `src/agent_loop.py`
 
+**21 files** import from `src.agent_loop`:
+
 - `src/tool_policy.py`, `src/teacher_escalation.py`, `src/bg_monitor.py`
 - `src/task_scheduler.py`
-- 6 test files
+- Multiple test files
 
 ### 3.4 Cross-Layer Import Violations
 
@@ -130,8 +130,8 @@ src/tool_implementations.py ──→ routes/prefs_routes.py
 |-----------|-------|-------|
 | `routes/` → `src/` | **349** | Expected: HTTP handlers call domain logic |
 | `routes/` → `core/` | **124** | Expected: handlers access DB models |
-| `src/` → `routes/` | **~20** | **Unexpected**: domain logic reaching into HTTP layer |
-| `src/` → `core/` | **49** | Acceptable but could be reduced with a data-access layer |
+| `src/` → `routes/` | **38** | **Unexpected**: domain logic reaching into HTTP layer |
+| `src/` → `core/` | **~49** | Acceptable but could be reduced with a data-access layer |
 
 ---
 
@@ -205,11 +205,11 @@ Tools in `tool_implementations.py` fall into natural groups:
 | Priority | Target | Risk | Rationale |
 |----------|--------|------|-----------|
 | **1** | `src/tool_implementations.py` → `src/tools/*.py` | **MEDIUM** | 4,032 lines → ~10 files by tool category. Already has natural boundaries. 18 importers, tracked in #3629. Use `__init__.py` shim to keep existing imports working. |
-| **2** | `routes/` → domain subdirectories | **MEDIUM** | 52 flat files → `routes/email/`, `routes/chat/`, `routes/cookbook/`, etc. Pure file moves + import path updates. Each domain group has clear ownership. |
+| **2** | `routes/` → domain subdirectories (one domain per PR) | **MEDIUM** | 54 flat files. Done **one domain at a time** (e.g. a standalone PR for the email domain, then chat, …), not a broad reorganization — route modules carry helper imports, registration assumptions, and test import paths. |
 | **3** | `src/agent_loop.py` → `src/agent/loop.py` + submodules | **MEDIUM-HIGH** | 2,961 lines, 24 functions. Can extract prompt building, classification, verification, and runaway detection. Tracked in #3266. |
 | **4** | `src/` → `src/pkg/`, `src/domain/`, `src/infra/`, `src/api/` | **MEDIUM** | Structural reorganization. Split flat `src/` into layered packages. Must come after routes and tools are stable. |
 | **5** | `routes/email_*.py` consolidation | **LOW** | Already grouped by filename prefix. Low-risk cleanup within the email domain. |
-| **6** | `core/database.py` → `src/infra/database/models/*.py` | **HIGH** | 27 classes, 49 importers. Highest-risk split. Must be **last** in any sequence. Requires careful import shim strategy. |
+| **6** | `core/database.py` → `src/infra/database/models/*.py` | **HIGH** | 27 classes, 94 importers. Highest-risk split. Must be **last** in any sequence. Requires careful import shim strategy. |
 | **7** | Frontend CSS modularization | **MEDIUM** | 36,653 lines. Tracked in #2617. Separate timeline from backend work. |
 | **8** | Frontend JS modularization | **MEDIUM** | 9,776 lines in `document.js`. Introduce ES modules at minimum. |
 
@@ -223,14 +223,16 @@ Tools in `tool_implementations.py` fall into natural groups:
 - Validation: `python -m pytest tests/ -x -q` + manual smoke test of tool execution
 - Reference: #3629
 
-**Slice 2: Group `routes/` by domain** (Pure reorganization)
+**Slice 2: Group `routes/` by domain** (one domain per PR, not a broad sweep)
 
-- Create `routes/email/`, `routes/chat/`, `routes/cookbook/`, `routes/model/`, `routes/calendar/`, `routes/document/`, `routes/auth/`, `routes/system/` subdirectories
-- Move each route file to its domain directory
-- Add `__init__.py` in each domain package with re-exports
-- Update `app.py` router imports
-- Validation: `python app.py` starts clean, all endpoints respond
-- **No behavior change** — pure file reorganization
+Route modules carry helper imports, router registration assumptions, and test import paths, so this must be done **one domain at a time** rather than as a single reorganization PR. Example sequence (each its own PR):
+
+- PR 2a: move the **email** domain (`email_routes.py`, `email_helpers.py`, `email_pollers.py`) → `routes/email/` + shim
+- PR 2b: move the **chat/agent** domain → `routes/chat/` + shim
+- PR 2c: move the **cookbook** domain → `routes/cookbook/` + shim
+- …and so on per domain from §4
+
+Each PR: add `__init__.py` re-exporting old names, update `app.py` router imports, validation `python app.py` starts clean. **No behavior change** — pure file reorganization.
 
 **Slice 3: Extract `agent_loop.py` submodules** (Improve reviewability)
 
@@ -291,9 +293,21 @@ timeout 5 python app.py 2>&1 | head -5 || true
 
 ---
 
+## 10. Future Direction (NOT current state)
+
+The following are **future refactor targets**, recorded here so this inventory does not imply they exist today. None of them are present in the current `dev` tree:
+
+- `main.py` — proposed rename of the `app.py` entrypoint. Today the app boots via `app.py`.
+- `src/agent/` — proposed package to hold `agent_loop.py` submodules (prompt/classifier/verifier/runaway/context). Today `agent_loop.py` is a single flat file in `src/`.
+- `src/infra/`, `src/domain/`, `src/pkg/`, `src/api/` — proposed layered reorganization of the flat `src/` directory (slice 4 in §6).
+
+These become real only when the corresponding slices land.
+
+---
+
 ## Appendix A: Complete File Listing
 
-### `src/` (60 files)
+### `src/` (91 files — representative subset listed)
 
 ```
 agent_loop.py          tool_implementations.py   tool_schemas.py
@@ -319,7 +333,7 @@ teacher_escalation.py  cookbook_serve_lifecycle.py
 chatgpt_subscription.py  mcp_manager.py
 ```
 
-### `routes/` (52 files)
+### `routes/` (54 files)
 
 ```
 __init__.py    _validators.py
@@ -357,14 +371,14 @@ atomic_io.py   platform_compat.py
 ## Appendix B: Key Import Relationships
 
 ```
-core/database.py  ←── 49 importers (routes/*, src/*, core/*, tests/*)
+core/database.py  ←── 94 importers (routes/*, src/*, core/*, tests/*)
     ↑
     ├── routes/auth_routes.py
     ├── routes/email_routes.py
     ├── src/builtin_actions.py
     ├── src/task_scheduler.py
     ├── src/tool_implementations.py (inline)
-    └── ...44 more
+    └── ...89 more
 
 src/tool_implementations.py  ←── 18 importers
     ↑
@@ -375,11 +389,11 @@ src/tool_implementations.py  ←── 18 importers
     ├── src/tool_policy.py
     └── ...13 more (mostly tests)
 
-src/agent_loop.py  ←── 10 importers
+src/agent_loop.py  ←── 21 importers
     ↑
     ├── src/tool_policy.py
     ├── src/teacher_escalation.py
     ├── src/bg_monitor.py
     ├── src/task_scheduler.py
-    └── 6 test files
+    └── 17 more (incl. tests)
 ```
