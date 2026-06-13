@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import logging
 import json
+import http.client
 import os
 import re
+import socket
 import subprocess
+import urllib.parse
 from typing import Any
 
 import httpx
@@ -41,6 +44,7 @@ _ALLOWED_ACTIONS = {
 BASE_URL = '/api/openclaw/homelab'
 PING_TARGET = os.getenv('HEIMDAL_PING_TARGET', '100.110.136.4')
 CADDY_CONTAINER = os.getenv('CADDY_CONTAINER', 'caddy')
+DOCKER_SOCKET = os.getenv('HOMELAB_DOCKER_SOCKET', '/var/run/docker.sock')
 
 
 def _safe_actions(actions: list[str]) -> list[str]:
@@ -121,6 +125,74 @@ def _find_grafana_url() -> str | None:
         if str(service.get('name') or '').lower() == 'grafana':
             return service.get('health_url') or service.get('url')
     return None
+
+
+class _UnixSocketHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: str, timeout: int = 8):
+        super().__init__('localhost', timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(self.timeout)
+        sock.connect(self.socket_path)
+        self.sock = sock
+
+
+def _docker_api_request(path: str, timeout: int = 8) -> dict[str, Any]:
+    if not os.path.exists(DOCKER_SOCKET):
+        return {'status': 'degraded', 'error': 'docker_socket_not_available'}
+    conn = _UnixSocketHTTPConnection(DOCKER_SOCKET, timeout=timeout)
+    try:
+        conn.request('GET', path)
+        resp = conn.getresponse()
+        raw = resp.read()
+        text = raw.decode('utf-8', errors='replace')
+        return {
+            'status': 'ok' if resp.status < 400 else 'degraded',
+            'http_status': resp.status,
+            'body': text,
+        }
+    except PermissionError:
+        return {'status': 'degraded', 'error': 'docker_socket_permission_denied'}
+    except Exception as exc:
+        return {'status': 'degraded', 'error': str(exc)}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _docker_unhealthy_containers() -> dict[str, Any]:
+    filters = urllib.parse.quote(json.dumps({'health': ['unhealthy']}))
+    result = _docker_api_request(f'/containers/json?filters={filters}')
+    containers = []
+    if result.get('status') == 'ok':
+        try:
+            payload = json.loads(result.get('body') or '[]')
+        except Exception:
+            payload = []
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    containers.append(_sanitize_dict({
+                        'ID': item.get('Id'),
+                        'Names': ', '.join([str(name).lstrip('/') for name in item.get('Names', [])]),
+                        'Image': item.get('Image'),
+                        'Status': item.get('Status'),
+                        'State': item.get('State'),
+                    }))
+    return {'containers': containers, 'check': result}
+
+
+def _docker_container_logs(container: str, lines: int) -> dict[str, Any]:
+    safe_container = urllib.parse.quote(container, safe='')
+    result = _docker_api_request(
+        f'/containers/{safe_container}/logs?stdout=1&stderr=1&tail={lines}',
+        timeout=10,
+    )
+    return {'logs': (result.get('body') or '')[-12000:], 'check': result}
 
 
 def _event_links(event_id: str) -> dict[str, str]:
@@ -284,13 +356,13 @@ def setup_openclaw_homelab_routes() -> APIRouter:
     async def openclaw_docker_unhealthy(request: Request) -> dict[str, Any]:
         """Return unhealthy Docker containers only. Requires: homelab:read."""
         _scope_owner(request, HOMELAB_READ_SCOPES)
-        cmd = ['docker', 'ps', '--filter', 'health=unhealthy', '--format', '{{json .}}']
-        result = _run_static_command(cmd)
-        containers = _json_lines(result.get('stdout') or '') if result.get('status') == 'ok' else []
+        data = _docker_unhealthy_containers()
+        result = data['check']
+        containers = data['containers']
         message = (
             f"{len(containers)} unhealthy Docker container(s)."
             if result.get('status') == 'ok' else
-            f"Docker unhealthy check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+            f"Docker unhealthy check degraded: {result.get('error') or result.get('body') or 'unknown error'}"
         )
         return _ops_result('docker_unhealthy', message, {'containers': containers, 'check': result})
 
@@ -356,17 +428,17 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         _scope_owner(request, HOMELAB_READ_SCOPES)
         if not (1 <= lines <= 200):
             raise HTTPException(400, 'lines must be between 1 and 200')
-        result = _run_static_command(['docker', 'logs', '--tail', str(lines), CADDY_CONTAINER], timeout=10)
-        output = "\n".join(part for part in [result.get('stdout'), result.get('stderr')] if part)
+        data = _docker_container_logs(CADDY_CONTAINER, lines)
+        result = data['check']
         message = (
             f"Caddy logs returned last {lines} line(s)."
             if result.get('status') == 'ok' else
-            f"Caddy log check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+            f"Caddy log check degraded: {result.get('error') or result.get('body') or 'unknown error'}"
         )
         return _ops_result('caddy_logs', message, {
             'container': CADDY_CONTAINER,
             'lines': lines,
-            'logs': output[-12000:],
+            'logs': data['logs'],
             'check': result,
         })
 

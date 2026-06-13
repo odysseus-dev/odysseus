@@ -13,7 +13,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     curl \
     git \
-    docker.io \
     iputils-ping \
     nodejs \
     npm \

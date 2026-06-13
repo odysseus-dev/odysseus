@@ -143,6 +143,35 @@ def test_json_lines_sanitizes_sensitive_fields():
     assert rows[1]['raw'] == 'not-json'
 
 
+def test_docker_unhealthy_containers_uses_socket_response(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_api_request',
+        lambda path, timeout=8: {
+            'status': 'ok',
+            'http_status': 200,
+            'body': '[{"Id":"abc","Names":["/web"],"Image":"nginx","Status":"unhealthy","State":"running"}]',
+        },
+    )
+    from routes.openclaw_homelab_routes import _docker_unhealthy_containers
+    result = _docker_unhealthy_containers()
+    assert result['containers'][0]['ID'] == 'abc'
+    assert result['containers'][0]['Names'] == 'web'
+
+
+def test_docker_logs_uses_socket_response(monkeypatch):
+    calls = {}
+
+    def fake_request(path, timeout=8):
+        calls['path'] = path
+        return {'status': 'ok', 'http_status': 200, 'body': 'recent logs'}
+
+    monkeypatch.setattr('routes.openclaw_homelab_routes._docker_api_request', fake_request)
+    from routes.openclaw_homelab_routes import _docker_container_logs
+    result = _docker_container_logs('caddy', 50)
+    assert 'tail=50' in calls['path']
+    assert result['logs'] == 'recent logs'
+
+
 
 # ---------------------------------------------------------------------------
 # _compact_event – response shape
@@ -409,8 +438,8 @@ async def test_get_service_envelope(mock_event_store, monkeypatch):
 @pytest.mark.asyncio
 async def test_docker_unhealthy_endpoint_returns_containers(monkeypatch):
     monkeypatch.setattr(
-        'routes.openclaw_homelab_routes._run_static_command',
-        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': '{"Names":"bad","Status":"unhealthy"}', 'stderr': ''},
+        'routes.openclaw_homelab_routes._docker_unhealthy_containers',
+        lambda: {'containers': [{'Names': 'bad', 'Status': 'unhealthy'}], 'check': {'status': 'ok'}},
     )
     router = setup_openclaw_homelab_routes()
     ep = _endpoint(router, '/api/openclaw/homelab/ops/docker-unhealthy', 'GET')
@@ -471,8 +500,8 @@ async def test_caddy_logs_endpoint_limits_lines(monkeypatch):
 @pytest.mark.asyncio
 async def test_caddy_logs_endpoint_returns_logs(monkeypatch):
     monkeypatch.setattr(
-        'routes.openclaw_homelab_routes._run_static_command',
-        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': 'line1', 'stderr': ''},
+        'routes.openclaw_homelab_routes._docker_container_logs',
+        lambda container, lines: {'logs': 'line1', 'check': {'status': 'ok'}},
     )
     router = setup_openclaw_homelab_routes()
     ep = _endpoint(router, '/api/openclaw/homelab/ops/caddy-logs', 'GET')
