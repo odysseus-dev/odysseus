@@ -931,6 +931,18 @@ def format_tool_result(description: str, result: Dict) -> str:
     elif "error" in result:
         parts.append(f"**Error:** {result['error']}")
 
+    # === IMPROVEMENT: Make failures highly visible to the LLM ===
+    exit_code = result.get("exit_code")
+    if exit_code not in (0, None, "") or "error" in result:
+        # Add a very clear failure marker so even weak models notice and react
+        parts.insert(0, "**[TOOL FAILED]**")
+        parts.append("")
+        parts.append("**Guidance:** The previous tool call failed. You should either:")
+        parts.append("- Retry with corrected arguments (most common fix)")
+        parts.append("- Try a different tool or approach")
+        parts.append("- Ask the user for clarification or help if you are blocked")
+        parts.append("Do not silently pretend the tool succeeded. Acknowledge the failure in your next response.")
+
     # Surface any additional structured payload (events, tasks, notes, calendars,
     # documents, attachments, etc.) that the dedicated branches above don't show.
     # Without this, tools that return {"response": "...", "events": [...]} would
