@@ -173,6 +173,22 @@ def test_docker_logs_uses_socket_response(monkeypatch):
     assert 'body' not in result['check']
 
 
+def test_compact_tailscale_status_removes_keys_and_keeps_peer_summary():
+    from routes.openclaw_homelab_routes import _compact_tailscale_status
+    result = _compact_tailscale_status({
+        'Version': '1.0',
+        'BackendState': 'Running',
+        'Self': {'HostName': 'heimdal', 'PublicKey': 'nodekey:secret', 'TailscaleIPs': ['100.1.1.1'], 'Online': True},
+        'Peer': {
+            'nodekey:secret': {'HostName': 'mac', 'PublicKey': 'nodekey:secret2', 'TailscaleIPs': ['100.2.2.2'], 'Online': True}
+        },
+    })
+    assert result['self']['host_name'] == 'heimdal'
+    assert result['peers'][0]['host_name'] == 'mac'
+    assert 'PublicKey' not in result['self']
+    assert 'PublicKey' not in result['peers'][0]
+
+
 
 # ---------------------------------------------------------------------------
 # _compact_event – response shape
@@ -454,7 +470,7 @@ async def test_docker_unhealthy_endpoint_returns_containers(monkeypatch):
 async def test_tailscale_status_endpoint_returns_peer_count(monkeypatch):
     monkeypatch.setattr(
         'routes.openclaw_homelab_routes._tailscale_status',
-        lambda: {'status': 'ok', 'tailscale': {'Peer': {'one': {}}}, 'check': {'status': 'ok'}},
+        lambda: {'status': 'ok', 'tailscale': {'peer_count': 1, 'peers': [{'host_name': 'one'}]}, 'check': {'status': 'ok'}},
     )
     router = setup_openclaw_homelab_routes()
     ep = _endpoint(router, '/api/openclaw/homelab/ops/tailscale-status', 'GET')

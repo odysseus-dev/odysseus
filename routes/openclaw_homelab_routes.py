@@ -198,6 +198,41 @@ def _docker_container_logs(container: str, lines: int) -> dict[str, Any]:
     return {'logs': logs[-12000:], 'check': check}
 
 
+def _compact_tailscale_status(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    self_node = payload.get('Self') if isinstance(payload.get('Self'), dict) else {}
+    peers = []
+    for peer in (payload.get('Peer') or {}).values():
+        if not isinstance(peer, dict):
+            continue
+        peers.append({
+            'host_name': peer.get('HostName'),
+            'dns_name': peer.get('DNSName'),
+            'os': peer.get('OS'),
+            'tailscale_ips': peer.get('TailscaleIPs') or [],
+            'online': bool(peer.get('Online')),
+            'active': bool(peer.get('Active')),
+            'last_seen': peer.get('LastSeen'),
+        })
+    peers.sort(key=lambda item: (not item.get('online'), str(item.get('host_name') or item.get('dns_name') or '')))
+    return {
+        'version': payload.get('Version'),
+        'backend_state': payload.get('BackendState'),
+        'tailscale_ips': payload.get('TailscaleIPs') or [],
+        'self': {
+            'host_name': self_node.get('HostName'),
+            'dns_name': self_node.get('DNSName'),
+            'os': self_node.get('OS'),
+            'tailscale_ips': self_node.get('TailscaleIPs') or [],
+            'online': bool(self_node.get('Online')),
+        },
+        'health': payload.get('Health') or [],
+        'peer_count': len(peers),
+        'peers': peers,
+    }
+
+
 def _tailscale_status() -> dict[str, Any]:
     if os.path.exists(TAILSCALE_SOCKET):
         conn = _UnixSocketHTTPConnection(TAILSCALE_SOCKET, timeout=8)
@@ -206,10 +241,11 @@ def _tailscale_status() -> dict[str, Any]:
             resp = conn.getresponse()
             text = resp.read().decode('utf-8', errors='replace')
             payload = json.loads(text) if resp.status < 400 else None
+            compact = _compact_tailscale_status(payload)
             return {
                 'status': 'ok' if resp.status < 400 else 'degraded',
                 'http_status': resp.status,
-                'tailscale': _sanitize_dict(payload) if isinstance(payload, dict) else None,
+                'tailscale': compact,
                 'check': {'status': 'ok' if resp.status < 400 else 'degraded', 'http_status': resp.status},
             }
         except Exception as exc:
@@ -224,7 +260,7 @@ def _tailscale_status() -> dict[str, Any]:
     status_json = None
     if result.get('status') == 'ok' and result.get('stdout'):
         try:
-            status_json = _sanitize_dict(json.loads(result['stdout']))
+            status_json = _compact_tailscale_status(json.loads(result['stdout']))
         except Exception:
             status_json = None
     return {'status': result.get('status'), 'tailscale': status_json, 'check': result}
@@ -408,9 +444,9 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         data = _tailscale_status()
         result = data['check']
         status_json = data.get('tailscale')
-        peers = status_json.get('Peer', {}) if isinstance(status_json, dict) else {}
+        peer_count = int(status_json.get('peer_count') or 0) if isinstance(status_json, dict) else 0
         message = (
-            f"Tailscale status returned {len(peers)} peer(s)."
+            f"Tailscale status returned {peer_count} peer(s)."
             if data.get('status') == 'ok' else
             f"Tailscale status degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
         )
