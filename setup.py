@@ -183,6 +183,31 @@ def check_deps():
         print("  [ok] tmux installed")
 
 
+def check_sidecars():
+    """Probe optional Docker sidecars; print fix commands if down."""
+    import socket
+
+    def port_open(host, port, timeout=1.0):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    chroma_host = os.getenv("CHROMADB_HOST", "localhost")
+    chroma_port = int(os.getenv("CHROMADB_PORT", "8100"))
+    if not port_open(chroma_host, chroma_port):
+        print(f"  [warn] ChromaDB not reachable at {chroma_host}:{chroma_port}")
+        print("         Memory vectors and document RAG will be DEGRADED.")
+        print("         Fix: docker compose up -d chromadb")
+        print("         Or:  powershell -File .\\scripts\\start-sidecars.ps1")
+
+    if not port_open("127.0.0.1", 8080):
+        print("  [warn] SearXNG not reachable at 127.0.0.1:8080")
+        print("         Web search and Deep Research will fail without a provider.")
+        print("         Fix: docker compose up -d searxng")
+
+
 def check_arch():
     """Stop early, with guidance, if we're on Apple Silicon but running an
     Intel (x86_64) Python through Rosetta.
@@ -237,6 +262,7 @@ def main():
 
     print("\n3. Checking dependencies...")
     check_deps()
+    check_sidecars()
 
     print("\n4. Initializing database...")
     try:

@@ -73,6 +73,10 @@ output.txt.txt
 !docs/**/*.gif
 !docs/**/*.webp
 
+# PWA install icons referenced by static/manifest.json
+!static/icon-192.png
+!static/icon-512.png
+
 # Reports and temp files
 reports/
 tasks/

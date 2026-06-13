@@ -5,6 +5,7 @@ Manages connections to MCP (Model Context Protocol) tool servers.
 Each server exposes tools that are made available to the agent loop.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -392,6 +393,8 @@ class McpManager:
         if stack:
             try:
                 await stack.aclose()
+            except (RuntimeError, asyncio.CancelledError) as e:
+                logger.debug("Benign MCP stack close error for %s: %s", server_id, e)
             except Exception as e:
                 logger.warning(f"Error closing MCP server {server_id}: {e}")
 
@@ -404,8 +407,9 @@ class McpManager:
     async def disconnect_all(self):
         """Disconnect from all MCP servers."""
         ids = list(self._sessions.keys())
-        for sid in ids:
-            await self.disconnect_server(sid)
+        if not ids:
+            return
+        await asyncio.gather(*(self.disconnect_server(sid) for sid in ids), return_exceptions=True)
 
     async def connect_all_enabled(self):
         """Connect to all enabled MCP servers from the database."""
