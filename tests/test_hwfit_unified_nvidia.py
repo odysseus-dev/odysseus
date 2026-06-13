@@ -71,3 +71,81 @@ def test_no_gpu_still_none(monkeypatch):
     """No nvidia-smi output → still None, no spurious unified GPU."""
     monkeypatch.setattr(hardware, "_run", lambda cmd: None)
     assert hardware._detect_nvidia() is None
+
+
+def test_detect_system_cache_separates_same_host_different_ports(monkeypatch):
+    """Keep cache separate by host+port+platform, don't use cached data"""
+    ram_gb = 0
+
+    def _ram():
+        nonlocal ram_gb
+        ram_gb += 1
+        return ram_gb * 64.0
+
+    monkeypatch.setattr(hardware, "_get_ram_gb", _ram)
+    monkeypatch.setattr(hardware, "_get_available_ram_gb", lambda: 40.0)
+    monkeypatch.setattr(hardware, "_get_cpu_count", lambda: 16)
+    monkeypatch.setattr(hardware, "_get_cpu_name", lambda: "AMD Ryzen")
+    monkeypatch.setattr(hardware, "_detect_apple_silicon", lambda: None)
+    monkeypatch.setattr(hardware, "_detect_nvidia", lambda: None)
+    monkeypatch.setattr(hardware, "_detect_amd", lambda: None)
+    monkeypatch.setattr(hardware, "_run", lambda _cmd: "x86_64")
+
+    def _windows_probe():
+        nonlocal ram_gb
+        ram_gb += 1
+        return {
+            "total_ram_gb": ram_gb * 64.0,
+            "available_ram_gb": 40.0,
+            "cpu_cores": 16,
+            "cpu_name": "AMD Ryzen",
+            "has_gpu": False,
+            "gpu_name": None,
+            "gpu_vram_gb": None,
+            "gpu_count": 0,
+            "backend": "cpu_x86",
+            "homogeneous": True,
+            "gpu_error": None,
+            "platform": "windows",
+        }
+
+    monkeypatch.setattr(hardware, "_detect_windows", _windows_probe)
+    hardware._cache_by_host.clear()
+
+    hardware.detect_system(host="user@wsl-host", ssh_port="22", platform="linux", fresh=False)
+    hardware.detect_system(host="user@wsl-host", ssh_port="2222", platform="linux", fresh=False)
+    hardware.detect_system(host="user@wsl-host", ssh_port="22", platform="windows", fresh=False)
+
+    assert len(hardware._cache_by_host) == 3
+    assert hardware._cache_by_host[("user@wsl-host", "22", "linux")][1]["total_ram_gb"] == 64.0
+    assert hardware._cache_by_host[("user@wsl-host", "2222", "linux")][1]["total_ram_gb"] == 128.0
+    assert hardware._cache_by_host[("user@wsl-host", "22", "windows")][1]["total_ram_gb"] == 192.0
+
+
+def test_detect_system_cache_hits_when_remote_context_matches(monkeypatch):
+    """Cache hits when host+port+platform match"""
+    ram_gb = 0
+
+    def _ram():
+        nonlocal ram_gb
+        ram_gb += 1
+        return ram_gb * 64.0
+
+    monkeypatch.setattr(hardware, "_get_ram_gb", _ram)
+    monkeypatch.setattr(hardware, "_get_available_ram_gb", lambda: 40.0)
+    monkeypatch.setattr(hardware, "_get_cpu_count", lambda: 16)
+    monkeypatch.setattr(hardware, "_get_cpu_name", lambda: "AMD Ryzen")
+    monkeypatch.setattr(hardware, "_detect_apple_silicon", lambda: None)
+    monkeypatch.setattr(hardware, "_detect_nvidia", lambda: None)
+    monkeypatch.setattr(hardware, "_detect_amd", lambda: None)
+    monkeypatch.setattr(hardware, "_run", lambda _cmd: "x86_64")
+    hardware._cache_by_host.clear()
+
+    hardware.detect_system(host="user@wsl-host", ssh_port="22", platform="linux", fresh=False)
+    hardware.detect_system(host="user@wsl-host", ssh_port="22", platform="linux", fresh=False)
+    hardware.detect_system(fresh=False)
+    hardware.detect_system(fresh=False)
+
+    assert len(hardware._cache_by_host) == 2
+    assert hardware._cache_by_host[("user@wsl-host", "22", "linux")][1]["total_ram_gb"] == 64.0
+    assert hardware._cache_by_host[("_local", "", "")][1]["total_ram_gb"] == 128.0

@@ -211,7 +211,6 @@ HOUSEKEEPING_DEFAULTS = {
     "draft_email_replies":  {"name": "Email AI Auto Reply",      "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Tidy Email (Replies)", "AI Auto Reply"]},
     "extract_email_events": {"name": "Email Calendar Events",    "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */1 * * *", "ship_paused": True, "legacy_names": ["Email → Calendar Events"]},
     "classify_events":      {"name": "Calendar Classify Events", "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 6,18 * * *", "ship_paused": True, "legacy_names": ["Classify Calendar Events"]},
-    "mark_email_boundaries": {"name": "Email Mark Boundaries",   "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 */2 * * *", "ship_paused": True, "legacy_names": ["Mark Email Boundaries"]},
     "check_email_urgency":   {"name": "Email Tags",               "schedule": "cron",  "scheduled_time": None,    "cron_expression": "0 * * * *", "ship_paused": True, "old_cron_expressions": ["*/15 * * * *"], "legacy_names": ["Email Triage", "Urgent Email"]},
     "audit_skills":          {"name": "Skills Audit",             "trigger_type": "event", "trigger_event": "skill_added", "trigger_count": 5, "schedule": None, "scheduled_time": None, "cron_expression": None, "legacy_names": ["Audit Skills"]},
 }
@@ -219,6 +218,7 @@ HOUSEKEEPING_DEFAULTS = {
 RETIRED_HOUSEKEEPING_ACTIONS = frozenset({
     "tidy_calendar",
     "tidy_email_inbox",
+    "mark_email_boundaries",
 })
 
 
@@ -844,7 +844,13 @@ class TaskScheduler:
             # Task chaining — trigger the next task on success
             if run.status == "success" and task.then_task_id:
                 chain_id = task.then_task_id
-                if not self._has_chain_cycle(db, chain_id):
+                chain_task = db.query(ScheduledTask).filter(ScheduledTask.id == chain_id).first()
+                if not chain_task or chain_task.owner != task.owner:
+                    logger.warning(
+                        "Skipping chain from %r: target task %s is missing or not owned by %r",
+                        task.name, chain_id, task.owner,
+                    )
+                elif not self._has_chain_cycle(db, chain_id, owner=task.owner):
                     logger.info(f"Chaining: '{task.name}' → task {chain_id}")
                     asyncio.create_task(self._run_chained(chain_id))
                 else:
@@ -944,7 +950,6 @@ class TaskScheduler:
     # Activity log + reminder email already carry everything the user needs.
     _SILENT_ACTIONS = frozenset({
         "check_email_urgency",
-        "mark_email_boundaries",
         "learn_sender_signatures",
         "summarize_emails",
         "draft_email_replies",
@@ -963,7 +968,6 @@ class TaskScheduler:
         "draft_email_replies",
         "extract_email_events",
         "classify_events",
-        "mark_email_boundaries",
         "learn_sender_signatures",
         "check_email_urgency",
         "test_skills",
@@ -981,10 +985,10 @@ class TaskScheduler:
             task = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
             if not task:
                 return True
-            task_type = task.task_type or "llm"
+            task_type = getattr(task, "task_type", "") or "llm"
             if task_type != "action":
                 return True
-            return (task.action or "") in self._MODEL_BACKED_ACTIONS
+            return (getattr(task, "action", "") or "") in self._MODEL_BACKED_ACTIONS
         finally:
             db.close()
 
@@ -994,7 +998,7 @@ class TaskScheduler:
         if "check-in" in (task.name or "").lower():
             return
         # Built-in housekeeping noise stays out of the chat.
-        if (task.action or "") in self._SILENT_ACTIONS:
+        if (getattr(task, "action", "") or "") in self._SILENT_ACTIONS:
             return
         from src.assistant_log import log_to_assistant
         log_to_assistant(
@@ -1020,6 +1024,10 @@ class TaskScheduler:
             kwargs = {"owner": task.owner, "task_name": task.name, "progress_cb": _progress}
             if task.action in ("run_script", "run_local", "ssh_command") and task.prompt:
                 kwargs["script" if task.action in ("run_script", "run_local") else "command"] = task.prompt
+            # cookbook_serve carries its JSON config in task.prompt — feed it
+            # through as `command` so action_cookbook_serve can json.loads it.
+            elif task.action == "cookbook_serve" and task.prompt:
+                kwargs["command"] = task.prompt
             result, success = await action_fn(**kwargs)
             return result, success
         except TaskNoop:
@@ -1090,7 +1098,7 @@ class TaskScheduler:
                                endpoint_url: str, model: str) -> str:
         """Gather raw data from all integrations, hand it to the LLM to write the check-in."""
         from src.tool_implementations import do_manage_notes
-        from src.agent_tools import get_mcp_manager
+        from src.tool_utils import get_mcp_manager
 
         tz_name = _resolve_task_timezone(db, task)
         try:
@@ -1307,6 +1315,7 @@ class TaskScheduler:
                 endpoint_url=endpoint_url,
                 model=model,
                 owner=task.owner,
+                folder="Tasks",
                 created_at=_utcnow(),
                 updated_at=_utcnow(),
             )
@@ -1315,7 +1324,10 @@ class TaskScheduler:
             db.commit()
             if self._session_manager:
                 try:
-                    self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
+                    self._session_manager.ensure_task_session(
+                        session_id, f"[Task] {task.name}", endpoint_url, model,
+                        owner=task.owner, task=task
+                    )
                 except Exception:
                     pass
 
@@ -1408,8 +1420,15 @@ class TaskScheduler:
         task's visible output target.
         """
         from core.database import Session as DbSession, ChatMessage, CrewMember
+        from core.models import ChatMessage as MemChatMessage
 
         output = task.output_target or "session"
+        if (
+            output == "session"
+            and (getattr(task, "task_type", "") or "") == "action"
+            and (getattr(task, "action", "") or "") in self._SILENT_ACTIONS
+        ):
+            return
         if output.startswith("mcp__"):
             await self._deliver_via_mcp(output, task, result)
             return
@@ -1449,6 +1468,7 @@ class TaskScheduler:
                 endpoint_url=endpoint_url or "",
                 model=model_name or "",
                 owner=task.owner,
+                folder="Tasks",
                 created_at=_utcnow(),
                 updated_at=_utcnow(),
             )
@@ -1457,7 +1477,10 @@ class TaskScheduler:
             db.commit()
             if self._session_manager:
                 try:
-                    self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
+                    self._session_manager.ensure_task_session(
+                        session_id, f"[Task] {task.name}", endpoint_url, model_name,
+                        owner=task.owner, task=task
+                    )
                 except Exception:
                     pass
 
@@ -1466,36 +1489,50 @@ class TaskScheduler:
             meta["model"] = model_name
         if crew and crew.is_default_assistant:
             meta.update({"source": "cron", "task_id": task.id, "task_name": task.name})
-        msg_meta = json.dumps(meta)
-        user_content = task.prompt or f"[Task] {task.name}"
-        user_msg = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            role="user",
-            content=user_content,
-            timestamp=_utcnow(),
-            meta_data=msg_meta,
-        )
-        assistant_msg = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            role="assistant",
-            content=result or "",
-            timestamp=_utcnow(),
-            meta_data=msg_meta,
-        )
-        db.add(user_msg)
-        db.add(assistant_msg)
-        db.commit()
 
-        if self._session_manager:
+        # Use SessionManager for persistence so in-memory cache stays in sync
+        if self._session_manager and session_id:
             try:
-                from core.models import ChatMessage as MemMsg
-                sess_obj = self._session_manager.get_session(session_id)
-                sess_obj.history.append(MemMsg(role="user", content=user_msg.content, metadata=meta))
-                sess_obj.history.append(MemMsg(role="assistant", content=assistant_msg.content, metadata=meta))
+                self._session_manager.add_message(
+                    session_id,
+                    MemChatMessage(
+                        "user",
+                        task.prompt or f"[Task] {task.name}",
+                        metadata=dict(meta),
+                    ),
+                )
+                self._session_manager.add_message(
+                    session_id,
+                    MemChatMessage(
+                        "assistant",
+                        result or "",
+                        metadata=dict(meta),
+                    ),
+                )
             except Exception:
-                pass
+                logger.exception("Failed to deliver task %s through SessionManager", task.id)
+        else:
+            # Fallback: raw DB write (no session manager available)
+            msg_meta = json.dumps(meta)
+            user_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="user",
+                content=task.prompt or f"[Task] {task.name}",
+                timestamp=_utcnow(),
+                meta_data=msg_meta,
+            )
+            assistant_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="assistant",
+                content=result or "",
+                timestamp=_utcnow(),
+                meta_data=msg_meta,
+            )
+            db.add(user_msg)
+            db.add(assistant_msg)
+            db.commit()
 
     @staticmethod
     def _is_email_output_target(output: str) -> bool:
@@ -1566,9 +1603,12 @@ class TaskScheduler:
         try:
             from core.database import SessionLocal, ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_headers
+            from src.auth_helpers import owner_filter
             db2 = SessionLocal()
             try:
-                eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
+                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
+                eps = ep_q.all()
                 for ep in eps:
                     if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
                         headers = build_headers(ep.api_key, normalize_base(ep.base_url))
@@ -1589,7 +1629,7 @@ class TaskScheduler:
         # chat uses but with the utility list (`utility_model_fallbacks`).
         try:
             from src.endpoint_resolver import resolve_utility_fallback_candidates
-            _task_fallbacks = resolve_utility_fallback_candidates()
+            _task_fallbacks = resolve_utility_fallback_candidates(owner=task.owner or None)
         except Exception:
             _task_fallbacks = []
         async for event_str in stream_agent_loop(
@@ -1632,7 +1672,7 @@ class TaskScheduler:
                 else:
                     grace_context += "No tool results were captured."
                 grace_context += "\n\nSummarize what you accomplished and what's still pending. Be concise."
-                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates()
+                _grace_candidates = [(endpoint_url, model, headers)] + resolve_utility_fallback_candidates(owner=task.owner or None)
                 full_text = await llm_call_async_with_fallback(
                     _grace_candidates,
                     messages=[
@@ -1660,6 +1700,8 @@ class TaskScheduler:
         # Resolve endpoint/model: research settings > task settings > session defaults
         endpoint_url = task.endpoint_url
         model = task.model
+        headers = {}
+        headers_from_resolver = False
 
         if not endpoint_url or not model:
             try:
@@ -1669,9 +1711,13 @@ class TaskScheduler:
                     endpoint_url or None,
                     model or None,
                     None,
+                    owner=task.owner or None,
                 )
                 endpoint_url = ep_url or endpoint_url
                 model = ep_model or model
+                if ep_headers is not None:
+                    headers = ep_headers
+                    headers_from_resolver = True
             except Exception:
                 pass
 
@@ -1683,16 +1729,19 @@ class TaskScheduler:
         self._last_run_model = model
 
         # Resolve headers
-        headers = {}
         try:
             from core.database import ModelEndpoint
             from src.endpoint_resolver import normalize_base, build_headers
+            from src.auth_helpers import owner_filter
             db2 = db
-            eps = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all()
-            for ep in eps:
-                if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
-                    headers = build_headers(ep.api_key, normalize_base(ep.base_url))
-                    break
+            if not headers_from_resolver:
+                ep_q = db2.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+                ep_q = owner_filter(ep_q, ModelEndpoint, task.owner or None)
+                eps = ep_q.all()
+                for ep in eps:
+                    if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
+                        headers = build_headers(ep.api_key, normalize_base(ep.base_url))
+                        break
         except Exception:
             pass
 
@@ -1729,6 +1778,7 @@ class TaskScheduler:
                 endpoint_url=endpoint_url,
                 model=model,
                 owner=task.owner,
+                folder="Tasks",
                 created_at=_utcnow(),
                 updated_at=_utcnow(),
             )
@@ -1783,7 +1833,7 @@ class TaskScheduler:
             self._executing.add(task_id)
         await self._execute_task(task_id)
 
-    def _has_chain_cycle(self, db, start_id: str, max_depth: int = 10) -> bool:
+    def _has_chain_cycle(self, db, start_id: str, max_depth: int = 10, owner: str | None = None) -> bool:
         """Detect cycles in task chains."""
         from core.database import ScheduledTask
         visited = set()
@@ -1793,6 +1843,8 @@ class TaskScheduler:
                 return True
             visited.add(current)
             task = db.query(ScheduledTask).filter(ScheduledTask.id == current).first()
+            if owner is not None and task and task.owner != owner:
+                return True
             if not task or not task.then_task_id:
                 return False
             current = task.then_task_id
@@ -1823,7 +1875,7 @@ class TaskScheduler:
         have to special-case each tool's schema; the MCP tool ignores keys it
         doesn't recognise.
         """
-        from src.agent_tools import get_mcp_manager
+        from src.tool_utils import get_mcp_manager
         mcp = get_mcp_manager()
         if not mcp:
             logger.warning(f"Task {task.id}: MCP manager not available for delivery")
@@ -1946,11 +1998,30 @@ class TaskScheduler:
                 task.task_type = "action"
                 task.action = action
 
+            from core.database import TaskRun
+            retired_ids = [
+                row[0] for row in db.query(ScheduledTask.id).filter(
+                    ScheduledTask.owner == owner,
+                    ScheduledTask.task_type == "action",
+                    ScheduledTask.action.in_(list(RETIRED_HOUSEKEEPING_ACTIONS)),
+                ).all()
+            ]
+            if retired_ids:
+                db.query(TaskRun).filter(TaskRun.task_id.in_(retired_ids)).delete(synchronize_session=False)
             retired_count = db.query(ScheduledTask).filter(
                 ScheduledTask.owner == owner,
                 ScheduledTask.task_type == "action",
                 ScheduledTask.action.in_(list(RETIRED_HOUSEKEEPING_ACTIONS)),
             ).delete(synchronize_session=False)
+            # Sweep orphan TaskRun rows (parent task deleted previously) so
+            # retired actions stop showing in Activity. Only runs when at least
+            # one live task exists — avoids wiping run history on a fresh DB.
+            try:
+                live_ids = {row[0] for row in db.query(ScheduledTask.id).all()}
+                if live_ids:
+                    db.query(TaskRun).filter(~TaskRun.task_id.in_(list(live_ids))).delete(synchronize_session=False)
+            except Exception:
+                pass
             existing_actions = {
                 row[0] for row in db.query(ScheduledTask.action).filter(
                     ScheduledTask.owner == owner,
@@ -2052,6 +2123,8 @@ class TaskScheduler:
                 # Built-in housekeeping/action jobs should not create browser
                 # task notifications; user AI/research tasks still can.
                 task.notifications_enabled = False
+                if (task.output_target or "session") == "session":
+                    task.output_target = defs.get("output_target", "none")
             seeded = []
             for action, defs in HOUSEKEEPING_DEFAULTS.items():
                 if action in existing_actions:
@@ -2082,17 +2155,19 @@ class TaskScheduler:
                     # AI/email/calendar tasks opt into a paused starting state
                     # via ship_paused so users can enable them deliberately.
                     status="paused" if ships_paused else "active",
-                    output_target="session",
+                    output_target=defs.get("output_target", "none"),
                     notifications_enabled=False,
                 )
                 db.add(task)
                 seeded.append(action)
             if seeded or renamed or removed_dupes or retired_count:
-                db.commit()
                 logger.info(
                     "Housekeeping defaults for %s: seeded=%s renamed=%s deduped=%s retired=%s",
                     owner, seeded, sorted(set(renamed)), sorted(set(removed_dupes)), retired_count,
                 )
+            # Always commit — the orphan-run sweep above may have produced
+            # pending deletes even when no defaults changed.
+            db.commit()
         except Exception as e:
             logger.warning(f"Failed to create default tasks: {e}")
         finally:

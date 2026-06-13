@@ -13,6 +13,8 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.constants import MEMORY_FILE, SKILLS_FILE
+
 
 def claim_json_entries(entries, owner):
     count = 0
@@ -35,8 +37,8 @@ def main():
 
     # 1. Memories (JSON files)
     for label, path in [
-        ("memory.json", "data/memory.json"),
-        ("skills.json", "data/skills.json"),
+        ("memory.json", MEMORY_FILE),
+        ("skills.json", SKILLS_FILE),
     ]:
         if not os.path.exists(path):
             print(f"  {label}: not found, skipping")

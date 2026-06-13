@@ -133,7 +133,7 @@ class TestMaybeCompactFourthMessage:
 
         cc.get_context_length = lambda url, model: context_length
         cc.llm_call_async = _fake_summary
-        cc.resolve_endpoint = lambda which: (None, None, None)
+        cc.resolve_endpoint = lambda which, owner=None: (None, None, None)
         cc._update_session_history = lambda *a, **k: None
         try:
             return asyncio.run(
