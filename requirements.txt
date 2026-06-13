@@ -47,3 +47,5 @@ pytest-asyncio
 # TestClient import when only classic httpx is present. Runtime code keeps
 # using `httpx` above; this is test-client only.
 httpx2
+# RAG manifest parsing (rag-manifest.yaml → scripts/index_from_manifest.py).
+pyyaml

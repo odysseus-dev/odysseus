@@ -8,6 +8,7 @@ APP_VERSION = "1.0.0"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 DATA_DIR = os.getenv("ODYSSEUS_DATA_DIR", os.path.join(BASE_DIR, "data"))
+RAG_MANIFEST_FILE = os.path.join(BASE_DIR, "rag-manifest.yaml")
 
 # Data file paths
 # Single source of truth: every persisted file/dir lives under DATA_DIR, which
