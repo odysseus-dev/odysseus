@@ -3,95 +3,85 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Declarative métier catalog (YAML) + profile compiler that turns a
-vertical catalog into the multiagent artifacts the approved multiagent spec
-defines (`data/personas/<name>/SOUL.md` + `data/agents/<name>/agent.json`),
-per spec `docs/superpowers/specs/2026-06-13-business-platform-slice1-design.md`
-§4. Ships ONE catalog: travel agency.
+catalog into multiagent artifacts (`data/personas/<name>/SOUL.md` +
+`data/agents/<name>/agent.json`), per spec
+`docs/superpowers/specs/2026-06-13-business-platform-slice1-design.md` §4.
 
-**Architecture:** `services/business_platform/catalogs/travel_agency.yaml`
-(the catalog), `services/business_platform/profile_compiler.py` (load,
-validate, compile). Compiler writes persona/agent artifacts plus a
-`front_desk.json` routing table under a target base dir (default `data/`,
-tests pass `tmp_path`). Artifact formats come from the multiagent spec
-(`docs/superpowers/specs/2026-06-12-odysseus-multiagent-orchestration-design.md`):
-persona = `personas/<name>/SOUL.md` + `meta.json {description}`;
-agent = `agents/<name>/agent.json {persona, tools, model}`. Names are
-prefixed `<vertical>-<role>` so several verticals can coexist.
+**Direction change (owner, 2026-06-13):** first catalog is **general office
+staff** — the baseline departments ANY company needs to go live ("paperclip
+company"), SEO first — not a travel vertical. Travel becomes a later catalog.
+Role capabilities come from **native Odysseus skills** (`data/skills/`,
+SkillsManager); the catalog only **references** skills. Métier-authored
+content is used ONLY where no native/community skill exists. Community
+skills are sourced via the SkillsMP MCP, security-vetted, and seeded into
+the repo.
 
-**Catalog schema (YAML):**
+**Skill sourcing decisions (vetted this session):**
 
-```yaml
-vertical: travel_agency            # required, [a-z0-9_]+
-display_name: Travel Agency
-surface_policy: web_first          # web_only | web_first | app_invite | app_required
-gated_classes: [payment_refund, booking, outbound_comms, quote]  # must ⊆ GATED_CLASSES
-front_desk:                        # intent prefix -> role (catch-all "*" required)
-  "booking.": booking-clerk
-  "quote.": trip-planner
-  "comms.": client-comms
-  "*": front-desk
-roles:                             # >= 1; front_desk targets must exist here
-  front-desk:
-    description: one-line role summary
-    soul: |
-      Markdown persona text (becomes SOUL.md)
-    tools: [memory]                # allowlist; copied into agent.json verbatim
-```
+| Role need | Source | Verdict |
+|---|---|---|
+| SEO | SkillsMP `jikime-marketing-seo` (5★, vendor-neutral specialist body) | vetted clean → seed `marketing/seo` |
+| content writing / page publishing / web search / email triage / task queue | agentkit-web `skills/` (content-writer, page-writer, web-search, email-triage, task-queue) | reuse as seeds (own codebase) |
+| front-desk, sales, office-manager identity | none usable on SkillsMP (hits were security-research datasets / dev-tool routers) | author minimal natively |
+| ServiceNow `email-recommendation` (30★) | rejected — hard-coupled to SN MCP/REST stack | — |
+
+**Architecture:**
+- `services/business_platform/seed_skills/<category>/<name>/SKILL.md` —
+  repo-tracked seeds (`data/` is gitignored). Odysseus frontmatter + body;
+  imported bodies keep source attribution.
+- `install_seed_skills(skills_dir)` — copy seeds into `data/skills/` ONLY
+  when missing (native-first: operator-edited skills are never overwritten).
+- `services/business_platform/catalogs/general_office.yaml` — roles
+  (departments) with `skills:` references, thin identity `soul`, `tools`.
+- `profile_compiler.py` — `load_catalog()` validates (incl. every referenced
+  skill resolvable in seeds∪data/skills; hard error listing missing);
+  `compile_profile(catalog, base_dir)` emits per role:
+  `personas/<vertical>-<role>/SOUL.md` + `meta.json`,
+  `agents/<vertical>-<role>/agent.json`
+  `{persona, tools, skills, model: null}` (`skills` = forward-compatible
+  extension; runtime consumption is Plan 3), plus `front_desk.json`.
+
+**Catalog (general_office) roles:** seo (first), content, front-desk,
+support, sales, office-manager. Gated classes used: `payment_refund`
+(office-manager), `outbound_comms` (support/content), `quote` (sales);
+`booking` omitted (travel-specific). Routing: `quote.→sales`,
+`payment.→office-manager`, `comms.→support`, `*→front-desk`.
 
 **Validation rules (CatalogError):** missing/invalid `vertical`; empty
-`roles`; a `front_desk` target not in `roles`; missing `"*"` catch-all;
-`gated_classes` not a subset of `envelope.GATED_CLASSES`; unknown
-`surface_policy`; role without `soul` or `tools`.
-
-**Tech Stack:** PyYAML (already in venv), existing
-`services/business_platform/envelope.py` for `GATED_CLASSES`.
-
-**Conventions:** match Plan 1 (tests under `tests/`, run with
-`./venv/bin/python -m pytest` from repo root, one commit per task).
+`roles`; `front_desk` target not in `roles`; missing `"*"` catch-all;
+`gated_classes` ⊄ `envelope.GATED_CLASSES`; unknown `surface_policy`; role
+without `soul`/`tools`; unresolvable skill reference.
 
 ---
 
-### Task 1: Travel-agency catalog + loader/validator
+### Task 1: Seed skills + installer
 
-**Files:**
-- Create: `services/business_platform/catalogs/travel_agency.yaml`
-- Create: `services/business_platform/profile_compiler.py` (load_catalog only)
-- Test: `tests/test_platform_profiles.py` (loader part)
+- [ ] Write 6 seeds under `seed_skills/` (marketing/seo from vetted jikime
+  body; 5 agentkit-web bodies verbatim + frontmatter).
+- [ ] `install_seed_skills()` + test: installs missing, skips existing,
+  SkillsManager can load the result.
+- [ ] Commit `feat(platform): seed office-staff skills + native-first installer`.
 
-- [ ] Failing test: `load_catalog()` returns validated dict for the shipped
-  travel catalog (4 roles: front-desk, trip-planner, booking-clerk,
-  client-comms; all four gated classes; `"*"` route present); raises
-  `CatalogError` for: unknown gated class, route to missing role, missing
-  catch-all, empty roles.
-- [ ] Implement catalog YAML + `load_catalog(path) -> dict` with the rules
-  above.
-- [ ] Run; commit `feat(platform): travel-agency métier catalog + loader`.
+### Task 2: general_office catalog + loader
 
-### Task 2: Compiler — catalog → personas/agents/front-desk artifacts
+- [ ] Catalog YAML (6 roles, skills refs, thin souls).
+- [ ] `load_catalog()` + `CatalogError` validation incl. skill resolution.
+- [ ] Tests: shipped catalog loads; each invalid-catalog case rejects.
+- [ ] Commit `feat(platform): general-office métier catalog + loader`.
 
-**Files:**
-- Modify: `services/business_platform/profile_compiler.py` (add compile)
-- Test: `tests/test_platform_profiles.py` (compiler part) + golden files
-  under `tests/golden/profiles/travel_agency/`
+### Task 3: Compiler
 
-- [ ] Failing test: `compile_profile(catalog, base_dir)` writes, per role:
-  `personas/travel_agency-<role>/SOUL.md` (catalog `soul`, verbatim),
-  `personas/travel_agency-<role>/meta.json` (`{description}`),
-  `agents/travel_agency-<role>/agent.json`
-  (`{"persona": "travel_agency-<role>", "tools": [...], "model": null}`),
-  plus `front_desk.json` (routing table + gated_classes + surface_policy);
-  returns a manifest listing all written paths. Recompile is idempotent
-  (same bytes). Golden-file comparison for one role end-to-end (spec §5).
-- [ ] Implement `compile_profile`.
-- [ ] Run; commit `feat(platform): profile compiler (catalog → multiagent artifacts)`.
+- [ ] `compile_profile()` → personas/agents/front_desk.json, idempotent,
+  manifest returned; golden-file test for one role (spec §5).
+- [ ] Commit `feat(platform): profile compiler (catalog → multiagent artifacts)`.
 
-### Task 3: Regression + wrap-up
+### Task 4: Regression + wrap-up
 
-- [ ] Full platform suite + whole-repo suite green.
-- [ ] `graphify update`; `codex review --base <plan-2 start sha>`; fix findings; commit.
+- [ ] Platform + whole-repo suites green; `graphify update`;
+  `codex review --base <plan-2 start sha>`; fix findings; commit.
 
-## Out of scope (Plan 3)
+## Out of scope (Plan 3 / later)
 
-Mission loop, manager approval surface, E2E flow, runtime consumption of the
-compiled artifacts (blocked by multiagent slice-1 implementation), additional
-vertical catalogs, registry/company wiring of `front_desk.json`.
+Travel and other vertical catalogs; runtime consumption of artifacts &
+skills injection (blocked by multiagent slice-1); mission loop; manager
+surface; E2E; registry wiring of `front_desk.json`.
