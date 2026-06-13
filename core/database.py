@@ -2259,7 +2259,69 @@ def archive_session(session_id: str):
             return True
     return False
 
-# Initialize the database by creating all tables
+
+# --- Business platform (slice-1) ---------------------------------------------
+
+class Company(TimestampMixin, Base):
+    """A platform tenant (travel agency, conciergerie, ...). Spec §2."""
+    __tablename__ = "platform_companies"
+
+    id = Column(String, primary_key=True)              # e.g. "travel-1"
+    vertical_type = Column(String, nullable=False)     # e.g. "travel_agency"
+    display_name = Column(String, nullable=False, default="")
+    parent_id = Column(String, ForeignKey("platform_companies.id"), nullable=True)
+    surface_policy = Column(String, nullable=False, default="web_first")
+    # Ed25519 service identity (signs envelopes). Private key encrypted at rest.
+    public_key_pem = Column(Text, nullable=True)
+    private_key_pem = Column(EncryptedText, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
 
 
+class Principal(TimestampMixin, Base):
+    """Typed actor: human | agent | company_service_account. Spec §2."""
+    __tablename__ = "platform_principals"
+
+    id = Column(String, primary_key=True)              # "human:oleg", "agent:travel-1/booker"
+    kind = Column(String, nullable=False)              # human|agent|company_service_account
+    company_id = Column(String, ForeignKey("platform_companies.id"), nullable=False)
+    is_manager = Column(Boolean, default=False, nullable=False)
+
+
+class EnvelopeRecord(TimestampMixin, Base):
+    """Hash-chained audit ledger of every envelope the hub accepted. Spec §3."""
+    __tablename__ = "platform_envelopes"
+
+    message_id = Column(String, primary_key=True)      # idempotency anchor
+    conversation_id = Column(String, nullable=False, index=True)
+    causation_id = Column(String, nullable=True)
+    from_subject = Column(String, nullable=True)
+    from_company = Column(String, nullable=False, index=True)
+    to_subject = Column(String, nullable=True)
+    to_company = Column(String, nullable=False, index=True)
+    intent = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    trust_level = Column(String, nullable=False, default="untrusted")
+    requires_human_approval = Column(Boolean, default=False, nullable=False)
+    payload_json = Column(Text, nullable=False, default="{}")
+    signature = Column(Text, nullable=False)
+    audit_hash = Column(String, nullable=False, unique=True)
+    prev_audit_hash = Column(String, nullable=False)
+    delivered = Column(Boolean, default=False, nullable=False, index=True)
+
+
+class GatedIntent(TimestampMixin, Base):
+    """Manager approval queue entry for gated action classes. Spec §3."""
+    __tablename__ = "platform_gated_intents"
+
+    id = Column(String, primary_key=True)
+    envelope_message_id = Column(String, ForeignKey("platform_envelopes.message_id"), nullable=False)
+    company_id = Column(String, ForeignKey("platform_companies.id"), nullable=False, index=True)
+    gated_class = Column(String, nullable=False)       # payment_refund|booking|outbound_comms|quote
+    state = Column(String, nullable=False, default="proposed", index=True)  # proposed|approved|denied|expired
+    decided_by = Column(String, nullable=True)         # principal id of the manager
+    decided_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+
+
+# Initialize the database by creating all tables (after ALL models are defined)
 init_db()
