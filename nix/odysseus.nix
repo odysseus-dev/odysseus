@@ -26,6 +26,7 @@ let
   # nixpkgs attr names parsed from requirements.txt: drop comments / blanks,
   # strip version specifiers and extras, normalise (lowercase, _/. -> -).
   # Skip packages that don't exist in nixpkgs (test-only deps like httpx2).
+  # Also skip fastembed on aarch64-linux where it's marked as badPlatform.
   reqNames =
     let
       nameOf =
@@ -40,7 +41,8 @@ let
       rawNames = lib.filter (n: n != null) (map nameOf lines);
       normalisedNames = map normalise rawNames;
       # Packages to skip (test-only or not in nixpkgs)
-      skipPackages = [ "httpx2" ];
+      # fastembed is not available on aarch64-linux (badPlatform in nixpkgs)
+      skipPackages = [ "httpx2" ] ++ lib.optionals stdenv.isAarch64 [ "fastembed" ];
     in
     lib.unique (lib.filter (n: !builtins.elem n skipPackages) normalisedNames);
 
