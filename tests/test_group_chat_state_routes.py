@@ -219,6 +219,33 @@ def test_list_sessions_hides_group_participants(monkeypatch):
     assert normal["group_participants"] == []
 
 
+def test_list_sessions_hides_legacy_null_owner_group_participants(monkeypatch):
+    _reset_db()
+    parent_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    _add_session(parent_id, name="[GRP] Athena, Mistral")
+    for session_id in child_ids:
+        _add_session(session_id, name="[GRP] participant")
+    _add_group_state(parent_id, child_ids, owner=None)
+
+    sm = MagicMock()
+    sm.get_sessions_for_user.return_value = {
+        parent_id: _session_stub(parent_id, "[GRP] Athena, Mistral"),
+        child_ids[0]: _session_stub(child_ids[0], "[GRP] Athena"),
+        child_ids[1]: _session_stub(child_ids[1], "[GRP] Mistral"),
+    }
+    router = _routes(monkeypatch, sm)
+    list_sessions = _endpoint(router, "/api/sessions", "GET")
+
+    returned_sessions = list_sessions(request=MagicMock())
+    returned_ids = {session["id"] for session in returned_sessions}
+    parent = next(session for session in returned_sessions if session["id"] == parent_id)
+
+    assert returned_ids == {parent_id}
+    assert parent["is_group_parent"] is True
+    assert [participant["id"] for participant in parent["group_participants"]] == child_ids
+
+
 def test_group_child_whisper_context_resolves_parent_for_owner(monkeypatch):
     _reset_db()
     parent_id = str(uuid.uuid4())
@@ -337,6 +364,31 @@ def test_group_parent_delete_cascades_to_children(monkeypatch):
     for session_id in child_ids:
         _add_session(session_id, name="[GRP] participant")
     _add_group_state(parent_id, child_ids)
+
+    sm = MagicMock()
+    sm.delete_session.return_value = True
+    router = _routes(monkeypatch, sm)
+    delete_session = _endpoint(router, "/api/session/{sid}", "DELETE")
+
+    result = delete_session(request=MagicMock(), sid=parent_id)
+
+    assert result == {"status": "deleted"}
+    assert {call.args[0] for call in sm.delete_session.call_args_list} == set(child_ids + [parent_id])
+    db = _TS()
+    try:
+        assert db.query(GroupChatState).filter(GroupChatState.parent_session_id == parent_id).first() is None
+    finally:
+        db.close()
+
+
+def test_group_parent_delete_cascades_for_legacy_null_owner_state(monkeypatch):
+    _reset_db()
+    parent_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    _add_session(parent_id, name="[GRP] Athena, Mistral")
+    for session_id in child_ids:
+        _add_session(session_id, name="[GRP] participant")
+    _add_group_state(parent_id, child_ids, owner=None)
 
     sm = MagicMock()
     sm.delete_session.return_value = True

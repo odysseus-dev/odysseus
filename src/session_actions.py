@@ -75,6 +75,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
     Returns a human-readable summary of what was done.
     """
     from core.database import SessionLocal, Session as DbSession, ChatMessage as DbMsg, GroupChatState
+    from src.auth_helpers import owner_filter
     from src.llm_core import llm_call_async
     from src.task_endpoint import resolve_task_endpoint
 
@@ -84,13 +85,13 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         deleted_empty = 0
         deleted_throwaway = 0
 
-        rows = db.query(DbSession).filter(
-            DbSession.archived == False,
-            *([DbSession.owner == owner] if owner else []),
+        rows = owner_filter(
+            db.query(DbSession).filter(DbSession.archived == False),
+            DbSession,
+            owner,
         ).all()
         group_query = db.query(GroupChatState.parent_session_id, GroupChatState.state)
-        if owner:
-            group_query = group_query.filter(GroupChatState.owner == owner)
+        group_query = owner_filter(group_query, GroupChatState, owner)
         group_parent_to_participants = {}
         group_participant_ids: set[str] = set()
         for parent_id, state in group_query.all():
@@ -162,9 +163,10 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
             logger.info(f"Auto-sort: deleted {deleted_empty} empty + {deleted_throwaway} throwaway sessions")
 
         # ── Phase 2: AI folder assignment ──
-        remaining = db.query(DbSession).filter(
-            DbSession.archived == False,
-            *([DbSession.owner == owner] if owner else []),
+        remaining = owner_filter(
+            db.query(DbSession).filter(DbSession.archived == False),
+            DbSession,
+            owner,
         ).all()
 
         session_list = []
@@ -266,8 +268,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
                         participant_ids = group_parent_to_participants.get(full_id, set())
                         if participant_ids:
                             child_query = db.query(DbSession).filter(DbSession.id.in_(participant_ids))
-                            if owner:
-                                child_query = child_query.filter(DbSession.owner == owner)
+                            child_query = owner_filter(child_query, DbSession, owner)
                             for child in child_query.all():
                                 child.folder = folder_name
                                 child.updated_at = _utcnow_naive()
