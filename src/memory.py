@@ -8,6 +8,8 @@ import re
 from typing import List, Dict, Tuple
 from datetime import datetime
 
+from core.atomic_io import atomic_write_json
+
 logger = logging.getLogger(__name__)
 
 def tokenize(text: str) -> List[str]:
@@ -206,11 +208,7 @@ class MemoryManager:
             if "category" not in entry:
                 entry["category"] = "fact"
         
-        # Use atomic write
-        tmp_file = self.memory_file + ".tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_file, self.memory_file)
+        atomic_write_json(self.memory_file, entries, indent=2)
     
     def add_entry(self, text: str, source: str = "user", category: str = "fact", owner: str = None) -> Dict:
         """Add a new memory entry."""

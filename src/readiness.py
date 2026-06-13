@@ -11,6 +11,41 @@ import uuid
 from datetime import datetime
 from typing import Dict
 
+import httpx
+
+from src.chroma_client import _port_open
+
+
+def _http_ok(url: str, timeout: float = 2.0) -> bool:
+    try:
+        r = httpx.get(url, timeout=timeout, follow_redirects=True)
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
+def _sidecar_checks() -> Dict[str, Dict[str, object]]:
+    chroma_host = os.getenv("CHROMADB_HOST", "localhost")
+    chroma_port = int(os.getenv("CHROMADB_PORT", "8100"))
+    searx_url = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080").rstrip("/") + "/"
+
+    chroma_ok = _port_open(chroma_host, chroma_port)
+    searx_ok = _http_ok(searx_url)
+
+    return {
+        "chromadb": {
+            "ok": chroma_ok,
+            "host": chroma_host,
+            "port": chroma_port,
+            "hint": None if chroma_ok else "docker compose up -d chromadb",
+        },
+        "searxng": {
+            "ok": searx_ok,
+            "url": searx_url,
+            "hint": None if searx_ok else "docker compose up -d searxng",
+        },
+    }
+
 
 def check_readiness() -> Dict[str, object]:
     """Run the readiness checks and return a JSON-serialisable report.
@@ -52,7 +87,9 @@ def check_readiness() -> Dict[str, object]:
     )
     checks["local_first"] = {"ok": True, "local": local_first}
 
-    ready = all(bool(c.get("ok")) for c in checks.values())
+    checks.update(_sidecar_checks())
+
+    ready = all(bool(checks[name].get("ok")) for name in ("database", "data_dir"))
     return {
         "ready": ready,
         "version": APP_VERSION,

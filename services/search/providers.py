@@ -382,7 +382,7 @@ def _resolve_ddg_redirect(raw: str) -> str:
 
 
 def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
-    """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
+    """Search using DuckDuckGo via the ddgs library. No API key needed."""
 
     def _html_fallback() -> List[dict]:
         try:
@@ -415,9 +415,9 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
             return []
 
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError:
-        logger.warning("duckduckgo-search package not installed; using HTML fallback")
+        logger.warning("ddgs package not installed; using HTML fallback")
         return _html_fallback()
 
     timelimit = None

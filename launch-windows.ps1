@@ -9,13 +9,16 @@
   Usage:
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
     powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -Port 7000 -BindHost 127.0.0.1
+    powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1 -InstallOptional -WithSidecars
 
   Tip: bind 127.0.0.1 (default) for local-only use. Use 0.0.0.0 only when you
   intentionally want other devices on your LAN to reach it.
 #>
 param(
     [int]$Port = 7000,
-    [string]$BindHost = "127.0.0.1"
+    [string]$BindHost = "127.0.0.1",
+    [switch]$InstallOptional,
+    [switch]$WithSidecars
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,6 +118,12 @@ Write-Step "Installing dependencies (first run can take a few minutes)"
 & $venvPy -m pip install -r requirements.txt
 if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
 
+if ($InstallOptional) {
+    Write-Step "Installing optional dependencies"
+    & $venvPy -m pip install -r requirements-optional.txt
+    if ($LASTEXITCODE -ne 0) { Fail "Optional dependency install failed." }
+}
+
 # 4. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"
 & $venvPy setup.py
@@ -127,6 +136,11 @@ if (-not (Find-GitBash)) {
     Write-Host "      The core app works without it. For full Cookbook background" -ForegroundColor Yellow
     Write-Host "      downloads and the agent shell tool, install Git for Windows:" -ForegroundColor Yellow
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
+}
+
+if ($WithSidecars) {
+    Write-Step "Starting Docker sidecars (ChromaDB, SearXNG, ntfy)"
+    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "scripts\start-sidecars.ps1")
 }
 
 # 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
