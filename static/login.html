@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
 <title>Odysseus — Login</title>
+<link rel="icon" type="image/png" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="manifest" href="/manifest.json">
 <script src="/static/js/base-path.js" nonce="{{CSP_NONCE}}"></script>
 <script nonce="{{CSP_NONCE}}">
 (function(){
@@ -37,6 +40,18 @@
   };
   var THEME_DEFAULT_INTENSITY = { midnight:0.5, terminal:0.8, organs:0.65 };
   try {
+    var bp = window.__odysseusBasePath || '';
+    
+    // Dynamic manifest, favicon and apple-touch-icon registration for subdirectory support
+    var ml = document.querySelector("link[rel='manifest']");
+    if (ml) ml.href = bp + '/manifest.json';
+    
+    var fav = document.querySelector("link[rel='icon']");
+    if (fav) fav.href = bp + '/static/icon-192.png';
+    
+    var apple = document.querySelector("link[rel='apple-touch-icon']");
+    if (apple) apple.href = bp + '/static/icon-192.png';
+
     var t = JSON.parse(localStorage.getItem('odysseus-theme'));
     var s = document.documentElement.style;
     if (t && t.colors) {
