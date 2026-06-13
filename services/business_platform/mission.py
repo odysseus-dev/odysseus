@@ -29,14 +29,28 @@ class MissionError(ValueError):
     pass
 
 
+def _human_id(owner: str) -> str:
+    """Principal id for a human owner, tolerating an already-prefixed value
+    ('oleg' -> 'human:oleg'; 'human:oleg' stays as-is)."""
+    o = str(owner)
+    return o if o.startswith("human:") else f"human:{o}"
+
+
 def ensure_big_boss(owner: str) -> dict:
-    """Idempotently register the Big Boss company (manager = the owner)."""
-    existing = registry.get_company(BIG_BOSS_COMPANY)
-    if existing:
-        return existing
-    return registry.create_company(
-        BIG_BOSS_COMPANY, "platform", "Big Boss",
-        manager_principal_id=f"human:{owner}")
+    """Idempotently register the Big Boss company and make `owner` a manager.
+
+    Big Boss is shared across mission owners; each owner must be able to
+    approve Big Boss's own gated actions, so the owner is upserted as a
+    manager whether or not the company already existed.
+    """
+    human_id = _human_id(owner)
+    if not registry.get_company(BIG_BOSS_COMPANY):
+        registry.create_company(
+            BIG_BOSS_COMPANY, "platform", "Big Boss",
+            manager_principal_id=human_id)
+    else:
+        registry.ensure_manager(BIG_BOSS_COMPANY, human_id)
+    return registry.get_company(BIG_BOSS_COMPANY)
 
 
 def _mission_dict(m: Mission, tasks=None) -> dict:
@@ -145,7 +159,7 @@ def dispatch_mission(mission_id: str) -> dict:
         env = Envelope(
             message_id=message_id, conversation_id=conversation_id,
             idempotency_key=message_id,
-            from_subject=f"human:{owner}", from_company=BIG_BOSS_COMPANY,
+            from_subject=_human_id(owner), from_company=BIG_BOSS_COMPANY,
             to_company=target_company,
             issued_at=datetime.now(UTC).isoformat(),
             intent=intent, status="proposed",

@@ -64,6 +64,13 @@ def test_ungated_task_dispatches_then_completes_on_reply(owner_and_company):
     assert r["status"] == "completed" and "Mission report" in r["report"]
 
 
+def _gated_intent_for(manager, env_message_id):
+    """Find the queued gated intent for a specific dispatched envelope
+    (shared in-memory DB accumulates intents across tests)."""
+    return [p for p in pending_for_manager(manager)
+            if p["envelope_message_id"] == env_message_id]
+
+
 def test_gated_task_blocks_until_manager_approves(owner_and_company):
     owner, cid = owner_and_company
     m = mission.create_mission("g", owner,
@@ -74,8 +81,7 @@ def test_gated_task_blocks_until_manager_approves(owner_and_company):
     assert d["tasks"][0]["status"] == "blocked"
     assert mission.refresh_mission(m["id"])["tasks"][0]["status"] == "blocked"
     # owner manages bigboss (the SENDER) -> approves
-    pend = [p for p in pending_for_manager("human:oleg")
-            if p["company_id"] == mission.BIG_BOSS_COMPANY]
+    pend = _gated_intent_for("human:oleg", d["tasks"][0]["envelope_message_id"])
     assert pend
     approve(pend[0]["id"], "human:oleg")
     r1 = mission.refresh_mission(m["id"])
@@ -90,10 +96,9 @@ def test_gated_denied_task_fails(owner_and_company):
     m = mission.create_mission("g", owner,
                                [{"company": cid, "intent": "payment.refund",
                                  "task": "refund X"}])
-    mission.dispatch_mission(m["id"])
-    pend = [p for p in pending_for_manager("human:oleg")
-            if p["company_id"] == mission.BIG_BOSS_COMPANY
-            and p["gated_class"] == "payment_refund"]
+    d = mission.dispatch_mission(m["id"])
+    pend = _gated_intent_for("human:oleg", d["tasks"][0]["envelope_message_id"])
+    assert pend
     deny(pend[0]["id"], "human:oleg", reason="not allowed")
     r = mission.refresh_mission(m["id"])
     assert r["tasks"][0]["status"] == "failed"
@@ -109,6 +114,36 @@ def test_reply_error_marks_task_failed(owner_and_company):
     _reply(cid, d["tasks"][0]["conversation_id"], "error", "blew up")
     r = mission.refresh_mission(m["id"])
     assert r["tasks"][0]["status"] == "failed" and r["status"] == "failed"
+
+
+def test_principal_shaped_owner_can_approve(owner_and_company):
+    """Owner stored as 'human:oleg' must not become 'human:human:oleg' —
+    they have to be able to approve Big Boss's gated tasks (codex P1)."""
+    _, cid = owner_and_company
+    m = mission.create_mission("g", "human:oleg",
+                               [{"company": cid, "intent": "quote.create",
+                                 "task": "quote"}])
+    d = mission.dispatch_mission(m["id"])
+    assert registry.is_manager_of("human:oleg", mission.BIG_BOSS_COMPANY)
+    pend = _gated_intent_for("human:oleg", d["tasks"][0]["envelope_message_id"])
+    assert pend  # visible to the owner
+
+
+def test_second_owner_gets_manager_rights(owner_and_company):
+    """Big Boss persists across owners; a later owner must still be able to
+    approve their own mission's gated tasks (codex P2)."""
+    _, cid = owner_and_company           # first owner = oleg already registered
+    registry.create_company("bob-co", "general_office", "Bob Co",
+                            manager_principal_id="human:bob")
+    m = mission.create_mission("bob mission", "bob",
+                               [{"company": "bob-co", "intent": "quote.create",
+                                 "task": "quote"}])
+    d = mission.dispatch_mission(m["id"])
+    assert registry.is_manager_of("human:bob", mission.BIG_BOSS_COMPANY)
+    pend = _gated_intent_for("human:bob", d["tasks"][0]["envelope_message_id"])
+    assert pend
+    approve(pend[0]["id"], "human:bob")
+    assert mission.refresh_mission(m["id"])["tasks"][0]["status"] == "dispatched"
 
 
 def test_create_requires_goal_and_tasks(owner_and_company):

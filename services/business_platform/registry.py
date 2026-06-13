@@ -92,6 +92,29 @@ def add_principal(company_id: str, principal_id: str, kind: str,
         return {"id": p.id, "kind": p.kind, "is_manager": p.is_manager}
 
 
+def ensure_manager(company_id: str, principal_id: str,
+                   kind: str = "human") -> None:
+    """Idempotently make `principal_id` a manager of `company_id`.
+
+    Adds the (principal, company) binding if missing, or promotes an existing
+    non-manager binding. Used so a company with shared ownership (e.g. Big
+    Boss across mission owners) grants approval rights to each owner.
+    """
+    if kind not in PRINCIPAL_KINDS:
+        raise RegistryError(f"unknown principal kind {kind!r}")
+    with get_db_session() as db:
+        if not db.get(Company, company_id):
+            raise RegistryError(f"company {company_id!r} not found")
+        p = (db.query(Principal)
+               .filter_by(id=principal_id, company_id=company_id).first())
+        if p is None:
+            db.add(Principal(id=principal_id, kind=kind,
+                             company_id=company_id, is_manager=True))
+        elif not p.is_manager:
+            p.is_manager = True
+        db.commit()
+
+
 def is_manager_of(principal_id: str, company_id: str) -> bool:
     with get_db_session() as db:
         p = (db.query(Principal)
