@@ -5,6 +5,21 @@ not auto-apply this file to review comments. Omit sections that do not add
 useful signal. Lead with confirmed findings; keep speculative notes out of the
 public review unless they are framed as a concrete open question.
 
+## Small PR Path
+
+For narrow docs, typo, test-only, or obvious local fixes, a short review is
+enough:
+
+```md
+LGTM after checking:
+- scope:
+- validation:
+- residual risk:
+```
+
+Use the fuller structure below for larger, risky, multi-finding, or
+security-sensitive reviews.
+
 ## Findings
 
 **<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub> issue (test): Short issue title**
