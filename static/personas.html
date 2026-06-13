@@ -419,6 +419,51 @@
       background: rgba(148, 163, 184, 0.15);
       color: #94a3b8;
     }
+  
+    /* Extra Gemini-style enhancements */
+    .persona-card {
+      transition: transform 0.2s cubic-bezier(0.4, 0.0, 0.2, 1), 
+                  box-shadow 0.2s cubic-bezier(0.4, 0.0, 0.2, 1),
+                  border-color 0.2s ease;
+    }
+    
+    .persona-card:hover {
+      transform: translateY(-6px) scale(1.01);
+      box-shadow: 0 30px 70px -15px rgb(0 0 0 / 0.5),
+                  0 0 0 1px rgba(99, 102, 241, 0.2);
+    }
+    
+    .floating-action {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: white;
+      padding: 14px 22px;
+      border-radius: 9999px;
+      font-weight: 600;
+      box-shadow: 0 10px 15px -3px rgb(99 102 241 / 0.5);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      z-index: 150;
+      animation: float 2s ease-in-out infinite;
+    }
+    
+    @keyframes float {
+      0%,100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+    
+    .persona-card .use-in-chat {
+      background: linear-gradient(90deg, #6366f1, #a855f7);
+      color: white;
+      border: none;
+      font-weight: 700;
+      box-shadow: 0 4px 6px -1px rgb(99 102 241 / 0.3);
+    }
+
   </style>
 </head>
 <body>
@@ -727,5 +772,13 @@
       loadPersonas();
     };
   </script>
+
+  <div onclick="window.location.href='/'" class="floating-action">
+    <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="3" viewBox="0 0 24 24">
+      <path d="M3 12h18M3 6h18M3 18h18"/>
+    </svg>
+    <span>Back to Chat</span>
+  </div>
+
 </body>
 </html>
