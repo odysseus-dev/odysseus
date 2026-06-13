@@ -7,9 +7,13 @@ and event lifecycle.  No restart actions, no shell execution.
 from __future__ import annotations
 
 import logging
+import json
+import os
 import re
+import subprocess
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from routes.homelab_routes import (
@@ -35,6 +39,8 @@ _ALLOWED_ACTIONS = {
 }
 
 BASE_URL = '/api/openclaw/homelab'
+PING_TARGET = os.getenv('HEIMDAL_PING_TARGET', '100.110.136.4')
+CADDY_CONTAINER = os.getenv('CADDY_CONTAINER', 'caddy')
 
 
 def _safe_actions(actions: list[str]) -> list[str]:
@@ -61,6 +67,60 @@ def _sanitize_dict(data: dict) -> dict:
 def _sanitize_service(service: dict) -> dict:
     """Return a new dict with sensitive fields redacted."""
     return _sanitize_dict(service)
+
+
+def _run_static_command(args: list[str], timeout: int = 8) -> dict[str, Any]:
+    """Run a fixed argv command and return a redacted diagnostic envelope."""
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            shell=False,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return {'status': 'degraded', 'error': 'command_not_available', 'command': args[0]}
+    except subprocess.TimeoutExpired:
+        return {'status': 'degraded', 'error': 'command_timeout', 'command': args[0]}
+    except Exception as exc:
+        return {'status': 'degraded', 'error': str(exc), 'command': args[0]}
+
+    stdout = (result.stdout or '').strip()
+    stderr = (result.stderr or '').strip()
+    return {
+        'status': 'ok' if result.returncode == 0 else 'degraded',
+        'returncode': result.returncode,
+        'stdout': stdout[:12000],
+        'stderr': stderr[:4000],
+    }
+
+
+def _json_lines(text: str) -> list[dict[str, Any]]:
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except Exception:
+            rows.append({'raw': line})
+            continue
+        if isinstance(value, dict):
+            rows.append(_sanitize_dict(value))
+    return rows
+
+
+def _find_grafana_url() -> str | None:
+    configured = (os.getenv('HOMELAB_GRAFANA_URL') or os.getenv('GRAFANA_URL') or '').strip()
+    if configured:
+        return configured
+    for service in _load_services():
+        if str(service.get('name') or '').lower() == 'grafana':
+            return service.get('health_url') or service.get('url')
+    return None
 
 
 def _event_links(event_id: str) -> dict[str, str]:
@@ -106,6 +166,16 @@ def _ok(*, message: str, event: dict | None = None, events: list | None = None,
     if events is not None:
         payload['events'] = events
     return payload
+
+
+def _ops_result(kind: str, message: str, detail: dict[str, Any]) -> dict[str, Any]:
+    return _ok(message=message) | {
+        'ops': {
+            'kind': kind,
+            **detail,
+        },
+        'links': {'health': f'{BASE_URL}/health'},
+    }
 
 
 def setup_openclaw_homelab_routes() -> APIRouter:
@@ -205,6 +275,112 @@ def setup_openclaw_homelab_routes() -> APIRouter:
                     'links': {'services': f'{BASE_URL}/services', 'health': f'{BASE_URL}/health'},
                 }
         raise HTTPException(404, 'Service not found')
+
+    # ------------------------------------------------------------------
+    # Safe read-only ops commands
+    # ------------------------------------------------------------------
+
+    @router.get('/ops/docker-unhealthy')
+    async def openclaw_docker_unhealthy(request: Request) -> dict[str, Any]:
+        """Return unhealthy Docker containers only. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        cmd = ['docker', 'ps', '--filter', 'health=unhealthy', '--format', '{{json .}}']
+        result = _run_static_command(cmd)
+        containers = _json_lines(result.get('stdout') or '') if result.get('status') == 'ok' else []
+        message = (
+            f"{len(containers)} unhealthy Docker container(s)."
+            if result.get('status') == 'ok' else
+            f"Docker unhealthy check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('docker_unhealthy', message, {'containers': containers, 'check': result})
+
+    @router.get('/ops/tailscale-status')
+    async def openclaw_tailscale_status(request: Request) -> dict[str, Any]:
+        """Return Tailscale status. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['tailscale', 'status', '--json'])
+        status_json = None
+        if result.get('status') == 'ok' and result.get('stdout'):
+            try:
+                status_json = _sanitize_dict(json.loads(result['stdout']))
+            except Exception:
+                status_json = None
+        peers = status_json.get('Peer', {}) if isinstance(status_json, dict) else {}
+        message = (
+            f"Tailscale status returned {len(peers)} peer(s)."
+            if result.get('status') == 'ok' else
+            f"Tailscale status degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('tailscale_status', message, {'tailscale': status_json, 'check': result})
+
+    @router.get('/ops/ping-heimdal')
+    async def openclaw_ping_heimdal(request: Request) -> dict[str, Any]:
+        """Ping the configured Heimdal target. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['ping', '-c', '3', PING_TARGET], timeout=10)
+        message = (
+            f"Heimdal ping OK: {PING_TARGET}."
+            if result.get('status') == 'ok' else
+            f"Heimdal ping degraded: {PING_TARGET}."
+        )
+        return _ops_result('ping_heimdal', message, {'target': PING_TARGET, 'check': result})
+
+    @router.get('/ops/grafana')
+    async def openclaw_check_grafana(request: Request) -> dict[str, Any]:
+        """Check configured Grafana health URL. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        url = _find_grafana_url()
+        if not url:
+            return _ops_result('grafana', 'Grafana health URL is not configured.', {'status': 'degraded'})
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(url)
+            status = 'ok' if resp.status_code < 400 else 'degraded'
+            message = f"Grafana returned HTTP {resp.status_code}."
+            return _ops_result('grafana', message, {
+                'status': status,
+                'url': url,
+                'http_status': resp.status_code,
+                'body': resp.text[:1000],
+            })
+        except Exception as exc:
+            return _ops_result('grafana', f"Grafana check degraded: {exc}", {
+                'status': 'degraded',
+                'url': url,
+                'error': str(exc),
+            })
+
+    @router.get('/ops/caddy-logs')
+    async def openclaw_tail_caddy_logs(request: Request, lines: int = 80) -> dict[str, Any]:
+        """Tail recent Caddy container logs. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        if not (1 <= lines <= 200):
+            raise HTTPException(400, 'lines must be between 1 and 200')
+        result = _run_static_command(['docker', 'logs', '--tail', str(lines), CADDY_CONTAINER], timeout=10)
+        output = "\n".join(part for part in [result.get('stdout'), result.get('stderr')] if part)
+        message = (
+            f"Caddy logs returned last {lines} line(s)."
+            if result.get('status') == 'ok' else
+            f"Caddy log check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('caddy_logs', message, {
+            'container': CADDY_CONTAINER,
+            'lines': lines,
+            'logs': output[-12000:],
+            'check': result,
+        })
+
+    @router.get('/ops/disk-usage')
+    async def openclaw_disk_usage(request: Request) -> dict[str, Any]:
+        """Return filesystem usage. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['df', '-h'], timeout=8)
+        message = (
+            "Disk usage returned."
+            if result.get('status') == 'ok' else
+            f"Disk usage check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('disk_usage', message, {'table': result.get('stdout') or '', 'check': result})
 
     # ------------------------------------------------------------------
     # Event read routes

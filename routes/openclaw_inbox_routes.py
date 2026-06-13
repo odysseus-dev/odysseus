@@ -126,7 +126,6 @@ def _items(owner: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
                 "mute_sender_2h",
                 "summarize_thread",
                 "create_redmine_ticket",
-                "forward_to_team",
             ],
         }
         items.append(item)
@@ -137,6 +136,30 @@ def _items(owner: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 class MuteRequest(BaseModel):
     hours: float = Field(default=2, ge=0.25, le=24)
     reason: str | None = Field(default=None, max_length=300)
+
+
+def _find_item(owner: str | None, item_id: str) -> dict[str, Any]:
+    _decode_key(item_id)
+    _state, items = _items(owner)
+    item = next((candidate for candidate in items if candidate["id"] == item_id), None)
+    if not item:
+        raise HTTPException(404, "Inbox item not found")
+    return item
+
+
+def _item_summary(item: dict[str, Any]) -> str:
+    parts = [
+        f"{item.get('tier', 'inbox').replace('-', ' ').title()} email from {item.get('from') or 'unknown sender'}.",
+        f"Subject: {item.get('subject') or '(no subject)'}.",
+    ]
+    reason = item.get("reason")
+    if reason:
+        parts.append(f"Why it was flagged: {reason}.")
+    tags = [str(tag) for tag in (item.get("tags") or []) if str(tag).strip()]
+    if tags:
+        parts.append(f"Tags: {', '.join(tags[:8])}.")
+    parts.append("Available Slack actions: ack, mute sender, draft Redmine ticket.")
+    return " ".join(parts)
 
 
 def setup_openclaw_inbox_routes() -> APIRouter:
@@ -171,9 +194,7 @@ def setup_openclaw_inbox_routes() -> APIRouter:
     async def ack_inbox_item(request: Request, item_id: str):
         owner = _scope_owner(request, EMAIL_READ_SCOPES)
         key = _decode_key(item_id)
-        _state, items = _items(owner)
-        if not any(item["id"] == item_id for item in items):
-            raise HTTPException(404, "Inbox item not found")
+        _find_item(owner, item_id)
         actions = _action_state(owner)
         actions.setdefault("acked", {})[key] = {
             "at": time.time(),
@@ -191,11 +212,7 @@ def setup_openclaw_inbox_routes() -> APIRouter:
     async def mute_inbox_sender(request: Request, item_id: str, body: MuteRequest | None = None):
         owner = _scope_owner(request, EMAIL_READ_SCOPES)
         body = body or MuteRequest()
-        _decode_key(item_id)
-        _state, items = _items(owner)
-        item = next((candidate for candidate in items if candidate["id"] == item_id), None)
-        if not item:
-            raise HTTPException(404, "Inbox item not found")
+        item = _find_item(owner, item_id)
         sender_key = _normalize_sender(item.get("from"))
         if not sender_key:
             raise HTTPException(400, "Inbox item has no sender to mute")
@@ -215,6 +232,50 @@ def setup_openclaw_inbox_routes() -> APIRouter:
             "sender": item.get("from"),
             "muted_until": until_ts,
             "requires_approval": False,
+        }
+
+    @router.get("/triage/{item_id}/summary")
+    async def summarize_inbox_item(request: Request, item_id: str):
+        owner = _scope_owner(request, EMAIL_READ_SCOPES)
+        item = _find_item(owner, item_id)
+        summary = _item_summary(item)
+        return {
+            "status": "ok",
+            "message": summary,
+            "summary": summary,
+            "item": item,
+            "requires_approval": False,
+        }
+
+    @router.post("/triage/{item_id}/redmine-ticket/draft")
+    async def draft_redmine_ticket(request: Request, item_id: str):
+        owner = _scope_owner(request, EMAIL_READ_SCOPES)
+        item = _find_item(owner, item_id)
+        subject = (item.get("subject") or "(no subject)")[:180]
+        tags = [str(tag) for tag in (item.get("tags") or []) if str(tag).strip()]
+        description = "\n".join([
+            "Drafted from OpenClaw inbox triage.",
+            "",
+            f"From: {item.get('from') or 'unknown'}",
+            f"Subject: {subject}",
+            f"Priority signal: {item.get('tier')} (score {item.get('score')})",
+            f"Reason: {item.get('reason') or 'not provided'}",
+            f"Tags: {', '.join(tags)}",
+            "",
+            "This is a draft only. Review before submitting to Converge/Redmine.",
+        ])[:4000]
+        return {
+            "status": "ok",
+            "message": "Redmine ticket draft ready. Approval is required before submission.",
+            "draft": {
+                "subject": subject,
+                "description": description,
+                "source": "openclaw_inbox_triage",
+                "source_item_id": item_id,
+                "requested_by": owner,
+            },
+            "requires_approval": True,
+            "links": {"self": f"{BASE_URL}/triage/{item_id}/redmine-ticket/draft"},
         }
 
     return router

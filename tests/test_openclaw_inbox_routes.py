@@ -66,6 +66,7 @@ async def test_triage_lists_urgent_items(inbox_state):
     assert len(data["items"]) == 2
     assert data["items"][0]["tier"] == "urgent"
     assert data["items"][0]["actions"][:2] == ["ack", "mute_sender_2h"]
+    assert "forward_to_team" not in data["items"][0]["actions"]
 
 
 @pytest.mark.asyncio
@@ -105,3 +106,32 @@ async def test_mute_sender_hides_matching_sender(inbox_state):
     assert "Customer" not in [item["from"] for item in after["items"]]
     with_muted = await triage(_request(["email:read"]), include_muted=True)
     assert "Customer" in [item["from"] for item in with_muted["items"]]
+
+
+@pytest.mark.asyncio
+async def test_summary_returns_cached_triage_context(inbox_state):
+    router = setup_openclaw_inbox_routes()
+    triage = _endpoint(router, "/api/openclaw/inbox/triage", "GET")
+    summary = _endpoint(router, "/api/openclaw/inbox/triage/{item_id}/summary", "GET")
+    before = await triage(_request(["email:read"]))
+    item_id = next(item["id"] for item in before["items"] if item["subject"] == "Production incident")
+    result = await summary(_request(["email:read"]), item_id)
+    assert result["status"] == "ok"
+    assert result["requires_approval"] is False
+    assert "Production incident" in result["summary"]
+    assert "container down" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_redmine_ticket_draft_requires_approval_and_does_not_submit(inbox_state):
+    router = setup_openclaw_inbox_routes()
+    triage = _endpoint(router, "/api/openclaw/inbox/triage", "GET")
+    draft = _endpoint(router, "/api/openclaw/inbox/triage/{item_id}/redmine-ticket/draft", "POST")
+    before = await triage(_request(["email:read"]))
+    item_id = next(item["id"] for item in before["items"] if item["subject"] == "Production incident")
+    result = await draft(_request(["email:read"]), item_id)
+    assert result["status"] == "ok"
+    assert result["requires_approval"] is True
+    assert result["draft"]["subject"] == "Production incident"
+    assert result["draft"]["source"] == "openclaw_inbox_triage"
+    assert "This is a draft only" in result["draft"]["description"]

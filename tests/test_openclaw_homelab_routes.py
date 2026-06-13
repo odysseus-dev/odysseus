@@ -120,6 +120,29 @@ def test_sanitize_service_redacts_sensitive_fields():
     assert raw == raw_copy
 
 
+def test_run_static_command_uses_shell_false(monkeypatch):
+    calls = {}
+
+    def fake_run(args, **kwargs):
+        calls['args'] = args
+        calls['kwargs'] = kwargs
+        return SimpleNamespace(returncode=0, stdout='ok\n', stderr='')
+
+    monkeypatch.setattr('routes.openclaw_homelab_routes.subprocess.run', fake_run)
+    from routes.openclaw_homelab_routes import _run_static_command
+    result = _run_static_command(['df', '-h'])
+    assert result['status'] == 'ok'
+    assert calls['args'] == ['df', '-h']
+    assert calls['kwargs']['shell'] is False
+
+
+def test_json_lines_sanitizes_sensitive_fields():
+    from routes.openclaw_homelab_routes import _json_lines
+    rows = _json_lines('{"Names":"web","Token":"secret"}\nnot-json')
+    assert rows[0]['Token'] == '***REDACTED***'
+    assert rows[1]['raw'] == 'not-json'
+
+
 
 # ---------------------------------------------------------------------------
 # _compact_event – response shape
@@ -381,6 +404,94 @@ async def test_get_service_envelope(mock_event_store, monkeypatch):
     assert result['status'] == 'ok'
     assert result['service']['name'] == 'pihole'
     assert 'links' in result
+
+
+@pytest.mark.asyncio
+async def test_docker_unhealthy_endpoint_returns_containers(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': '{"Names":"bad","Status":"unhealthy"}', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/docker-unhealthy', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['status'] == 'ok'
+    assert result['ops']['kind'] == 'docker_unhealthy'
+    assert result['ops']['containers'][0]['Names'] == 'bad'
+
+
+@pytest.mark.asyncio
+async def test_tailscale_status_endpoint_returns_peer_count(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': '{"Peer":{"one":{}}}', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/tailscale-status', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'tailscale_status'
+    assert '1 peer' in result['message']
+
+
+@pytest.mark.asyncio
+async def test_ping_heimdal_endpoint_uses_static_target(monkeypatch):
+    calls = {}
+
+    def fake_run(args, timeout=8):
+        calls['args'] = args
+        return {'status': 'ok', 'returncode': 0, 'stdout': 'pong', 'stderr': ''}
+
+    monkeypatch.setattr('routes.openclaw_homelab_routes._run_static_command', fake_run)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/ping-heimdal', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'ping_heimdal'
+    assert calls['args'][:3] == ['ping', '-c', '3']
+
+
+@pytest.mark.asyncio
+async def test_grafana_endpoint_reports_missing_config(monkeypatch):
+    monkeypatch.setattr('routes.openclaw_homelab_routes._find_grafana_url', lambda: None)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/grafana', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'grafana'
+    assert result['ops']['status'] == 'degraded'
+
+
+@pytest.mark.asyncio
+async def test_caddy_logs_endpoint_limits_lines(monkeypatch):
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/caddy-logs', 'GET')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:read']), lines=0)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_caddy_logs_endpoint_returns_logs(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': 'line1', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/caddy-logs', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'caddy_logs'
+    assert result['ops']['logs'] == 'line1'
+
+
+@pytest.mark.asyncio
+async def test_disk_usage_endpoint_returns_table(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': 'Filesystem Size', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/disk-usage', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'disk_usage'
+    assert 'Filesystem' in result['ops']['table']
 
 
 # ---------------------------------------------------------------------------
