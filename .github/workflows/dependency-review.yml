@@ -29,8 +29,9 @@ concurrency:
 jobs:
   dependency-review:
     name: dependency-review (PR gate)
-    # Only meaningful on a pull request -- it needs a base..head diff to review.
-    if: github.event_name == 'pull_request'
+    # Only meaningful on a pull request AND only supported on the upstream repo
+    # (maylortaylor/odysseus is a fork; the dependency graph is not available there).
+    if: github.event_name == 'pull_request' && github.repository == 'pewdiepie-archdaemon/odysseus'
     runs-on: ubuntu-latest
     permissions:
       contents: read

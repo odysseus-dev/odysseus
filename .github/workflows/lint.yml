@@ -1,0 +1,35 @@
+name: Lint
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    name: ruff (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: --exit-zero reports violations without failing the job, so the
+    # PR check stays green while upstream violations exist. Remove --exit-zero
+    # (and flip this to a hard gate) once the backlog is cleared.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.11"
+
+      - name: Run ruff
+        run: |
+          pip install ruff
+          ruff check app.py core/ routes/ src/ scripts/ tests/ --exit-zero
