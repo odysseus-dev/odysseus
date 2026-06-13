@@ -172,7 +172,7 @@ Write-Host ""
 if ($serverReady) {
     Write-Host "Server is ready."
 } else {
-    Write-Host "Server may not be ready yet — opening browser anyway." -ForegroundColor Yellow
+    Write-Host "Server may not be ready yet -- opening browser anyway." -ForegroundColor Yellow
 }
 Start-Process $url
 
