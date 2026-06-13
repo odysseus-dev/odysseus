@@ -262,6 +262,11 @@ _DOMAIN_RULES = {
 - Use `manage_settings` for preferences and tool enable/disable.
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+    "contacts": """\
+## Contacts rules
+- Use `resolve_contact` to look up a contact's email or phone number by name. Searches the CardDAV address book and sent email history.
+- Use `manage_contact` to list, add, update, or delete contacts in the address book.
+- Do NOT use `manage_memory` for contact lookups — contact details live in the address book, not memory.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -274,6 +279,7 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "contacts": {"resolve_contact", "manage_contact"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -797,6 +803,8 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
+        domains.add("contacts")
 
     low_signal = not continuation and not domains
     return {
