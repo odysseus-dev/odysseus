@@ -1746,7 +1746,17 @@ async def stream_agent_loop(
       - data: [DONE]                                        (end)
     """
 
-    mcp_mgr = get_mcp_manager()
+
+    # === PERSONA SUPPORT (NEW) ===
+    active_persona = None
+    if "persona" in (messages[-1].get("content", "") if messages else ""):
+        # Simple detection from last message (can be improved later)
+        pass
+    # For now, we allow persona to be passed via extra param or we will wire it later
+    # We will inject persona system prompt addition if a persona is active
+    _active_persona_name = None  # will be set from outside or via context
+
+        mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
     if tool_policy:
