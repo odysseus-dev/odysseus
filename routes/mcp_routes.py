@@ -111,6 +111,36 @@ def _load_disabled_map():
 def setup_mcp_routes(mcp_manager: McpManager):
     """Setup MCP routes with the provided manager."""
 
+
+    @router.get("/catalog")
+    def mcp_catalog(request: Request):
+        """OpenAI-compat MCP tool catalog for the chat UI (non-admin read)."""
+        from src.auth_helpers import effective_user
+        if not effective_user(request):
+            raise HTTPException(401, "Authentication required")
+        disabled_map = _load_disabled_map()
+        db = SessionLocal()
+        try:
+            enabled_ids = {
+                s.id for s in db.query(McpServer).filter(McpServer.is_enabled == True).all()
+            }
+        finally:
+            db.close()
+        out = []
+        for tool in mcp_manager.get_all_tools(disabled_map):
+            if tool.get("is_disabled"):
+                continue
+            if tool.get("server_id") not in enabled_ids:
+                continue
+            out.append({
+                "server_id": tool.get("server_id"),
+                "server_name": tool.get("server_name"),
+                "name": tool.get("name"),
+                "qualified": tool.get("qualified_name"),
+                "description": (tool.get("description") or "")[:240],
+            })
+        return out
+
     @router.get("/servers")
     def list_servers(request: Request):
         """List all configured MCP servers with connection status."""

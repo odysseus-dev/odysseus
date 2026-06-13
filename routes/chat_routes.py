@@ -62,6 +62,28 @@ def _stream_set(session_id: str, **fields) -> None:
     rec.update(fields)
 
 
+
+
+def _parse_active_mcp_tools(raw) -> set | None:
+    """Parse active_mcp_tools from form field or JSON body.
+
+    None = legacy client (include all MCP schemas). Empty set = explicit none.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple, set)):
+        return {str(x).strip() for x in raw if str(x).strip()}
+    s = str(raw).strip()
+    if not s:
+        return set()
+    try:
+        parsed = json.loads(s)
+    except (json.JSONDecodeError, TypeError):
+        return set()
+    if not isinstance(parsed, list):
+        return set()
+    return {str(x).strip() for x in parsed if str(x).strip()}
+
 def _resolve_request_workspace(request, raw_value) -> tuple:
     """Resolve the posted workspace for this request: (workspace, rejected).
 
@@ -490,6 +512,9 @@ def setup_chat_routes(
         # Workspace: confine the agent's file/shell tools to this folder.
         workspace, workspace_rejected = _resolve_request_workspace(
             request, form_data.get("workspace")
+        )
+        active_mcp_tools = _parse_active_mcp_tools(
+            form_data.get("active_mcp_tools") or (body or {}).get("active_mcp_tools")
         )
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
@@ -1184,6 +1209,7 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
+                        active_mcp_tools=active_mcp_tools,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

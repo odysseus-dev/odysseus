@@ -25,7 +25,49 @@ _TOOL_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Pattern 2: [TOOL_CALL] ... [/TOOL_CALL] blocks (some models use this format)
+# Pattern 1b: ```json / ```tool_call fences with OpenAI-style {"name","arguments"}
+_JSON_TOOL_FENCE_RE = re.compile(
+    r"```(?:json|tool_call|tool)\s*\n([\s\S]*?)```",
+    re.IGNORECASE,
+)
+
+
+def _parse_json_tool_fence(content: str) -> Optional[ToolBlock]:
+    """Parse ```json {"name": "mcp__...", "arguments": {...}} ``` tool calls."""
+    raw = content.strip()
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, list):
+        if len(data) != 1 or not isinstance(data[0], dict):
+            return None
+        data = data[0]
+    if not isinstance(data, dict):
+        return None
+    name = data.get("name") or data.get("tool")
+    if isinstance(name, dict):
+        name = name.get("name")
+    if not name or not isinstance(name, str):
+        fn = data.get("function")
+        if isinstance(fn, dict):
+            name = fn.get("name")
+            args = fn.get("arguments", {})
+        else:
+            return None
+    else:
+        args = data.get("arguments", data.get("args", data.get("parameters", {})))
+    if isinstance(args, dict):
+        args_str = json.dumps(args)
+    elif isinstance(args, str):
+        args_str = args
+    else:
+        args_str = "{}"
+    from src.tool_schemas import function_call_to_tool_block
+    return function_call_to_tool_block(name, args_str)
+
 # Matches: {tool => "shell", args => {--command "ls -la"}} etc.
 _TOOL_CALL_RE = re.compile(
     r"\[TOOL_CALL\]\s*\{([\s\S]*?)\}\s*\[/TOOL_CALL\]",
@@ -450,6 +492,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     """
     blocks = []
 
+    # Pattern 1b: JSON/tool_call fenced blocks (common when model=auto or local LLMs)
+    for m in _JSON_TOOL_FENCE_RE.finditer(text):
+        block = _parse_json_tool_fence(m.group(1))
+        if block:
+            blocks.append(block)
+    if blocks:
+        return blocks
+
     # Normalize DeepSeek DSML markup into standard <invoke> form so the
     # XML patterns below catch it.
     text = _normalize_dsml(text)
@@ -529,6 +579,7 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     # / <tool_call> removers below instead of leaking to the user.
     text = _normalize_dsml(text)
     cleaned = text if skip_fenced else _TOOL_BLOCK_RE.sub('', text)
+    cleaned = _JSON_TOOL_FENCE_RE.sub('', cleaned)
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)

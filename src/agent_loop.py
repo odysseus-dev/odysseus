@@ -57,6 +57,21 @@ def _load_mcp_disabled_map() -> Dict[str, set]:
         db.close()
     return disabled_map
 
+
+def _mcp_tool_schemas_for_request(
+    mcp_schemas: List[Dict],
+    active_mcp_tools: Optional[Set[str]],
+) -> List[Dict]:
+    """Select MCP OpenAI schemas for the tools payload."""
+    if not mcp_schemas:
+        return []
+    if active_mcp_tools is None:
+        return list(mcp_schemas)
+    return [
+        s for s in mcp_schemas
+        if s.get('function', {}).get('name') in active_mcp_tools
+    ]
+
 # System prompt that tells the LLM about available tools.
 # Always injected — the LLM decides whether to use them.
 _AGENT_PREAMBLE = """\
@@ -1733,6 +1748,7 @@ async def stream_agent_loop(
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
+    active_mcp_tools: Optional[Set[str]] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -2139,23 +2155,20 @@ async def stream_agent_loop(
             # write the answer instead of flailing further.
             all_tool_schemas = []
         elif _is_api_model:
-            # Filter schemas by RAG-selected tools (if available)
+            # Native tools: existing Odysseus selection (RAG / intent / toggles).
             if _relevant_tools:
                 base_schemas = [
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") in _relevant_tools
                 ]
-                _mcp_filtered = [
-                    s for s in mcp_schemas
-                    if s.get("function", {}).get("name") in _relevant_tools
-                ]
-                all_tool_schemas = base_schemas + _mcp_filtered
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") not in _ADMIN_SCHEMA_NAMES
                 ]
-                all_tool_schemas = base_schemas + mcp_schemas
+            # MCP tools: UI-selected (active_mcp_tools); never RAG-filtered.
+            mcp_for_llm = _mcp_tool_schemas_for_request(mcp_schemas, active_mcp_tools)
+            all_tool_schemas = base_schemas + mcp_for_llm
             if disabled_tools:
                 all_tool_schemas = [
                     t for t in all_tool_schemas
@@ -2163,14 +2176,26 @@ async def stream_agent_loop(
                     and t.get("name") not in disabled_tools
                 ]
         else:
-            # Local: only MCP schemas when message suggests MCP tool usage
-            _last_content = _last_user.lower()
-            _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
-            all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+            # Local fenced path: MCP when UI selected them or legacy keyword hint.
+            mcp_for_llm = _mcp_tool_schemas_for_request(mcp_schemas, active_mcp_tools)
+            if mcp_for_llm:
+                all_tool_schemas = mcp_for_llm
+            else:
+                _last_content = _last_user.lower()
+                _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
+                all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
-        logger.info(f"[agent-debug] round={round_num} model={model} _is_api_model={_is_api_model} tools_sent={len(_tool_names_sent)} tool_names={_tool_names_sent[:15]} relevant_tools={sorted(_relevant_tools)[:15] if _relevant_tools else 'ALL'}")
+        _mcp_sent = sum(1 for n in _tool_names_sent if n and str(n).startswith("mcp__"))
+        logger.info(
+            "[agent-debug] round=%s model=%s _is_api_model=%s tools_sent=%s mcp_sent=%s "
+            "tool_names=%s relevant_tools=%s active_mcp_tools=%s",
+            round_num, model, _is_api_model, len(_tool_names_sent), _mcp_sent,
+            _tool_names_sent[:15],
+            sorted(_relevant_tools)[:15] if _relevant_tools else "ALL",
+            sorted(active_mcp_tools)[:15] if active_mcp_tools is not None else "legacy-all",
+        )
 
         # Primary target + any configured fallback models. stream_llm_with_fallback
         # only switches on a pre-content failure, so streamed output is never

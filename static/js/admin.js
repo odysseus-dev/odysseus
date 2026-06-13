@@ -446,6 +446,22 @@ async function loadEndpoints() {
       const keyLabel = ep.has_key
         ? (ep.api_key_fingerprint ? ` (key ${esc(ep.api_key_fingerprint)})` : ' (key set)')
         : '';
+      const toolsOn = ep.supports_tools === true;
+      const toolsOff = ep.supports_tools === false;
+      const toolsTitle = toolsOn
+        ? 'Native OpenAI tool schemas are sent to this endpoint'
+        : toolsOff
+          ? 'Tool schemas disabled — agent uses fenced code blocks only'
+          : 'Auto-detect tool support from URL/model (click to set explicitly)';
+      const toolsBadge = ep.model_type === 'image'
+        ? ''
+        : `<label class="admin-switch-inline adm-ep-tools-toggle" title="${esc(toolsTitle)}" style="display:inline-flex;align-items:center;gap:6px;font-size:10px;opacity:0.85;cursor:pointer;margin-left:6px;">
+            <span>Native tools</span>
+            <span class="admin-switch" style="flex-shrink:0;">
+              <input type="checkbox" data-adm-ep-supports-tools="${ep.id}" ${toolsOn ? 'checked' : ''}>
+              <span class="admin-slider"></span>
+            </span>
+          </label>`;
       return `
         <div class="admin-user-row${ep.is_enabled ? '' : ' admin-ep-disabled'}${justAddedClass}" data-adm-ep-id="${ep.id}">
           <div style="display:flex;align-items:center;justify-content:space-between;${hasModels ? 'cursor:pointer;' : ''}padding:4px 0;" data-adm-ep-header="${ep.id}">
@@ -463,7 +479,7 @@ async function loadEndpoints() {
               ${hasModels ? '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
             </div>
           </div>
-          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}</div>
+          <div class="admin-ep-detail">${esc(ep.base_url)}${category === 'local' ? `<button type="button" class="admin-ep-copy-btn" data-adm-copy-url="${esc(ep.base_url)}" title="Copy URL" aria-label="Copy URL" style="background:none;border:none;padding:0 2px;margin-left:6px;cursor:pointer;color:inherit;opacity:0.45;vertical-align:-2px;line-height:1;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>` : ''}${keyLabel}${toolsBadge}</div>
           ${hasModels ? `<div class="mcp-tools-panel hidden" data-adm-ep-models-panel="${ep.id}"></div>` : ''}
         </div>`;
     });
@@ -501,6 +517,32 @@ async function loadEndpoints() {
     };
     queryAll('[data-adm-toggle-ep]').forEach(btn => {
       btn.addEventListener('click', async (e) => { e.stopPropagation(); await fetch(`/api/model-endpoints/${btn.dataset.admToggleEp}`, { method: 'PATCH' }); loadEndpoints(); });
+    });
+    queryAll('[data-adm-ep-supports-tools]').forEach(box => {
+      box.addEventListener('change', async (e) => {
+        e.stopPropagation();
+        const epId = box.dataset.admEpSupportsTools;
+        const enabled = !!box.checked;
+        box.disabled = true;
+        try {
+          const res = await fetch(`/api/model-endpoints/${epId}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ supports_tools: enabled }),
+          });
+          if (!res.ok) {
+            box.checked = !enabled;
+            const d = await res.json().catch(() => ({}));
+            console.warn('supports_tools update failed:', d.detail || res.status);
+          }
+        } catch (err) {
+          box.checked = !enabled;
+          console.warn('supports_tools update failed:', err);
+        } finally {
+          box.disabled = false;
+        }
+      });
     });
     queryAll('[data-adm-copy-url]').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -561,7 +603,7 @@ async function loadEndpoints() {
         // Don't let interactions inside the expanded panel re-fire the
         // expand/collapse handler — the search box was getting closed
         // because clicking it bubbled up to here.
-        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, input, label')) return;
+        if (e.target.closest('.admin-btn-sm, .admin-btn-delete, .mcp-tools-list, .mcp-tools-header, .mcp-tools-search, .adm-ep-tools-toggle, input, label')) return;
         const epId = header.dataset.admEpHeader;
         const panel = row.querySelector(`[data-adm-ep-models-panel="${epId}"]`);
         if (!panel) return;
@@ -1009,6 +1051,10 @@ function initEndpointForm() {
       }
       const epType = el('adm-epType');
       if (epType) fd.append('model_type', epType.value);
+      const supportsTools = el('adm-epSupportsTools');
+      if (supportsTools && supportsTools.checked && (!epType || epType.value === 'llm')) {
+        fd.append('supports_tools', 'true');
+      }
       if (provider.value && /openrouter\.ai|ollama\.com/i.test(provider.value)) fd.append('require_models', 'true');
       else fd.append('skip_probe', 'false');
       const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
@@ -1334,6 +1380,10 @@ function initEndpointForm() {
         fd.append('model_refresh_mode', 'auto');
         const lt = el('adm-epLocalType');
         if (lt) fd.append('model_type', lt.value);
+        const localSupportsTools = el('adm-epLocalSupportsTools');
+        if (localSupportsTools && localSupportsTools.checked && (!lt || lt.value === 'llm')) {
+          fd.append('supports_tools', 'true');
+        }
         fd.append('skip_probe', 'false');
         const res = await fetch('/api/model-endpoints', { method: 'POST', body: fd, credentials: 'same-origin' });
         const d = await res.json();

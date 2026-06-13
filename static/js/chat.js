@@ -22,6 +22,7 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
+import chatToolsModule from './chatTools.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
 
@@ -826,6 +827,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
+      await chatToolsModule.scanTextForKeywords(finalMsg);
+      fd.append('active_mcp_tools', JSON.stringify(chatToolsModule.getActiveMcpTools()));
 
 
       const abortCtrl = new AbortController();
@@ -3823,6 +3826,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     bodyEl.innerHTML = '';
     bodyEl.appendChild(editor);
     bodyEl.appendChild(btnRow);
+    chatToolsModule.wireTextSource(editor);
+    chatToolsModule.scanTextForKeywords(currentText);
     editor.focus();
 
     cancelBtn.addEventListener('click', (e) => {
@@ -3834,6 +3839,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       e.stopPropagation();
       const newText = editor.value.trim();
       if (!newText) return;
+
+      await chatToolsModule.scanTextForKeywords(newText);
 
       const sessionId = sessionModule.getCurrentSessionId();
       if (!sessionId) return;
@@ -3941,6 +3948,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       }
       _hideUserBubble = true;
       _pendingRegenAttachments = _ids;
+
+      await chatToolsModule.scanTextForKeywords(text);
 
       // Resubmit
       const messageInput = uiModule.el('message');
@@ -4056,6 +4065,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       aiMsgElement.remove();
 
       _hideUserBubble = true;
+      await chatToolsModule.scanTextForKeywords(userText);
       const messageInput = uiModule.el('message');
       messageInput.value = userText;
       const submitBtn = document.querySelector('.send-btn');

@@ -1523,6 +1523,10 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
       const presetsModule = window.presetsModule || (await import('./presets.js')).default;
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
+    try {
+      const chatToolsModule = window.chatToolsModule || (await import('./chatTools.js')).default;
+      if (chatToolsModule && chatToolsModule.onSessionSwitch) chatToolsModule.onSessionSwitch(id);
+    } catch (e) {}
     const meta = sessions.find(s => s.id === id);
 
     // Detach any in-flight stream to background instead of aborting

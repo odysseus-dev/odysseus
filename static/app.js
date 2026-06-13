@@ -11,6 +11,7 @@ import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
+import chatToolsModule from './js/chatTools.js';
 import compareModule from './js/compare/index.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
@@ -49,6 +50,7 @@ import { initSectionCollapse, initSectionDrag } from './js/section-management.js
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
+window.chatToolsModule = chatToolsModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
@@ -228,6 +230,9 @@ function initializeEventListeners() {
     document.querySelectorAll(
       '.skill-kebab-menu, .note-reminder-menu, .task-dropdown, .doclib-card-dropdown, .email-card-dropdown, .msg-overflow-menu'
     ).forEach(m => { if (m !== except) m.remove(); });
+    if (except !== 'mcp-tools-panel' && window.chatToolsModule?.togglePanel) {
+      window.chatToolsModule.togglePanel(false);
+    }
   };
   // Window-opening / nav controls (rail buttons, sidebar tool rows + session
   // rows, section headers) count as "other actions" — dismiss popups when one
@@ -3386,6 +3391,9 @@ function startOdysseusApp() {
   searchModule.init(API_BASE);
   chatModule.init(API_BASE);
   chatModule.initListeners();
+  chatToolsModule.initChatTools();
+  const _initSession = sessionModule && sessionModule.getCurrentSessionId();
+  if (_initSession) chatToolsModule.onSessionSwitch(_initSession);
   groupModule.init(API_BASE);
   // Initialize compare module
   if (compareModule) {
