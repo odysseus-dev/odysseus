@@ -3669,6 +3669,13 @@ function startOdysseusApp() {
       const hasText = messageInput && messageInput.value.trim().length > 0;
       const hasFiles = _hasAttachments();
 
+      // Voice dialog mode owns the mic: don't start the legacy push-to-talk
+      // recorder (which can attach voice-message files) underneath it.
+      if (window._voiceDialogActive && !hasText && !hasFiles) {
+        if (uiModule && uiModule.showToast) uiModule.showToast('Voice dialog active — just speak');
+        return;
+      }
+
       // New chat mode — empty input, no attachments, no STT
       if (!hasText && !hasFiles && sendBtn.dataset.mode === 'newchat') {
         if (sessionModule) {

@@ -363,6 +363,7 @@ async function start() {
 
   _state = 'listening';
   mgr.autoPlay = true;
+  window._voiceDialogActive = true; // send-btn mic path checks this and yields
   _setUI('vd-listening', 'starting…', 'Voice dialog: starting…');
 
   // Provider decides the capture path: browser → Web Speech API (no VAD/WS).
@@ -440,6 +441,7 @@ async function start() {
 function stop() {
   _standbyEnabled = false;
   _state = 'off';
+  window._voiceDialogActive = false;
   _stopBrowserRec();
   _browserMode = false;
   if (_watchTimer) { clearTimeout(_watchTimer); _watchTimer = null; }
