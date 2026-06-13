@@ -29,11 +29,14 @@ COPY requirements.txt requirements-optional.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && if [ "$INSTALL_OPTIONAL" = "true" ]; then pip install --no-cache-dir -r requirements-optional.txt; fi
 
-# Copy app code
-COPY . .
+# Copy app code as the default runtime user. This keeps container startup from
+# having to recursively chown the whole source tree before dropping privileges.
+COPY --chown=1000:1000 . .
 
-# Create data directory (mount a volume here for persistence)
-RUN mkdir -p data logs services/cache/search
+# Create runtime directories (mount volumes here for persistence).
+RUN mkdir -p data logs .ssh .cache/huggingface .local services/cache/search services/cache/content \
+    && chown -R 1000:1000 data logs .ssh .cache .local services/cache \
+    && chown 1000:1000 /app
 
 # Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs
 # ownership on the bind-mounted /app/data and /app/logs. Without this,

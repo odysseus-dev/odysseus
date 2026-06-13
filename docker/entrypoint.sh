@@ -24,27 +24,62 @@ if ! getent passwd "$PUID" >/dev/null 2>&1; then
     useradd -u "$PUID" -g "$PGID" -M -s /bin/sh -d /app odysseus
 fi
 
-# Repair ownership on every writable path the app touches at runtime.
-#
-# Bind-mounted dirs (/app/data, /app/logs) are the obvious ones, but
-# the app ALSO writes inside the image's own source tree at runtime:
-#   - services/cache/{search,content}/*  (search cache LRU)
-#   - services/search_analytics.json
-#   - services/search_engine_error.log
-#   - services/tts cache, etc.
-# These dirs were created as root during `docker build`, so dropping
-# to PUID:PGID would otherwise crash on the first import that tries
-# to mkdir them. Chown the whole /app tree — fast (<1s on this size)
-# and idempotent via the `-not -uid` filter so we only touch files
-# that need fixing.
-for dir in /app /app/data /app/logs; do
+# Repair ownership for runtime-writable paths without recursively walking the
+# image source tree. The Dockerfile owns /app as the default runtime user; on
+# startup we only need to repair bind mounts that may have been created by root
+# on the host. Large Cookbook/Hugging Face caches are persisted separately and
+# are intentionally not recursed on every boot.
+chown_path() {
+    path="$1"
+    if [ -e "$path" ]; then
+        chown "$PUID:$PGID" "$path" 2>/dev/null || true
+    fi
+}
+
+repair_tree() {
+    dir="$1"
     if [ -d "$dir" ]; then
-        # `find ... -not -uid` keeps this O(touched-files), not
-        # O(everything), so terabyte-sized maildirs don't slow startup.
         find "$dir" -not -uid "$PUID" -print0 2>/dev/null \
             | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
     fi
+}
+
+# Let setup.py create /app/.env, and let first-run cache installs create files
+# in these mount roots, without scanning their existing contents.
+for path in \
+    /app \
+    /app/.cache \
+    /app/.cache/huggingface \
+    /app/.local \
+    /app/data/local \
+    /app/data/huggingface; do
+    chown_path "$path"
 done
+
+# /app/data is host-editable app state. Prune the large cache subtrees that are
+# also mounted at /app/.local and /app/.cache/huggingface.
+if [ -d /app/data ]; then
+    find /app/data \
+        \( -path /app/data/local -o -path /app/data/local/\* \
+        -o -path /app/data/huggingface -o -path /app/data/huggingface/\* \) -prune \
+        -o -not -uid "$PUID" -print0 2>/dev/null \
+        | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
+fi
+
+repair_tree /app/logs
+repair_tree /app/.ssh
+
+# Escape hatch for installations that already have root-owned package/model
+# caches. It is intentionally opt-in because these trees can be multi-GB on
+# Docker Desktop/WSL and re-chowning them can make every boot appear hung.
+case "${ODYSSEUS_CHOWN_CACHE_TREES:-false}" in
+    1|true|TRUE|yes|YES)
+        repair_tree /app/.local
+        repair_tree /app/.cache/huggingface
+        repair_tree /app/data/local
+        repair_tree /app/data/huggingface
+        ;;
+esac
 
 # Cookbook installs vllm/etc. via `pip install --user`, which pulls
 # nvidia-cuda-* wheels into /app/.local but does not set CUDA_HOME or

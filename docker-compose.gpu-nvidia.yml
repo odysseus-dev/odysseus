@@ -74,6 +74,9 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Opt-in one-time repair for root-owned Cookbook/Hugging Face caches.
+      # Leave false for normal boots; these trees can be multi-GB.
+      - ODYSSEUS_CHOWN_CACHE_TREES=${ODYSSEUS_CHOWN_CACHE_TREES:-false}
       # NVIDIA overlay (from docker/gpu.nvidia.yml).
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
