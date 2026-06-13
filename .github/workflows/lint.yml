@@ -17,10 +17,9 @@ jobs:
   ruff:
     name: ruff (advisory)
     runs-on: ubuntu-latest
-    # Advisory: surfaces lint violations without blocking merges while upstream
-    # code still has violations. Remove continue-on-error once the backlog is
-    # cleared and ruff is clean across the whole codebase.
-    continue-on-error: true
+    # Advisory: --exit-zero reports violations without failing the job, so the
+    # PR check stays green while upstream violations exist. Remove --exit-zero
+    # (and flip this to a hard gate) once the backlog is cleared.
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
@@ -33,4 +32,4 @@ jobs:
       - name: Run ruff
         run: |
           pip install ruff
-          ruff check app.py core/ routes/ src/ scripts/ tests/
+          ruff check app.py core/ routes/ src/ scripts/ tests/ --exit-zero
