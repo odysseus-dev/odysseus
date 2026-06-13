@@ -540,7 +540,62 @@ async def test_disk_usage_endpoint_returns_table(monkeypatch):
     assert 'Filesystem' in result['ops']['table']
 
 
-# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_memory_usage_endpoint_returns_table(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': 'Mem: 16G', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/memory-usage', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'memory_usage'
+    assert 'Mem:' in result['ops']['table']
+
+
+@pytest.mark.asyncio
+async def test_dns_check_endpoint_returns_ips(monkeypatch):
+    import socket
+    monkeypatch.setattr(socket, 'gethostbyname_ex', lambda d: (d, [], ['192.168.1.1']))
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/dns-check', 'GET')
+    result = await ep(_request(scopes=['homelab:read']), domain='router.local')
+    assert result['ops']['kind'] == 'dns_check'
+    assert '192.168.1.1' in result['ops']['check']['ips']
+
+
+@pytest.mark.asyncio
+async def test_caddy_routes_endpoint_returns_config(monkeypatch):
+    import httpx
+    class MockResponse:
+        status_code = 200
+        def json(self): return {"apps": {"http": {"servers": {}}}}
+    
+    class MockAsyncClient:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def get(self, url): return MockResponse()
+
+    monkeypatch.setattr(httpx, 'AsyncClient', MockAsyncClient)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/caddy-routes', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'caddy_routes'
+    assert 'apps' in result['ops']['check']['config']
+
+
+@pytest.mark.asyncio
+async def test_netbox_sync_status_endpoint_returns_output(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': 'Sync complete', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/netbox-sync-status', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'netbox_sync_status'
+    assert 'Sync complete' in result['ops']['output']# ---------------------------------------------------------------------------
 # Persistence failure → 500 (not 404 swallow)
 # ---------------------------------------------------------------------------
 

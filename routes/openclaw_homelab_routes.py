@@ -521,6 +521,67 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         )
         return _ops_result('disk_usage', message, {'table': result.get('stdout') or '', 'check': result})
 
+    @router.get('/ops/memory-usage')
+    async def openclaw_memory_usage(request: Request) -> dict[str, Any]:
+        """Return memory usage. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['free', '-h'], timeout=8)
+        message = (
+            "Memory usage returned."
+            if result.get('status') == 'ok' else
+            f"Memory usage check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('memory_usage', message, {'table': result.get('stdout') or '', 'check': result})
+
+    @router.get('/ops/dns-check')
+    async def openclaw_dns_check(request: Request, domain: str) -> dict[str, Any]:
+        """Check DNS resolution for a domain. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        try:
+            hostname, aliases, ips = socket.gethostbyname_ex(domain)
+            result = {'status': 'ok', 'hostname': hostname, 'aliases': aliases, 'ips': ips}
+            message = f"DNS check for {domain} resolved to {len(ips)} IP(s)."
+        except Exception as exc:
+            result = {'status': 'degraded', 'error': str(exc)}
+            message = f"DNS check for {domain} degraded: {exc}"
+        return _ops_result('dns_check', message, {'domain': domain, 'check': result})
+
+    @router.get('/ops/caddy-routes')
+    async def openclaw_caddy_routes(request: Request) -> dict[str, Any]:
+        """Check Caddy configured routes. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        caddy_url = os.getenv('HOMELAB_CADDY_CONFIG_URL', f'http://{CADDY_CONTAINER}:2019/config/')
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(caddy_url)
+                if resp.status_code < 400:
+                    try:
+                        payload = resp.json()
+                        payload = _sanitize_dict(payload)
+                    except Exception:
+                        payload = {'raw': resp.text[:2000]}
+                    message = "Caddy routes retrieved successfully."
+                    result = {'status': 'ok', 'config': payload}
+                else:
+                    message = f"Caddy routes degraded: HTTP {resp.status_code}"
+                    result = {'status': 'degraded', 'http_status': resp.status_code, 'body': resp.text[:1000]}
+        except Exception as exc:
+            message = f"Caddy routes degraded: {exc}"
+            result = {'status': 'degraded', 'error': str(exc)}
+        return _ops_result('caddy_routes', message, {'check': result})
+
+    @router.get('/ops/netbox-sync-status')
+    async def openclaw_netbox_sync_status(request: Request) -> dict[str, Any]:
+        """Return Netbox sync status. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['netbox-sync', '--status'], timeout=8)
+        message = (
+            "Netbox sync status returned."
+            if result.get('status') == 'ok' else
+            f"Netbox sync status degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('netbox_sync_status', message, {'output': result.get('stdout') or '', 'check': result})
+
     # ------------------------------------------------------------------
     # Event read routes
     # ------------------------------------------------------------------
