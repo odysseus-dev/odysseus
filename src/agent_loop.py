@@ -2163,10 +2163,14 @@ async def stream_agent_loop(
                     and t.get("name") not in disabled_tools
                 ]
         else:
-            # Local: only MCP schemas when message suggests MCP tool usage
-            _last_content = _last_user.lower()
-            _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
-            all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+            # Local models: pass MCP schemas unless the endpoint is explicitly
+            # marked as not supporting tool schemas (supports_tools=False).
+            # Models with NULL/unknown support get schemas; models with explicit
+            # False (e.g. gemma3 which returns HTTP 400 on tool schemas) do not.
+            if _endpoint_supports is False:
+                all_tool_schemas = []
+            else:
+                all_tool_schemas = mcp_schemas or []
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]

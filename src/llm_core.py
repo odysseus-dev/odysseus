@@ -713,7 +713,7 @@ def _anthropic_rejects_temperature(model: str) -> bool:
     return (int(match.group(1)), int(match.group(2))) >= (4, 7)
 
 # Models that support structured thinking — may output </think> without opening tag
-_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
+_THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma", "phi4", "phi-4")
 
 def _supports_thinking(model: str) -> bool:
     """Check if model supports structured thinking output."""

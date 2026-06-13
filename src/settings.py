@@ -119,7 +119,7 @@ DEFAULT_SETTINGS = {
     "task_endpoint_id": "",
     "task_model": "",
     "default_endpoint_id": "",
-    "default_model": "",
+    "default_model": "gemma3:12b",
     # Ordered fallback chain for the default chat model. Each entry is
     # {"endpoint_id": "...", "model": "..."}. If the primary model fails
     # before producing output (endpoint offline / errors), the chat

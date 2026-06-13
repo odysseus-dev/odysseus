@@ -136,7 +136,10 @@ class ChatProcessor:
             kw_norm = min(kw_norm * cat_boost, 1.0)
 
             # Recency — tiebreaker only (max 5% contribution)
-            ts = mem.get("timestamp", 0)
+            try:
+                ts = float(mem.get("timestamp", 0))
+            except (TypeError, ValueError):
+                ts = 0.0
             days_old = max((now - ts) / 86400, 0)
             recency = 1.0 / (1.0 + days_old * 0.05)
 
