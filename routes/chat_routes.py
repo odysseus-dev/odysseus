@@ -23,7 +23,7 @@ from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, owner_filter
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -84,8 +84,7 @@ def _group_child_whisper_context(session_id: str, owner: str | None) -> dict | N
     db = SessionLocal()
     try:
         q = db.query(GroupChatState)
-        if owner is not None:
-            q = q.filter(GroupChatState.owner == owner)
+        q = owner_filter(q, GroupChatState, owner)
         for row in q.all():
             state = row.state if isinstance(row.state, dict) else {}
             participant_ids = state.get("participantSessions")

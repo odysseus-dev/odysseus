@@ -11,6 +11,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from core.database import Session as DbSession, GroupChatState, SessionLocal, Document, GalleryImage, utcnow_naive
 from src.auth_helpers import get_current_user, effective_user, _auth_disabled, owner_filter
+from src.request_models import SessionResponse
 from src.session_actions import is_session_recently_active
 
 
@@ -280,9 +281,7 @@ def _group_participant_ids_from_state(state) -> set[str]:
 
 def _group_state_query_for_user(db, user):
     q = db.query(GroupChatState.parent_session_id, GroupChatState.state)
-    if user is not None:
-        q = q.filter(GroupChatState.owner == user)
-    return q
+    return owner_filter(q, GroupChatState, user)
 
 
 def _group_session_links_for_user(db, user) -> tuple[set[str], set[str]]:
@@ -360,8 +359,7 @@ def _set_group_participant_folders(db, participant_ids: set[str], folder: str | 
     if not participant_ids:
         return
     q = db.query(DbSession).filter(DbSession.id.in_(participant_ids))
-    if user is not None:
-        q = q.filter(DbSession.owner == user)
+    q = owner_filter(q, DbSession, user)
     now = datetime.utcnow()
     for participant in q.all():
         participant.folder = folder
@@ -380,8 +378,7 @@ def _delete_session_with_group_children(session_manager, session_id: str, user) 
     db = SessionLocal()
     try:
         q = db.query(GroupChatState).filter(GroupChatState.parent_session_id == session_id)
-        if user is not None:
-            q = q.filter(GroupChatState.owner == user)
+        q = owner_filter(q, GroupChatState, user)
         group_state = q.first()
         if group_state:
             participant_ids = _group_participant_ids_from_state(group_state.state)
@@ -402,8 +399,7 @@ def _delete_session_with_group_children(session_manager, session_id: str, user) 
     db = SessionLocal()
     try:
         q = db.query(GroupChatState).filter(GroupChatState.parent_session_id == session_id)
-        if user is not None:
-            q = q.filter(GroupChatState.owner == user)
+        q = owner_filter(q, GroupChatState, user)
         q.delete(synchronize_session=False)
         db.commit()
     except Exception:
@@ -821,7 +817,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 owner_by_id = {row.id: row.owner for row in rows}
                 if set(owner_by_id) != participant_ids:
                     raise HTTPException(400, "Group participant session not found")
-                if user and any(owner != user for owner in owner_by_id.values()):
+                if user and any(owner not in (user, None) for owner in owner_by_id.values()):
                     raise HTTPException(404, "Group participant session not found")
 
             group_state = db.query(GroupChatState).filter(GroupChatState.parent_session_id == sid).first()
