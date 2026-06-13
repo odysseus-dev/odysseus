@@ -1,0 +1,36 @@
+name: Lint
+
+on:
+  push:
+    branches: [dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    name: ruff (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: surfaces lint violations without blocking merges while upstream
+    # code still has violations. Remove continue-on-error once the backlog is
+    # cleared and ruff is clean across the whole codebase.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run ruff
+        run: |
+          pip install ruff
+          ruff check app.py core/ routes/ src/ scripts/ tests/

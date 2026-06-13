@@ -49,10 +49,6 @@ jobs:
   python-tests:
     name: Python tests (pytest)
     runs-on: ubuntu-latest
-    # Informational for now: the suite has known flaky / environment-dependent
-    # failures (test isolation + embedding-model assertions). Tracked under the
-    # ROADMAP "fresh install smoke tests" item; make this required once green.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
