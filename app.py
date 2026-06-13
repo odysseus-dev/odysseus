@@ -171,6 +171,8 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        "/manifest.json",
+        "/sw.js",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
@@ -749,6 +751,20 @@ async def serve_index(request: Request):
     if os.path.exists(root_path):
         return _serve_html_with_nonce(request, root_path)
     raise HTTPException(404, "index.html not found")
+
+@app.get("/manifest.json")
+async def serve_manifest(request: Request):
+    static_path = abs_join(BASE_DIR, "static/manifest.json")
+    if os.path.exists(static_path):
+        return FileResponse(static_path, media_type="application/manifest+json")
+    raise HTTPException(404, "manifest.json not found")
+
+@app.get("/sw.js")
+async def serve_sw(request: Request):
+    static_path = abs_join(BASE_DIR, "static/sw.js")
+    if os.path.exists(static_path):
+        return FileResponse(static_path, media_type="text/javascript")
+    raise HTTPException(404, "sw.js not found")
 
 @app.get("/notes")
 async def serve_notes(request: Request):

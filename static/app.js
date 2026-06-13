@@ -46,19 +46,26 @@ import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
-const API_BASE = window.location.origin;
+// Retrieve base path from global utility
+const _basePath = window.__odysseusBasePath || '';
+const API_BASE = window.location.origin + _basePath;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
 
-// Redirect to login on 401 from any fetch
+// Rewrite fetch URLs to include base path and redirect to login on 401
 const _origFetch = window.fetch;
 window.fetch = async function(...args) {
+  if (args[0] && typeof args[0] === 'string' && _basePath) {
+    if (args[0].startsWith('/api/') || args[0].startsWith('/static/')) {
+      args[0] = _basePath + args[0];
+    }
+  }
   const res = await _origFetch.apply(this, args);
   if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
-    window.location.href = '/login';
+    window.location.href = _basePath + '/login';
   }
   return res;
 };

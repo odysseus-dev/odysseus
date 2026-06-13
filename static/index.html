@@ -13,6 +13,7 @@
        browser-default styling that didn't match the Odysseus theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
   <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <script src="/static/js/base-path.js" nonce="{{CSP_NONCE}}"></script>
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
@@ -99,7 +100,14 @@
   <script nonce="{{CSP_NONCE}}">
   (function(){
     try {
-      var path = (window.location.pathname || '').toLowerCase();
+      var pathname = (window.location.pathname || '').toLowerCase();
+      var bp = window.__odysseusBasePath || '';
+      var path = pathname;
+      if (bp && path.indexOf(bp.toLowerCase()) === 0) {
+        path = path.substring(bp.length);
+      }
+      if (!path.startsWith('/')) path = '/' + path;
+
       var theme = (function(){ try { return JSON.parse(localStorage.getItem('odysseus-theme')); } catch(_) { return null; } })();
       var ac = (theme && (theme.red || theme.colors && theme.colors.red)) || '#e06c75';
       // Shapes are line-stroke SVGs (no emoji glyphs). Each entry returns
@@ -138,16 +146,7 @@
           "<rect x='13' y='5' width='5' height='22' rx='1' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
           "<rect x='21' y='8' width='6' height='19' rx='1' fill='none' stroke='" + ac + "' stroke-width='2.5' transform='rotate(8 24 17)'/>",
       };
-      var inner = SHAPES[path];
-      if (!inner) return; // Root path keeps the default boat icon.
-      var svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" + inner + "</svg>";
-      var href = 'data:image/svg+xml,' + encodeURIComponent(svg);
-      var fav = document.querySelector("link[rel='icon']");
-      if (!fav) { fav = document.createElement('link'); fav.rel = 'icon'; fav.type = 'image/svg+xml'; document.head.appendChild(fav); }
-      fav.href = href;
-      var apple = document.querySelector("link[rel='apple-touch-icon']");
-      if (!apple) { apple = document.createElement('link'); apple.rel = 'apple-touch-icon'; document.head.appendChild(apple); }
-      apple.href = href;
+
       // Also customize the page title so the bookmark inherits a useful name.
       var titles = {
         '/calendar': 'Calendar — Odysseus',
@@ -160,31 +159,30 @@
         '/library': 'Library — Odysseus',
       };
       if (titles[path]) document.title = titles[path];
-      // Per-route Android home-screen icon. We swap the <link rel="manifest">
-      // to a per-page Blob URL with this route's SVG icon — that way "Add to
-      // Home Screen" picks up the route-specific glyph instead of the shared
-      // boat logo. Falls back silently on browsers without Blob URL support.
+
+      var inner = SHAPES[path];
+      var href = '';
+      var iconType = 'image/svg+xml';
+      if (inner) {
+        var svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" + inner + "</svg>";
+        href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+      } else {
+        href = bp + '/static/icon-512.png';
+        iconType = 'image/png';
+      }
+
+      var fav = document.querySelector("link[rel='icon']");
+      if (!fav) { fav = document.createElement('link'); fav.rel = 'icon'; fav.type = iconType; document.head.appendChild(fav); }
+      fav.href = href;
+      var apple = document.querySelector("link[rel='apple-touch-icon']");
+      if (!apple) { apple = document.createElement('link'); apple.rel = 'apple-touch-icon'; document.head.appendChild(apple); }
+      apple.href = href;
+
+      // Set the manifest URL dynamically based on the base path prefix
       try {
-        if (inner && typeof Blob !== 'undefined') {
-          var pwa = {
-            name: (titles[path] || 'Odysseus'),
-            short_name: (titles[path] || 'Odysseus').split('—')[0].trim(),
-            start_url: path,
-            scope: '/',
-            display: 'standalone',
-            background_color: '#0e0e10',
-            theme_color: ac,
-            icons: [
-              { src: href, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
-              { src: href, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
-            ],
-          };
-          var blob = new Blob([JSON.stringify(pwa)], { type: 'application/manifest+json' });
-          var url = URL.createObjectURL(blob);
-          var ml = document.querySelector("link[rel='manifest']");
-          if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
-          ml.href = url;
-        }
+        var ml = document.querySelector("link[rel='manifest']");
+        if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
+        ml.href = bp + '/manifest.json';
       } catch(_) {}
     } catch(e){}
   })();
@@ -2319,6 +2317,6 @@
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
-<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
+<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register((window.__odysseusBasePath || '') + '/sw.js').catch(()=>{});}</script>
 </body>
 </html>

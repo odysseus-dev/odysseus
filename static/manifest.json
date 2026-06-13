@@ -1,15 +1,48 @@
 {
+  "id": "odysseus",
   "name": "Odysseus",
   "short_name": "Odysseus",
   "description": "Self-hosted AI chat with memory, documents, and tools",
-  "start_url": "/",
-  "scope": "/",
+  "categories": ["productivity", "utilities"],
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "any",
   "background_color": "#282c34",
   "theme_color": "#282c34",
   "icons": [
-    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "AI Chat",
+      "short_name": "Chat",
+      "description": "Start a new conversation",
+      "url": "./",
+      "icons": [{ "src": "static/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Calendar",
+      "short_name": "Calendar",
+      "description": "Open your agenda",
+      "url": "./calendar",
+      "icons": [{ "src": "static/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Notes",
+      "short_name": "Notes",
+      "description": "Access your notepad",
+      "url": "./notes",
+      "icons": [{ "src": "static/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Tasks",
+      "short_name": "Tasks",
+      "description": "Manage your tasks",
+      "url": "./tasks",
+      "icons": [{ "src": "static/icon-192.png", "sizes": "192x192" }]
+    }
   ]
 }

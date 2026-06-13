@@ -9,59 +9,74 @@
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
 const CACHE_NAME = 'odysseus-v327';
 
-// Core shell precached on install so repeat opens are instant without any
-// network wait. Keep this list in sync with the <script type="module"> tags
-// and <link rel="stylesheet"> in index.html.
+// Derive base path from URL for subdirectory support
+const _basePath = (() => {
+  const p = location.pathname;
+  if (p.endsWith('/sw.js')) {
+    return p.substring(0, p.length - '/sw.js'.length);
+  }
+  return '';
+})();
+
+// Shorthand for paths that include base path
+const _bp = (p) => _basePath + p;
+
+// Precache paths with base path for subdirectory support
 const PRECACHE = [
-  '/',
-  '/static/style.css',
-  '/static/app.js',
-  '/static/js/storage.js',
-  '/static/js/ui.js',
-  '/static/js/markdown.js',
-  '/static/js/dragSort.js',
-  '/static/js/sessions.js',
-  '/static/js/memory.js',
-  '/static/js/skills.js',
-  '/static/js/tourHints.js',
-  '/static/js/fileHandler.js',
-  '/static/js/voiceRecorder.js',
-  '/static/js/models.js',
-  '/static/js/rag.js',
-  '/static/js/presets.js',
-  '/static/js/search.js',
-  '/static/js/spinner.js',
-  '/static/js/tts-ai.js',
-  '/static/js/document.js',
-  '/static/js/gallery.js',
-  '/static/js/chatRenderer.js',
-  '/static/js/codeRunner.js',
-  '/static/js/chatStream.js',
-  '/static/js/chat.js',
-  '/static/js/cookbook.js',
-  '/static/js/search-chat.js',
-  '/static/js/compare/index.js',
-  '/static/js/theme.js',
-  '/static/js/censor.js',
-  '/static/js/settings.js',
-  '/static/js/admin.js',
-  '/static/js/init.js',
-  '/static/js/slashCommands.js',
-  '/static/js/emailInbox.js',
-  '/static/js/emailLibrary/utils.js',
-  '/static/js/emailLibrary/signatureFold.js',
-  '/static/js/emailLibrary/state.js',
-  '/static/js/notes.js',
-  '/static/js/tasks.js',
-  '/static/js/calendar.js',
-  '/static/js/calendar/utils.js',
-  '/static/js/calendar/reminders.js',
-  '/static/js/group.js',
-  '/static/js/keyboard-shortcuts.js',
-  '/static/js/sidebar-layout.js',
-  '/static/js/section-management.js',
-  '/static/lib/highlight.min.js',
+  _bp('/'),
+  _bp('/static/style.css'),
+  _bp('/static/app.js'),
+  _bp('/static/js/base-path.js'),
+  _bp('/static/js/storage.js'),
+  _bp('/static/js/ui.js'),
+  _bp('/static/js/markdown.js'),
+  _bp('/static/js/dragSort.js'),
+  _bp('/static/js/sessions.js'),
+  _bp('/static/js/memory.js'),
+  _bp('/static/js/skills.js'),
+  _bp('/static/js/tourHints.js'),
+  _bp('/static/js/fileHandler.js'),
+  _bp('/static/js/voiceRecorder.js'),
+  _bp('/static/js/models.js'),
+  _bp('/static/js/rag.js'),
+  _bp('/static/js/presets.js'),
+  _bp('/static/js/search.js'),
+  _bp('/static/js/spinner.js'),
+  _bp('/static/js/tts-ai.js'),
+  _bp('/static/js/document.js'),
+  _bp('/static/js/gallery.js'),
+  _bp('/static/js/chatRenderer.js'),
+  _bp('/static/js/codeRunner.js'),
+  _bp('/static/js/chatStream.js'),
+  _bp('/static/js/chat.js'),
+  _bp('/static/js/cookbook.js'),
+  _bp('/static/js/search-chat.js'),
+  _bp('/static/js/compare/index.js'),
+  _bp('/static/js/theme.js'),
+  _bp('/static/js/censor.js'),
+  _bp('/static/js/settings.js'),
+  _bp('/static/js/admin.js'),
+  _bp('/static/js/init.js'),
+  _bp('/static/js/slashCommands.js'),
+  _bp('/static/js/emailInbox.js'),
+  _bp('/static/js/emailLibrary/utils.js'),
+  _bp('/static/js/emailLibrary/signatureFold.js'),
+  _bp('/static/js/emailLibrary/state.js'),
+  _bp('/static/js/notes.js'),
+  _bp('/static/js/tasks.js'),
+  _bp('/static/js/calendar.js'),
+  _bp('/static/js/calendar/utils.js'),
+  _bp('/static/js/calendar/reminders.js'),
+  _bp('/static/js/group.js'),
+  _bp('/static/js/keyboard-shortcuts.js'),
+  _bp('/static/js/sidebar-layout.js'),
+  _bp('/static/js/section-management.js'),
+  _bp('/static/lib/highlight.min.js'),
 ];
+
+// Root paths used in cache matching
+const _root = (p) => p === '/' ? '/' : p;  // '' becomes '/', '/odysseus' stays
+const _staticBase = _bp('/static/');
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
@@ -98,12 +113,14 @@ self.addEventListener('fetch', (e) => {
   // SPA root. Other navigations (e.g. a deep-linked /static/*.html page) must
   // go to the network/static handlers below; otherwise every navigation was
   // served the app index, replacing the page the user actually asked for.
-  if (e.request.mode === 'navigate' && url.pathname === '/') {
+  // Uses base path to support subdirectory deployments.
+  const rootPath = _bp('/');
+  if (e.request.mode === 'navigate' && (url.pathname === '/' || url.pathname === rootPath || url.pathname === _basePath || url.pathname === _basePath + '/')) {
     e.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
-        const cached = await cache.match('/');
+        const cached = await cache.match(rootPath);
         const network = fetch(e.request).then(res => {
-          if (res && res.ok) cache.put('/', res.clone());
+          if (res && res.ok) cache.put(rootPath, res.clone());
           return res;
         }).catch(() => cached);
         return cached || network;
@@ -114,7 +131,8 @@ self.addEventListener('fetch', (e) => {
 
   // JS/CSS: network-first — always try the network so code/style edits show up
   // on a normal reload; fall back to cache only when offline.
-  if (url.pathname.startsWith('/static/') && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
+  // Uses base path to support subdirectory deployments.
+  if (url.pathname.startsWith(_staticBase) && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
     e.respondWith(
       fetch(e.request).then(res => {
         if (res && res.ok) {
@@ -128,7 +146,8 @@ self.addEventListener('fetch', (e) => {
   }
 
   // Other static assets (images, fonts, libs): cache-first with background refresh.
-  if (url.pathname.startsWith('/static/')) {
+  // Uses base path to support subdirectory deployments.
+  if (url.pathname.startsWith(_staticBase)) {
     e.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
         const cached = await cache.match(e.request);

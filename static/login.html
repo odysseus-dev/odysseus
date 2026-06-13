@@ -4,8 +4,25 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
 <title>Odysseus — Login</title>
+<script src="/static/js/base-path.js" nonce="{{CSP_NONCE}}"></script>
 <script nonce="{{CSP_NONCE}}">
 (function(){
+  // Override fetch to prepend base path if set
+  (function() {
+    var bp = window.__odysseusBasePath || '';
+    if (bp) {
+      var origFetch = window.fetch;
+      window.fetch = async function(...args) {
+        if (args[0] && typeof args[0] === 'string') {
+          if (args[0].startsWith('/api/') || args[0].startsWith('/static/')) {
+            args[0] = bp + args[0];
+          }
+        }
+        return origFetch.apply(this, args);
+      };
+    }
+  })();
+
   // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
   // static/js/theme.js so login picks the same default pattern as the
   // main app for users who never explicitly chose one.
@@ -362,7 +379,7 @@
     const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
     const data = await res.json();
     if (data.authenticated) {
-      window.location.replace('/');
+      window.location.replace(window.__odysseusBasePath + '/');
       return;
     }
     signupAllowed = !!data.signup_enabled;
@@ -468,7 +485,7 @@
         sessionStorage.setItem('ody-prefetch-sessions', JSON.stringify(sess));
         sessionStorage.setItem('ody-prefetch-features', JSON.stringify(feat));
         sessionStorage.setItem('ody-prefetch-settings', JSON.stringify(sett));
-      }).catch(() => {}).finally(() => { window.location.replace('/'); });
+      }).catch(() => {}).finally(() => { window.location.replace(window.__odysseusBasePath + '/'); });
     }
     async function doLogin(totpCode) {
       const loginBody = { username, password, remember };

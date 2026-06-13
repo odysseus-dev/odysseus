@@ -11,6 +11,9 @@ import { isAltGrEvent } from './platform.js';
 let initialized = false;
 let modalEl = null;
 
+// Retrieve base path from global utility
+const _basePath = window.__odysseusBasePath || '';
+
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
 function safeRasterDataUrl(raw) {
@@ -2166,7 +2169,7 @@ function initAccount() {
         _toRemove.forEach(k => localStorage.removeItem(k));
         sessionStorage.clear();
       } catch (_) {}
-      window.location.href = '/login';
+      window.location.href = _basePath + '/login';
     });
   }
 }
