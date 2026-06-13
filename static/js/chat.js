@@ -1234,8 +1234,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       }
     })();
 
-    // Materialize pending session (deferred from model click) on first message
-    if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
+    // Materialize pending session (deferred from model click) on first message.
+    // Raw group participant chats already have a fixed session/model; stale
+    // pending chat state must not create a fresh standalone chat here.
+    if (sessionModule.isCurrentGroupChild && sessionModule.isCurrentGroupChild()) {
+      if (sessionModule.clearPendingChat) sessionModule.clearPendingChat();
+    } else if (sessionModule.hasPendingChat && sessionModule.hasPendingChat()) {
       _sendPerf.mark('pending_session_begin');
       const ok = await sessionModule.materializePendingSession();
       _sendPerf.mark('pending_session_done');
@@ -1763,6 +1767,8 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
       holder._researchQuery = msg; // Store query for notification text
       
       const modelName = _bestKnownStreamModel(selectedRouteForSend) || null;
+      const groupChildInfo = sessionModule.getCurrentGroupChildInfo ? sessionModule.getCurrentGroupChildInfo() : null;
+      const groupChildAlias = groupChildInfo && groupChildInfo.name ? groupChildInfo.name : '';
 
       let loadingText = 'Initializing...';
 
@@ -1778,13 +1784,14 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         loadingText = 'Processing request...';
       }
 
-      var roleLabel = _modelRouteLabel(modelName, modelName);
-      var _charNameInit = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
+      var roleLabel = groupChildAlias || _modelRouteLabel(modelName, modelName);
+      var _charNameInit = groupChildAlias || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
       if (_charNameInit) roleLabel = _charNameInit;
       const roleTs = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
       holder.innerHTML = `<div class="role">${uiModule.esc(roleLabel)} <span class="role-timestamp">${roleTs}</span></div><div class="body"></div>`;
       holder._requestedModel = modelName;
       holder._actualModel = modelName;
+      holder._characterName = _charNameInit || '';
       _applyModelColor(holder.querySelector('.role'), modelName);
       holder.style.position = 'relative';
       
@@ -2778,7 +2785,7 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
                     holder._actualModel = json.model || holder._actualModel || holder._requestedModel;
                     if (json.suffix) holder._roleSuffix = json.suffix;
                     // Prepend character name if sent by server or set locally
-                    var _charName = json.character_name || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
+                    var _charName = json.character_name || holder._characterName || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
                     if (_charName) holder._characterName = _charName;
                     _setRoleModelLabel(roleEl, holder._requestedModel, holder._actualModel, {
                       suffix: holder._roleSuffix,
@@ -3470,12 +3477,12 @@ import { wireArrowUpRecall, getUserMessagesFromChatHistory } from './composerArr
         const _finalActualModel = metrics?.model || holder._actualModel || finalMeta?.model;
         const _finalRequestedModel = metrics?.requested_model || holder._requestedModel || finalMeta?.model || _finalActualModel;
         // Prepend character name if set
-        var _charNameFinal = presetsModule.getCharacterName ? presetsModule.getCharacterName() : '';
+        var _charNameFinal = holder._characterName || (presetsModule.getCharacterName ? presetsModule.getCharacterName() : '');
         const roleEl = holder.querySelector('.role');
         if (roleEl) {
           _setRoleModelLabel(roleEl, _finalRequestedModel, _finalActualModel, {
             suffix: holder._roleSuffix,
-            characterName: _charNameFinal || holder._characterName,
+            characterName: _charNameFinal,
           });
         }
         holder.dataset.raw = accumulated;

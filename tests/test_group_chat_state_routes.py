@@ -196,11 +196,51 @@ def test_list_sessions_hides_group_participants(monkeypatch):
     assert not set(child_ids) & returned_ids
     assert parent["is_group_parent"] is True
     assert parent["group_participants"] == [
-        {"id": child_ids[0], "index": 0, "name": "Athena", "model": "Llama 3"},
-        {"id": child_ids[1], "index": 1, "name": "Mistral", "model": "Mistral"},
+        {
+            "id": child_ids[0],
+            "index": 0,
+            "name": "Athena",
+            "model": "Llama 3",
+            "model_id": "llama3",
+            "endpoint_url": "http://localhost:11434",
+            "endpoint_id": "local",
+        },
+        {
+            "id": child_ids[1],
+            "index": 1,
+            "name": "Mistral",
+            "model": "Mistral",
+            "model_id": "mistral",
+            "endpoint_url": "http://localhost:11434",
+            "endpoint_id": None,
+        },
     ]
     assert normal["is_group_parent"] is False
     assert normal["group_participants"] == []
+
+
+def test_group_child_whisper_context_resolves_parent_for_owner(monkeypatch):
+    _reset_db()
+    parent_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    _add_session(parent_id, name="[GRP] Athena, Mistral")
+    for session_id in child_ids:
+        _add_session(session_id, name="[GRP] participant")
+    _add_group_state(parent_id, child_ids)
+
+    import routes.chat_routes as cr
+
+    monkeypatch.setattr(cr, "SessionLocal", _TS)
+    ctx = cr._group_child_whisper_context(child_ids[0], "alice")
+
+    assert ctx == {
+        "parent_session_id": parent_id,
+        "participant_session_id": child_ids[0],
+        "participant_index": 0,
+        "participant_name": "Athena",
+        "participant_model": "llama3",
+    }
+    assert cr._group_child_whisper_context(child_ids[0], "bob") is None
 
 
 def test_group_parent_folder_move_cascades_and_child_move_is_blocked(monkeypatch):

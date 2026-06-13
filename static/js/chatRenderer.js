@@ -2333,6 +2333,7 @@ export function addMessage(role, content, modelName, metadata) {
           const pair = replyModelPair(modelName, metadata);
           const contModel = pair.actualModel || pair.requestedModel;
           roleEl.textContent = modelRouteLabel(pair.requestedModel, contModel);
+          if (metadata?.character_name) roleEl.textContent = metadata.character_name;
           if (pair.requestedModel && contModel && !sameModelName(pair.requestedModel, contModel)) {
             roleEl.title = pair.requestedModel + ' -> ' + contModel;
           }
@@ -2482,6 +2483,9 @@ export function addMessage(role, content, modelName, metadata) {
     // --- Standard single-bubble message ---
     const wrap = document.createElement('div');
     wrap.className = 'msg ' + (role === 'user' ? 'msg-user' : 'msg-ai');
+    if (metadata?.group_whisper) {
+      wrap.classList.add('msg-whisper');
+    }
 
     const r = document.createElement('div');
     r.className = 'role';
@@ -2497,6 +2501,15 @@ export function addMessage(role, content, modelName, metadata) {
       _roleText = metadata.group_model;
     } else if (metadata?.character_name && role !== 'user' && !isSlash && !isCompacted) {
       _roleText = metadata.character_name;
+    }
+    if (metadata?.group_whisper) {
+      if (role === 'user' && metadata.whisper_to) {
+        _roleText = 'Whisper to ' + metadata.whisper_to;
+      } else if (role !== 'user' && metadata.whisper_from) {
+        _roleText = 'Whisper from ' + metadata.whisper_from;
+      } else if (role !== 'user' && metadata.group_model) {
+        _roleText = 'Whisper from ' + metadata.group_model;
+      }
     }
     r.textContent = _roleText;
     if (role !== 'user') {

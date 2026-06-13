@@ -13,6 +13,8 @@ const API_BASE = window.location.origin;
 
 let sessions = [];
 let currentSessionId = null;
+let _currentSessionDetails = null;
+const _groupChildSessions = new Map();
 let _sessionNavToken = 0;
 let _skipAutoSelect = false;
 let _suppressNextSessionLoading = false;
@@ -339,6 +341,49 @@ function _normalizeSessionsList(fetched) {
   return unique;
 }
 
+function _indexGroupChildSessions(list) {
+  _groupChildSessions.clear();
+  for (const session of list || []) {
+    const participants = _groupParticipantsForSession(session);
+    participants.forEach(participant => {
+      const id = String(participant.id || '');
+      if (!id) return;
+      _groupChildSessions.set(id, {
+        id,
+        name: participant.name || participant.model || `Participant ${(participant.index || 0) + 1}`,
+        model: participant.model_id || participant.model || '',
+        endpoint_url: participant.endpoint_url || session.endpoint_url || '',
+        endpoint_id: participant.endpoint_id || '',
+        parent_session_id: session.id,
+        parent_name: session.name || '',
+        is_group_participant_child: true,
+      });
+    });
+  }
+}
+
+function _sessionDetailsForId(id) {
+  const sid = String(id || '');
+  return sessions.find(x => String(x.id) === sid) ||
+    (_currentSessionDetails && String(_currentSessionDetails.id) === sid ? _currentSessionDetails : null) ||
+    _groupChildInfoForId(sid) ||
+    null;
+}
+
+function _groupChildInfoForId(id) {
+  const sid = String(id || '');
+  const indexed = _groupChildSessions.get(sid);
+  if (indexed) return indexed;
+  if (
+    _currentSessionDetails &&
+    String(_currentSessionDetails.id) === sid &&
+    _currentSessionDetails.is_group_participant_child
+  ) {
+    return _currentSessionDetails;
+  }
+  return null;
+}
+
 function _groupParticipantsForSession(session) {
   if (!session || !Array.isArray(session.group_participants)) return [];
   return session.group_participants.filter(participant => participant && participant.id);
@@ -375,8 +420,10 @@ function _createGroupParticipantsList(session, participants) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'group-participant-row';
-    row.title = 'Open the parent group chat';
-    row.setAttribute('aria-label', `Open group chat for ${participant.name || participant.model || 'participant'}`);
+    row.dataset.groupParticipantId = String(participant.id);
+    row.title = `Open raw chat for ${participant.name || participant.model || 'participant'}`;
+    row.setAttribute('aria-label', `Open raw chat for ${participant.name || participant.model || 'participant'}`);
+    row.setAttribute('aria-pressed', 'false');
 
     const dot = document.createElement('span');
     dot.className = 'group-participant-dot';
@@ -395,9 +442,12 @@ function _createGroupParticipantsList(session, participants) {
       row.appendChild(model);
     }
 
-    row.addEventListener('click', (e) => {
+    row.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (currentSessionId !== session.id) selectSession(session.id);
+      if (window.groupModule && window.groupModule.clearWhisperTarget) {
+        window.groupModule.clearWhisperTarget();
+      }
+      await selectSession(participant.id, { keepSidebar: true });
     });
     list.appendChild(row);
   });
@@ -1791,6 +1841,7 @@ export async function loadSessions() {
       fetched = await res.json();
     }
     sessions = _normalizeSessionsList(fetched);
+    _indexGroupChildSessions(sessions);
     renderSessionList();
 
     const sessionsSection = uiModule.el('sessions-section');
@@ -1837,12 +1888,16 @@ export async function loadSessions() {
       targetId = null;
     } else if (hashId && activeSessions.some(s => s.id === hashId)) {
       targetId = hashId;
+    } else if (hashId && _groupChildSessions.has(String(hashId))) {
+      targetId = hashId;
     } else if (currentSessionId && activeSessions.some(s => s.id === currentSessionId)) {
       targetId = currentSessionId;
     } else if (currentSessionId) {
       // Session was just created but may not be in the list yet — keep it
       targetId = currentSessionId;
     } else if (!_freshRootLoad && savedId && activeSessions.some(s => s.id === savedId)) {
+      targetId = savedId;
+    } else if (!_freshRootLoad && savedId && _groupChildSessions.has(String(savedId))) {
       targetId = savedId;
     } else if (!_freshRootLoad && !_skipAutoSelect && _realSessions.length > 0) {
       // Most-recent NON-transient session — skip Assistant / Tasks so the
@@ -1943,6 +1998,7 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     }
     currentSessionId = id;
     try { window.__odysseusLastSelectedSessionId = id; } catch (_) {}
+    _currentSessionDetails = _sessionDetailsForId(id);
     // Identify Assistant / task-output sessions so we don't "trap" the user
     // there on return. Skipped from both `lastSessionId` persistence and the
     // URL hash — the user complained that coming back to Odysseus kept
@@ -1959,6 +2015,13 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       if (presetsModule && presetsModule.onSessionSwitch) presetsModule.onSessionSwitch(id);
     } catch (e) {}
     const meta = sessions.find(s => s.id === id);
+    const groupChildInfo = _groupChildInfoForId(id);
+    if (groupChildInfo) {
+      _pendingChat = null;
+    }
+    if (window._syncWhisperIndicator) {
+      window._syncWhisperIndicator(!!groupChildInfo, groupChildInfo || null);
+    }
 
     // Detach any in-flight stream to background instead of aborting
     try {
@@ -2016,10 +2079,21 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
     document.querySelectorAll('.list-item.active-session').forEach(el => el.classList.remove('active-session'));
     const activeEl = document.querySelector(`.list-item[data-session-id="${id}"]`);
     if (activeEl) activeEl.classList.add('active-session');
+    document.querySelectorAll('.group-participant-row.child-active').forEach(el => {
+      el.classList.remove('child-active');
+      el.setAttribute('aria-pressed', 'false');
+    });
+    document.querySelectorAll('.group-participant-row').forEach(row => {
+      const active = String(row.dataset.groupParticipantId || '') === String(id);
+      if (active) {
+        row.classList.add('child-active');
+        row.setAttribute('aria-pressed', 'true');
+      }
+    });
 
     const currentMetaEl = uiModule.el('current-meta');
     if (currentMetaEl) {
-      currentMetaEl.textContent = meta ? meta.name : 'Odysseus Chat';
+      currentMetaEl.textContent = meta ? meta.name : (groupChildInfo ? groupChildInfo.name : 'Odysseus Chat');
     }
     // Update model picker visibility
     updateModelPicker();
@@ -2067,6 +2141,19 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
         total: data.total,
         has_more_before: !!data.has_more_before,
       };
+      _currentSessionDetails = meta || {
+        id,
+        name: data.name || groupChildInfo?.name || 'Odysseus Chat',
+        model: data.model || groupChildInfo?.model || '',
+        endpoint_url: data.endpoint_url || groupChildInfo?.endpoint_url || '',
+        endpoint_id: groupChildInfo?.endpoint_id || '',
+        parent_session_id: groupChildInfo?.parent_session_id || null,
+        group_parent_session_id: groupChildInfo?.parent_session_id || null,
+        is_group_participant_child: !!groupChildInfo,
+      };
+      if (!meta && currentMetaEl) {
+        currentMetaEl.textContent = _currentSessionDetails.name || 'Odysseus Chat';
+      }
       // The model returned by /api/history is the authoritative one the
       // backend will use for this session. Write it back into the cached
       // session meta and refresh the picker so the displayed model can
@@ -2125,8 +2212,19 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
         'OpenClaw');
     } else if (msgHistory.length) {
       for (const msg of msgHistory) {
+        let renderMsg = msg;
+        if (groupChildInfo && msg.role === 'assistant') {
+          renderMsg = {
+            ...msg,
+            metadata: {
+              ...(msg.metadata || {}),
+              character_name: (msg.metadata && msg.metadata.character_name) || groupChildInfo.name,
+              model: (msg.metadata && msg.metadata.model) || groupChildInfo.model || '',
+            },
+          };
+        }
         try {
-          _renderHistoryMessage(msg, modelName);
+          _renderHistoryMessage(renderMsg, modelName);
         } catch (e) {
           console.warn('Failed to render history message:', e, msg);
         }
@@ -2174,14 +2272,32 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       if (navToken !== _sessionNavToken || currentSessionId !== id) return;
     }
     if (restoredGroupState) {
+      if (window._syncWhisperIndicator) window._syncWhisperIndicator(false);
       if (window._syncGroupIndicator) window._syncGroupIndicator(true);
+      if (window.groupModule && window.groupModule.clearWhisperTarget) {
+        window.groupModule.clearWhisperTarget();
+      }
       // Hide model picker for group sessions
+      const _mpw = document.getElementById('model-picker-wrap');
+      if (_mpw) _mpw.style.display = 'none';
+    } else if (groupChildInfo) {
+      if (window.groupModule && window.groupModule.isActive()) {
+        // Child raw chats send through the normal session stream so the
+        // backend can mirror them to the parent as whispers.
+        window.groupModule.stopGroup();
+      }
+      if (window._syncGroupIndicator) window._syncGroupIndicator(false);
+      if (window._syncWhisperIndicator) window._syncWhisperIndicator(true, groupChildInfo);
       const _mpw = document.getElementById('model-picker-wrap');
       if (_mpw) _mpw.style.display = 'none';
     } else if (window.groupModule && window.groupModule.isActive()) {
       // Switching away from group session — deactivate
       window.groupModule.stopGroup();
       if (window._syncGroupIndicator) window._syncGroupIndicator(false);
+      if (window._syncWhisperIndicator) window._syncWhisperIndicator(false);
+      updateModelPicker();
+    } else if (window._syncWhisperIndicator) {
+      window._syncWhisperIndicator(false);
     }
 
     // Stop pulsing notification — user is now viewing this session
@@ -2307,6 +2423,7 @@ export function createDirectChat(url, modelId, endpointId, opts = {}) {
   }
 
   // Don't hit the API — just store the model info and prepare the UI
+  if (window._syncWhisperIndicator) window._syncWhisperIndicator(false);
   _pendingChat = { url, modelId, endpointId, source: incomingSource };
   _pendingMaterializePromise = null;
   _skipAutoSelect = true;
@@ -2459,9 +2576,18 @@ export function preMaterializePendingSession() {
 
 export function hasPendingChat() { return !!_pendingChat; }
 export function getPendingChat() { return _pendingChat; }
+export function clearPendingChat() { _pendingChat = null; }
 // Getters for external access
 export function getCurrentSessionId() {
   return currentSessionId;
+}
+
+export function getCurrentGroupChildInfo() {
+  return _groupChildInfoForId(currentSessionId);
+}
+
+export function isCurrentGroupChild() {
+  return !!getCurrentGroupChildInfo();
 }
 
 export function isCurrentSessionIncognito() {
@@ -2469,11 +2595,14 @@ export function isCurrentSessionIncognito() {
 }
 
 export function getSessions() {
+  if (_currentSessionDetails && !sessions.some(x => String(x.id) === String(_currentSessionDetails.id))) {
+    return sessions.concat([_currentSessionDetails]);
+  }
   return sessions;
 }
 
 export function getCurrentModel() {
-  const sess = sessions.find(x => x.id === currentSessionId);
+  const sess = _sessionDetailsForId(currentSessionId);
   if (sess && sess.model) return sess.model;
   if (_pendingChat && _pendingChat.modelId) return _pendingChat.modelId;
   return null;
@@ -2482,7 +2611,7 @@ export function getCurrentModel() {
 /** Endpoint URL serving the current (or pending) session's model. Used to
  *  decide whether a model is local (free) vs a billable cloud provider. */
 export function getCurrentEndpointUrl() {
-  const sess = sessions.find(x => x.id === currentSessionId);
+  const sess = _sessionDetailsForId(currentSessionId);
   if (sess && sess.endpoint_url) return sess.endpoint_url;
   if (_pendingChat && _pendingChat.url) return _pendingChat.url;
   return null;
@@ -2494,6 +2623,7 @@ export function setCurrentSessionId(id) {
   try { window.__odysseusLastSelectedSessionId = id || ''; } catch (_) {}
   if (!id) {
     _suppressNextSessionLoading = true;
+    _currentSessionDetails = null;
     Storage.remove('lastSessionId');
     history.replaceState(null, '', window.location.pathname);
     document.querySelectorAll('.list-item.active-session, .session-item.active').forEach(el => {
@@ -2879,9 +3009,10 @@ export function clearStreamComplete(sessionId) {
 function _initAllDropdowns() {
   initModelPicker({
     getCurrentSessionId: () => currentSessionId,
-    getSessions: () => sessions,
+    getSessions,
     getPendingChat: () => _pendingChat,
     setPendingChat: (v) => { _pendingChat = v; },
+    isCurrentGroupChild,
     createDirectChat,
   });
   _initDropdownDismiss();
@@ -3747,7 +3878,10 @@ const sessionModule = {
   preMaterializePendingSession,
   hasPendingChat,
   getPendingChat,
+  clearPendingChat,
   getCurrentSessionId,
+  getCurrentGroupChildInfo,
+  isCurrentGroupChild,
   getSessions,
   getCurrentModel,
   getCurrentEndpointUrl,
