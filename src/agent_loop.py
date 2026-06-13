@@ -1757,26 +1757,37 @@ async def stream_agent_loop(
     _active_persona_name = None  # will be set from outside or via context
 
     
-    # === PERSONAS INTEGRATION ===
+
+    # === PERSONAS INTEGRATION (Improved) ===
     active_persona = None
-    # Try to detect requested persona from the latest user message or context
     last_user_msg = ""
     for m in reversed(messages):
         if m.get("role") == "user":
-            last_user_msg = m.get("content", "")
+            last_user_msg = str(m.get("content", "")).lower()
             break
     
-    # Simple detection: if user says "use researcher" or similar
-    import re
-    persona_match = re.search(r'(?:use|switch to|as|persona|mode)\s+([a-zA-Z0-9_-]+)', last_user_msg, re.IGNORECASE)
-    if persona_match:
-        candidate = persona_match.group(1).lower()
-        from src.persona_manager import PersonaManager
-        pm = PersonaManager(DATA_DIR)
-        if pm.get_persona(candidate):
-            active_persona = candidate
-            pm.record_usage(candidate)
+    # Smarter detection
+    from src.persona_manager import PersonaManager
+    pm = PersonaManager(DATA_DIR)
+    all_personas = [p.name for p in pm.list_personas()]
+    
+    for pname in all_personas:
+        if pname in last_user_msg or f"as {pname}" in last_user_msg or f"use {pname}" in last_user_msg:
+            active_persona = pname
+            pm.record_usage(pname)
             logger.info(f"[personas] Agent switched to persona: {active_persona}")
+            break
+    
+    # Also support explicit @persona syntax
+    if not active_persona:
+        match = re.search(r'@([a-zA-Z0-9_-]+)', last_user_msg)
+        if match:
+            candidate = match.group(1).lower()
+            if pm.get_persona(candidate):
+                active_persona = candidate
+                pm.record_usage(candidate)
+                logger.info(f"[personas] Agent switched to persona via @: {active_persona}")
+
 
         mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
