@@ -62,6 +62,33 @@ def _stream_set(session_id: str, **fields) -> None:
     rec.update(fields)
 
 
+def _resolve_request_workspace(request, raw_value) -> tuple:
+    """Resolve the posted workspace for this request: (workspace, rejected).
+
+    Privilege is checked BEFORE the path ever touches the filesystem. Only
+    admin/single-user callers can use the workspace-backed file/shell tools,
+    so only they get vet_workspace() and the workspace_rejected signal. For
+    any other caller the submitted value is dropped uniformly, with no vetting
+    and no event: otherwise the presence/absence of workspace_rejected would
+    let a non-admin chat caller probe which host paths exist.
+
+    vet_workspace rejects non-directories, sensitive roots (.ssh, .gnupg,
+    ...), and filesystem roots; on rejection there is no confinement and the
+    default tool-path allowlist applies. The rejected value is surfaced so the
+    stream can tell an admin client (which believes a workspace is active)
+    that it was dropped.
+    """
+    requested = (raw_value or "").strip()
+    if not requested:
+        return "", ""
+    from src.tool_security import owner_is_admin_or_single_user
+    if not owner_is_admin_or_single_user(get_current_user(request)):
+        return "", ""
+    from src.tool_execution import vet_workspace
+    workspace = vet_workspace(requested) or ""
+    return workspace, (requested if not workspace else "")
+
+
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
     if not session_url or not endpoint_base:
         return False
@@ -400,6 +427,7 @@ def setup_chat_routes(
             temperature=ctx.preset.temperature,
             max_tokens=ctx.preset.max_tokens,
             prompt_type=preset_id,
+            session_id=session,
         )
         _clean_reply, _clean_md = clean_thinking_for_save(reply, {"model": sess.model})
         sess.add_message(ChatMessage("assistant", _clean_reply, metadata=_clean_md))
@@ -446,8 +474,11 @@ def setup_chat_routes(
         use_research = form_data.get("use_research")
         time_filter = form_data.get("time_filter")
         preset_id = form_data.get("preset_id")
-        allow_bash = form_data.get("allow_bash")
-        allow_web_search = form_data.get("allow_web_search")
+        # Issue #3229: API callers send JSON, not FormData.  Read from the
+        # JSON body as fallback so callers who send {"allow_bash": true}
+        # actually get bash enabled.
+        allow_bash = form_data.get("allow_bash") or (body or {}).get("allow_bash")
+        allow_web_search = form_data.get("allow_web_search") or (body or {}).get("allow_web_search")
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
@@ -456,6 +487,10 @@ def setup_chat_routes(
         # manual form posts that still send plan_mode=true.
         plan_mode = False
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        # Workspace: confine the agent's file/shell tools to this folder.
+        workspace, workspace_rejected = _resolve_request_workspace(
+            request, form_data.get("workspace")
+        )
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
@@ -634,7 +669,7 @@ def setup_chat_routes(
             # leak a doc that belongs to a DIFFERENT session.
             if not active_doc:
                 try:
-                    from src.tool_implementations import get_active_document
+                    from src.agent_tools.document_tools import get_active_document
                     _mem_id = get_active_document()
                     if _mem_id:
                         _mem_q = _doc_db.query(DBDocument).filter(DBDocument.id == _mem_id)
@@ -655,9 +690,13 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
-        if str(allow_bash).lower() != "true":
+        # Only disable bash/web_search when the caller *explicitly* set them
+        # to a falsy value.  When unset (None), defer to per-user privilege
+        # checks below — this lets admins with can_use_bash=True use bash
+        # by default without having to send allow_bash in every request.
+        if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
-        if str(allow_web_search).lower() != "true":
+        if allow_web_search is not None and str(allow_web_search).lower() != "true":
             disabled_tools.add("web_search")
             disabled_tools.add("web_fetch")
 
@@ -759,6 +798,13 @@ def setup_chat_routes(
 
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
+
+            # The client sent a workspace the server refused to bind (deleted
+            # folder, file path, sensitive dir, filesystem root). Tell it up
+            # front so the UI can clear the pill instead of displaying a
+            # confinement that is not actually in effect.
+            if workspace_rejected:
+                yield f"data: {json.dumps({'type': 'workspace_rejected', 'data': {'path': workspace_rejected}})}\n\n"
 
             if ctx.preprocessed.attachment_meta:
                 yield f"data: {json.dumps({'type': 'attachments', 'data': ctx.preprocessed.attachment_meta})}\n\n"
@@ -988,6 +1034,7 @@ def setup_chat_routes(
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         tools=None,
+                        session_id=session,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1136,6 +1183,7 @@ def setup_chat_routes(
                         fallbacks=_fallback_candidates,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
+                        workspace=workspace or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

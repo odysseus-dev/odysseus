@@ -15,9 +15,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
+from src.constants import COOKBOOK_STATE_FILE
 from pydantic import BaseModel
 
 from core.middleware import require_admin
+from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
@@ -28,16 +30,20 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.cookbook_output import error_aware_output_tail
 
 logger = logging.getLogger(__name__)
 
 from routes.cookbook_helpers import (
-    _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
-    _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
-    _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
+    _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
+    _validate_local_dir, _validate_gpus, _shell_path,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
+    load_stored_hf_token,
+    _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
+    _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     ModelDownloadRequest, ServeRequest,
@@ -54,7 +60,7 @@ _HF_TOKEN_STATUS_SNIPPET = (
 
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
-    _cookbook_state_path = Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+    _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
 
     def _mask_secret(value: str) -> str:
         if not value:
@@ -232,14 +238,7 @@ def setup_cookbook_routes() -> APIRouter:
         return state
 
     def _load_stored_hf_token() -> str:
-        if not _cookbook_state_path.exists():
-            return ""
-        try:
-            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
-            env = state.get("env") if isinstance(state, dict) else {}
-            return _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
-        except Exception:
-            return ""
+        return load_stored_hf_token(state_path=_cookbook_state_path)
 
     def _cookbook_ssh_dir() -> Path:
         # The Docker image keeps cookbook keys under /app/.ssh; that path only
@@ -406,8 +405,8 @@ def setup_cookbook_routes() -> APIRouter:
         else:
             _validate_repo_id(req.repo_id)
             _validate_include(req.include)
-        _validate_remote_host(req.remote_host)
-        req.ssh_port = _validate_ssh_port(req.ssh_port)
+        validate_remote_host(req.remote_host)
+        req.ssh_port = validate_ssh_port(req.ssh_port)
         req.local_dir = _validate_local_dir(req.local_dir)
         req.hf_token = "" if is_ollama_download else (req.hf_token or _load_stored_hf_token())
         _validate_token(req.hf_token)
@@ -738,9 +737,8 @@ def setup_cookbook_routes() -> APIRouter:
         # Validate shell-bound inputs, matching the sibling list_gpus endpoint —
         # `host`/`ssh_port` are interpolated into an ssh command below, so an
         # unvalidated value (e.g. "x'; rm -rf ~ #") would be command injection.
-        host = _validate_remote_host(host)
-        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
-            raise HTTPException(400, "Invalid ssh_port")
+        host = validate_remote_host(host)
+        ssh_port = validate_ssh_port(ssh_port)
         TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         model_dirs = []
@@ -889,11 +887,16 @@ def setup_cookbook_routes() -> APIRouter:
             # listening" check without requiring ss/netstat/nmap.
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if ssh_port and str(ssh_port) != "22":
-                if not _SSH_PORT_RE.match(str(ssh_port)):
+                try:
+                    ssh_port = validate_ssh_port(ssh_port)
+                except HTTPException:
                     return None
                 ssh_base.extend(["-p", str(ssh_port)])
-            host_arg = remote
-            if not _REMOTE_HOST_RE.match(host_arg):
+            try:
+                host_arg = validate_remote_host(remote)
+            except HTTPException:
+                return None
+            if not host_arg:
                 return None
             probe_ports = " ".join(str(start_port + i) for i in range(max_offset + 1))
             script = (
@@ -1196,8 +1199,8 @@ def setup_cookbook_routes() -> APIRouter:
         """
         require_admin(request)
         # Defence-in-depth: reject values that could break out of shell contexts.
-        _validate_remote_host(req.remote_host)
-        req.ssh_port = _validate_ssh_port(req.ssh_port)
+        validate_remote_host(req.remote_host)
+        req.ssh_port = validate_ssh_port(req.ssh_port)
         req.gpus = _validate_gpus(req.gpus)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
@@ -1637,12 +1640,11 @@ def setup_cookbook_routes() -> APIRouter:
     async def server_setup(request: Request, req: SetupRequest):
         """Install required dependencies on a remote server via SSH."""
         require_admin(request)
-        host = _validate_remote_host(req.host)
+        host = validate_remote_host(req.host)
         if not host:
             raise HTTPException(400, "host is required")
         port = req.ssh_port
-        if port is not None and port != "" and not re.fullmatch(r"\d{1,5}", port):
-            raise HTTPException(400, "Invalid ssh_port")
+        port = validate_ssh_port(port)
         pf = f"-p {port} " if port and port != "22" else ""
 
         # Detect platform: Windows first (echo %OS% → Windows_NT), then Termux, then Linux
@@ -1886,9 +1888,8 @@ def setup_cookbook_routes() -> APIRouter:
         `busy` is True when free_mb/total_mb < 0.5.
         """
         require_admin(request)
-        host = _validate_remote_host(host)
-        if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
-            raise HTTPException(400, "Invalid ssh_port")
+        host = validate_remote_host(host)
+        ssh_port = validate_ssh_port(ssh_port)
         gpu_query = "nvidia-smi --query-gpu=index,name,memory.free,memory.total,memory.used,utilization.gpu,uuid --format=csv,noheader,nounits"
         nvidia_error = None
         try:
@@ -2045,9 +2046,8 @@ def setup_cookbook_routes() -> APIRouter:
         sig = (req.signal or "TERM").upper()
         if sig not in ("TERM", "KILL", "INT"):
             raise HTTPException(400, "signal must be TERM, KILL, or INT")
-        host = _validate_remote_host(req.host)
-        if req.ssh_port and not _SSH_PORT_RE.fullmatch(req.ssh_port):
-            raise HTTPException(400, "Invalid ssh_port")
+        host = validate_remote_host(req.host)
+        req.ssh_port = validate_ssh_port(req.ssh_port)
         kill_cmd = f"kill -{sig} {req.pid}"
         try:
             if host:
@@ -2381,14 +2381,19 @@ def setup_cookbook_routes() -> APIRouter:
             host = (srv.get("host") or "").strip()
             if not host:
                 continue  # local-only entry; the /proc scan handles it
-            if not _REMOTE_HOST_RE.match(host):
+            try:
+                host = validate_remote_host(host)
+            except HTTPException:
                 continue
             sport = str(srv.get("port") or "").strip()
             ssh_base = ["ssh", "-o", "ConnectTimeout=4", "-o", "StrictHostKeyChecking=no"]
             if sport and sport != "22":
-                if not _SSH_PORT_RE.match(sport):
+                try:
+                    sport = validate_ssh_port(sport)
+                except HTTPException:
                     continue
-                ssh_base.extend(["-p", sport])
+                if sport != "22":
+                    ssh_base.extend(["-p", sport])
 
             try:
                 ls = subprocess.run(
@@ -2742,12 +2747,18 @@ def setup_cookbook_routes() -> APIRouter:
             if not _SESSION_ID_RE.match(session_id):
                 logger.warning(f"Skipping task with unsafe session_id: {session_id!r}")
                 continue
-            if remote and not _REMOTE_HOST_RE.match(remote):
-                logger.warning(f"Skipping task with unsafe remoteHost: {remote!r}")
-                continue
-            if _tport and not _SSH_PORT_RE.match(str(_tport)):
-                logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
-                continue
+            if remote:
+                try:
+                    remote = validate_remote_host(remote)
+                except HTTPException:
+                    logger.warning(f"Skipping task with unsafe remoteHost: {remote!r}")
+                    continue
+            if _tport:
+                try:
+                    _tport = validate_ssh_port(str(_tport))
+                except HTTPException:
+                    logger.warning(f"Skipping task with unsafe sshPort: {_tport!r}")
+                    continue
             if task_platform == "windows" and remote:
                 # Windows: check PID file + Get-Process, read log tail
                 sd = "$env:TEMP\\odysseus-sessions"
@@ -2860,6 +2871,7 @@ def setup_cookbook_routes() -> APIRouter:
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
             # when the PID is gone instead of blindly reporting "stopped".
             download_zero_files = False
+            exit_code = None
             status = "unknown"
             download_has_ok = task_type == "download" and "DOWNLOAD_OK" in full_snapshot
             download_has_failed = task_type == "download" and "DOWNLOAD_FAILED" in full_snapshot
@@ -2933,7 +2945,7 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
-            output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
+            output_tail = error_aware_output_tail(full_snapshot, status)
 
             results.append({
                 "session_id": session_id,
@@ -2944,6 +2956,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "phase": serve_phase,
                 "diagnosis": diagnosis,
                 "output_tail": output_tail,
+                "exit_code": exit_code,
                 "cmd": _payload.get("_cmd") or "",
                 "tps": phase_info.get("tps"),
                 "reqs": phase_info.get("reqs"),

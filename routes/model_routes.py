@@ -123,6 +123,21 @@ def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
     return cleared_users
 
 
+def _default_endpoint_needs_assignment(current_default_id: str, enabled_endpoint_ids) -> bool:
+    """Whether the global default chat endpoint should be (re)assigned.
+
+    True when nothing is configured yet, or the configured default no longer
+    resolves to an enabled endpoint (e.g. the user disabled it). Without the
+    second case, adding a new endpoint after disabling the previous default
+    leaves `default_endpoint_id` pointing at the disabled endpoint, so features
+    that read the raw setting (Memory → Tidy) fail with "No default model
+    configured" even though an enabled endpoint exists. See #3586.
+    """
+    if not current_default_id:
+        return True
+    return current_default_id not in enabled_endpoint_ids
+
+
 # Loopback hosts a user might type for a local model server (LM Studio,
 # llama.cpp, vLLM, …). Inside Docker these point at the *container*, not the
 # host the server actually runs on.
@@ -283,6 +298,7 @@ _HOST_TO_CURATED = (
     ("fireworks.ai", "fireworks"),
     ("googleapis.com", "google"),
     ("x.ai", "xai"),
+    ("nvidia.com", "nvidia"),
     ("openrouter.ai", "openrouter"),
     ("ollama.com", "ollama"),
 )
@@ -477,10 +493,17 @@ _NON_CHAT_PREFIXES = (
     "dall-e", "tts-", "whisper", "text-embedding", "embedding",
     "davinci", "babbage", "moderation", "omni-moderation",
     "sora", "gpt-image", "chatgpt-image",
+    # embedding / retrieval / non-chat models (common across providers)
+    "snowflake/arctic-embed", "nvidia/nv-embed", "embed",
 )
 _NON_CHAT_CONTAINS = (
     "-realtime", "-transcribe", "-tts", "-codex",
-    "codex-",
+    "codex-", "content-safety", "-safety", "-reward", "nvclip",
+    "kosmos", "fuyu", "deplot", "vila", "neva",
+    "gliner", "riva", "-parse", "-embedqa", "-nemoretriever",
+    "topic-control", "calibration",
+    "ai-synthetic-video", "cosmos-reason2",
+    "bge", "llama-guard",
 )
 _NON_CHAT_EXACT_PREFIXES = (
     "gpt-audio",  # gpt-audio, gpt-audio-mini etc. (not gpt-4o-audio-preview which is chat)
@@ -731,7 +754,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
                 for _e in _PROVIDER_CURATED.get(_ck, []):
                     if _e not in set(models) and not any(m.startswith(_e) for m in models):
                         models.append(_e)
-            return models
+            return [m for m in models if _is_chat_model(m)]
     except httpx.HTTPStatusError as e:
         if api_key:
             status = e.response.status_code if e.response is not None else "unknown"
@@ -755,7 +778,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
             data = r.json()
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
             if models:
-                return models
+                return [m for m in models if _is_chat_model(m)]
     except Exception as e:
         logger.debug(f"Ollama /api/tags probe failed for {base}: {e}")
     # Fall back to curated list if the provider has a URL-based match (e.g. z.ai has no /models endpoint)
@@ -1719,12 +1742,19 @@ def setup_model_routes(model_discovery):
             )
             db.add(ep)
             db.commit()
-            # Auto-set as default chat endpoint if none configured yet. Seed
-            # the first CHAT model (not raw model_ids[0]) so we don't pin the
-            # global default to an embedding/tts/etc. entry a provider happens
-            # to list first.
+            # Auto-set as default chat endpoint when none is usable yet — either
+            # nothing is configured, or the configured default points at an
+            # endpoint that is now missing/disabled (#3586). Seed the first CHAT
+            # model (not raw model_ids[0]) so we don't pin the global default to
+            # an embedding/tts/etc. entry a provider happens to list first.
             settings = _load_settings()
-            if not settings.get("default_endpoint_id"):
+            enabled_ids = {
+                e.id
+                for e in db.query(ModelEndpoint).filter(
+                    ModelEndpoint.is_enabled == True  # noqa: E712
+                ).all()
+            }
+            if _default_endpoint_needs_assignment(settings.get("default_endpoint_id") or "", enabled_ids):
                 from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
                 settings["default_model"] = _first_chat_model(model_ids) or ""

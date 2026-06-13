@@ -444,6 +444,8 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    if _host_match(url, "nvidia.com"):
+        return "nvidia"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url):
         return "chatgpt-subscription"
@@ -451,6 +453,53 @@ def _detect_provider(url: str) -> str:
     if is_copilot_base(url):
         return "copilot"
     return "openai"
+
+
+def _is_self_hosted_openai_compatible(url: str) -> bool:
+    """True for custom/local OpenAI-compatible servers (llama.cpp, LM Studio,
+    vLLM, text-generation-webui, etc.) as opposed to cloud APIs.
+
+    Used to gate llama.cpp-server-specific payload extras (``session_id``,
+    ``cache_prompt``) used for KV-cache slot affinity (issue #2927). Strict
+    cloud providers reject unrecognized top-level fields (api.openai.com
+    returns 400, Mistral returns 422 "extra_forbidden", issue #3793), and any
+    unknown OpenAI-compatible host used to be treated as self-hosted, so those
+    fields leaked to every strict provider added as a custom endpoint.
+
+    A server only counts as self-hosted when it also resolves as local:
+    loopback/private/tailscale host, or the endpoint explicitly configured
+    with kind "local". A self-hosted server exposed via a public hostname
+    loses the affinity hint unless its endpoint kind is set to "local" -
+    a lost perf hint, versus a hard 4xx on every request the other way.
+    """
+    if _detect_provider(url) != "openai" or _host_match(url, "openai.com"):
+        return False
+    from src.model_context import is_local_endpoint
+    return is_local_endpoint(url)
+
+
+def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
+    """Add llama.cpp-server slot-affinity hints to an outgoing payload, in place.
+
+    As diagnosed in issue #2927, llama.cpp assigns requests to processing
+    slots via LRU when no stable identifier is present ("session_id=<empty>
+    server-selected (LCP/LRU)"), which means consecutive turns of the same
+    chat can land on different slots and lose their cached prefix entirely.
+    Sending a stable ``session_id`` (derived from the Odysseus session) lets
+    the server keep routing the same conversation to the same slot, and
+    ``cache_prompt: true`` asks it to retain/reuse the prefix it already has.
+
+    Both fields are llama.cpp / LM Studio extensions to the OpenAI schema; we
+    only set them for self-hosted OpenAI-compatible endpoints (never
+    api.openai.com or other cloud providers, which reject unrecognized
+    top-level request fields).
+    """
+    if not session_id:
+        return
+    if not _is_self_hosted_openai_compatible(url):
+        return
+    payload.setdefault("session_id", str(session_id))
+    payload.setdefault("cache_prompt", True)
 
 
 def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
@@ -489,6 +538,7 @@ def _provider_label(url: str) -> str:
     if is_copilot_base(url): return "GitHub Copilot"
     if _host_match(url, "mistral.ai"): return "Mistral"
     if _host_match(url, "deepseek.com"): return "DeepSeek"
+    if _host_match(url, "nvidia.com"): return "NVIDIA"
     if _host_match(url, "googleapis.com"): return "Google"
     if _host_match(url, "together.xyz", "together.ai"): return "Together"
     if _host_match(url, "fireworks.ai"): return "Fireworks"
@@ -560,8 +610,9 @@ def _build_chatgpt_responses_payload(
     }
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
-    if max_tokens and max_tokens > 0:
-        payload["max_output_tokens"] = max_tokens
+    # ChatGPT Subscription Codex API does not support max_output_tokens —
+    # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
+    # Do not include it in the payload.
     return payload
 
 
@@ -639,6 +690,27 @@ def _restricts_temperature(model: str) -> bool:
         return False
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
+
+# Anthropic removed the sampling parameters (temperature, top_p, top_k) starting
+# with Claude Opus 4.7. On Opus 4.7 and later, sending `temperature` at all —
+# even 0.0 — returns HTTP 400. Earlier Claude models (Opus 4.6 and below, every
+# Sonnet/Haiku) still accept temperature in [0.0, 1.0], so the omission must be
+# version-gated rather than applied to all `claude-*` models.
+def _anthropic_rejects_temperature(model: str) -> bool:
+    """Check if a native-Anthropic model rejects the temperature field (Opus 4.7+)."""
+    if not isinstance(model, str) or not model:
+        return False
+    # `(?<![a-z])` anchors "opus" to a word boundary so a substring match like
+    # `oct-opus`/`octopus-4-8` can't be read as Opus (it would otherwise strip
+    # temperature). Cap the minor at 1-2 digits and forbid a trailing digit so a
+    # dated id like `claude-opus-4-20250514` (Opus 4.0) parses as major-only (no
+    # minor match, kept) instead of reading the date `20250514` as a giant minor
+    # that would falsely test >= 4.7. Dated 4.7+ snapshots (`claude-opus-4-7-
+    # 20260201`) keep their explicit minor and are still matched.
+    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", model.lower())
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2))) >= (4, 7)
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
@@ -743,8 +815,11 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
         "model": model,
         "messages": chat_messages,
         "max_tokens": max_tokens if max_tokens and max_tokens > 0 else 4096,
-        "temperature": temperature,
     }
+    # Opus 4.7+ removed the sampling parameters — sending `temperature` (even 0.0)
+    # returns HTTP 400. Omit it for those models; older Claude models still take it.
+    if not _anthropic_rejects_temperature(model):
+        payload["temperature"] = temperature
     if system_parts:
         system_text = "\n\n".join(system_parts)
         # Send `system` as a structured text block so we can attach a prompt-cache
@@ -828,7 +903,7 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     (content=None, since Gemini/Ollama reject tool_calls alongside ""). Dropping
     it leaves the tool result dangling and breaks the next round.
     """
-    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call"}
+    allowed = {"role", "content", "name", "tool_call_id", "tool_calls", "function_call", "reasoning_content"}
     cleaned = []
     for msg in messages or []:
         if not isinstance(msg, dict):
@@ -1265,7 +1340,8 @@ async def llm_call_async(
     headers: Optional[Dict] = None,
     timeout: int = LLMConfig.STREAM_TIMEOUT,
     max_retries: int = LLMConfig.MAX_RETRIES,
-    prompt_type: Optional[str] = None
+    prompt_type: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -1365,6 +1441,7 @@ async def llm_call_async(
         # Suppress thinking for qwen3/gemma4 on Ollama /v1 — same as stream_llm.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
+        _apply_local_cache_affinity(payload, url, session_id)
 
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
@@ -1422,7 +1499,7 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None):
+                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1487,6 +1564,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         # <think> blocks. Ollama /v1 accepts "think": false as a top-level param.
         if _is_ollama_openai_compat_url(url) and _supports_thinking(model):
             payload["think"] = False
+        _apply_local_cache_affinity(payload, url, session_id)
         h = _provider_headers(provider, headers)
         if provider == "copilot":
             from src.copilot import apply_request_headers

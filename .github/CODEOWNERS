@@ -1,0 +1,8 @@
+# Code owners.
+#
+# Every file is owned by the maintainer, so that when branch protection has
+# "Require review from Code Owners" turned on, no pull request can be merged
+# without the maintainer's review. This is the human gate that backs up the
+# automated security checks. See docs/security-ci.md for how to turn it on.
+
+*       @pewdiepie-archdaemon
