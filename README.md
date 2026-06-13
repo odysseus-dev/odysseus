@@ -298,6 +298,57 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
+### Making a clickable app (Windows)
+
+The launcher now auto-opens your browser, but to make Odysseus feel like
+a native app you can search for and launch from anywhere:
+
+**Option A – Start Menu shortcut (easiest)**
+
+Create a `.bat` wrapper in the project folder (`odysseus.bat`):
+
+```bat
+@echo off
+powershell -ExecutionPolicy Bypass -File "%~dp0launch-windows.ps1"
+```
+
+Then run this **once** in PowerShell to pin it to the Start Menu:
+
+```powershell
+$ws = New-Object -ComObject WScript.Shell
+$s = $ws.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Odysseus.lnk")
+$s.TargetPath = "C:\Full\Path\To\odysseus.bat"
+$s.WorkingDirectory = "C:\Full\Path\To\odysseus"
+$s.Save()
+```
+
+Now press Win, type `Odysseus`, and press Enter to launch.
+
+**Option B – Desktop shortcut**
+
+Right-click `launch-windows.ps1` → **Create shortcut**, then move or pin it
+wherever you like. Set the shortcut's **Target** to:
+
+```
+powershell -ExecutionPolicy Bypass -File "C:\Full\Path\To\launch-windows.ps1"
+```
+
+**Option C – Single-file .exe via PyInstaller**
+
+Bundle the whole app into one `.exe` (larger, slower to start, but truly
+portable):
+
+```powershell
+pip install pyinstaller
+pyinstaller --onefile --name Odysseus --add-data "static;static" --hidden-import uvicorn --hidden-import fastapi app.py
+```
+
+The output lives in `dist\Odysseus.exe`. Run it from anywhere — a console
+window will open, the server starts, and your browser launches automatically.
+
+> **Note:** Updating the code requires re-running PyInstaller. For day-to-day
+> use, Option A or B is recommended.
+
 ## Troubleshooting & Advanced Setup
 
 ### `chromadb-client` conflicts with embedded ChromaDB

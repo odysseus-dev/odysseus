@@ -141,8 +141,52 @@ if (-not (Find-GitBash)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
-Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
-Write-Host "Press Ctrl+C to stop."
+# 6. Start the server and open the browser
+$url = "http://${BindHost}:${Port}"
+Write-Step ("Starting Odysseus at {0}" -f $url)
+
+# Start uvicorn as a background job so we can open the browser afterwards
+$serverJob = Start-Job -Name OdysseusServer -ScriptBlock {
+    param($PyExe, $HostAddr, $PortNum)
+    & $PyExe -m uvicorn app:app --host $HostAddr --port $PortNum
+} -ArgumentList $venvPy, $BindHost, $Port
+
+# Poll until the server responds (up to 15 seconds)
+Write-Host "Waiting for server to be ready..." -NoNewline
+$serverReady = $false
+foreach ($i in 1..15) {
+    Start-Sleep -Seconds 1
+    try {
+        $request = [System.Net.WebRequest]::Create($url)
+        $request.Timeout = 2000
+        $response = $request.GetResponse()
+        $response.Close()
+        $serverReady = $true
+        break
+    } catch {
+        Write-Host "." -NoNewline
+    }
+}
+
 Write-Host ""
-& $venvPy -m uvicorn app:app --host $BindHost --port $Port
+if ($serverReady) {
+    Write-Host "Server is ready."
+} else {
+    Write-Host "Server may not be ready yet — opening browser anyway." -ForegroundColor Yellow
+}
+Start-Process $url
+
+Write-Host ""
+Write-Host "Odysseus is running. Close this window or press Ctrl+C to stop."
+Write-Host ""
+
+# Keep the script alive while the server runs
+while ($serverJob.State -eq 'Running') {
+    Start-Sleep -Milliseconds 500
+}
+
+# Show error output if the job failed
+if ($serverJob.State -eq 'Failed') {
+    Write-Host "Server exited with an error:" -ForegroundColor Red
+    Receive-Job $serverJob -ErrorAction Continue
+}
