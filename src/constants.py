@@ -28,59 +28,11 @@ INTEGRATIONS_FILE = os.path.join(DATA_DIR, "integrations.json")
 CONTACTS_FILE = os.path.join(DATA_DIR, "contacts.json")
 APP_KEY_FILE = os.path.join(DATA_DIR, ".app_key")
 EMBEDDING_ENDPOINT_FILE = os.path.join(DATA_DIR, "embedding_endpoint.json")
-COOKBOOK_STATE_FILE = os.path.join(DATA_DIR, "cookbook_state.json")
-BG_JOBS_FILE = os.path.join(DATA_DIR, "bg_jobs.json")
-VAULT_FILE = os.path.join(DATA_DIR, "vault.json")
-TIDY_CALENDAR_STATE_FILE = os.path.join(DATA_DIR, "tidy_calendar_state.json")
-SKILLS_FILE = os.path.join(DATA_DIR, "skills.json")
-APP_DB = os.path.join(DATA_DIR, "app.db")
-SCHEDULED_EMAILS_DB = os.path.join(DATA_DIR, "scheduled_emails.db")
-EMAIL_CACHE_DB = os.path.join(DATA_DIR, "email_cache.db")
 
-# Data subdirectories
-PERSONAL_UPLOADS_DIR = os.path.join(DATA_DIR, "personal_uploads")
-EMOJI_CACHE_DIR = os.path.join(DATA_DIR, "emoji_cache")
-RAG_DIR = os.path.join(DATA_DIR, "rag")
-CHROMA_DIR = os.path.join(DATA_DIR, "chroma")
-BG_JOBS_DIR = os.path.join(DATA_DIR, "bg_jobs")
-DEEP_RESEARCH_DIR = os.path.join(DATA_DIR, "deep_research")
-MCP_OAUTH_DIR = os.path.join(DATA_DIR, "mcp_oauth")
-GENERATED_IMAGES_DIR = os.path.join(DATA_DIR, "generated_images")
-TTS_CACHE_DIR = os.path.join(DATA_DIR, "tts_cache")
-EMAIL_URGENCY_CACHE_DIR = os.path.join(DATA_DIR, "email_urgency_cache")
-SKILLS_DIR = os.path.join(DATA_DIR, "skills")
-GALLERY_DIR = os.path.join(DATA_DIR, "gallery")
-GALLERY_UPLOADS_DIR = os.path.join(DATA_DIR, "gallery_uploads")
-MEMORY_VECTORS_DIR = os.path.join(DATA_DIR, "memory_vectors")
+# === NEW: Personas (Sub-Agents) ===
+PERSONAS_DIR = os.path.join(DATA_DIR, "personas")
+PERSONAS_FILE = os.path.join(PERSONAS_DIR, "personas.json")  # legacy/backup
 
-# Paths with an intentional dedicated env override, defaulting under DATA_DIR.
-MAIL_ATTACHMENTS_DIR = os.getenv("ODYSSEUS_MAIL_ATTACHMENTS_DIR", os.path.join(DATA_DIR, "mail-attachments"))
-FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH", os.path.join(DATA_DIR, "fastembed_cache"))
-
-# Agent tool output limits (single source of truth — imported by tool_execution.py,
-# tool_implementations.py, agent_tools.py, and any other module that needs them)
-MAX_OUTPUT_CHARS = 10_000       # cap for bash/python/web_search/web_fetch output
-MAX_READ_CHARS = 20_000         # cap for read_file / document preview
-MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
-
-# API Configuration
-MAX_CONTEXT_MESSAGES = 90
-REQUEST_TIMEOUT = 20
-OPENAI_COMPAT_PATH = "/v1/chat/completions"
-
-# Environment variables with defaults
-DEFAULT_HOST = os.getenv("LLM_HOST", "localhost")
-LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip()]
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
-
-
-# Cleanup configuration
-CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
-CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
-
-# Default parameters
-DEFAULT_TEMPERATURE = 1.0
 DEFAULT_MAX_TOKENS = 0
 
 
