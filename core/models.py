@@ -74,6 +74,9 @@ class Session:
     owner: Optional[str] = None
     is_important: bool = False
     message_count: int = 0
+    # Free-form metadata; subagent child sessions carry
+    # {"parent_session_id", "human_owner", "kind": "subagent"}.
+    meta: Optional[Dict] = None
 
     def __post_init__(self):
         if self.headers is None:

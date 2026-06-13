@@ -636,6 +636,43 @@ class SessionManager:
             task.session_id = session_id
         return session
 
+    def create_subagent_session(self, session_id: str, name: str,
+                                endpoint_url: str, model: str,
+                                agent_owner: str, human_owner: str,
+                                parent_session_id: str) -> Session:
+        """Materialize a persisted CHILD session for a subagent run.
+
+        Multiagent spec (2026-06-12, "Session handling"): owner is the
+        derived agent id (``agent:{human}/{name}``), the parent link and the
+        originating human are recorded in ``meta`` so the run stays
+        traceable/auditable, and ``kind="subagent"`` lets the sessions panel
+        and cleanup distinguish it. Existing owner gating applies unchanged
+        (humans don't own the child; they reach it via the parent link).
+        """
+        if not agent_owner.startswith("agent:"):
+            raise ValueError(
+                f"subagent session owner must be a derived agent id, "
+                f"got {agent_owner!r}")
+        meta = {"parent_session_id": parent_session_id,
+                "human_owner": human_owner,
+                "kind": "subagent"}
+        session = self.ensure_task_session(
+            session_id, name, endpoint_url, model, owner=agent_owner)
+        session.meta = meta
+        db = SessionLocal()
+        try:
+            row = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if row is not None:
+                row.meta = meta
+                db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error stamping subagent session meta: {e}")
+            raise
+        finally:
+            db.close()
+        return session
+
     # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
