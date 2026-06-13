@@ -621,9 +621,15 @@ function renderSkillsList() {
   const showBuiltin = false;
 
   if (!sorted.length && !showBuiltin) {
+    const selectBtn = document.getElementById('skills-select-btn');
+    if (selectBtn) selectBtn.disabled = true;
+    if (_selectMode) _exitSelectMode();
     container.innerHTML = `<div style="text-align:center;opacity:0.4;padding:24px 0;font-size:11px;">${loaded ? 'No skills yet, use agent for it to auto extract them.' : 'Loading…'}</div>`;
     return;
   }
+
+  const selectBtn = document.getElementById('skills-select-btn');
+  if (selectBtn) selectBtn.disabled = false;
 
   // Library-style cards: a compact bar that expands in-place to show the
   // SKILL.md, with a footer (Delete left; Edit / Run / Approve right).
@@ -884,10 +890,10 @@ function renderSkillsList() {
     });
   }
 
-  // Background-load the visible skills' SKILL.md so expanding any of them is
-  // instant (no first-time async fetch → no jump). Deferred so it never
-  // competes with the render/cascade paint.
-  setTimeout(_preloadVisibleMarkdown, 0);
+  // Do not eager-load every visible SKILL.md. On large skill libraries this
+  // creates dozens of simultaneous /api/skills/<name>/markdown requests during
+  // app startup and can peg uvicorn. Markdown is fetched lazily when a card is
+  // expanded.
 }
 
 // ---- Card expand / edit / actions ----
@@ -1067,9 +1073,8 @@ async function _deleteSkill(name, card = null) {
       card.classList.add('doclib-card-deleting');
       card.addEventListener('transitionend', () => card.remove(), { once: true });
       setTimeout(() => { if (card.parentElement) card.remove(); }, 400);
-    } else {
-      await loadSkills();
     }
+    await loadSkills();
     uiModule.showToast('Skill deleted');
   } catch (e) { uiModule.showError('Delete failed: ' + e.message); }
 }

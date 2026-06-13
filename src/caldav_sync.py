@@ -216,18 +216,57 @@ def _open_url_as_calendar(client, url: str):
     return client.calendar(url=target)
 
 
+def _build_dav_client(url: str, username: str, password: str):
+    """Construct a CalDAV client with automatic redirects disabled.
+
+    ``validate_caldav_url`` resolves and vets the *initial* host, but caldav's
+    underlying HTTP session follows 3xx redirects by default. So a URL that
+    passes validation can still be redirected — at request time — to
+    loopback / link-local / private space, re-opening the SSRF the host check
+    closes. Pin the session to zero redirects: any 3xx then raises instead of
+    silently following an attacker-chosen ``Location``. This mirrors the
+    test-connection path in ``routes/calendar_routes.py``, which already sets
+    ``follow_redirects=False``.
+
+    DAVClient exposes no per-request redirect flag, so we set it on the session
+    after construction (the session is created in ``__init__``).
+    """
+    import caldav
+
+    client = caldav.DAVClient(url=url, username=username, password=password)
+    # Unconditional: a redirect-disable that only sometimes applies is not a
+    # control. The session exists right after __init__ on every real client;
+    # test_build_dav_client_disables_redirects asserts it against installed
+    # caldav in CI.
+    client.session.max_redirects = 0
+    return client
+
+
+def _should_prune_window(seen_uids: set, parse_failed: bool) -> bool:
+    """Whether the post-sync prune of vanished CalDAV events is safe to run.
+
+    The prune deletes local ``origin=="caldav"`` rows in the window whose UID the
+    server did not just return. Any parse failure (total or partial) makes
+    ``seen_uids`` an incomplete view of the server, so pruning against it can
+    delete events that still exist upstream but could not be read: a total
+    failure wipes the whole window, a partial failure deletes just the
+    unreadable ones. Only prune on a clean read. An empty ``seen_uids`` after a
+    clean read is a genuinely empty window, which is safe to prune.
+    """
+    return not parse_failed
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str, account_id: str = "") -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
     # Lazy imports so a missing `caldav` dep doesn't break app startup —
     # the integrations form still works, sync just no-ops with an error.
-    import caldav
     from caldav.lib.error import AuthorizationError, NotFoundError
     from core.database import CalendarCal, CalendarEvent, SessionLocal
 
     result = {"calendars": 0, "events": 0, "deleted": 0, "errors": []}
 
-    client = caldav.DAVClient(url=url, username=username, password=password)
+    client = _build_dav_client(url, username, password)
 
     # Discovery: try principal → calendars first; if the server doesn't
     # support discovery (or the URL points directly at a calendar), fall
@@ -303,6 +342,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 # duplicate UIDs within the same batch are updated, not re-inserted
                 # (which would violate the UNIQUE constraint on commit).
                 pending: dict = {}
+                parse_failed = False
                 try:
                     objs = remote_cal.date_search(start=start, end=end, expand=False)
                 except Exception as e:
@@ -314,6 +354,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                         ical = iCal.from_ical(obj.data)
                     except Exception as e:
                         result["errors"].append(f"{display_name}: parse failed ({e})")
+                        parse_failed = True
                         continue
 
                     for comp in ical.walk():
@@ -390,17 +431,23 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 # are prunable; locally-created events (agent / email triage / a
                 # UI event whose write-back failed) carry origin NULL and must
                 # never be deleted just because the server didn't return them.
-                stale = db.query(CalendarEvent).filter(
-                    CalendarEvent.calendar_id == local_cal.id,
-                    CalendarEvent.origin == "caldav",
-                    CalendarEvent.dtstart >= start,
-                    CalendarEvent.dtstart <= end,
-                    ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
-                ).all()
-                for ev in stale:
-                    db.delete(ev)
-                result["deleted"] += len(stale)
-                db.commit()
+                # Skip the prune on any parse failure: seen_uids is then an
+                # incomplete view of the server, so pruning against it would
+                # delete events that still exist upstream but could not be read
+                # (the empty-seen_uids case wipes the whole window; a partial
+                # failure deletes just the unreadable rows).
+                if _should_prune_window(seen_uids, parse_failed):
+                    stale = db.query(CalendarEvent).filter(
+                        CalendarEvent.calendar_id == local_cal.id,
+                        CalendarEvent.origin == "caldav",
+                        CalendarEvent.dtstart >= start,
+                        CalendarEvent.dtstart <= end,
+                        ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
+                    ).all()
+                    for ev in stale:
+                        db.delete(ev)
+                    result["deleted"] += len(stale)
+                    db.commit()
             except Exception as e:
                 logger.exception("CalDAV sync failed for one calendar")
                 result["errors"].append(str(e)[:200])

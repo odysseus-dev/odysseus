@@ -36,6 +36,17 @@ function linkHtml(text, url) {
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
+function _isModelEndpointUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || ''), window.location.origin);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return path === '/v1';
+  } catch (_) {
+    return false;
+  }
+}
+
 /**
  * Sanitize the raw-HTML fragments that mdToHtml deliberately preserves from
  * the source text — <details> blocks (collapsible agent output) and <a> tags
@@ -327,6 +338,17 @@ function createThinkingSection(thinkingContent, index = 0, thinkingTime = null) 
   `;
 }
 
+function createTaskCompletedMarker() {
+  return `
+    <div class="task-completed-marker" role="status" aria-label="Task completed">
+      <span class="task-completed-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </span>
+      <span>Task completed</span>
+    </div>
+  `;
+}
+
 /**
  * Process text and render with thinking sections
  */
@@ -422,6 +444,9 @@ export function processWithThinking(text) {
   const { thinkingBlocks, content, thinkingTime } = extractThinkingBlocks(text);
 
   let html = '';
+  let visibleContent = content || '';
+  const doneOnly = /^\s*\[DONE\]\s*$/i.test(visibleContent);
+  const hadTrailingDone = !doneOnly && /(?:^|\n)\s*\[DONE\]\s*$/i.test(visibleContent);
 
   // Add thinking sections (collapsed by default)
   thinkingBlocks.forEach((block, index) => {
@@ -429,8 +454,12 @@ export function processWithThinking(text) {
   });
 
   // Add the actual content
-  if (content) {
-    html += mdToHtml(content);
+  if (doneOnly) {
+    html += createTaskCompletedMarker();
+  } else {
+    if (hadTrailingDone) visibleContent = visibleContent.replace(/\n?\s*\[DONE\]\s*$/i, '').trimEnd();
+    if (visibleContent) html += mdToHtml(visibleContent);
+    if (hadTrailingDone) html += createTaskCompletedMarker();
   }
 
   return _useSvgEmoji() ? svgifyEmoji(html) : html;
@@ -875,6 +904,124 @@ document.addEventListener('click', function(e) {
       for (const m of mutations) {
         for (const node of m.addedNodes) {
           if (node.nodeType === 1) _apply(node);
+        }
+      }
+    }).observe(root, { childList: true, subtree: true });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start, { once: true });
+  } else {
+    start();
+  }
+})();
+
+function _endpointNameFromUrl(url) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.host || parsed.hostname || 'Model endpoint';
+  } catch (_) {
+    return 'Model endpoint';
+  }
+}
+
+function _appendEndpointAddButtons(root) {
+  if (!root || !root.querySelectorAll) return;
+  const anchors = root.matches?.('a[href]')
+    ? [root]
+    : [...root.querySelectorAll('a[href]')];
+  for (const anchor of anchors) {
+    if (anchor.dataset.endpointAddChecked === '1') continue;
+    anchor.dataset.endpointAddChecked = '1';
+    const href = anchor.getAttribute('href') || '';
+    if (!_isModelEndpointUrl(href)) continue;
+    if (anchor.nextElementSibling?.classList?.contains('model-endpoint-add-btn')) continue;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'model-endpoint-add-btn';
+    btn.dataset.endpointUrl = new URL(href, window.location.origin).href.replace(/\/+$/, '');
+    btn.title = 'Add this OpenAI-compatible endpoint to the model picker';
+    btn.innerHTML = '<span aria-hidden="true">+</span><span>Add to model picker</span>';
+    anchor.insertAdjacentElement('afterend', btn);
+  }
+}
+
+async function _registerEndpointFromButton(btn) {
+  const baseUrl = String(btn?.dataset?.endpointUrl || '').trim();
+  if (!baseUrl || !_isModelEndpointUrl(baseUrl)) return;
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span aria-hidden="true">...</span><span>Adding</span>';
+  try {
+    const existingRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    if (existingRes.ok) {
+      const endpoints = await existingRes.json();
+      const existing = Array.isArray(endpoints)
+        ? endpoints.find((ep) => String(ep.base_url || '').replace(/\/+$/, '') === baseUrl)
+        : null;
+      if (existing) {
+        btn.classList.add('added');
+        btn.innerHTML = '<span aria-hidden="true">✓</span><span>Already added</span>';
+        window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { baseUrl } }));
+        if (window.modelsModule?.refreshModels) window.modelsModule.refreshModels(true);
+        if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
+        uiModule.showToast?.(`Already in model picker: ${existing.name || _endpointNameFromUrl(baseUrl)}`);
+        return;
+      }
+    }
+
+    const parsed = new URL(baseUrl, window.location.origin);
+    const fd = new FormData();
+    fd.append('base_url', baseUrl);
+    fd.append('name', _endpointNameFromUrl(baseUrl));
+    fd.append('model_type', 'llm');
+    fd.append('endpoint_kind', 'auto');
+    fd.append('skip_probe', 'true');
+    if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(parsed.hostname)) {
+      fd.append('container_local', 'true');
+    }
+    const res = await fetch('/api/model-endpoints', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}${body ? ': ' + body.slice(0, 160) : ''}`);
+    }
+    btn.classList.add('added');
+    btn.innerHTML = '<span aria-hidden="true">✓</span><span>Added</span>';
+    window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { baseUrl } }));
+    if (window.modelsModule?.refreshModels) await window.modelsModule.refreshModels(true);
+    if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
+    uiModule.showToast?.(`Model endpoint added: ${_endpointNameFromUrl(baseUrl)}`);
+  } catch (err) {
+    btn.disabled = false;
+    btn.innerHTML = original;
+    uiModule.showError?.(`Add endpoint failed: ${err.message || err}`);
+  }
+}
+
+(function _watchModelEndpointLinks() {
+  if (window._modelEndpointLinkWatcherWired) return;
+  window._modelEndpointLinkWatcherWired = true;
+
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest?.('.model-endpoint-add-btn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    _registerEndpointFromButton(btn);
+  });
+
+  const start = () => {
+    const root = document.body;
+    if (!root) return;
+    _appendEndpointAddButtons(root);
+    new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (node.nodeType === 1) _appendEndpointAddButtons(node);
         }
       }
     }).observe(root, { childList: true, subtree: true });

@@ -1,0 +1,80 @@
+# Workflow security (CI that audits the CI)
+#
+# Purpose: the GitHub Actions workflows themselves are an attack surface. A
+# poorly written workflow can leak the repository token, run attacker-supplied
+# code from a pull request, or pull in a tampered third-party action. These two
+# tools check every workflow file in this repo for those mistakes:
+#
+#   - actionlint: catches workflow syntax errors and shell-script bugs inside
+#     `run:` steps before they reach main.
+#   - zizmor: a security linter for Actions. Flags template-injection holes,
+#     unpinned actions, credential persistence, and over-broad token
+#     permissions -- exactly the patterns the rest of this CI is built to avoid.
+#
+# Add this early: it then audits every workflow added after it.
+
+name: Workflow security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Default-deny token; each job grants only read access to the code.
+permissions: {}
+
+concurrency:
+  group: workflow-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Pinned version + checksum so a tampered binary cannot run here.
+      - name: Run actionlint (pinned, checksum-verified)
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          TARBALL="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o "${TARBALL}" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${TARBALL}"
+          echo "${ACTIONLINT_SHA256}  ${TARBALL}" | sha256sum -c -
+          tar -xzf "${TARBALL}" actionlint
+          ./actionlint -color
+
+  zizmor:
+    name: zizmor (Actions SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: '3.12'
+
+      # Pinned zizmor release. --offline keeps the audit hermetic (no network
+      # calls about the actions it inspects); --min-severity=low surfaces
+      # everything so nothing slips through under the gate.
+      - name: Run zizmor
+        run: |
+          set -euo pipefail
+          pip install zizmor==1.25.2
+          zizmor --offline --min-severity=low .github/workflows/

@@ -14037,6 +14037,29 @@
   ]
  },
  {
+  "name": "google/gemma-4-12B",
+  "provider": "Google",
+  "parameter_count": "12.0B",
+  "parameters_raw": 12000000000,
+  "min_ram_gb": 24.0,
+  "recommended_ram_gb": 32.0,
+  "min_vram_gb": 24.0,
+  "quantization": "BF16",
+  "context_length": 131072,
+  "use_case": "General purpose, multimodal",
+  "is_moe": false,
+  "num_experts": null,
+  "active_experts": null,
+  "active_parameters": null,
+  "architecture": "gemma4",
+  "pipeline_tag": "image-text-to-text",
+  "release_date": "2026-04-01",
+  "gguf_sources": [],
+  "capabilities": [
+   "vision"
+  ]
+ },
+ {
   "name": "google/gemma-4-31B-it",
   "provider": "Google",
   "parameter_count": "32.7B",
