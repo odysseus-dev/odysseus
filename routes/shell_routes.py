@@ -13,6 +13,7 @@ import tempfile
 from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
+from core.platform_compat import IS_APPLE_SILICON, which_tool
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
 # on Windows, so importing them unconditionally crashed app startup there
@@ -37,6 +38,7 @@ from core.platform_compat import (
     IS_WINDOWS,
     detached_popen_kwargs,
     find_bash,
+    git_bash_path,
 )
 
 
@@ -91,6 +93,7 @@ def _venv_activate_prefix(venv: str | None) -> str:
         raise ValueError("invalid venv path")
     act = venv if venv.endswith("/bin/activate") else venv.rstrip("/") + "/bin/activate"
     return f". {act} && "
+
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +172,10 @@ def _package_installed_from_probe(name: str, probe: dict) -> bool:
             and (dists.get("torch") or modules.get("torch", {}).get("real_module"))
         )
     if name == "hf_transfer":
-        return bool(dists.get("hf-transfer") or modules.get("hf_transfer", {}).get("real_module"))
+        return bool(
+            dists.get("hf-transfer")
+            or modules.get("hf_transfer", {}).get("real_module")
+        )
     return bool(dists.get(name) or modules.get(name, {}).get("real_module"))
 
 
@@ -194,8 +200,14 @@ def _package_status_note(name: str, probe: dict) -> str:
         if binaries.get("llama-server"):
             parts.append(f"native llama-server: {binaries['llama-server']}")
         if dists.get("llama-cpp-python"):
-            parts.append(f"python package: llama-cpp-python {dists['llama-cpp-python']}")
-        return "; ".join(parts) if parts else "No native llama-server or llama-cpp-python server package found."
+            parts.append(
+                f"python package: llama-cpp-python {dists['llama-cpp-python']}"
+            )
+        return (
+            "; ".join(parts)
+            if parts
+            else "No native llama-server or llama-cpp-python server package found."
+        )
     if name == "diffusers":
         if _package_installed_from_probe(name, probe):
             return f"diffusers {dists.get('diffusers', 'available')} with torch {dists.get('torch', 'available')}"
@@ -205,7 +217,9 @@ def _package_status_note(name: str, probe: dict) -> str:
     return ""
 
 
-def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageUpdateStatus:
+def _package_pip_update_status(
+    pkg: dict, probe: dict | None = None
+) -> PackageUpdateStatus:
     """Return whether the Dependencies UI should offer a generic pip update.
 
     "Installed" means Cookbook can use the dependency. It does not always mean
@@ -213,12 +227,28 @@ def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageU
     native llama-server can come from a package manager/source build, and a CLI
     may be on PATH without matching Python package metadata.
     """
+    if pkg.get("name") == "APFEL":
+        return PackageUpdateStatus(
+            False,
+            "",  # Note is empty because IT DOES allow for updates outside of PIP.
+        )
+
     if pkg.get("kind") == "system" or not pkg.get("pip"):
-        return PackageUpdateStatus(False, "Update this system dependency outside Odysseus.")
+        return PackageUpdateStatus(
+            False, "Update this system dependency outside Odysseus."
+        )
 
     name = pkg.get("name")
-    binaries = probe.get("binaries") if isinstance(probe, dict) and isinstance(probe.get("binaries"), dict) else {}
-    dists = probe.get("dists") if isinstance(probe, dict) and isinstance(probe.get("dists"), dict) else {}
+    binaries = (
+        probe.get("binaries")
+        if isinstance(probe, dict) and isinstance(probe.get("binaries"), dict)
+        else {}
+    )
+    dists = (
+        probe.get("dists")
+        if isinstance(probe, dict) and isinstance(probe.get("dists"), dict)
+        else {}
+    )
 
     if name == "llama_cpp" and binaries.get("llama-server"):
         return PackageUpdateStatus(
@@ -231,7 +261,9 @@ def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageU
             "Using a vLLM CLI on PATH without Python package metadata; update it outside Odysseus.",
         )
 
-    return PackageUpdateStatus(True, "Update uses pip in the selected Python environment.")
+    return PackageUpdateStatus(
+        True, "Update uses pip in the selected Python environment."
+    )
 
 
 def _prepend_user_install_bins_to_path() -> None:
@@ -250,7 +282,9 @@ def _prepend_user_install_bins_to_path() -> None:
         candidates = []
     candidates.append(os.path.expanduser("~/.local/bin"))
 
-    parts = os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
+    parts = (
+        os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
+    )
     changed = False
     for path in reversed([p for p in candidates if p]):
         if path not in parts:
@@ -357,9 +391,11 @@ PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 class ShellExecRequest(BaseModel):
     command: str
-    timeout: int | None = None  # optional override; 0 = no timeout (run until client disconnects)
-    use_pty: bool = False       # use pseudo-TTY (for progress bars)
-    use_tmux: bool = False      # run in tmux session (survives browser disconnect)
+    timeout: int | None = (
+        None  # optional override; 0 = no timeout (run until client disconnects)
+    )
+    use_pty: bool = False  # use pseudo-TTY (for progress bars)
+    use_tmux: bool = False  # run in tmux session (survives browser disconnect)
 
 
 async def _create_shell(command: str, **kwargs):
@@ -368,8 +404,16 @@ async def _create_shell(command: str, **kwargs):
     POSIX: /bin/sh via create_subprocess_shell (unchanged behaviour).
     Windows: prefer a real bash (Git Bash/WSL) so bash-syntax commands behave
     the same as on Linux; fall back to cmd.exe when no bash is installed.
+    Powershell commands are executed directly via cmd.exe /c to avoid quoting
+    and env variable expansion errors under Git Bash.
     """
     if IS_WINDOWS:
+        # PowerShell commands (used by the frontend for Windows log-file polling
+        # and session management) must run directly — passing them through
+        # bash -c mangles $env:VAR syntax and breaks the command.
+        cmd_trim = command.strip()
+        if cmd_trim.startswith("powershell") or cmd_trim.startswith("cmd "):
+            return await asyncio.create_subprocess_shell(command, **kwargs)
         bash = find_bash()
         if bash:
             return await asyncio.create_subprocess_exec(bash, "-c", command, **kwargs)
@@ -386,9 +430,7 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
             stderr=asyncio.subprocess.PIPE,
             cwd=str(Path.home()),
         )
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout
-        )
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         stdout = stdout_b.decode(errors="replace")[:MAX_OUTPUT]
         stderr = stderr_b.decode(errors="replace")[:MAX_OUTPUT]
         return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
@@ -399,7 +441,11 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
                 await proc.wait()
             except ProcessLookupError:
                 pass
-        return {"stdout": "", "stderr": f"Command timed out after {timeout}s", "exit_code": -1}
+        return {
+            "stdout": "",
+            "stderr": f"Command timed out after {timeout}s",
+            "exit_code": -1,
+        }
     except Exception as e:
         return {"stdout": "", "stderr": str(e), "exit_code": -1}
 
@@ -481,7 +527,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
                 if idx == -1:
                     break
                 line = buf[:idx].decode(errors="replace")
-                buf = buf[idx + sep_len:]
+                buf = buf[idx + sep_len :]
                 if line:
                     yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
 
@@ -503,7 +549,7 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
                 if idx == -1:
                     break
                 line = buf[:idx].decode(errors="replace")
-                buf = buf[idx + sep_len:]
+                buf = buf[idx + sep_len :]
                 if line:
                     yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
             if buf:
@@ -534,6 +580,7 @@ def _pty_read(fd: int) -> bytes | None:
     """Blocking read from PTY fd. Called via run_in_executor.
     Returns bytes on data, None on timeout (no data yet)."""
     import select
+
     r, _, _ = select.select([fd], [], [], 1.0)
     if r:
         try:
@@ -557,10 +604,10 @@ async def _generate_tmux(cmd: str, request: Request):
     script_path = TMUX_LOG_DIR / f"{session_id}.sh"
     script_path.write_text(
         f"#!/bin/bash\n"
-        f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
-        f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
-        f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
-        f"  if [ -n \"$ODYSSEUS_USER_PATH\" ]; then export PATH=\"$ODYSSEUS_USER_PATH:$PATH\"; fi\n"
+        f'ODYSSEUS_USER_SHELL="${{SHELL:-}}"\n'
+        f'if [ -n "$ODYSSEUS_USER_SHELL" ] && [ -x "$ODYSSEUS_USER_SHELL" ]; then\n'
+        f'  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"\n'
+        f'  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi\n'
         f"fi\n"
         f"{cmd} 2>&1 | tee '{log_path}'\n"
         f"EC=${{PIPESTATUS[0]}}\n"
@@ -570,7 +617,9 @@ async def _generate_tmux(cmd: str, request: Request):
         encoding="utf-8",
     )
     script_path.chmod(0o755)
-    logger.info("tmux wrapper script created: session=%s path=%s", session_id, script_path)
+    logger.info(
+        "tmux wrapper script created: session=%s path=%s", session_id, script_path
+    )
 
     tmux_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(script_path))}"
 
@@ -602,7 +651,9 @@ async def _generate_tmux(cmd: str, request: Request):
         # Read new lines from log
         try:
             if log_path.exists():
-                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                lines = log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
                 new_lines = lines[lines_sent:]
                 for line in new_lines:
                     if line.startswith(":::EXIT_CODE:::"):
@@ -630,7 +681,9 @@ async def _generate_tmux(cmd: str, request: Request):
             # Session ended — do one final read
             await asyncio.sleep(0.5)
             if log_path.exists():
-                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                lines = log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
                 for line in lines[lines_sent:]:
                     if line.startswith(":::EXIT_CODE:::"):
                         try:
@@ -672,8 +725,8 @@ async def _generate_win_detached(cmd: str, request: Request):
     if bash:
         script_path = TMUX_LOG_DIR / f"{session_id}.sh"
         script_path.write_text(
-            f"{cmd} > {shlex.quote(str(log_path))} 2>&1\n"
-            f"echo $? > {shlex.quote(str(exit_path))}\n",
+            f"{cmd} > {shlex.quote(git_bash_path(log_path))} 2>&1\n"
+            f"echo $? > {shlex.quote(git_bash_path(exit_path))}\n",
             encoding="utf-8",
         )
         argv = [bash, str(script_path)]
@@ -711,7 +764,9 @@ async def _generate_win_detached(cmd: str, request: Request):
             return
         try:
             if log_path.exists():
-                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                lines = log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
                 for line in lines[lines_sent:]:
                     yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
                 lines_sent = len(lines)
@@ -723,11 +778,18 @@ async def _generate_win_detached(cmd: str, request: Request):
             await asyncio.sleep(0.3)
             try:
                 if log_path.exists():
-                    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    lines = log_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
                     for line in lines[lines_sent:]:
                         yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
                     lines_sent = len(lines)
-                exit_code = int((exit_path.read_text(encoding="utf-8", errors="replace").strip() or "0"))
+                exit_code = int(
+                    (
+                        exit_path.read_text(encoding="utf-8", errors="replace").strip()
+                        or "0"
+                    )
+                )
             except Exception:
                 exit_code = 0
             break
@@ -753,7 +815,9 @@ def setup_shell_routes() -> APIRouter:
             return {"stdout": "", "stderr": "No command provided", "exit_code": 1}
 
         logger.info("User shell exec requested: length=%d", len(cmd))
-        result = await _exec_shell(cmd, timeout=EXEC_TIMEOUT)
+        result = await _exec_shell(
+            cmd, timeout=req.timeout if req.timeout is not None else EXEC_TIMEOUT
+        )
         return result
 
     @router.post("/api/shell/stream")
@@ -762,9 +826,11 @@ def setup_shell_routes() -> APIRouter:
         _require_admin(request)
         cmd = req.command.strip()
         if not cmd:
+
             async def empty():
                 yield f"data: {json.dumps({'stream': 'stderr', 'data': 'No command provided'})}\n\n"
                 yield f"data: {json.dumps({'exit_code': 1})}\n\n"
+
             return StreamingResponse(empty(), media_type="text/event-stream")
 
         timeout = req.timeout if req.timeout is not None else STREAM_TIMEOUT
@@ -781,7 +847,11 @@ def setup_shell_routes() -> APIRouter:
         if use_tmux:
             # tmux is POSIX-only; Windows uses a detached-process + logfile tail
             # that preserves the "survives disconnect" behaviour.
-            gen = _generate_win_detached(cmd, request) if IS_WINDOWS else _generate_tmux(cmd, request)
+            gen = (
+                _generate_win_detached(cmd, request)
+                if IS_WINDOWS
+                else _generate_tmux(cmd, request)
+            )
             return StreamingResponse(gen, media_type="text/event-stream")
 
         if use_pty and not IS_WINDOWS:
@@ -813,7 +883,12 @@ def setup_shell_routes() -> APIRouter:
                             chunk = await stream.read(4096)
                             if not chunk:
                                 if buf:
-                                    await q.put((name, buf.decode(errors="replace").rstrip("\r\n")))
+                                    await q.put(
+                                        (
+                                            name,
+                                            buf.decode(errors="replace").rstrip("\r\n"),
+                                        )
+                                    )
                                 break
                             buf += chunk
                             while True:
@@ -821,7 +896,7 @@ def setup_shell_routes() -> APIRouter:
                                 if idx == -1:
                                     break
                                 line = buf[:idx].decode(errors="replace")
-                                buf = buf[idx + sep_len:]
+                                buf = buf[idx + sep_len :]
                                 if line:
                                     await q.put((name, line))
                     finally:
@@ -880,7 +955,12 @@ def setup_shell_routes() -> APIRouter:
         return StreamingResponse(generate(), media_type="text/event-stream")
 
     @router.get("/api/cookbook/packages")
-    async def list_packages(request: Request, host: str | None = None, ssh_port: str | None = None, venv: str | None = None):
+    async def list_packages(
+        request: Request,
+        host: str | None = None,
+        ssh_port: str | None = None,
+        venv: str | None = None,
+    ):
         """Check which optional packages are installed.
 
         Local-target packages are checked in-process. Remote-target packages
@@ -890,7 +970,13 @@ def setup_shell_routes() -> APIRouter:
         """
         _require_admin(request)
         _reject_cross_site(request)
-        import importlib, importlib.metadata as importlib_metadata, shlex, json as _json, site, sys
+        import importlib
+        import importlib.metadata as importlib_metadata
+        import shlex
+        import json as _json
+        import site
+        import sys
+
         _prepend_user_install_bins_to_path()
         importlib.invalidate_caches()
         try:
@@ -905,26 +991,115 @@ def setup_shell_routes() -> APIRouter:
                 raise HTTPException(400, "Invalid ssh_port")
         packages = [
             # ── System ── OS binaries, not pip packages
-            {"name": "tmux", "pip": "", "desc": "Required for Linux/Termux Cookbook background downloads and serves", "category": "System", "target": "remote", "kind": "system", "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper."},
-            {"name": "docker", "pip": "", "desc": "Required only for Docker-backed launch commands", "category": "System", "target": "remote", "kind": "system", "install_hint": "Install Docker on the selected server and allow this user to run docker."},
+            {
+                "name": "tmux",
+                "pip": "",
+                "desc": "Required for Linux/Termux Cookbook background downloads and serves",
+                "category": "System",
+                "target": "remote",
+                "kind": "system",
+                "install_hint": "Run Cookbook server setup, or install tmux with apt/pacman/dnf/apk/zypper.",
+            },
+            {
+                "name": "docker",
+                "pip": "",
+                "desc": "Required only for Docker-backed launch commands",
+                "category": "System",
+                "target": "remote",
+                "kind": "system",
+                "install_hint": "Install Docker on the selected server and allow this user to run docker.",
+            },
             # ── LLM ── installs on GPU servers for model serving/downloading
-            {"name": "hf_transfer", "pip": "hf_transfer", "desc": "Fast model downloads from HuggingFace", "category": "LLM", "target": "remote"},
-            {"name": "llama_cpp", "pip": "llama-cpp-python[server]", "desc": "Serve GGUF models via llama.cpp", "category": "LLM", "target": "remote"},
-            {"name": "sglang", "pip": "sglang[all]", "desc": "Serve HF safetensors models via SGLang", "category": "LLM", "target": "remote"},
-            {"name": "vllm", "pip": "vllm", "desc": "High-throughput LLM serving engine", "category": "LLM", "target": "remote"},
+            {
+                "name": "hf_transfer",
+                "pip": "hf_transfer",
+                "desc": "Fast model downloads from HuggingFace",
+                "category": "LLM",
+                "target": "remote",
+            },
+            {
+                "name": "llama_cpp",
+                "pip": "llama-cpp-python[server]",
+                "desc": "Serve GGUF models via llama.cpp",
+                "category": "LLM",
+                "target": "remote",
+            },
+            {
+                "name": "sglang",
+                "pip": "sglang[all]",
+                "desc": "Serve HF safetensors models via SGLang",
+                "category": "LLM",
+                "target": "remote",
+            },
+            {
+                "name": "vllm",
+                "pip": "vllm",
+                "desc": "High-throughput LLM serving engine",
+                "category": "LLM",
+                "target": "remote",
+            },
+            {
+                "name": "APFEL",
+                "pip": "",
+                "desc": "OpenAI-compatible API for Apple Foundational Models on Apple Silicon",
+                "category": "LLM",
+                "target": "local",
+                "kind": "system",
+                "install_cmd": "brew install apfel",
+                "update_cmd": "brew upgrade apfel",
+                "install_hint": "Requires a native Apple Silicon Mac with Apple Foundational Models support. Installable via Homebrew on supported Macs.",
+            },
             # ── Image ── editor + diffusion model serving
-            {"name": "diffusers", "pip": "diffusers[torch]", "desc": "Image generation pipelines (SD, Flux) with PyTorch", "category": "Image", "target": "remote"},
-            {"name": "rembg", "pip": "rembg[gpu]", "desc": "AI background removal for image editor", "category": "Image", "target": "local"},
-            {"name": "realesrgan", "pip": "realesrgan", "desc": "AI denoise + upscale (Real-ESRGAN). Used by editor's Denoise and Upscale tools.", "category": "Image", "target": "local"},
+            {
+                "name": "diffusers",
+                "pip": "diffusers[torch]",
+                "desc": "Image generation pipelines (SD, Flux) with PyTorch",
+                "category": "Image",
+                "target": "remote",
+            },
+            {
+                "name": "rembg",
+                "pip": "rembg[gpu]",
+                "desc": "AI background removal for image editor",
+                "category": "Image",
+                "target": "local",
+            },
+            {
+                "name": "realesrgan",
+                "pip": "realesrgan",
+                "desc": "AI denoise + upscale (Real-ESRGAN). Used by editor's Denoise and Upscale tools.",
+                "category": "Image",
+                "target": "local",
+            },
             # ── Tools ──
-            {"name": "playwright", "pip": "playwright", "desc": "Browser automation for web tools", "category": "Tools", "target": "local"},
+            {
+                "name": "playwright",
+                "pip": "playwright",
+                "desc": "Browser automation for web tools",
+                "category": "Tools",
+                "target": "local",
+            },
         ]
+
+        # Most packages should not be installed through external means. Hence, set the default of the
+        # install_cmd and update_cmd to None, which indicates that the recommended way to install/update is through the Cookbook # server setup or pip. Only system packages, should have explicit install/update commands provided.
+        for pkg in packages:
+            pkg.setdefault("install_cmd", None)
+            pkg.setdefault("update_cmd", None)
         # Remote check: for remote-target packages, probe the selected server's
         # venv over SSH so a remote `pip install` actually reflects here.
         remote_status: dict = {}
         remote_details: dict = {}
-        remote_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") != "system"]
-        remote_system_names = [p["name"] for p in packages if p.get("target") == "remote" and p.get("kind") == "system"]
+        remote_names = [
+            p["name"]
+            for p in packages
+            if p.get("target") == "remote" and p.get("kind") != "system"
+        ]
+        remote_system_names = [
+            p["name"]
+            for p in packages
+            if p.get("target") == "remote" and p.get("kind") == "system"
+        ]
         if host and remote_names:
             try:
                 py = _package_probe_script(remote_names)
@@ -934,7 +1109,9 @@ def setup_shell_routes() -> APIRouter:
                 inner = f"{src}python3 -c {shlex.quote(py)}"
                 argv = _ssh_base_argv(host, ssh_port) + [inner]
                 proc = await asyncio.create_subprocess_exec(
-                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
                 out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
                 txt = out.decode("utf-8", errors="replace").strip()
@@ -958,11 +1135,15 @@ def setup_shell_routes() -> APIRouter:
                 checks = []
                 for name in remote_system_names:
                     qn = shlex.quote(name)
-                    checks.append(f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi")
+                    checks.append(
+                        f"if command -v {qn} >/dev/null 2>&1; then echo {qn}=1; else echo {qn}=0; fi"
+                    )
                 inner = " ; ".join(checks)
                 argv = _ssh_base_argv(host, ssh_port) + [inner]
                 proc = await asyncio.create_subprocess_exec(
-                    *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    *argv,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
                 out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
                 txt = out.decode("utf-8", errors="replace").strip()
@@ -987,11 +1168,25 @@ def setup_shell_routes() -> APIRouter:
                     if note:
                         pkg["status_note"] = note
             elif pkg.get("kind") == "system":
-                pkg["installed"] = shutil.which(pkg["name"]) is not None
+                if pkg["name"] == "APFEL":
+                    pkg["applicable"] = IS_APPLE_SILICON
+                    pkg["installed"] = which_tool("apfel") is not None
+                    pkg["status_note"] = (
+                        "Available on Apple Silicon (arm64) devices; exposed through a local OpenAI-compatible API."
+                        if IS_APPLE_SILICON
+                        else "Requires a native Apple Silicon Mac with Apple Foundational Models support."
+                    )
+                else:
+                    pkg["installed"] = shutil.which(pkg["name"]) is not None
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
-                pkg["status_note"] = f"native llama-server: {shutil.which('llama-server')}"
-                probe = {"binaries": {"llama-server": shutil.which("llama-server")}, "dists": {}}
+                pkg["status_note"] = (
+                    f"native llama-server: {shutil.which('llama-server')}"
+                )
+                probe = {
+                    "binaries": {"llama-server": shutil.which("llama-server")},
+                    "dists": {},
+                }
             elif pkg["name"] == "vllm":
                 _vllm_cli = shutil.which("vllm")
                 pkg["installed"] = _vllm_cli is not None
@@ -1013,6 +1208,12 @@ def setup_shell_routes() -> APIRouter:
                 except ImportError:
                     pkg["installed"] = False
                 except importlib_metadata.PackageNotFoundError:
+                    pkg["installed"] = False
+                except Exception:
+                    # Installed but crashes on import — e.g. a CUDA build of
+                    # llama-cpp-python raising FileNotFoundError when the CUDA
+                    # toolkit dir is absent. One broken optional package must not
+                    # 500 the entire packages panel; report it as not usable.
                     pkg["installed"] = False
 
             if pkg.get("installed"):
@@ -1037,15 +1238,30 @@ def setup_shell_routes() -> APIRouter:
         """Install a package via pip. Admin only — pip install is effectively code exec."""
         _require_admin(request)
         import sys as _sys
+
         body = await request.json()
         pip_name = body.get("pip")
         if not pip_name:
             return {"ok": False, "error": "No package specified"}
         # Validate against known packages to prevent arbitrary pip install
         known = {
-            "rembg[gpu]", "hf_transfer", "llama-cpp-python[server]", "sglang[all]", "diffusers", "diffusers[torch]",
-            "TTS", "bark", "faster-whisper", "playwright", "realesrgan", "gfpgan",
-            "insightface", "onnxruntime-gpu", "onnxruntime", "hdbscan", "vllm",
+            "rembg[gpu]",
+            "hf_transfer",
+            "llama-cpp-python[server]",
+            "sglang[all]",
+            "diffusers",
+            "diffusers[torch]",
+            "TTS",
+            "bark",
+            "faster-whisper",
+            "playwright",
+            "realesrgan",
+            "gfpgan",
+            "insightface",
+            "onnxruntime-gpu",
+            "onnxruntime",
+            "hdbscan",
+            "vllm",
         }
         if pip_name not in known:
             return {"ok": False, "error": f"Unknown package: {pip_name}"}
@@ -1071,6 +1287,7 @@ def setup_shell_routes() -> APIRouter:
         """
         _require_admin(request)
         from routes.cookbook_helpers import _llama_cpp_rebuild_cmd
+
         body = await request.json()
         engine = str(body.get("engine") or "llamacpp").strip()
         if engine != "llamacpp":
@@ -1079,7 +1296,11 @@ def setup_shell_routes() -> APIRouter:
         ssh_port = body.get("ssh_port")
         cmd = _llama_cpp_rebuild_cmd()
         try:
-            argv = (_ssh_base_argv(host, ssh_port) + [cmd]) if host else ["bash", "-lc", cmd]
+            argv = (
+                (_ssh_base_argv(host, ssh_port) + [cmd])
+                if host
+                else ["bash", "-lc", cmd]
+            )
         except ValueError as e:
             raise HTTPException(400, str(e))
         try:

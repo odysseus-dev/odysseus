@@ -6,25 +6,20 @@ calling do_manage_calendar with an rrule stores a single event carrying that RRU
 """
 
 import json
-import tempfile
+import sys
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
+
+from tests.helpers.import_state import clear_fake_database_modules
+from tests.helpers.sqlite_db import make_temp_sqlite
+
+clear_fake_database_modules()
 
 import core.database as cdb
 from core.database import CalendarEvent
 
-_TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(
-    f"sqlite:///{_TMPDB.name}",
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
-)
-cdb.Base.metadata.create_all(_ENGINE)
-_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
+_TS, _ENGINE, _TMPDB = make_temp_sqlite(cdb.Base.metadata)
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +27,10 @@ def _bind_temp_db(monkeypatch):
     # do_manage_calendar does `from core.database import SessionLocal` at call
     # time, so patch the module attribute to our temp DB — via monkeypatch so it
     # is RESTORED after each test and can't leak into later tests in the process.
+    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    parent = sys.modules.get("core")
+    if parent is not None:
+        monkeypatch.setattr(parent, "database", cdb, raising=False)
     monkeypatch.setattr(cdb, "SessionLocal", _TS)
     yield
 

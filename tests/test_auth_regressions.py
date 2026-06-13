@@ -81,12 +81,12 @@ def _auth_regressions_stubs(monkeypatch):
         resolve_endpoint=MagicMock(return_value=("", "", {})),
         normalize_base=MagicMock(),
         build_chat_url=MagicMock(),
+        build_models_url=MagicMock(),
         build_headers=MagicMock(),
     )
     monkeypatch.setitem(sys.modules, "core.database", db)
     monkeypatch.setitem(sys.modules, "core.auth", auth)
     monkeypatch.setitem(sys.modules, "src.endpoint_resolver", ep)
-
 
 from fastapi import HTTPException
 

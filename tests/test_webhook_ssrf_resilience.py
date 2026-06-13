@@ -1,14 +1,44 @@
+import os
 import sys
 import json
 from datetime import datetime
-
-# conftest.py stubs src.database with a fake module; webhook_manager imports
-# from it, so drop the stub here to load the real module under test.
-if "src.database" in sys.modules:
-    del sys.modules["src.database"]
+from unittest.mock import patch
 
 import pytest
-from src.webhook_manager import validate_webhook_url
+
+from tests.helpers.import_state import clear_module, preserve_import_state
+
+# conftest.py stubs src.database; drop the stub so webhook_manager imports the
+# real module. preserve_import_state restores sys.modules and parent-package
+# attributes for both src.database and core.database after the block, preventing
+# stub/engine leakage into siblings.
+#
+# Importing the real core.database runs init_db() -> create_all() against
+# DATABASE_URL (default sqlite:///./data/app.db); in a clean worktree with no
+# ./data directory that raises sqlite3.OperationalError during collection. Pin
+# DATABASE_URL to in-memory SQLite for the import: it needs no filesystem path
+# and leaves no artifact, and these tests never touch the real engine
+# (validate_webhook_url is pure; the delivery test monkeypatches SessionLocal).
+# patch.dict restores the prior DATABASE_URL after the block.
+with patch.dict(os.environ, {"DATABASE_URL": "sqlite:///:memory:"}), \
+        preserve_import_state("src.database", "core.database"):
+    clear_module("src.database")
+    _core_database = sys.modules.get("core.database")
+    _core_database_all = (
+        getattr(_core_database, "__all__", None) if _core_database is not None else None
+    )
+    if _core_database is not None and (
+        not getattr(_core_database, "__file__", None)
+        or (
+            _core_database_all is not None
+            and (
+                not isinstance(_core_database_all, (list, tuple, set))
+                or not all(isinstance(name, str) for name in _core_database_all)
+            )
+        )
+    ):
+        del sys.modules["core.database"]
+    from src.webhook_manager import validate_webhook_url
 
 
 def test_webhook_url_ssrf_mitigation():
