@@ -33,6 +33,9 @@ EMBEDDING_ENDPOINT_FILE = os.path.join(DATA_DIR, "embedding_endpoint.json")
 PERSONAS_DIR = os.path.join(DATA_DIR, "personas")
 PERSONAS_FILE = os.path.join(PERSONAS_DIR, "personas.json")  # legacy/backup
 
+# Per-persona memory (optional but powerful)
+PERSONA_MEMORY_DIR = os.path.join(DATA_DIR, "persona_memory")
+
 DEFAULT_MAX_TOKENS = 0
 
 
