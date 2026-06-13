@@ -1995,6 +1995,14 @@ async def stream_agent_loop(
             messages.insert(0, {"role": "system", "content": GUIDE_ONLY_DIRECTIVE})
     prep_timings["prompt_build"] = time.time() - _t2
 
+    # === Improvement: Append round-limit warning if we are near the end ===
+    if _round_warning:
+        if messages and messages[0].get("role") == "system":
+            messages[0]["content"] = (messages[0].get("content") or "") + _round_warning
+        else:
+            messages.insert(0, {"role": "system", "content": _round_warning})
+        logger.info(f"[agent] injected round-limit warning (round {round_num}/{max_rounds})")
+
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
@@ -2130,6 +2138,18 @@ async def stream_agent_loop(
         # detect a SUBSEQUENT block in the same round.
         _doc_scan_from = 0
 
+        # === Improvement: Warn the model when approaching round limit ===
+        _remaining_rounds = max_rounds - round_num + 1
+        _round_warning = ""
+        if max_rounds >= 10 and _remaining_rounds <= max(3, int(max_rounds * 0.2)):
+            _round_warning = f"""
+
+**IMPORTANT: You are near the end of allowed agent rounds (round {round_num} / {max_rounds}, only {_remaining_rounds} left).**
+Prioritize finishing the core task, summarize progress, or ask the user whether to continue.
+Do not start new long-running explorations in the final rounds.
+"""
+
+
         # Merge native tool schemas with MCP tool schemas, filtering out
         # Only send function schemas for API models (OpenAI, Anthropic, etc.).
         # Local models use fenced code blocks or <tool_code> — schemas add overhead.
@@ -2191,9 +2211,20 @@ async def stream_agent_loop(
             timeout=agent_stream_timeout,
             session_id=session_id,
         ):
+            # === Improvement: Turn round deadline into clear feedback for the LLM ===
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")
-                break
+                timeout_msg = (
+                    f"[ROUND TIMED OUT]\n"
+                    f"The agent round exceeded its time limit (hard deadline).\n"
+                    f"Guidance: Simplify the current step, break the task into smaller actions, "
+                    f"or ask the user for help. Do not keep trying the same slow operation."
+                )
+                # Treat this as a tool result so it gets fed back properly
+                tool_results.append(timeout_msg)
+                tool_result_texts.append(timeout_msg)
+                break  # stop this round early but still process the results
+
             # Forward error events from stream_llm to the frontend
             if chunk.startswith("event: error"):
                 yield chunk
