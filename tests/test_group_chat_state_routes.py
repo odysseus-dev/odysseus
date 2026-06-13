@@ -329,6 +329,51 @@ def test_group_participant_lifecycle_actions_are_blocked(monkeypatch):
     assert unarchive_exc.value.status_code == 403
 
 
+def test_group_parent_delete_cascades_to_children(monkeypatch):
+    _reset_db()
+    parent_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    _add_session(parent_id, name="[GRP] Athena, Mistral")
+    for session_id in child_ids:
+        _add_session(session_id, name="[GRP] participant")
+    _add_group_state(parent_id, child_ids)
+
+    sm = MagicMock()
+    sm.delete_session.return_value = True
+    router = _routes(monkeypatch, sm)
+    delete_session = _endpoint(router, "/api/session/{sid}", "DELETE")
+
+    result = delete_session(request=MagicMock(), sid=parent_id)
+
+    assert result == {"status": "deleted"}
+    assert {call.args[0] for call in sm.delete_session.call_args_list} == set(child_ids + [parent_id])
+    db = _TS()
+    try:
+        assert db.query(GroupChatState).filter(GroupChatState.parent_session_id == parent_id).first() is None
+    finally:
+        db.close()
+
+
+def test_group_parent_bulk_delete_cascades_to_children(monkeypatch):
+    _reset_db()
+    parent_id = str(uuid.uuid4())
+    child_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    _add_session(parent_id, name="[GRP] Athena, Mistral")
+    for session_id in child_ids:
+        _add_session(session_id, name="[GRP] participant")
+    _add_group_state(parent_id, child_ids)
+
+    sm = MagicMock()
+    sm.delete_session.return_value = True
+    router = _routes(monkeypatch, sm)
+    bulk_delete = _endpoint(router, "/api/sessions/bulk-delete", "POST")
+
+    result = asyncio.run(bulk_delete(request=_JsonRequest({"ids": [parent_id]})))
+
+    assert result == {"deleted": 1}
+    assert {call.args[0] for call in sm.delete_session.call_args_list} == set(child_ids + [parent_id])
+
+
 def test_group_chat_state_rejects_participants_from_other_users(monkeypatch):
     _reset_db()
     router = _routes(monkeypatch)

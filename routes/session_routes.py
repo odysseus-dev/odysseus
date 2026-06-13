@@ -375,6 +375,46 @@ def _sync_group_participant_folder(db, parent_session_id: str, folder: str | Non
     _set_group_participant_folders(db, _group_participant_ids_from_state(row.state), folder, user)
 
 
+def _delete_session_with_group_children(session_manager, session_id: str, user) -> bool:
+    participant_ids: set[str] = set()
+    db = SessionLocal()
+    try:
+        q = db.query(GroupChatState).filter(GroupChatState.parent_session_id == session_id)
+        if user is not None:
+            q = q.filter(GroupChatState.owner == user)
+        group_state = q.first()
+        if group_state:
+            participant_ids = _group_participant_ids_from_state(group_state.state)
+    finally:
+        db.close()
+
+    for participant_id in participant_ids:
+        try:
+            session_manager.delete_session(participant_id)
+        except Exception:
+            logger.exception("Failed to delete group child session %s", participant_id)
+            raise
+
+    parent_deleted = bool(session_manager.delete_session(session_id))
+    if not parent_deleted:
+        return False
+
+    db = SessionLocal()
+    try:
+        q = db.query(GroupChatState).filter(GroupChatState.parent_session_id == session_id)
+        if user is not None:
+            q = q.filter(GroupChatState.owner == user)
+        q.delete(synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to remove group state for deleted parent %s", session_id)
+    finally:
+        db.close()
+
+    return True
+
+
 _HIDDEN_SYSTEM_SESSION_NAMES = {
     "[Task] Chat Sessions Tidy",
     "[Task] Documents Tidy",
@@ -860,7 +900,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 finally:
                     db.close()
 
-                if session_manager.delete_session(sid):
+                if _delete_session_with_group_children(session_manager, sid, user):
                     deleted_count += 1
             except Exception:
                 pass
@@ -886,7 +926,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 db.close()
 
             # Delete the session and all its messages
-            if session_manager.delete_session(sid):
+            if _delete_session_with_group_children(session_manager, sid, user):
                 return {"status": "deleted"}
             else:
                 raise HTTPException(404, "Session not found")
