@@ -19,6 +19,9 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from src.constants import PERSONAL_DIR
+
 # Configure logging for the script
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +48,7 @@ def main():
     rag_manager = RAGManager()
     
     # Directory to scan
-    docs_directory = "data/personal_docs"
+    docs_directory = PERSONAL_DIR
     directory_path = Path(docs_directory)
     
     # Check if directory exists

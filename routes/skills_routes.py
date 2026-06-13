@@ -11,6 +11,8 @@ import logging
 import re
 from typing import List, Optional
 
+import httpx
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -49,6 +51,10 @@ class SkillAddRequest(BaseModel):
     problem: Optional[str] = Field(None, max_length=2000)
     solution: Optional[str] = Field(None, max_length=5000)
     steps: List[str] = Field(default_factory=list)
+
+
+class SkillImportUrlRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2000)
 
 
 class SkillUpdateRequest(BaseModel):
@@ -1014,7 +1020,7 @@ def _resolve_audit_models(owner=None):
             spec = (get_setting("teacher_model", "") or "").strip()
             if spec:
                 from src.ai_interaction import _resolve_model
-                t_url, t_model, t_headers = _resolve_model(spec)
+                t_url, t_model, t_headers = _resolve_model(spec, owner=owner)
                 if t_url and t_model:
                     teacher = (t_url, t_model, t_headers)
     except Exception as e:
@@ -1102,6 +1108,35 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         user = _owner(request)
         idx = skills_manager.index_for(owner=user)
         return {"index": idx, "count": len(idx)}
+
+    @router.get("/slash-catalog")
+    async def get_slash_catalog(request: Request):
+        """Return skills that are available as slash commands.
+
+        Mirrors the agent prompt's published-skill index so the UI never offers
+        a slash command the model would not normally be allowed to discover.
+        """
+        user = _owner(request)
+        all_skills = {s.get("name"): s for s in skills_manager.load(owner=user)}
+        entries = []
+        for s in skills_manager.index_for(owner=user):
+            name = (s.get("name") or "").strip()
+            if not name:
+                continue
+            full = all_skills.get(name) or {}
+            category = (s.get("category") or full.get("category") or "general").strip() or "general"
+            entries.append({
+                "type": "skill",
+                "token": f"/{name}",
+                "name": name,
+                "category": f"Skills / {category}",
+                "help": s.get("description") or full.get("description") or "",
+                "usage": f"/{name} <request>",
+                "uses": int(full.get("uses") or 0),
+                "last_used": full.get("last_used"),
+            })
+        entries.sort(key=lambda row: row["name"])
+        return {"skills": entries, "count": len(entries)}
 
     @router.get("/builtin")
     async def list_builtin_skills(request: Request):
@@ -1203,6 +1238,36 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             save_settings(settings)
         return {"ok": True, "name": name, "is_overridden": False}
 
+    @router.post("/import-from-url")
+    async def import_skill_from_url(request: Request, body: SkillImportUrlRequest):
+        """Install a SKILL.md bundle from a public GitHub URL (skills.sh links supported)."""
+        require_admin(request)
+        user = _owner(request)
+        from services.memory.skill_importer import (
+            SkillImportError,
+            fetch_skill_bundle,
+        )
+
+        try:
+            files, _src = fetch_skill_bundle(body.url.strip())
+            entry = skills_manager.import_bundle_from_files(
+                files,
+                owner=user,
+                source_url=body.url.strip(),
+            )
+        except SkillImportError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPError as e:
+            logger.warning("skill import fetch failed: %s", e)
+            detail = str(e).strip() or "Could not download skill from URL"
+            raise HTTPException(502, detail) from e
+        except Exception as e:
+            logger.error("skill import failed: %s", e)
+            raise HTTPException(500, "Skill import failed") from e
+
+        _fire_skill_added(user)
+        return {"ok": True, "skill": entry, "files": len(files)}
+
     @router.post("/add")
     async def add_skill(request: Request, body: SkillAddRequest):
         user = _owner(request)
@@ -1235,6 +1300,47 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
         if not entry.get("_deduped"):
             _fire_skill_added(user)
         return {"ok": True, "deduped": bool(entry.get("_deduped")), "skill": entry}
+
+    @router.post("/{skill_id}/invoke")
+    async def invoke_skill(request: Request, skill_id: str):
+        """Build a skill-pinned prompt for slash-command invocation.
+
+        This is intentionally server-side so availability, ownership, and usage
+        accounting use the same rules as the SkillsManager.
+        """
+        user = _owner(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        request_text = (body.get("request") or "").strip() if isinstance(body, dict) else ""
+
+        invokable = {
+            s.get("name"): s for s in skills_manager.index_for(owner=user)
+            if (s.get("name") or "").strip()
+        }
+        match = invokable.get(skill_id)
+        if not match:
+            raise HTTPException(404, "Skill is not available for slash invocation")
+
+        name = match.get("name")
+        md = skills_manager.read_skill_md(name, owner=user)
+        if md is None:
+            raise HTTPException(404, "Skill source unavailable")
+
+        skills_manager.record_use(name, owner=user)
+        message = (
+            "Apply the skill below to my request, following its Procedure / Pitfalls / Verification.\n\n"
+            f"--- BEGIN SKILL ---\n{md}\n--- END SKILL ---\n\n"
+            + (f"Request: {request_text}" if request_text else "Request: (use the skill as appropriate)")
+        )
+        return {
+            "ok": True,
+            "type": "skill",
+            "name": name,
+            "command": f"/{name}",
+            "message": message,
+        }
 
     @router.get("/{skill_id}")
     async def get_skill(request: Request, skill_id: str):

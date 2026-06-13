@@ -1,5 +1,6 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
 import asyncio
+import sys
 import types as _types
 
 import pytest
@@ -11,7 +12,13 @@ if not isinstance(sqlalchemy, _types.ModuleType):
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from tests.helpers.import_state import clear_fake_database_modules
+
+clear_fake_database_modules()
+
+import core.database as cdb
 from core.database import Base, Session as DbSession
+from core.models import ChatMessage as MemChatMessage
 from src.task_scheduler import TaskScheduler
 
 # This test needs the real core.database (real SQLAlchemy Base/ChatMessage).
@@ -46,10 +53,15 @@ def _make_task():
     )
 
 
-def test_session_delivery_survives_empty_database():
+def test_session_delivery_survives_empty_database(monkeypatch):
     """On a fresh/wiped database there is no session to inherit endpoint/model
     from, so _resolve_defaults returns None. The delivery must still persist a
     session instead of crashing on the NOT NULL constraint (issue #326)."""
+    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    parent = sys.modules.get("core")
+    if parent is not None:
+        monkeypatch.setattr(parent, "database", cdb, raising=False)
+
     db = _make_db()
     scheduler = TaskScheduler.__new__(TaskScheduler)
     scheduler._session_manager = None
@@ -60,3 +72,44 @@ def test_session_delivery_survives_empty_database():
     assert len(sessions) == 1
     assert sessions[0].endpoint_url == ""
     assert sessions[0].model == ""
+
+
+def test_session_delivery_uses_in_memory_messages_with_manager(monkeypatch):
+    """Manager delivery must not construct the SQLAlchemy ChatMessage model."""
+    monkeypatch.setitem(sys.modules, "core.database", cdb)
+    parent = sys.modules.get("core")
+    if parent is not None:
+        monkeypatch.setattr(parent, "database", cdb, raising=False)
+
+    class RecordingManager:
+        def __init__(self):
+            self.messages = []
+
+        def add_message(self, session_id, message):
+            assert isinstance(message, MemChatMessage)
+            self.messages.append((session_id, message))
+
+    db = _make_db()
+    manager = RecordingManager()
+    scheduler = TaskScheduler.__new__(TaskScheduler)
+    scheduler._session_manager = manager
+    task = _make_task()
+    task.session_id = "existing-session"
+    task.endpoint_url = "http://endpoint"
+    task.model = "test-model"
+
+    asyncio.run(scheduler._deliver_task_result(task, "done", db))
+
+    assert [message.role for _, message in manager.messages] == [
+        "user",
+        "assistant",
+    ]
+    assert [message.content for _, message in manager.messages] == [
+        "tidy",
+        "done",
+    ]
+    assert all(session_id == "existing-session" for session_id, _ in manager.messages)
+    assert all(
+        message.metadata == {"model": "test-model"}
+        for _, message in manager.messages
+    )
