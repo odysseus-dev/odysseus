@@ -595,7 +595,59 @@ async def test_netbox_sync_status_endpoint_returns_output(monkeypatch):
     ep = _endpoint(router, '/api/openclaw/homelab/ops/netbox-sync-status', 'GET')
     result = await ep(_request(scopes=['homelab:read']))
     assert result['ops']['kind'] == 'netbox_sync_status'
-    assert 'Sync complete' in result['ops']['output']# ---------------------------------------------------------------------------
+    assert 'Sync complete' in result['ops']['output']
+
+
+@pytest.mark.asyncio
+async def test_redmine_status_endpoint_returns_health(monkeypatch):
+    import httpx
+    monkeypatch.setattr('os.getenv', lambda k, d=None: "http://redmine:3000" if k == "CONVERGE_BASE_URL" else ("secret" if k == "CONVERGE_API_KEY" else d))
+    
+    class MockResponse:
+        status_code = 200
+        def json(self): return {"status": "ok", "db": "connected"}
+    
+    class MockAsyncClient:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def get(self, url, headers=None): return MockResponse()
+
+    monkeypatch.setattr(httpx, 'AsyncClient', MockAsyncClient)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/redmine-status', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'redmine_status'
+    assert result['ops']['check']['health']['db'] == 'connected'
+
+
+@pytest.mark.asyncio
+async def test_github_failed_endpoint_returns_output(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': 'build-push-image  failure', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/github-failed', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'github_failed'
+    assert 'build-push-image' in result['ops']['output']
+
+
+@pytest.mark.asyncio
+async def test_ollama_models_endpoint_returns_table(monkeypatch):
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._run_static_command',
+        lambda args, timeout=8: {'status': 'ok', 'returncode': 0, 'stdout': 'llama3:8b', 'stderr': ''},
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/ollama-models', 'GET')
+    result = await ep(_request(scopes=['homelab:read']))
+    assert result['ops']['kind'] == 'ollama_models'
+    assert 'llama3' in result['ops']['table']
+
+
+# ---------------------------------------------------------------------------
 # Persistence failure → 500 (not 404 swallow)
 # ---------------------------------------------------------------------------
 

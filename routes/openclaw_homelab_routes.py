@@ -582,6 +582,55 @@ def setup_openclaw_homelab_routes() -> APIRouter:
         )
         return _ops_result('netbox_sync_status', message, {'output': result.get('stdout') or '', 'check': result})
 
+    @router.get('/ops/redmine-status')
+    async def openclaw_redmine_status(request: Request) -> dict[str, Any]:
+        """Check Redmine via Converge. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        from routes.openclaw_bridge_routes import _converge_config
+        try:
+            base_url, api_key = _converge_config()
+            async with httpx.AsyncClient(timeout=8) as client:
+                resp = await client.get(f"{base_url}/health", headers={"Authorization": f"Bearer {api_key}"})
+                if resp.status_code < 400:
+                    try:
+                        payload = resp.json()
+                        payload = _sanitize_dict(payload)
+                    except Exception:
+                        payload = {'raw': resp.text[:2000]}
+                    message = "Redmine (Converge) is healthy."
+                    result = {'status': 'ok', 'health': payload}
+                else:
+                    message = f"Redmine (Converge) degraded: HTTP {resp.status_code}"
+                    result = {'status': 'degraded', 'http_status': resp.status_code, 'body': resp.text[:1000]}
+        except Exception as exc:
+            message = f"Redmine (Converge) check failed: {exc}"
+            result = {'status': 'degraded', 'error': str(exc)}
+        return _ops_result('redmine_status', message, {'check': result})
+
+    @router.get('/ops/github-failed')
+    async def openclaw_github_failed(request: Request) -> dict[str, Any]:
+        """List failed GitHub actions. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['gh', 'run', 'list', '--status', 'failure', '--limit', '5'], timeout=10)
+        message = (
+            "Failed GitHub runs retrieved."
+            if result.get('status') == 'ok' else
+            f"GitHub check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('github_failed', message, {'output': result.get('stdout') or '', 'check': result})
+
+    @router.get('/ops/ollama-models')
+    async def openclaw_ollama_models(request: Request) -> dict[str, Any]:
+        """List Ollama models. Requires: homelab:read."""
+        _scope_owner(request, HOMELAB_READ_SCOPES)
+        result = _run_static_command(['ollama', 'list'], timeout=8)
+        message = (
+            "Ollama models retrieved."
+            if result.get('status') == 'ok' else
+            f"Ollama check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
+        )
+        return _ops_result('ollama_models', message, {'table': result.get('stdout') or '', 'check': result})
+
     # ------------------------------------------------------------------
     # Event read routes
     # ------------------------------------------------------------------
