@@ -141,6 +141,17 @@ Required for:
 - `POST /api/openclaw/homelab/events/{id}/resolve`
 - `POST /api/openclaw/homelab/events/{id}/ignore`
 
+### `homelab:write`
+Allows mutating homelab states, including container restarts and Redmine ticket creation.
+Required for:
+- `POST /api/openclaw/homelab/ops/docker-restart`
+- `POST /api/openclaw/events/{event_id}/redmine-ticket`
+
+### `n8n:write`
+Allows mutating n8n states, such as rerunning failed executions.
+Required for:
+- `POST /api/openclaw/homelab/ops/n8n-rerun`
+
 ## Workflow Allowlist
 
 Workflow execution can be restricted using the `OPENCLAW_ALLOWED_WORKFLOWS` environment variable:
@@ -271,6 +282,40 @@ Ignore a non-actionable event.
 curl -X POST -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homelab/events/<id>/ignore
 ```
 
+### `GET /api/openclaw/homelab/ops/daily-brief`
+Retrieves a consolidated summary of open inbox items, critical events, failing n8n executions, and general homelab health.
+**Requires:** `homelab:read`
+```bash
+curl -H "Authorization: Bearer <token>" http://localhost:7000/api/openclaw/homelab/ops/daily-brief
+```
+
+### `POST /api/openclaw/homelab/ops/docker-restart`
+Restart a homelab container.
+**Requires:** `homelab:write` and request body flag `"confirm": true`
+```bash
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"container": "nginx", "confirm": true}' \
+  http://localhost:7000/api/openclaw/homelab/ops/docker-restart
+```
+
+### `POST /api/openclaw/homelab/ops/n8n-rerun`
+Rerun a failed n8n execution.
+**Requires:** `n8n:write` and request body flag `"confirm": true`
+```bash
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"execution_id": "12345", "confirm": true}' \
+  http://localhost:7000/api/openclaw/homelab/ops/n8n-rerun
+```
+
+### `POST /api/openclaw/events/{event_id}/redmine-ticket`
+Create a Redmine ticket tracking an event and attach its URL to the event.
+**Requires:** `homelab:write` and request body flag `"confirm": true`
+```bash
+curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"confirm": true}' \
+  http://localhost:7000/api/openclaw/events/<id>/redmine-ticket
+```
+
 ## OpenClaw / Slack Command Reference
 
 | Command | Route | Scope |
@@ -288,6 +333,10 @@ curl -X POST -H "Authorization: Bearer <token>" http://localhost:7000/api/opencl
 | `ops n8n health` | `GET /api/openclaw/n8n/health` | `n8n:read` |
 | `ops n8n failures` | `GET /api/openclaw/n8n/failures` | `n8n:read` |
 | `ops n8n failures --record` | `POST /api/openclaw/n8n/failures/record` | `n8n:events` |
+| `ops daily brief` | `GET /api/openclaw/homelab/ops/daily-brief` | `homelab:read` |
+| `ops docker restart` | `POST /api/openclaw/homelab/ops/docker-restart` | `homelab:write` |
+| `ops n8n rerun` | `POST /api/openclaw/homelab/ops/n8n-rerun` | `n8n:write` |
+| `ops ticket` | `POST /api/openclaw/events/{event_id}/redmine-ticket` | `homelab:write` |
 
 ## Security Notes
 
