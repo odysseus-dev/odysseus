@@ -189,5 +189,6 @@ while ($serverJob.State -eq 'Running') {
 if ($serverJob.State -eq 'Failed') {
     Write-Host "Server exited with an error:" -ForegroundColor Red
     Receive-Job $serverJob -ErrorAction Continue
-    Read-Host "`nPress Enter to exit"
+    Write-Host ""
+    Read-Host "Press Enter to exit"
 }
