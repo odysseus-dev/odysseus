@@ -1,0 +1,11 @@
+#!/bin/bash
+echo "=== Odysseus Codespace Started ==="
+echo "Current dir: $(pwd)"
+echo "Python: $(python --version)"
+echo "Node: $(node --version 2>/dev/null || echo 'node not in path')"
+echo ""
+echo "Useful commands:"
+echo "  python -m uvicorn app:app --host 0.0.0.0 --port 7000"
+echo "  docker compose up -d"
+echo ""
+echo "Access UI at http://localhost:7000 once running"
