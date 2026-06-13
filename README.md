@@ -300,19 +300,18 @@ and configure everything else inside **Settings**.
 
 ### Making a clickable app (Windows)
 
-The launcher now auto-opens your browser, but to make Odysseus feel like
-a native app you can search for and launch from anywhere:
+The launcher auto-opens your browser once the server is ready. To make
+Odysseus feel like a native app you can find in the Start Menu:
 
-**Option A – Start Menu shortcut (easiest)**
+**Option A – Start Menu shortcut via batch file (recommended)**
 
-Create a `.bat` wrapper in the project folder (`odysseus.bat`):
+`odysseus.bat` is a small wrapper around `launch-windows.ps1`. It shows the
+console output, keeps the window open on error, and auto-opens the browser
+when the server is ready. Double-click it from the project folder, or create
+a Start Menu shortcut:
 
-```bat
-@echo off
-powershell -ExecutionPolicy Bypass -File "%~dp0launch-windows.ps1"
-```
-
-Then run this **once** in PowerShell to pin it to the Start Menu:
+Run this **once** in PowerShell (replace the paths with your actual checkout
+directory):
 
 ```powershell
 $ws = New-Object -ComObject WScript.Shell
@@ -323,6 +322,19 @@ $s.Save()
 ```
 
 Now press Win, type `Odysseus`, and press Enter to launch.
+
+If the window closes immediately with red text, it means something went wrong
+(e.g., port 7000 already in use, Python not found, or a missing dependency).
+The window will now pause before closing so you can read the error. Common
+fixes:
+
+- **Port in use:** stop whatever is on port 7000, or edit `.env` with
+  `APP_PORT=7001` and re-launch.
+- **Python not found:** install Python 3.11+ from
+  https://www.python.org/downloads/ and make sure the Python launcher (`py`)
+  is on your PATH.
+- **Dependency issue:** run `launch-windows.ps1` from a PowerShell window
+  directly to see the full error without the window closing.
 
 **Option B – Desktop shortcut**
 
