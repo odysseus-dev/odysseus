@@ -14,6 +14,7 @@ agent = ``agents/<name>/agent.json {persona, tools, model}`` — extended here
 with a forward-compatible ``skills`` list (runtime consumption is Plan 3).
 """
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -64,6 +65,11 @@ def install_seed_skills(skills_dir: Optional[str | Path] = None,
             continue
         shutil.copytree(src_dir, dest, dirs_exist_ok=True)
         if owner:
+            # Frontmatter-injection guard: owner is interpolated into the
+            # SKILL.md header, so a newline or YAML-structural char could
+            # smuggle extra keys. Owner ids are "human:x" / "agent:x/y".
+            if not re.fullmatch(r"[\w:@./-]+", owner):
+                raise ValueError(f"invalid owner for skill stamping: {owner!r}")
             md = dest / "SKILL.md"
             text = md.read_text(encoding="utf-8")
             head, sep, body = text.partition("\n---\n")

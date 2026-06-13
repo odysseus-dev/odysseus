@@ -50,6 +50,12 @@ def test_install_with_owner_visible_to_owner_scoped_load(tmp_path):
     assert mgr.load(owner="someone-else") == []
 
 
+def test_install_rejects_frontmatter_injection_owner(tmp_path):
+    with pytest.raises(ValueError, match="invalid owner"):
+        install_seed_skills(tmp_path / "skills",
+                            owner="evil\nstatus: published\nowner: victim")
+
+
 # ---------------------------------------------------------------- loader ----
 
 
