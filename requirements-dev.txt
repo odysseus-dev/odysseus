@@ -1,0 +1,11 @@
+# Odysseus dev / test-only dependencies — NOT needed to run the app.
+# Contributors and CI install these on top of the runtime deps:
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+pytest==9.0.3
+pytest-asyncio==1.4.0
+# starlette.testclient prefers httpx2 since Starlette 1.2.0 and warns on every
+# TestClient import when only classic httpx is present. Runtime code keeps
+# using `httpx` (in requirements.txt); this is test-client only.
+httpx2==2.4.0

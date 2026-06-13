@@ -1,49 +1,56 @@
-fastapi
-uvicorn
-python-multipart
-python-dotenv
-httpx
-pydantic>=2.0
-pydantic-settings>=2.0
-SQLAlchemy
-pypdf
-beautifulsoup4
-charset-normalizer
-numpy
+# Odysseus runtime dependencies — Python 3.11+.
+#
+# Pinned to known-good versions for reproducible installs. The previous
+# unpinned set could resolve to a newer, breaking release on a fresh install
+# weeks/months later, which is the most common "it won't install / won't run"
+# report from users. These exact versions are verified working on
+# CPython 3.11–3.13 (Linux/macOS/Windows).
+#
+#   pip install -r requirements.txt
+#
+# Dev/test-only deps:    requirements-dev.txt
+# Optional feature deps: requirements-optional.txt
+
+fastapi==0.136.3
+uvicorn==0.49.0
+python-multipart==0.0.32
+python-dotenv==1.2.2
+httpx==0.28.1
+pydantic==2.13.4
+pydantic-settings==2.14.1
+SQLAlchemy==2.0.50
+pypdf==6.13.2
+beautifulsoup4==4.15.0
+charset-normalizer==3.4.7
+numpy==2.4.6
 # Vector store + local embeddings for RAG, semantic memory, and tool
 # selection. Used on core agent paths, so installed by default — the app
 # still degrades to keyword fallback if they're ever missing.
 # chromadb-client is the lightweight HTTP client (talks to a standalone
 # ChromaDB service); fastembed runs local ONNX embeddings.
-chromadb-client
-fastembed
-youtube-transcript-api
+chromadb-client==1.5.9
+fastembed==0.8.0
+youtube-transcript-api==1.2.4
 # Markdown rendering for research reports (src/visual_report.py).
 # Imported at module-top so it's a hard core dep, not optional.
-markdown
+markdown==3.10.2
 # HTML sanitizer for rendered research reports (src/visual_report.py). Report
 # content is untrusted (LLM output over crawled pages) and report pages run
 # under a relaxed CSP, so the rendered HTML is allowlist-sanitized.
-nh3
+nh3==0.3.5
 # Calendar .ics import/export (routes/calendar_routes.py).
-icalendar
+icalendar==7.1.2
 # Recurrence rule expansion for calendar events (routes/calendar_routes.py).
 # Imported directly as dateutil.rrule — make it explicit even though caldav
 # pulls it in transitively.
-python-dateutil
+python-dateutil==2.9.0.post0
 # CalDAV sync (src/caldav_sync.py). Handles PROPFIND discovery + REPORT
 # fetch across Radicale, Nextcloud, Apple, Fastmail; we'd be reinventing
 # the protocol without it.
-caldav
-cryptography
-bcrypt
-mcp
-pyotp
-qrcode[pil]
-croniter
-pytest
-pytest-asyncio
-# starlette.testclient prefers httpx2 since Starlette 1.2.0 and warns on every
-# TestClient import when only classic httpx is present. Runtime code keeps
-# using `httpx` above; this is test-client only.
-httpx2
+caldav==3.2.1
+cryptography==49.0.0
+bcrypt==5.0.0
+mcp==1.27.2
+pyotp==2.9.0
+qrcode[pil]==8.2
+croniter==6.2.2
