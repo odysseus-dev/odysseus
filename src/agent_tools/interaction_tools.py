@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class AskUserTool:
-    def execute(self, content):
+    async def execute(self, content, ctx):
         # ask_user: the agent poses a multiple-choice question to the user to get a
         # decision/clarification. This is a pure UI-control marker — no subprocess,
         # no filesystem. It returns an `ask_user` payload that the agent loop turns
@@ -54,7 +54,7 @@ class AskUserTool:
         return desc, result
 
 class UpdatePlanTool:
-    def execute(self, content):
+    async def execute(self, content, ctx):
         # update_plan: the agent writes back to the active plan — tick an item done
         # or revise steps (e.g. when the user asks to change something). Pure UI
         # marker: returns a `plan_update` payload the agent loop turns into a
