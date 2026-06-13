@@ -1,4 +1,4 @@
-"""Regression guard for issue #1291 — CPU-only serve still emitted GPU-only flags.
+"""Regression guard for issue #1291 - CPU-only serve still emitted GPU-only flags.
 
 The llama.cpp serve command builder (static/js/cookbook.js) added
 `--flash-attn on` and exported `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1` from
@@ -16,8 +16,8 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "static/js/cookbook.js"
 SERVE_SRC = Path(__file__).resolve().parent.parent / "static/js/cookbookServe.js"
-ROUTES_SRC = Path(__file__).resolve().parent.parent / "routes/cookbook_routes.py"
-
+ROOT = SRC.parent.parent.parent
+ROUTES_SRC = ROOT / "routes/cookbook_routes.py"
 
 def test_cpu_only_drops_gpu_only_flags():
     text = SRC.read_text(encoding="utf-8")
@@ -84,3 +84,39 @@ def test_vllm_route_strips_swap_space_when_runtime_rejects_it():
     assert "print(shlex.join(parts[:serve_i + 1] + [\"--help\"]))" in text
     assert "eval \"$ODYSSEUS_VLLM_HELP_CMD\" 2>&1 | grep -q -- \"--swap-space\"" in text
     assert "eval \"$ODYSSEUS_SERVE_CMD\"" in text
+
+
+def test_local_windows_platform_comes_from_backend_host_state():
+    text = SRC.read_text(encoding="utf-8")
+    routes = ROUTES_SRC.read_text(encoding="utf-8")
+    running = (SRC.parent / "cookbookRunning.js").read_text(encoding="utf-8")
+
+    assert "hostPlatform" in text
+    assert "navigator.platform" not in text
+    assert "hostOrTask === 'local'" in text
+    assert "if (hostOrTask === 'local') return _envState.hostPlatform || '';" in text
+    assert "return _envState.hostPlatform || _envState.platform || ''" not in text
+    assert 'return "windows" if IS_WINDOWS else ""' in routes
+    assert 'env["hostPlatform"] = _client_host_platform()' in routes
+    assert "return _state_for_client({})" in routes
+    assert 'env.pop("hostPlatform", None)' in routes
+    assert "delete env.hostPlatform;" in running
+
+
+def test_local_windows_llamacpp_prefers_native_llama_server():
+    text = SRC.read_text(encoding="utf-8")
+    helpers = (ROOT / "routes/cookbook_helpers.py").read_text(encoding="utf-8")
+
+    assert "const _localWindows = _isWin && !_envState.remoteHost;" in text
+    assert "const gpuId = (f.gpus || f.gpu_id || '').toString().trim();" in text
+    assert "const _lcServer = `${lcPrefix}llama-server --model" in text
+    assert "if (_localWindows) {" in text
+    assert "cmd += _lcServer;" in text
+    assert '"llama-server.exe"' in helpers
+
+
+def test_local_windows_llama_server_skips_source_bootstrap():
+    routes = ROUTES_SRC.read_text(encoding="utf-8")
+
+    assert 'local_windows_llama_cmd = local_windows and ("llama_cpp" in req.cmd or "llama-server" in req.cmd)' in routes
+    assert 'if ("llama_cpp" in req.cmd or "llama-server" in req.cmd) and not local_windows_llama_cmd:' in routes
