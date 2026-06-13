@@ -38,6 +38,7 @@
 
         packages = {
           default = odysseus;
+          odysseus = odysseus;
           container = mkContainer pkgs odysseus;
         };
       }

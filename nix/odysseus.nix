@@ -97,5 +97,6 @@ stdenv.mkDerivation {
   meta = {
     mainProgram = "odysseus";
     description = "Odysseus AI assistant";
+    license = lib.licenses.agpl3Only;
   };
 }

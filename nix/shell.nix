@@ -34,9 +34,7 @@ pkgs.mkShell {
       tmux
       openssh
       curl
-      gcc
       pkg-config
-      gnumake
       odysseus
     ]
     ++ lib.optionals pkgs.stdenv.isLinux [
@@ -65,7 +63,7 @@ pkgs.mkShell {
 
     SESSION_NAME="odysseus"
 
-    echo "Odysseus Nix shell for ${pkgs.system} is loaded."
+    echo "Odysseus Nix shell for ${pkgs.stdenv.hostPlatform.system} is loaded."
 
     # 1. First-time Setup Check
     # If the database directory doesn't exist, we assume this is a fresh clone.
