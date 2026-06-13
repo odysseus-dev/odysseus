@@ -2278,12 +2278,18 @@ class Company(TimestampMixin, Base):
 
 
 class Principal(TimestampMixin, Base):
-    """Typed actor: human | agent | company_service_account. Spec §2."""
+    """Typed actor: human | agent | company_service_account. Spec §2.
+
+    A row is a (principal, company) BINDING: the same identity (e.g. the owner
+    "human:oleg") legitimately manages several companies, so the primary key is
+    composite (company_id, id), not id alone.
+    """
     __tablename__ = "platform_principals"
 
     id = Column(String, primary_key=True)              # "human:oleg", "agent:travel-1/booker"
+    company_id = Column(String, ForeignKey("platform_companies.id"),
+                        primary_key=True)
     kind = Column(String, nullable=False)              # human|agent|company_service_account
-    company_id = Column(String, ForeignKey("platform_companies.id"), nullable=False)
     is_manager = Column(Boolean, default=False, nullable=False)
 
 
