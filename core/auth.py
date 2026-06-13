@@ -326,17 +326,21 @@ class AuthManager:
         if existing is not None:
             return existing
 
-        # Bootstrap: if no users exist yet and the env var doesn't explicitly
-        # opt out, make the first OIDC user an admin so the install isn't
-        # unadministrable.  OIDC_ADMIN_GROUPS, when set, takes precedence.
+        # Bootstrap: if no users exist yet, OIDC_ADMIN_GROUPS is unset, and
+        # OIDC_FIRST_USER_IS_ADMIN isn't explicitly false, make the first
+        # OIDC user an admin.  When OIDC_ADMIN_GROUPS is configured, group
+        # membership is the ONLY path to admin — the bootstrap is suppressed
+        # so a non-admin IdP user can't accidentally get admin just by
+        # being first.
         if not is_admin:
             first_user_admin = os.getenv("OIDC_FIRST_USER_IS_ADMIN", "true").lower() != "false"
             oidc_admin_groups = os.getenv("OIDC_ADMIN_GROUPS", "").strip()
-            if first_user_admin and not self.users:
+            if first_user_admin and not self.users and not oidc_admin_groups:
                 is_admin = True
                 logger.info(
-                    "First OIDC user '%s' promoted to admin (bootstrap). "
-                    "Set OIDC_FIRST_USER_IS_ADMIN=false or OIDC_ADMIN_GROUPS to override.",
+                    "First OIDC user '%s' promoted to admin (bootstrap, "
+                    "no OIDC_ADMIN_GROUPS configured). "
+                    "Set OIDC_FIRST_USER_IS_ADMIN=false to opt out.",
                     username,
                 )
 

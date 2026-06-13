@@ -569,6 +569,81 @@ class TestExchangeCode:
                 mgr.exchange_code("code", state, "https://app.example.com/callback")
 
 
+class TestUserInfoProtection:
+    def test_userinfo_mismatched_sub_rejected(self):
+        """UserInfo with a different sub than the id_token should be rejected."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "m" * 64
+        id_token = _make_id_token("user123", nonce)
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+
+            # UserInfo returns a different sub
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),     # JWKS
+                _FakeResponse(200, {"sub": "evil_user"}),  # mismatched UserInfo
+            ]
+
+            with pytest.raises(mod.OidcError, match="UserInfo sub mismatch"):
+                mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+    def test_userinfo_same_sub_merged_safely(self):
+        """UserInfo with matching sub should be merged without overwriting identity claims."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "n" * 64
+        id_token = _make_id_token("user123", nonce)
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+
+            # UserInfo matches sub, adds extra profile data
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),
+                _FakeResponse(200, {
+                    "sub": "user123",  # matches id_token
+                    "name": "Full Name from UserInfo",
+                    "picture": "https://example.com/avatar.png",
+                }),
+            ]
+
+            claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
+            assert claims["sub"] == "user123"  # unchanged
+            assert claims["name"] == "Full Name from UserInfo"  # merged
+            assert claims["picture"] == "https://example.com/avatar.png"  # merged
+            # Verified claims not overwritten
+            assert claims["nonce"] == nonce
+            assert claims["iss"] == FAKE_ISSUER
+
+
 class TestJwksCache:
     def test_jwks_cached_on_first_fetch(self):
         """JWKS should be fetched once then served from cache."""
