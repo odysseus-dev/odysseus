@@ -8,7 +8,7 @@ from routes.n8n_routes import (
     _scope_owner,
 )
 from routes.openclaw_homelab_routes import _ok, _compact_event
-from src.n8n_client import N8nClient
+from src.n8n_client import N8nClient, N8nClientError
 from src.event_store import EventStore
 
 BASE_URL = '/api/openclaw/n8n'
@@ -47,7 +47,9 @@ def setup_openclaw_n8n_routes() -> APIRouter:
         _scope_owner(request, N8N_READ_SCOPES)
         client = N8nClient()
         summary = await client.get_failed_executions_summary()
-        
+        if summary.get('configured') and summary.get('error'):
+            raise HTTPException(502, summary['error'])
+
         if not summary.get('configured'):
             return _ok(message="n8n monitoring is not configured.") | {'failures': []}
             
@@ -91,7 +93,10 @@ def setup_openclaw_n8n_routes() -> APIRouter:
         if not client.configured:
             return _ok(message="n8n monitoring is not configured.") | {'events': []}
             
-        executions = await client.list_executions(status='error', limit=10)
+        try:
+            executions = await client.list_executions(status='error', limit=10)
+        except N8nClientError as e:
+            raise HTTPException(502, str(e))
         
         store = EventStore()
         recorded_events = []

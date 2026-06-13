@@ -33,7 +33,7 @@ class EventStore:
                 return json.load(f).get("events", [])
         except Exception as e:
             logger.error(f"Failed to load events: {e}")
-            return []
+            raise IOError(f"Persistence load failure: {e}") from e
 
     def _save(self, events: list):
         # Atomic write

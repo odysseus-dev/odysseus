@@ -5,6 +5,10 @@ from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
+class N8nClientError(RuntimeError):
+    """Raised when n8n is configured but the API cannot be queried."""
+
+
 class N8nClient:
     def __init__(self):
         self.base_url = os.getenv("N8N_BASE_URL", "").rstrip("/")
@@ -51,7 +55,7 @@ class N8nClient:
         """List all workflows."""
         if not self.configured:
             return []
-            
+
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 resp = await client.get(
@@ -63,13 +67,13 @@ class N8nClient:
                 return data.get("data", [])
         except Exception as e:
             logger.error(f"n8n list_workflows failed: {e}")
-            return []
+            raise N8nClientError(f"n8n list_workflows failed: {e}") from e
 
     async def list_executions(self, status: str | None = "error", limit: int = 10) -> List[Dict[str, Any]]:
         """List executions, optionally filtered by status."""
         if not self.configured:
             return []
-            
+
         try:
             params: Dict[str, Any] = {"limit": limit}
             if status:
@@ -86,15 +90,24 @@ class N8nClient:
                 return data.get("data", [])
         except Exception as e:
             logger.error(f"n8n list_executions failed: {e}")
-            return []
+            raise N8nClientError(f"n8n list_executions failed: {e}") from e
 
     async def get_failed_executions_summary(self, limit: int = 10) -> Dict[str, Any]:
         """Get a summary of failed executions."""
         if not self.configured:
             return {"configured": False, "status": "unknown"}
-            
-        executions = await self.list_executions(status="error", limit=limit)
-        
+
+        try:
+            executions = await self.list_executions(status="error", limit=limit)
+        except N8nClientError as e:
+            return {
+                "configured": True,
+                "status": "error",
+                "failed_count": None,
+                "executions": [],
+                "error": str(e),
+            }
+
         count = len(executions)
         return {
             "configured": True,

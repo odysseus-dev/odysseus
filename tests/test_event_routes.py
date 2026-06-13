@@ -68,6 +68,17 @@ def test_save_failure_raises(mock_event_store, monkeypatch):
         mock_event_store.record_event("test", "test", "warning", "t", "s", "key")
     assert "Persistence failure" in str(exc.value)
 
+def test_load_failure_raises_and_does_not_overwrite(tmp_path):
+    events_file = tmp_path / "homelab_events.json"
+    events_file.write_text("{not-json", encoding="utf-8")
+    store = EventStore(str(events_file))
+
+    with pytest.raises(IOError) as exc:
+        store.record_event("test", "test", "warning", "t", "s", "key")
+
+    assert "Persistence load failure" in str(exc.value)
+    assert events_file.read_text(encoding="utf-8") == "{not-json"
+
 @pytest.mark.asyncio
 async def test_severity_mapping(mock_event_store, monkeypatch):
     router = setup_homelab_routes()

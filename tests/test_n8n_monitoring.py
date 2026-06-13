@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from fastapi import FastAPI
 from routes.n8n_routes import setup_n8n_routes
 from routes.openclaw_n8n_routes import setup_openclaw_n8n_routes
-from src.n8n_client import N8nClient
+from src.n8n_client import N8nClient, N8nClientError
 from src.event_store import EventStore
 
 # Mock dependencies
@@ -92,6 +92,37 @@ async def test_missing_base_url_degraded_state():
         workflows = await client.list_workflows()
         assert workflows == []
 
+@pytest.mark.asyncio
+async def test_n8n_api_failure_is_not_reported_as_zero_failures(monkeypatch):
+    class FailingResponse:
+        def raise_for_status(self):
+            raise RuntimeError("401 Unauthorized")
+
+    class FailingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return FailingResponse()
+
+    monkeypatch.setenv("N8N_BASE_URL", "http://n8n.local")
+    monkeypatch.setattr("src.n8n_client.httpx.AsyncClient", FailingAsyncClient)
+
+    client = N8nClient()
+    with pytest.raises(N8nClientError):
+        await client.list_executions(status="error", limit=10)
+
+    summary = await client.get_failed_executions_summary()
+    assert summary["status"] == "error"
+    assert summary["failed_count"] is None
+    assert "401 Unauthorized" in summary["error"]
+
 def test_scope_enforcement_n8n_read(client_with_scopes, mock_n8n_client):
     c = client_with_scopes(["wrong:scope"])
     resp = c.get("/api/n8n/health")
@@ -128,6 +159,19 @@ def test_openclaw_n8n_failures(client_with_scopes, mock_n8n_client):
     assert data["status"] == "ok"
     assert len(data["failures"]) == 1
     assert data["failures"][0]["id"] == "exec-1"
+
+def test_openclaw_n8n_failures_returns_502_on_client_error(client_with_scopes, mock_n8n_client):
+    mock_n8n_client.get_failed_executions_summary = AsyncMock(return_value={
+        "configured": True,
+        "status": "error",
+        "failed_count": None,
+        "executions": [],
+        "error": "n8n list_executions failed: 401 Unauthorized",
+    })
+    c = client_with_scopes(["n8n:read"])
+    resp = c.get("/api/openclaw/n8n/failures")
+    assert resp.status_code == 502
+    assert "401 Unauthorized" in resp.text
 
 def test_openclaw_n8n_record_events(client_with_scopes, mock_n8n_client, real_event_store):
     c = client_with_scopes(["n8n:events"])
