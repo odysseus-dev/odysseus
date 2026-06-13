@@ -28,6 +28,7 @@ if os.name == "nt":
     os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 from dotenv import load_dotenv
+
 # encoding="utf-8-sig" tolerates a UTF-8 BOM in .env — a common Windows gotcha
 # when the file is saved from Notepad. Without this, the first key parses as
 # "﻿AUTH_ENABLED" instead of "AUTH_ENABLED", so AUTH_ENABLED=false (etc.)
@@ -38,35 +39,40 @@ load_dotenv(encoding="utf-8-sig")
 import asyncio
 import logging
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Dict
 
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+import bcrypt as _bcrypt
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import RedirectResponse
+
+from core.auth import AuthManager, normalize_known_username
 
 # Core imports
 from core.constants import (
-    BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
+    AUTH_FILE,
+    BASE_DIR,
+    OPENAI_API_KEY,
+    REQUEST_TIMEOUT,
+    SESSIONS_FILE,
+    STATIC_DIR,
 )
-from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
-from core.auth import AuthManager, normalize_known_username
+from core.database import ApiToken, SessionLocal
 from core.exceptions import (
-    SessionNotFoundError, InvalidFileUploadError,
-    LLMServiceError, WebSearchError,
+    InvalidFileUploadError,
+    LLMServiceError,
+    SessionNotFoundError,
+    WebSearchError,
 )
-
-import bcrypt as _bcrypt
-
+from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
 from src.app_helpers import abs_join
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
-from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
 logging.basicConfig(
@@ -126,6 +132,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 # legitimately stay open. Without this, a single hung subprocess.run or
 # missing-timeout httpx call locks up the entire server for everyone.
 import asyncio as _asyncio
+
 from starlette.middleware.base import BaseHTTPMiddleware as _BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _JSONResponse
 
@@ -160,7 +167,7 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
 app.add_middleware(_RequestTimeoutMiddleware)
 
 # ========= AUTH =========
-from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
+from routes.auth_routes import SESSION_COOKIE, setup_auth_routes
 
 auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
@@ -288,7 +295,8 @@ if AUTH_ENABLED:
             # (no admin cookie available in that context). Restricted to
             # loopback clients + matching token to keep it locked down.
             try:
-                from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
+                from core.middleware import INTERNAL_TOOL_HEADER
+                from core.middleware import INTERNAL_TOOL_TOKEN as _ITT
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
@@ -421,8 +429,9 @@ async def serve_generated_image(filename: str, request: Request):
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
     try:
+        from core.database import GalleryImage as _GI
+        from core.database import SessionLocal as _SL
         from src.auth_helpers import get_current_user
-        from core.database import SessionLocal as _SL, GalleryImage as _GI
         _user = get_current_user(request)
         if _user:
             _db = _SL()
@@ -457,6 +466,7 @@ async def serve_generated_image(filename: str, request: Request):
 
 # ========= YOUTUBE INIT =========
 from services.youtube import init_youtube
+
 init_youtube()
 
 # ========= RAG (vector document RAG) =========
@@ -470,6 +480,7 @@ init_youtube()
 # (chromadb 1.5.x + pydantic 2.13.x) the init works and Personal Docs
 # (POST /api/personal/add_directory etc.) is functional again.
 from src.rag_singleton import get_rag_manager
+
 rag_manager = get_rag_manager()
 rag_available = rag_manager is not None
 if rag_available:
@@ -481,18 +492,19 @@ else:
     )
 
 # ========= IMPORT CONFIG =========
-from src.config import config
-
 # ========= COMPONENT INITIALIZATION =========
 from src.app_initializer import initialize_managers
+from src.config import config
 
 components = initialize_managers(BASE_DIR, rag_manager)
 
 session_manager   = components["session_manager"]
 from src.assistant_log import set_session_manager as _set_asst_sm
+
 _set_asst_sm(session_manager)
 # Set the global session manager singleton (used by core.models.Session.add_message)
 from core.models import set_session_manager_instance
+
 set_session_manager_instance(session_manager)
 app.state.session_manager = session_manager
 memory_manager    = components["memory_manager"]
@@ -545,6 +557,7 @@ app.include_router(auth_router)
 
 # Uploads
 from routes.upload_routes import setup_upload_routes
+
 upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
 app.include_router(upload_router)
 upload_cleanup_task = None
@@ -552,26 +565,32 @@ upload_cleanup_task = None
 # Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
+
 app.include_router(setup_emoji_routes())
 
 # Sessions
 from routes.session_routes import setup_session_routes
+
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
 app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
+
 app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
 from routes.memory_routes import setup_memory_routes
+
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
 app.include_router(memory_router)
 from routes.skills_routes import setup_skills_routes
+
 app.include_router(setup_skills_routes(skills_manager))
 
 # Chat
 from routes.chat_routes import setup_chat_routes
+
 app.include_router(setup_chat_routes(
     session_manager, chat_handler, chat_processor,
     memory_manager, research_handler, upload_handler,
@@ -582,127 +601,158 @@ app.include_router(setup_chat_routes(
 
 # Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
+
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
 # History
 from routes.history_routes import setup_history_routes
+
 app.include_router(setup_history_routes(session_manager))
 
 # Search
 from routes.search_routes import setup_search_routes
+
 app.include_router(setup_search_routes(config))
 
 # Presets
 from routes.preset_routes import setup_preset_routes
+
 app.include_router(setup_preset_routes(preset_manager))
 
 # Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
+
 app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler, memory_vector))
 
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
+
 app.include_router(setup_cleanup_routes(session_manager))
 
 # Personal docs
 from routes.personal_routes import setup_personal_routes
+
 app.include_router(setup_personal_routes(personal_docs_mgr, rag_manager, rag_available))
 
 # Embedding model management
 from routes.embedding_routes import setup_embedding_routes
+
 app.include_router(setup_embedding_routes())
 
 # Models
 from routes.model_routes import setup_model_routes
+
 app.include_router(setup_model_routes(model_discovery))
 
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
+
 app.include_router(setup_copilot_routes())
 
 # ChatGPT Subscription device-flow login
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
+
 app.include_router(setup_chatgpt_subscription_routes())
 
 # TTS
 from routes.tts_routes import setup_tts_routes
+
 app.include_router(setup_tts_routes(tts_service))
 
 # STT
 from services.stt import get_stt_service
+
 stt_service = get_stt_service()
 from routes.stt_routes import setup_stt_routes
+
 app.include_router(setup_stt_routes(stt_service))
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
 from routes.document_routes import setup_document_routes
+
 document_router = setup_document_routes(session_manager, upload_handler)
 app.include_router(document_router)
 
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
+
 app.include_router(setup_signature_routes())
 
 # Gallery (image library)
 from routes.gallery_routes import setup_gallery_routes
+
 app.include_router(setup_gallery_routes())
 
 # Persisted image-editor drafts (server-backed projects)
 from routes.editor_draft_routes import setup_editor_draft_routes
+
 app.include_router(setup_editor_draft_routes())
 
 # Scheduled tasks + event bus
 from src.task_scheduler import TaskScheduler
+
 task_scheduler = TaskScheduler(session_manager)
 from src.event_bus import set_task_scheduler
+
 set_task_scheduler(task_scheduler)
 from routes.task_routes import setup_task_routes
+
 app.include_router(setup_task_routes(task_scheduler))
 
 from routes.assistant_routes import setup_assistant_routes
+
 app.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
+
 calendar_router = setup_calendar_routes()
 app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
+
 app.include_router(setup_shell_routes())
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
+
 app.include_router(setup_cookbook_routes())
 
 from routes.workspace_routes import setup_workspace_routes
+
 app.include_router(setup_workspace_routes())
 
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
+
 app.include_router(setup_hwfit_routes())
 
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
+
 app.include_router(setup_compare_routes(session_manager))
 
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
+
 app.include_router(setup_prefs_routes())
 
 # Backup (export/import user data)
 from routes.backup_routes import setup_backup_routes
+
 app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))
 
 from routes.font_routes import setup_font_routes
+
 app.include_router(setup_font_routes())
 
 
 # MCP (Model Context Protocol)
-from src.mcp_manager import McpManager
-from src.agent_tools import set_mcp_manager
 from routes.mcp_routes import setup_mcp_routes
+from src.agent_tools import set_mcp_manager
+from src.mcp_manager import McpManager
 
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
@@ -710,7 +760,10 @@ app.include_router(setup_mcp_routes(mcp_manager))
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
-from src.ai_interaction import set_session_manager as set_ai_session_manager, set_memory_manager as set_ai_memory_manager, set_rag_manager as set_ai_rag_manager
+from src.ai_interaction import set_memory_manager as set_ai_memory_manager
+from src.ai_interaction import set_rag_manager as set_ai_rag_manager
+from src.ai_interaction import set_session_manager as set_ai_session_manager
+
 set_ai_session_manager(session_manager)
 set_ai_memory_manager(memory_manager, memory_vector)
 set_ai_rag_manager(rag_manager, personal_docs_mgr)
@@ -718,20 +771,24 @@ logger.info("AI interaction tools initialized (session, memory, RAG, UI control)
 
 # Webhooks
 from routes.webhook_routes import setup_webhook_routes
+
 app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_manager, api_key_manager))
 
 # API Tokens
 from routes.api_token_routes import setup_api_token_routes
+
 app.include_router(setup_api_token_routes())
 
 logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
+
 app.include_router(setup_note_routes(task_scheduler))
 
 # Email
 from routes.email_routes import setup_email_routes
+
 email_router = setup_email_routes()
 app.include_router(email_router)
 
@@ -740,7 +797,8 @@ app.include_router(email_router)
 # Codex sessions can only touch the data the user explicitly allowed. Mounted
 # AFTER email so the codex_routes can borrow the email router for shared
 # search/threading helpers.
-from routes.codex_routes import setup_codex_routes, setup_claude_routes
+from routes.codex_routes import setup_claude_routes, setup_codex_routes
+
 app.include_router(setup_codex_routes(
     email_router=email_router,
     memory_router=memory_router,
@@ -750,13 +808,16 @@ app.include_router(setup_codex_routes(
 app.include_router(setup_claude_routes())
 
 from routes.vault_routes import setup_vault_routes
+
 app.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
+
 app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
+
 app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
@@ -887,7 +948,9 @@ async def _startup_event():
     # Wipe any leftover incognito sessions from previous process — they're
     # ephemeral by design and must not survive a restart.
     try:
-        from core.database import SessionLocal as _SL, Session as _DbSess, ChatMessage as _DbMsg
+        from core.database import ChatMessage as _DbMsg
+        from core.database import Session as _DbSess
+        from core.database import SessionLocal as _SL
         _db = _SL()
         try:
             _ghosts = _db.query(_DbSess).filter(_DbSess.name.in_(("Nobody", "Incognito"))).all()
@@ -999,7 +1062,7 @@ async def _startup_event():
         # up stale/demo/deleted-user built-ins that are no longer in auth.json;
         # otherwise their old scheduled rows can keep firing forever.
         try:
-            from core.database import SessionLocal, ScheduledTask
+            from core.database import ScheduledTask, SessionLocal
             from src.task_scheduler import HOUSEKEEPING_DEFAULTS
             builtin_names = []
             for defs in HOUSEKEEPING_DEFAULTS.values():
