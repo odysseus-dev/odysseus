@@ -234,3 +234,18 @@ def test_event_store_custom_suggested_actions(real_event_store):
     assert "ack" in event2["suggested_actions"]
     assert "view_service" in event2["suggested_actions"]
     assert "view_workflow" not in event2["suggested_actions"]
+
+
+def test_openclaw_n8n_rerun_requires_confirm(client_with_scopes):
+    c = client_with_scopes(["n8n:write"])
+    resp = c.post("/api/openclaw/n8n/ops/n8n-rerun", json={"workflow": "wf-1", "confirm": False})
+    assert resp.status_code == 400
+    assert "confirm=true" in resp.json()["detail"]
+
+
+def test_openclaw_n8n_rerun_success(client_with_scopes, mock_n8n_client):
+    c = client_with_scopes(["n8n:write"])
+    resp = c.post("/api/openclaw/n8n/ops/n8n-rerun", json={"workflow": "wf-1", "confirm": True})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["workflow"] == "wf-1"

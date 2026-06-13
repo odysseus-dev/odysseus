@@ -15,6 +15,7 @@ from src.auth_helpers import require_user
 logger = logging.getLogger(__name__)
 
 HOMELAB_READ_SCOPES = {'homelab:read'}
+HOMELAB_WRITE_SCOPES = {'homelab:write'}
 
 
 def _scope_owner(request: Request, allowed: set[str]) -> str:

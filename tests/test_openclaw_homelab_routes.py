@@ -648,6 +648,71 @@ async def test_ollama_models_endpoint_returns_table(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Write Ops
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_docker_restart_requires_confirm(monkeypatch):
+    from routes.openclaw_homelab_routes import DockerRestartRequest
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/docker-restart', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), body=DockerRestartRequest(container='caddy', confirm=False))
+    assert exc.value.status_code == 400
+    assert 'confirm=true' in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_docker_restart_success(monkeypatch):
+    from routes.openclaw_homelab_routes import DockerRestartRequest
+    monkeypatch.setattr(
+        'routes.openclaw_homelab_routes._docker_api_request',
+        lambda path, method, timeout: {'status': 'ok', 'http_status': 204}
+    )
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/ops/docker-restart', 'POST')
+    result = await ep(_request(scopes=['homelab:write']), body=DockerRestartRequest(container='pihole', confirm=True))
+    assert result['ops']['kind'] == 'docker_restart'
+    assert result['ops']['container'] == 'pihole'
+
+
+@pytest.mark.asyncio
+async def test_create_redmine_ticket_requires_confirm(mock_event_store):
+    from routes.openclaw_homelab_routes import RedmineTicketRequest
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/events/{event_id}/redmine-ticket', 'POST')
+    with pytest.raises(HTTPException) as exc:
+        await ep(_request(scopes=['homelab:write']), event_id='evt-123', body=RedmineTicketRequest(confirm=False))
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_redmine_ticket_success(mock_event_store, monkeypatch):
+    from routes.openclaw_homelab_routes import RedmineTicketRequest
+    event = mock_event_store.record_event('source', 'svc', 'critical', 'Title', 'Sum', 'k')
+    
+    import httpx
+    monkeypatch.setattr('routes.openclaw_bridge_routes._converge_config', lambda: ("http://base", "key"))
+    
+    class MockResponse:
+        status_code = 201
+        def json(self): return {"issue": {"id": 999}}
+        
+    class MockAsyncClient:
+        def __init__(self, **kwargs): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def post(self, url, headers=None, json=None): return MockResponse()
+
+    monkeypatch.setattr(httpx, 'AsyncClient', MockAsyncClient)
+    router = setup_openclaw_homelab_routes()
+    ep = _endpoint(router, '/api/openclaw/homelab/events/{event_id}/redmine-ticket', 'POST')
+    result = await ep(_request(scopes=['homelab:write']), event_id=event['id'], body=RedmineTicketRequest(confirm=True))
+    assert result['ops']['kind'] == 'create_redmine_ticket'
+    assert result['ops']['issue_id'] == 999
+
+
+# ---------------------------------------------------------------------------
 # Persistence failure → 500 (not 404 swallow)
 # ---------------------------------------------------------------------------
 

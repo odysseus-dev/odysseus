@@ -6,7 +6,8 @@ from src.n8n_client import N8nClient, N8nClientError
 from src.event_store import EventStore
 
 N8N_READ_SCOPES = {'n8n:read'}
-N8N_EVENTS_SCOPES = {'n8n:events'}
+N8N_WRITE_SCOPES = {'n8n:write'}
+N8N_EVENTS_SCOPES = {'n8n:events', 'n8n:write'}
 
 def _has_scope(request: Request, allowed: set[str]) -> bool:
     if not getattr(request.state, 'api_token', False):

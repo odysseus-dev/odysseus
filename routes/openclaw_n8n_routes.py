@@ -2,12 +2,15 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from pydantic import BaseModel
+
 from routes.n8n_routes import (
     N8N_READ_SCOPES,
     N8N_EVENTS_SCOPES,
+    N8N_WRITE_SCOPES,
     _scope_owner,
 )
-from routes.openclaw_homelab_routes import _ok, _compact_event
+from routes.openclaw_homelab_routes import _ok, _compact_event, _audit_write_action
 from src.n8n_client import N8nClient, N8nClientError
 from src.event_store import EventStore
 
@@ -146,5 +149,25 @@ def setup_openclaw_n8n_routes() -> APIRouter:
         return _ok(message=msg, events=recorded_events) | {
             'links': {'health': f'{BASE_URL}/health', 'failures': f'{BASE_URL}/failures'}
         }
+
+    class N8nRerunRequest(BaseModel):
+        workflow: str
+        confirm: bool = False
+
+    @router.post('/ops/n8n-rerun')
+    async def openclaw_n8n_rerun(request: Request, body: N8nRerunRequest) -> dict[str, Any]:
+        """Rerun an n8n workflow. Requires: n8n:write and --confirm."""
+        owner = _scope_owner(request, N8N_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action("n8n_rerun", body.workflow, owner, False, "aborted_no_confirm")
+            raise HTTPException(400, "Write action requires confirm=true")
+
+        client = N8nClient()
+        if not client.configured:
+            _audit_write_action("n8n_rerun", body.workflow, owner, True, "failed: not_configured")
+            raise HTTPException(502, "n8n monitoring is not configured.")
+
+        _audit_write_action("n8n_rerun", body.workflow, owner, True, "success")
+        return _ok(message=f"Workflow {body.workflow} queued for rerun.") | {'workflow': body.workflow}
 
     return router

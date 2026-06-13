@@ -18,9 +18,18 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+class DockerRestartRequest(BaseModel):
+    container: str
+    confirm: bool = False
+
+class RedmineTicketRequest(BaseModel):
+    confirm: bool = False
 
 from routes.homelab_routes import (
     HOMELAB_READ_SCOPES,
+    HOMELAB_WRITE_SCOPES,
     EVENTS_WRITE_SCOPES,
     _load_services,
     execute_health_checks,
@@ -51,6 +60,26 @@ TAILSCALE_SOCKET = os.getenv('HOMELAB_TAILSCALE_SOCKET', '/var/run/tailscale/tai
 def _safe_actions(actions: list[str]) -> list[str]:
     """Filter to only allowed actions before returning to OpenClaw."""
     return [a for a in actions if a in _ALLOWED_ACTIONS]
+
+def _audit_write_action(action: str, target: str, owner: str, confirmed: bool, result: str, details: dict = None) -> None:
+    audit_file = os.path.join("data", "ops_audit.log")
+    os.makedirs(os.path.dirname(audit_file), exist_ok=True)
+    import datetime
+    entry = {
+        "action": action,
+        "target": target,
+        "requested_by": owner,
+        "confirmed": confirmed,
+        "result": result,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    if details:
+        entry["details"] = details
+    try:
+        with open(audit_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        logger.error(f"Audit log write failed: {exc}")
 
 def _sanitize_dict(data: dict) -> dict:
     """Recursively redact sensitive keys from a dictionary."""
@@ -140,12 +169,12 @@ class _UnixSocketHTTPConnection(http.client.HTTPConnection):
         self.sock = sock
 
 
-def _docker_api_request(path: str, timeout: int = 8) -> dict[str, Any]:
+def _docker_api_request(path: str, timeout: int = 8, method: str = 'GET') -> dict[str, Any]:
     if not os.path.exists(DOCKER_SOCKET):
         return {'status': 'degraded', 'error': 'docker_socket_not_available'}
     conn = _UnixSocketHTTPConnection(DOCKER_SOCKET, timeout=timeout)
     try:
-        conn.request('GET', path)
+        conn.request(method, path)
         resp = conn.getresponse()
         raw = resp.read()
         text = raw.decode('utf-8', errors='replace')
@@ -630,6 +659,65 @@ def setup_openclaw_homelab_routes() -> APIRouter:
             f"Ollama check degraded: {result.get('error') or result.get('stderr') or 'unknown error'}"
         )
         return _ops_result('ollama_models', message, {'table': result.get('stdout') or '', 'check': result})
+
+    @router.post('/ops/docker-restart')
+    async def openclaw_docker_restart(request: Request, body: DockerRestartRequest) -> dict[str, Any]:
+        """Restart a docker container. Requires: homelab:write and --confirm."""
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action("docker_restart", body.container, owner, False, "aborted_no_confirm")
+            raise HTTPException(400, "Write action requires confirm=true")
+        
+        if not re.match(r'^[A-Za-z0-9_-]+$', body.container):
+            _audit_write_action("docker_restart", body.container, owner, True, "rejected_invalid_name")
+            raise HTTPException(400, "Invalid container name format")
+        
+        result = _docker_api_request(f"/containers/{body.container}/restart", method="POST", timeout=30)
+        
+        if result.get('status') == 'ok' and result.get('http_status', 500) < 400:
+            _audit_write_action("docker_restart", body.container, owner, True, "success")
+            return _ops_result('docker_restart', f"Container {body.container} restarted.", {'container': body.container})
+        else:
+            err = result.get('error') or result.get('body') or f"HTTP {result.get('http_status')}"
+            _audit_write_action("docker_restart", body.container, owner, True, f"failed: {err}")
+            raise HTTPException(500, f"Failed to restart container: {err}")
+
+    @router.post('/events/{event_id}/redmine-ticket')
+    async def openclaw_create_redmine_ticket(request: Request, event_id: str, body: RedmineTicketRequest) -> dict[str, Any]:
+        """Create a Redmine ticket from a homelab event. Requires: homelab:write and --confirm."""
+        owner = _scope_owner(request, HOMELAB_WRITE_SCOPES)
+        if not body.confirm:
+            _audit_write_action("create_redmine_ticket", event_id, owner, False, "aborted_no_confirm")
+            raise HTTPException(400, "Write action requires confirm=true")
+            
+        store = EventStore()
+        event = store.get_event(event_id)
+        if not event:
+            raise HTTPException(404, "Event not found")
+            
+        from routes.openclaw_bridge_routes import _converge_config
+        try:
+            base_url, api_key = _converge_config()
+            payload = {
+                "issue": {
+                    "project_id": 1,
+                    "subject": f"[{event.get('service')}] {event.get('title')}",
+                    "description": f"Event ID: {event_id}\nSeverity: {event.get('severity')}\n\n{event.get('summary')}",
+                    "priority_id": 4 if event.get('severity') == 'critical' else 2
+                }
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(f"{base_url}/issues.json", headers={"Authorization": f"Bearer {api_key}"}, json=payload)
+                if resp.status_code >= 400:
+                    raise Exception(f"Redmine returned HTTP {resp.status_code}: {resp.text[:200]}")
+                data = resp.json()
+                issue_id = data.get('issue', {}).get('id')
+                
+                _audit_write_action("create_redmine_ticket", event_id, owner, True, "success", {"issue_id": issue_id})
+                return _ops_result('create_redmine_ticket', f"Ticket #{issue_id} created for event {event_id}.", {'issue_id': issue_id})
+        except Exception as exc:
+            _audit_write_action("create_redmine_ticket", event_id, owner, True, f"failed: {exc}")
+            raise HTTPException(500, f"Failed to create ticket: {exc}")
 
     # ------------------------------------------------------------------
     # Event read routes
