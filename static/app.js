@@ -730,7 +730,8 @@ function initializeEventListeners() {
     if (chk) chk.checked = active;
     // Hide/show model picker
     const _mpw = el('model-picker-wrap');
-    if (_mpw) _mpw.style.display = active ? 'none' : '';
+    const whisperActive = !!(sessionModule && sessionModule.isCurrentGroupChild && sessionModule.isCurrentGroupChild());
+    if (_mpw) _mpw.style.display = (active || whisperActive) ? 'none' : '';
     // Mutual exclusion: group disables research + web search
     if (active) {
       _syncResearchIndicator(false);
@@ -794,6 +795,33 @@ function initializeEventListeners() {
       }
     }
     if (ws) { ws.style.animation = 'none'; ws.offsetHeight; ws.style.animation = 'welcome-enter 0.3s ease-out both'; }
+  }
+
+  /** Sync raw participant whisper indicator. */
+  function _syncWhisperIndicator(active, target = null) {
+    const btn = el('whisper-toggle-btn');
+    const label = el('whisper-toggle-label');
+    const name = target && target.name ? String(target.name) : '';
+    if (btn) {
+      btn.style.display = active ? '' : 'none';
+      btn.classList.toggle('active', active);
+      btn.title = active
+        ? `Whisper to ${name || 'group participant'} - click to open group`
+        : 'Whisper mode active';
+      if (target && target.parent_session_id) {
+        btn.dataset.parentSessionId = String(target.parent_session_id);
+      } else {
+        delete btn.dataset.parentSessionId;
+      }
+    }
+    if (label) {
+      label.textContent = 'Whisper';
+    }
+    const _mpw = el('model-picker-wrap');
+    if (_mpw) {
+      const groupActive = !!(groupModule && groupModule.isActive && groupModule.isActive());
+      _mpw.style.display = (active || groupActive) ? 'none' : '';
+    }
   }
 
   // ── Close compare if active (used by all tool/sidebar activations) ──
@@ -1759,6 +1787,7 @@ function initializeEventListeners() {
   // run locally — finds it instead of silently no-op'ing (the "group indicator
   // sometimes doesn't appear" bug).
   window._syncGroupIndicator = _syncGroupIndicator;
+  window._syncWhisperIndicator = _syncWhisperIndicator;
   // Init RAG state on load
   {
     const st = loadToggleState();
@@ -2267,6 +2296,19 @@ function initializeEventListeners() {
   }
 
   // ── Incognito mode toggle (on welcome screen) ──
+  const whisperToggleBtn = el('whisper-toggle-btn');
+  if (whisperToggleBtn) {
+    whisperToggleBtn.addEventListener('click', () => {
+      const child = sessionModule && sessionModule.getCurrentGroupChildInfo
+        ? sessionModule.getCurrentGroupChildInfo()
+        : null;
+      const parentId = (child && child.parent_session_id) || whisperToggleBtn.dataset.parentSessionId;
+      if (parentId && sessionModule && sessionModule.selectSession) {
+        sessionModule.selectSession(parentId, { keepSidebar: true });
+      }
+    });
+  }
+
   const incognitoBtn = el('incognito-btn');
   const INCOGNITO_EYE_OPEN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
   const INCOGNITO_EYE_CLOSED = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>';
@@ -3538,7 +3580,8 @@ function startOdysseusApp() {
       if (!msg) { console.log('[group] Empty message, skipping'); return; }
       console.log('[group] Sending:', msg);
       chatRenderer.hideWelcomeScreen();
-      chatRenderer.addMessage('user', msg);
+      const userMetadata = groupModule.getWhisperUserMetadata ? groupModule.getWhisperUserMetadata() : null;
+      chatRenderer.addMessage('user', msg, null, userMetadata);
       msgInput.value = '';
       groupModule.sendMessage(msg);
       return;
@@ -3570,6 +3613,16 @@ function startOdysseusApp() {
     return fileHandlerModule.getPendingCount && fileHandlerModule.getPendingCount() > 0;
   }
 
+  function _currentWhisperChildInfo() {
+    try {
+      return sessionModule && sessionModule.getCurrentGroupChildInfo
+        ? sessionModule.getCurrentGroupChildInfo()
+        : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function _updateSendBtnIcon() {
     if (!sendBtn) return;
     // Don't override if streaming (stop button) or recording
@@ -3588,9 +3641,13 @@ function startOdysseusApp() {
     } else if (!hasText && !hasFiles && !_isSttEnabled()) {
       clearTimeout(sendBtn._collapseTimer);
       // Group chat: always show send button, never newchat mode
-      if (groupModule && groupModule.isActive()) {
+      const whisperChild = _currentWhisperChildInfo();
+      if ((groupModule && groupModule.isActive()) || whisperChild) {
+        const whisperTarget = groupModule.getWhisperTarget ? groupModule.getWhisperTarget() : null;
         sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send to group';
+        sendBtn.title = whisperChild
+          ? `Send whisper to ${whisperChild.name || 'participant'}`
+          : (whisperTarget ? `Whisper to ${whisperTarget.name}` : 'Send to group');
         newMode = 'idle';
         sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded');
       } else {
@@ -3628,15 +3685,25 @@ function startOdysseusApp() {
         const delay = wasExpanded ? 300 : 0;
         setTimeout(() => {
           if (sendBtn.dataset.mode !== 'send') return;
+          const groupActive = groupModule && groupModule.isActive && groupModule.isActive();
+          const whisperTarget = groupActive && groupModule.getWhisperTarget ? groupModule.getWhisperTarget() : null;
+          const whisperChild = _currentWhisperChildInfo();
           sendBtn.innerHTML = _sendIcon;
-          sendBtn.title = 'Send message';
+          sendBtn.title = whisperChild
+            ? `Send whisper to ${whisperChild.name || 'participant'}`
+            : (whisperTarget ? `Whisper to ${whisperTarget.name}` : (groupActive ? 'Send to group' : 'Send message'));
           sendBtn.classList.remove('mic-mode', 'newchat-mode', 'anim-spin-swap');
           sendBtn.classList.add('anim-spin');
           sendBtn.addEventListener('animationend', () => sendBtn.classList.remove('anim-spin'), { once: true });
         }, delay);
       } else {
+        const groupActive = groupModule && groupModule.isActive && groupModule.isActive();
+        const whisperTarget = groupActive && groupModule.getWhisperTarget ? groupModule.getWhisperTarget() : null;
+        const whisperChild = _currentWhisperChildInfo();
         sendBtn.innerHTML = _sendIcon;
-        sendBtn.title = 'Send message';
+        sendBtn.title = whisperChild
+          ? `Send whisper to ${whisperChild.name || 'participant'}`
+          : (whisperTarget ? `Whisper to ${whisperTarget.name}` : (groupActive ? 'Send to group' : 'Send message'));
         sendBtn.classList.remove('mic-mode', 'newchat-mode', 'newchat-expanded', 'anim-spin', 'anim-launch', 'anim-land');
       }
     }

@@ -7596,12 +7596,22 @@ a.chat-link:hover {
   background: color-mix(in srgb, var(--fg) 7%, transparent) !important;
   opacity: 0.92;
 }
+.group-participant-row.child-active,
+.group-participant-row.whisper-active {
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent) !important;
+  opacity: 1;
+}
 .group-participant-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--fg) 28%, transparent);
   flex-shrink: 0;
+}
+.group-participant-row.child-active .group-participant-dot,
+.group-participant-row.whisper-active .group-participant-dot {
+  background: var(--accent, var(--red));
+  border-color: var(--accent, var(--red));
 }
 .group-participant-name {
   flex: 1;
@@ -27518,10 +27528,18 @@ button .spinner-whirlpool {
 .msg-group .role {
   font-weight: 600;
 }
+.msg-whisper {
+  border-color: color-mix(in srgb, #8b5cf6 32%, var(--bubble-border, var(--border))) !important;
+  box-shadow: inset 3px 0 0 color-mix(in srgb, #8b5cf6 58%, transparent);
+}
 #group-toggle-btn.active,
 .overflow-menu-item#overflow-group-btn.active {
   color: var(--red);
   background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+#whisper-toggle-btn.active {
+  color: #8b5cf6;
+  background: color-mix(in srgb, #8b5cf6 14%, transparent);
 }
 /* Group model picker — match app theme */
 #group-model-picker .modal-content {

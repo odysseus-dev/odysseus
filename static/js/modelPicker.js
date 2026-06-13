@@ -98,6 +98,7 @@ function _modelExists(modelId, url) {
  * @param {function} deps.getSessions - returns sessions array
  * @param {function} deps.getPendingChat - returns _pendingChat object
  * @param {function} deps.setPendingChat - sets _pendingChat object
+ * @param {function} deps.isCurrentGroupChild - returns true for raw group participant chats
  * @param {function} deps.createDirectChat - creates a new direct chat session
  */
 export function initModelPicker(deps) {
@@ -634,9 +635,9 @@ export function updateModelPicker() {
   if (!_deps) return;
   const label = document.getElementById('model-picker-label');
   if (!label) return;
-  // Hide model picker when group chat is active
+  // Hide model picker when group chat or a raw group participant whisper is active
   const wrap = document.getElementById('model-picker-wrap');
-  if (window.groupModule && window.groupModule.isActive()) {
+  if ((window.groupModule && window.groupModule.isActive()) || (_deps.isCurrentGroupChild && _deps.isCurrentGroupChild())) {
     if (wrap) { wrap.style.display = 'none'; }
     return;
   }

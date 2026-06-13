@@ -335,6 +335,9 @@ def _group_participants_for_user(db, user) -> dict[str, list[dict]]:
                 "index": idx,
                 "name": _group_participant_label(model, idx),
                 "model": _group_state_str(model.get("display") or model.get("mid"), 1024),
+                "model_id": _group_state_str(model.get("mid"), 1024),
+                "endpoint_url": _group_state_str(model.get("url"), 2048),
+                "endpoint_id": _group_state_str(model.get("endpointId"), 1024),
             })
         if participants:
             participants_by_parent[str(parent_id)] = participants
