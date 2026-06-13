@@ -280,13 +280,15 @@ def rank_image_models(system, search=None, sort="fit"):
 
     Returns list of models with fit info (vram needed, fits, recommended quant).
     """
+    if not isinstance(system, dict):
+        system = {}
     gpu_vram = system.get("gpu_vram_gb", 0) or 0
     has_gpu = system.get("has_gpu", False)
     results = []
 
     for model in IMAGE_MODEL_REGISTRY:
         # Filter by search
-        if search:
+        if isinstance(search, str) and search:
             s = search.lower()
             if s not in model["name"].lower() and s not in model["id"].lower() and s not in model.get("description", "").lower():
                 continue

