@@ -73,6 +73,10 @@ binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
 only when you intentionally want LAN/reverse-proxy access.
 
+> **On Apple Silicon (M-series) Macs:** Docker can't reach the Metal GPU, so
+> Cookbook serves local models on CPU only. For GPU-accelerated model serving,
+> run natively instead — see [Apple Silicon](#apple-silicon) below.
+
 ### Native Linux / macOS
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
