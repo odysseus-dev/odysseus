@@ -673,6 +673,8 @@ app.include_router(setup_openclaw_bridge_routes(
     webhook_manager=webhook_manager,
     task_scheduler=task_scheduler,
 ))
+from routes.openclaw_inbox_routes import setup_openclaw_inbox_routes
+app.include_router(setup_openclaw_inbox_routes())
 
 # Homelab operations
 from routes.homelab_routes import setup_homelab_routes

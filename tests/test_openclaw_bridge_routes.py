@@ -29,6 +29,7 @@ def _request(*, api_token=True, scopes=None, owner="alice", current_user="browse
 def test_openclaw_bridge_token_profile_is_read_only_by_default():
     assert "chat" in TOKEN_PROFILES["openclaw_bridge"]
     assert "converge:read" in TOKEN_PROFILES["openclaw_bridge"]
+    assert "email:read" in TOKEN_PROFILES["openclaw_bridge"]
     assert "workflows:trigger" not in TOKEN_PROFILES["openclaw_bridge"]
     assert {
         "chat",

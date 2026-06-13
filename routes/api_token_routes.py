@@ -45,6 +45,7 @@ TOKEN_PROFILES = {
     'openclaw_bridge': [
         'chat',
         'converge:read',
+        'email:read',
         'homelab:read',
         'events:read',
         'events:write',
