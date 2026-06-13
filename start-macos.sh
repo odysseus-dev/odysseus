@@ -30,6 +30,16 @@ if [ -f .env ]; then
     done < .env
 fi
 
+# DATABASE_URL is project-scoped: force it from .env if explicitly set there,
+# so a shell-level DATABASE_URL for another project's Postgres doesn't take over.
+if [ -f .env ]; then
+    _db_url="$(grep -E '^DATABASE_URL=' .env | tail -1 | sed 's/^DATABASE_URL=//')"
+    if [ -n "$_db_url" ]; then
+        export DATABASE_URL="$_db_url"
+    fi
+    unset _db_url
+fi
+
 # Shell overrides (ODYSSEUS_PORT / ODYSSEUS_HOST) take top priority, then .env
 # values (APP_PORT / APP_BIND), then built-in defaults.
 PORT="${ODYSSEUS_PORT:-${APP_PORT:-7860}}"   # 7860, not 7000 — macOS AirPlay Receiver holds 7000.
@@ -162,6 +172,13 @@ fi
 echo "▶ Preparing Odysseus…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
+# Apply Gmail/CalDAV/Drive integrations from .env — idempotent, runs on every start.
+if [ -f .env ] && grep -qE '^(GMAIL_PERSONAL_USER|GMAIL_USER)=' .env 2>/dev/null; then
+    echo "▶ Configuring email/calendar integrations…"
+    ./venv/bin/python scripts/setup-integrations.py \
+        || echo "  ⚠ Integration setup failed — re-run: ./venv/bin/python scripts/setup-integrations.py"
+fi
+
 # Local provider bootstrap.
 #     On Apple Silicon macOS, Apfel is treated as a sibling local model server
 #     to Ollama: if Homebrew has it installed, we start its OpenAI-compatible
@@ -209,6 +226,22 @@ elif [ -x "$CHROMA_BIN" ]; then
     CHROMA_PID=$!
 else
     echo "▶ ChromaDB CLI not found in venv; skipping (tool index will be degraded)."
+fi
+
+# Index RAG sources defined in rag-manifest.yaml once ChromaDB is reachable.
+# Runs in the background so startup isn't blocked; logs to a temp file.
+if [ -f "$PWD/rag-manifest.yaml" ]; then
+    echo "▶ Scheduling RAG manifest indexing (background)…"
+    echo "  log: ${TMPDIR:-/tmp}/odysseus-rag-index.log"
+    (
+        for _ in $(seq 1 15); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/$CHROMA_PORT") 2>/dev/null; then break; fi
+            sleep 2
+        done
+        INDEX_LOG="${TMPDIR:-/tmp}/odysseus-rag-index.log"
+        "$VENV_PY" scripts/index_from_manifest.py >> "$INDEX_LOG" 2>&1
+        echo "[rag-index] Done — $(date)" >> "$INDEX_LOG"
+    ) &
 fi
 
 # 5. Launch. Bind to loopback by default; opt into LAN/Tailscale with

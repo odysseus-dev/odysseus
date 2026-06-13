@@ -1,0 +1,16 @@
+# rag-manifest.yaml
+# Controls which directories are indexed into Odysseus's RAG system on startup.
+# Edit this file and restart Odysseus to pick up new sources.
+version: 1
+
+sources:
+  - path: "~/Documents/_dev/maylortaylor/obsidian_vault"
+    label: "Obsidian Vault"
+    recursive: true   # default — traverse all subdirectories
+
+# Per-source options:
+#   path:      Required. ~ expands to home directory.
+#   label:     Optional. Human-readable name shown in logs.
+#   recursive: Optional, default true. Traverse all subdirectories.
+#   include:   Future: glob patterns to include (e.g. ["*.md", "*.txt"])
+#   exclude:   Future: directory names to skip (e.g. [".obsidian", "node_modules"])
