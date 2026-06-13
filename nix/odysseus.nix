@@ -25,6 +25,7 @@ let
 
   # nixpkgs attr names parsed from requirements.txt: drop comments / blanks,
   # strip version specifiers and extras, normalise (lowercase, _/. -> -).
+  # Skip packages that don't exist in nixpkgs (test-only deps like httpx2).
   reqNames =
     let
       nameOf =
@@ -36,8 +37,12 @@ let
         if m == null then null else builtins.head m;
       normalise = n: reqRenames.${n} or (lib.replaceStrings [ "_" "." ] [ "-" "-" ] (lib.toLower n));
       lines = lib.splitString "\n" (builtins.readFile ../requirements.txt);
+      rawNames = lib.filter (n: n != null) (map nameOf lines);
+      normalisedNames = map normalise rawNames;
+      # Packages to skip (test-only or not in nixpkgs)
+      skipPackages = [ "httpx2" ];
     in
-    lib.unique (map normalise (lib.filter (n: n != null) (map nameOf lines)));
+    lib.unique (lib.filter (n: !builtins.elem n skipPackages) normalisedNames);
 
   # Deps the native app needs that requirements.txt doesn't declare (the
   # Docker/pip path doesn't need them): libmagic-backed MIME detection, and
