@@ -2369,5 +2369,33 @@ class GatedIntent(TimestampMixin, Base):
     expires_at = Column(DateTime, nullable=True)
 
 
+class Mission(TimestampMixin, Base):
+    """A Big Boss mission: goal -> task plan -> dispatch -> report. Spec §6."""
+    __tablename__ = "platform_missions"
+
+    id = Column(String, primary_key=True)
+    goal = Column(Text, nullable=False)
+    owner = Column(String, nullable=False, index=True)   # human owner
+    status = Column(String, nullable=False, default="planning", index=True)  # planning|running|completed|failed
+    report = Column(Text, nullable=True)
+
+
+class MissionTask(TimestampMixin, Base):
+    """One dispatched unit of a mission; status mirrors the envelope lifecycle."""
+    __tablename__ = "platform_mission_tasks"
+
+    id = Column(String, primary_key=True)
+    mission_id = Column(String, ForeignKey("platform_missions.id"),
+                        nullable=False, index=True)
+    seq = Column(Integer, nullable=False, default=0)
+    target_company = Column(String, nullable=False)
+    intent = Column(String, nullable=False)
+    task_text = Column(Text, nullable=False, default="")
+    conversation_id = Column(String, nullable=False, index=True)
+    envelope_message_id = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="pending", index=True)  # pending|dispatched|blocked|completed|failed
+    result = Column(Text, nullable=True)
+
+
 # Initialize the database by creating all tables (after ALL models are defined)
 init_db()
