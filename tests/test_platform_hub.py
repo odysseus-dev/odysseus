@@ -58,6 +58,19 @@ def test_gated_intent_parked_not_delivered():
     assert all(e["message_id"] != "hub-m4" for e in inbox)
 
 
+def test_expired_envelope_rejected():
+    _make_company("hub-c7")
+    env = Envelope(
+        message_id="hub-m6", conversation_id="c-1", idempotency_key="hub-m6",
+        from_company="hub-c7", to_company="bigboss",
+        issued_at="2020-01-01T10:00:00Z", expires_at="2020-01-01T10:05:00Z",
+        intent="status.report", status="finished", payload={},
+    )
+    sig = sign_envelope(env, company_private_key("hub-c7"))
+    with pytest.raises(HubError, match="expired"):
+        ingest(env, sig)   # expires_at is in the past relative to wall clock
+
+
 def test_ungated_message_delivered():
     _make_company("hub-c5")
     _make_company("hub-c6")

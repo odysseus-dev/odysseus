@@ -10,7 +10,7 @@ import json
 import uuid
 from datetime import datetime, timedelta, UTC
 
-from core.database import get_db_session, EnvelopeRecord, GatedIntent
+from core.database import get_db_session, utcnow_naive, EnvelopeRecord, GatedIntent
 from .envelope import Envelope, canonical_bytes, verify_envelope, classify_intent
 from .registry import company_public_key
 
@@ -26,6 +26,20 @@ def _chain_hash(prev_hash: str, env: Envelope) -> str:
     return hashlib.sha256(prev_hash.encode() + canonical_bytes(env)).hexdigest()
 
 
+def _is_expired(expires_at_iso: str | None) -> bool:
+    """True when an ISO-8601 expires_at lies in the past (naive treated as UTC)."""
+    if not expires_at_iso:
+        return False
+    try:
+        exp = datetime.fromisoformat(expires_at_iso)
+    except ValueError:
+        # Unparseable expiry on a signed message: refuse rather than guess.
+        return True
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=UTC)
+    return exp < datetime.now(UTC)
+
+
 def ingest(env: Envelope, signature_hex: str) -> dict:
     """Accept one envelope into the hub. Raises HubError on any rejection."""
     pub = company_public_key(env.from_company)
@@ -33,6 +47,8 @@ def ingest(env: Envelope, signature_hex: str) -> dict:
         raise HubError(f"unknown sender company {env.from_company!r}")
     if not verify_envelope(env, signature_hex, pub):
         raise HubError("signature verification failed")
+    if _is_expired(env.expires_at):
+        raise HubError(f"envelope expired at {env.expires_at}")
 
     with get_db_session() as db:
         if db.get(EnvelopeRecord, env.message_id):
@@ -67,7 +83,8 @@ def ingest(env: Envelope, signature_hex: str) -> dict:
                 id=str(uuid.uuid4()), envelope_message_id=env.message_id,
                 company_id=env.from_company, gated_class=gated_class,
                 state="proposed",
-                expires_at=datetime.now(UTC) + timedelta(hours=DEFAULT_GATE_TTL_HOURS),
+                # naive UTC: matches the codebase's DateTime column convention
+                expires_at=utcnow_naive() + timedelta(hours=DEFAULT_GATE_TTL_HOURS),
             ))
         db.commit()
         return {"message_id": env.message_id, "audit_hash": audit_hash,

@@ -28,14 +28,18 @@ def test_company_principal_roundtrip():
 def test_envelope_record_and_gated_intent_tables():
     db = SessionLocal()
     try:
+        # Self-contained: own company so FK checks pass regardless of
+        # test ordering (don't lean on travel-1 from the other test).
+        db.add(Company(id="travel-db2", vertical_type="travel_agency",
+                       display_name="Travel DB2", surface_policy="web_first"))
         rec = EnvelopeRecord(message_id="m-1", conversation_id="c-1",
-                             from_company="travel-1", to_company="bigboss",
+                             from_company="travel-db2", to_company="bigboss",
                              intent="status.report", status="finished",
                              payload_json="{}", signature="sig",
                              audit_hash="h1", prev_audit_hash="GENESIS")
         db.add(rec)
         gi = GatedIntent(id="gi-1", envelope_message_id="m-1",
-                         company_id="travel-1", gated_class="booking",
+                         company_id="travel-db2", gated_class="booking",
                          state="proposed")
         db.add(gi)
         db.commit()

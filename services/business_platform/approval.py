@@ -6,7 +6,9 @@ the ORIGIN company may decide (the company whose agent proposed the action).
 """
 from datetime import datetime, UTC
 
-from core.database import get_db_session, GatedIntent, EnvelopeRecord, Principal
+from core.database import (
+    get_db_session, utcnow_naive, GatedIntent, EnvelopeRecord, Principal,
+)
 from .registry import is_manager_of
 
 
@@ -40,12 +42,20 @@ def _decide(intent_id: str, principal_id: str, new_state: str,
             raise ApprovalError(f"gated intent {intent_id!r} not found")
         if g.state != "proposed":
             raise ApprovalError(f"intent already {g.state}")
+        # Lazy expiry: TTL holds even when no expire_stale() sweep has run.
+        exp = g.expires_at
+        if exp is not None and exp.tzinfo is not None:
+            exp = exp.astimezone(UTC).replace(tzinfo=None)
+        if exp is not None and exp < utcnow_naive():
+            g.state = "expired"
+            db.commit()
+            raise ApprovalError("intent expired; nothing executes by default")
         if not is_manager_of(principal_id, g.company_id):
             raise ApprovalError(
                 f"{principal_id!r} is not a manager of {g.company_id!r}")
         g.state = new_state
         g.decided_by = principal_id
-        g.decided_at = datetime.now(UTC)
+        g.decided_at = utcnow_naive()
         rec = db.get(EnvelopeRecord, g.envelope_message_id)
         if new_state == "approved" and rec:
             rec.status = "approved"
@@ -65,8 +75,10 @@ def deny(intent_id: str, principal_id: str, reason: str = "") -> dict:
 
 
 def expire_stale(now: datetime | None = None) -> int:
-    """Mark overdue proposed intents expired. Returns count. Spec §5."""
-    now = now or datetime.now(UTC)
+    """Mark overdue proposed intents expired. Returns count. Spec §5.
+
+    `now` must be naive UTC (codebase DateTime column convention)."""
+    now = now or utcnow_naive()
     with get_db_session() as db:
         rows = (db.query(GatedIntent)
                   .filter(GatedIntent.state == "proposed",
