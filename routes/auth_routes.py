@@ -117,6 +117,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Password must be at least 8 characters")
         if len(body.username.strip()) < 1:
             raise HTTPException(400, "Username is required")
+        if body.username.strip().lower().startswith("agent:"):
+            raise HTTPException(400, "Reserved username prefix")
         ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
         if not ok:
             raise HTTPException(409, "Username already taken")
@@ -128,6 +130,10 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         # Verify password first
         username = body.username.strip().lower()
+        # agent:* owner ids are INTERNAL-ONLY identities (multiagent spec):
+        # created without passwords, never allowed through the login path.
+        if username.startswith("agent:"):
+            raise HTTPException(401, "Invalid credentials")
         if not await asyncio.to_thread(auth_manager.verify_password, username, body.password):
             raise HTTPException(401, "Invalid credentials")
         # Check 2FA if enabled

@@ -101,6 +101,10 @@ DEFAULT_SETTINGS = {
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
+    # Multiagent slice-1 (spec 2026-06-12): subagent recursion depth cap and
+    # bounded-parallel fan-out cap (protects the single-GPU model pool).
+    "agent_max_depth": 2,
+    "agent_max_parallel": 2,
     "agent_input_token_budget": 6000,
     # Ceiling on the *auto-derived* input budget that #1230 introduced. Has
     # no effect when `agent_input_token_budget` is explicitly set (the user's

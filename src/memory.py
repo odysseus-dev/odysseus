@@ -133,6 +133,18 @@ class MemoryManager:
             return entries
         return [e for e in entries if e.get("owner") == owner]
 
+    def load_multi(self, owners: List[str]) -> List[Dict]:
+        """Load entries whose owner is in `owners`, plus shared (ownerless).
+
+        Multiagent spec read model: a subagent reads
+        ``owner IN (agent_id, human_id, NULL)`` — its own memories, the
+        inheriting human's, and shared. Callers MUST pass only the derived
+        agent id + its inheriting human; never another human's owner.
+        """
+        allowed = {o for o in owners if o}
+        return [e for e in self.load_all()
+                if not e.get("owner") or e.get("owner") in allowed]
+
     def claim_ownerless(self, owner: str):
         """Assign all ownerless memory entries to the given owner."""
         entries = self.load_all()
