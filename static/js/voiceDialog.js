@@ -33,6 +33,8 @@ let _useStream = false; // false → v1 single-shot POST fallback
 let _pendingAudio = null;   // VAD audio kept for fallback while awaiting stream final
 let _finalTimer = null;     // watchdog: no final within window → fallback
 let _standbyEnabled = false; // toggle cycle: off → dialog → dialog+standby → off
+let _browserMode = false;    // stt_provider=browser → Web Speech API loop, no VAD/WS
+let _rec = null;             // active SpeechRecognition (browser mode)
 
 const ICON_DIALOG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M9 10h.01M12 10h.01M15 10h.01"/></svg>';
 
@@ -192,6 +194,7 @@ async function _onSpeechEnd(audio) {
 
 function _resumeListening() {
   if (_state === 'off') return;
+  if (_browserMode) { _startBrowserTurn(); return; }
   _state = 'listening';
   _engine.setThreshold(THRESHOLD_LISTEN);
   _engine.start();
@@ -202,6 +205,73 @@ function _resumeListening() {
   }
   _setUI('vd-listening', 'listening', 'Voice dialog: listening… (click to stop)');
   _startWave();
+}
+
+// ── Browser STT mode (Web Speech API — stt_provider=browser) ──
+// One SpeechRecognition per turn: the browser endpoints on silence and emits
+// a final result; interims render greyed in the input. No VAD, no WS — the
+// phone/OS recognizer (Apple/Google) handles languages natively.
+
+function _stopBrowserRec() {
+  if (_rec) {
+    _rec.onresult = _rec.onend = _rec.onerror = null;
+    try { _rec.abort(); } catch (_) {}
+    _rec = null;
+  }
+}
+
+function _startBrowserTurn() {
+  if (_state === 'off') return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { _toast('Browser speech recognition unavailable'); stop(); return; }
+  _stopBrowserRec();
+
+  _state = 'listening';
+  _setUI('vd-listening', 'listening (browser)', 'Voice dialog: listening… (click to stop)');
+
+  const input = document.getElementById('message');
+  let finalText = '';
+
+  _rec = new SR();
+  _rec.continuous = false;        // browser endpoints the turn on silence
+  _rec.interimResults = true;
+  _rec.lang = '';                 // OS/page locale decides (fr/en native)
+
+  _rec.onresult = (event) => {
+    let interim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) finalText += event.results[i][0].transcript + ' ';
+      else interim += event.results[i][0].transcript;
+    }
+    if (input) {
+      input.value = (finalText + interim).trim();
+      input.style.opacity = '0.55';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  };
+
+  _rec.onerror = (e) => {
+    if (e.error === 'no-speech' || e.error === 'aborted') return; // onend restarts
+    console.warn('Voice dialog: browser STT error:', e.error);
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      _toast('Microphone permission denied');
+      stop();
+    }
+  };
+
+  _rec.onend = () => {
+    if (_state !== 'listening') return;
+    if (input) input.style.opacity = '';
+    const text = finalText.trim();
+    if (text) { _rec = null; _send(text); }
+    else _startBrowserTurn();      // heard nothing — listen again
+  };
+
+  try { _rec.start(); } catch (err) {
+    console.warn('Voice dialog: recognition start failed', err);
+    _toast('Speech recognition failed to start');
+    stop();
+  }
 }
 
 function _enterStandby() {
@@ -233,11 +303,14 @@ function _send(text) {
   _sawTTSActivity = false;
   _watchStartedAt = Date.now();
 
-  // Keep the mic open at the raised threshold so barge-in works during the answer
-  _engine.setThreshold(THRESHOLD_PLAYBACK);
-  _engine.start();
+  if (_engine) {
+    // Keep the mic open at the raised threshold so barge-in works during the answer
+    _engine.setThreshold(THRESHOLD_PLAYBACK);
+    _engine.start();
+    _startWave();
+  }
   if (_useStream && _stt) _stt.detach(); // stop streaming frames during the answer
-  _startWave();
+  if (_browserMode) _stopBrowserRec();   // no recognition while the answer plays (echo)
 
   if (typeof form.onsubmit === 'function') form.onsubmit(new Event('submit'));
   else if (form.requestSubmit) form.requestSubmit();
@@ -259,7 +332,8 @@ function _watchAnswer() {
       _setUI('vd-speaking', 'speaking', 'Voice dialog: speaking… (speak to interrupt, click to stop)');
     }
   } else if (_sawTTSActivity) {
-    _enterStandby();   // falls back to _resumeListening() when standby is off
+    if (_browserMode) _startBrowserTurn();
+    else _enterStandby();   // falls back to _resumeListening() when standby is off
     return;
   }
 
@@ -289,8 +363,22 @@ async function start() {
 
   _state = 'listening';
   mgr.autoPlay = true;
-  _setUI('vd-listening', 'loading VAD…', 'Voice dialog: starting…');
+  _setUI('vd-listening', 'starting…', 'Voice dialog: starting…');
 
+  // Provider decides the capture path: browser → Web Speech API (no VAD/WS).
+  _browserMode = false;
+  try {
+    const res = await fetch('/api/stt/stats', { credentials: 'same-origin' });
+    const stats = await res.json();
+    _browserMode = stats.provider === 'browser';
+  } catch (_) { /* default to server path */ }
+
+  if (_browserMode) {
+    _startBrowserTurn();
+    return;
+  }
+
+  _setUI('vd-listening', 'loading VAD…', 'Voice dialog: starting…');
   try {
     _engine = await createVadEngine({
       onSpeechStart: _onSpeechStart,
@@ -352,6 +440,8 @@ async function start() {
 function stop() {
   _standbyEnabled = false;
   _state = 'off';
+  _stopBrowserRec();
+  _browserMode = false;
   if (_watchTimer) { clearTimeout(_watchTimer); _watchTimer = null; }
   if (_bargeTimer) { clearTimeout(_bargeTimer); _bargeTimer = null; }
   if (_finalTimer) { clearTimeout(_finalTimer); _finalTimer = null; }
@@ -371,11 +461,12 @@ function _toggle() {
   if (_state === 'off') {
     _standbyEnabled = false;
     start();
-  } else if (!_standbyEnabled) {
+  } else if (!_standbyEnabled && !_browserMode) {
     _standbyEnabled = true;
     _toast('Standby mode: after each reply, say "hey soloway" to continue');
     if (_state === 'listening') _enterStandby();
   } else {
+    // Browser mode has no wake-word channel — second tap turns off.
     stop();
   }
 }
