@@ -36,6 +36,20 @@ def test_seeds_load_via_skills_manager(tmp_path):
     }
 
 
+def test_install_with_owner_visible_to_owner_scoped_load(tmp_path):
+    """SkillsManager.load(owner=...) hides ownerless skills (strict filter);
+    installer must be able to stamp an owner so seeds are runtime-visible."""
+    from services.memory.skills import SkillsManager
+    install_seed_skills(tmp_path / "skills", owner="agent:oleg/office")
+    mgr = SkillsManager(str(tmp_path))
+    visible = mgr.load(owner="agent:oleg/office")
+    assert {s["name"] for s in visible} == {
+        "seo", "content-writer", "page-writer", "web-search",
+        "email-triage", "task-queue",
+    }
+    assert mgr.load(owner="someone-else") == []
+
+
 # ---------------------------------------------------------------- loader ----
 
 
@@ -152,7 +166,10 @@ def test_compile_general_office(tmp_path):
     }
 
     front = json.loads((tmp_path / "front_desk.json").read_text())
-    assert front["front_desk"]["*"] == "front-desk"
+    # routes target COMPILED agent names; raw role mapping kept under "roles"
+    assert front["front_desk"]["*"] == "general_office-front-desk"
+    assert front["front_desk"]["quote."] == "general_office-sales"
+    assert front["roles"]["*"] == "front-desk"
     assert front["gated_classes"] == ["outbound_comms", "payment_refund", "quote"]
     assert front["surface_policy"] == "web_first"
 

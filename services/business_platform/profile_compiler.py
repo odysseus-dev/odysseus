@@ -40,11 +40,18 @@ def _default_skills_dir() -> Path:
     return Path(SKILLS_DIR)
 
 
-def install_seed_skills(skills_dir: Optional[str | Path] = None) -> dict:
+def install_seed_skills(skills_dir: Optional[str | Path] = None,
+                        owner: Optional[str] = None) -> dict:
     """Copy repo seed skills into the native skills dir, missing-only.
 
     Returns {"installed": [refs], "skipped": [refs]} where a ref is
     "<category>/<name>". Existing native skills are never touched.
+
+    ``owner``: SkillsManager.load(owner=...) deliberately HIDES ownerless
+    skills (strict ownership filter). Pass the owner the seeded skills
+    should be visible to (e.g. the company's agent owner id) and it is
+    stamped into the frontmatter on install. Without it, seeds are only
+    reachable via load_all() / catalog skill-ref resolution.
     """
     dest_root = Path(skills_dir) if skills_dir else _default_skills_dir()
     installed, skipped = [], []
@@ -56,6 +63,13 @@ def install_seed_skills(skills_dir: Optional[str | Path] = None) -> dict:
             skipped.append(ref)
             continue
         shutil.copytree(src_dir, dest, dirs_exist_ok=True)
+        if owner:
+            md = dest / "SKILL.md"
+            text = md.read_text(encoding="utf-8")
+            head, sep, body = text.partition("\n---\n")
+            if sep and head.startswith("---"):
+                md.write_text(f"{head}\nowner: {owner}{sep}{body}",
+                              encoding="utf-8")
         installed.append(ref)
     return {"installed": installed, "skipped": skipped}
 
@@ -165,7 +179,12 @@ def compile_profile(catalog: dict, base_dir: str | Path) -> dict:
 
     front = {
         "vertical": vertical,
-        "front_desk": catalog["front_desk"],
+        # Routes target COMPILED agent names (agents/<vertical>-<role>/) so a
+        # consuming runtime can spawn them directly without re-deriving the
+        # prefix; "roles" keeps the raw catalog mapping for reference.
+        "front_desk": {prefix: f"{vertical}-{role}"
+                       for prefix, role in catalog["front_desk"].items()},
+        "roles": catalog["front_desk"],
         "gated_classes": sorted(catalog.get("gated_classes") or []),
         "surface_policy": catalog["surface_policy"],
     }
