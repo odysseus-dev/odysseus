@@ -8,6 +8,8 @@ from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+from src.owner_identity import INTERNAL_TOOL_USER, auth_disabled
+
 
 # Per-process token that lets the in-app tool layer hit admin-gated
 # routes via HTTP loopback (the agent's tool calls don't carry the
@@ -15,8 +17,6 @@ from starlette.responses import Response
 # same value from this module. Never persisted or exposed externally.
 INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token_hex(32)
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
-# Pseudo-username on in-process tool-loopback requests; require_admin trusts it and it is reserved.
-INTERNAL_TOOL_USER = "internal-tool"
 
 
 def is_cors_preflight(method: str, headers) -> bool:
@@ -47,7 +47,7 @@ def require_admin(request: Request):
         pass
 
     auth_mgr = getattr(request.app.state, "auth_manager", None)
-    if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+    if auth_disabled():
         return
     if not auth_mgr or not auth_mgr.is_configured:
         raise HTTPException(403, "Admin only")
