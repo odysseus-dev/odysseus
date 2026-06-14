@@ -32,10 +32,10 @@ client = TestClient(app, raise_server_exceptions=False)
 
 def test_redact_sensitive_data():
     mock_settings = json.dumps({
-        "brave_api_key": "SECRET_BRAVE_123",
-        "tavily_api_key": "SECRET_TAVILY_456"
+        "brave_api_key": "TEST_SECRET_BRAVE_123",
+        "tavily_api_key": "TEST_SECRET_TAVILY_456"
     })
-    test_payload = {"messages": [{"id": "msg_1", "content": "Key: SECRET_BRAVE_123.", "metadata": {"used_key": "SECRET_TAVILY_456"}}]}
+    test_payload = {"messages": [{"id": "msg_1", "content": "Key: TEST_SECRET_BRAVE_123.", "metadata": {"used_key": "TEST_SECRET_TAVILY_456"}}]}
 
     with patch("builtins.open", mock_open(read_data=mock_settings)):
         result = services.trace_export.redact_sensitive_data(test_payload)
