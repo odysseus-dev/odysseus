@@ -2918,35 +2918,68 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     const startEl = document.getElementById('cal-f-start');
     const endEl = document.getElementById('cal-f-end');
     if (!startEl || !endEl) return;
+
     const _toMin = (v) => {
       if (!v || !/^\d{2}:\d{2}$/.test(v)) return null;
       const [h, m] = v.split(':').map(n => parseInt(n, 10));
       return h * 60 + m;
     };
+
     const _toHHMM = (mins) => {
       let m = ((mins % 1440) + 1440) % 1440;
       const hh = String(Math.floor(m / 60)).padStart(2, '0');
       const mm = String(m % 60).padStart(2, '0');
       return `${hh}:${mm}`;
     };
+
+    const _autoAdvanceEndDate = () => {
+      const isAD = document.getElementById('cal-f-allday')?.checked;
+      if (isAD) return;
+
+      const dv = document.getElementById('cal-f-date')?.value;
+      const dvEndEl = document.getElementById('cal-f-date-end');
+      if (!dv || !dvEndEl || dvEndEl.value !== dv) return;
+
+      const sVal = startEl.value;
+      const eVal = endEl.value;
+
+      if (sVal && eVal && eVal <= sVal) {
+        const d = new Date(`${dv}T00:00:00`);
+        d.setDate(d.getDate() + 1);
+
+        dvEndEl.value = _ds(d);
+      }
+    };
+
     let prevStartMin = _toMin(startEl.value);
-    endEl.addEventListener('input', () => { endEl.dataset.userEdited = '1'; });
+
+    endEl.addEventListener('input', () => {
+      endEl.dataset.userEdited = '1';
+    });
+
+    endEl.addEventListener('change', _autoAdvanceEndDate);
+
     startEl.addEventListener('change', () => {
       const newStartMin = _toMin(startEl.value);
       const endMin = _toMin(endEl.value);
-      if (newStartMin == null) { prevStartMin = newStartMin; return; }
-      // Compute the duration before the change. Use the user's existing
-      // start→end gap, fallback to 1 hour.
-      let durationMin = 60;
-      if (prevStartMin != null && endMin != null && endMin > prevStartMin) {
-        durationMin = endMin - prevStartMin;
-      } else if (endMin != null && newStartMin != null && endMin > newStartMin && endEl.dataset.userEdited === '1') {
-        // User already set a custom end before changing start — leave it.
+
+      if (newStartMin == null) {
         prevStartMin = newStartMin;
         return;
       }
+
+      let durationMin = 60;
+
+      if (prevStartMin != null && endMin != null && endMin > prevStartMin) {
+        durationMin = endMin - prevStartMin;
+      } else if (endMin != null && newStartMin != null && endMin > newStartMin && endEl.dataset.userEdited === '1') {
+        prevStartMin = newStartMin;
+        return;
+      }
+
       endEl.value = _toHHMM(newStartMin + durationMin);
       prevStartMin = newStartMin;
+      _autoAdvanceEndDate();
     });
   })();
   // Custom reminder picker
@@ -3007,6 +3040,20 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     // proper UTC instants (is_utc=True). Without this, naive "10:00" gets
     // re-interpreted as local elsewhere — the timezone-misfire bug.
     const _tz = _tzOffset();
+    
+    if (!isAD) {
+      const startVal = document.getElementById('cal-f-start').value;
+      const endVal = document.getElementById('cal-f-end').value;
+
+      const startDt = new Date(`${dv}T${startVal}:00`);
+      const endDt = new Date(`${dvEnd}T${endVal}:00`);
+
+      if (endDt <= startDt) {
+        uiModule.showToast('End time must be after start time');
+        return;
+      }
+    }
+
     const payload = {
       summary,
       dtstart: isAD ? dv : `${dv}T${document.getElementById('cal-f-start').value}:00${_tz}`,
