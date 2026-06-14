@@ -1972,8 +1972,7 @@ body.bg-pattern-sparkles {
       border-radius: 18px 18px 0 18px;
       align-self: flex-end;
       width: fit-content;
-      max-width: 85%;
-      min-width: 80px;
+      width: 100%
       word-wrap: break-word;
       overflow-wrap: break-word;
       overflow: hidden;
