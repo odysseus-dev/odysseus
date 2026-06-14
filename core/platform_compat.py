@@ -55,7 +55,7 @@ def safe_chmod(path, mode: int) -> bool:
 
 
 # ── Process detach / liveness / teardown ────────────────────────────────────
-def detached_popen_kwargs() -> dict:
+def detached_popen_kwargs(runtime_env: Optional[dict] = None) -> dict:
     """Keyword args for :class:`subprocess.Popen` that fully detach a child so
     it outlives the request/stream that launched it.
 
@@ -63,13 +63,26 @@ def detached_popen_kwargs() -> dict:
     Windows: ``CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`` — the child gets
     its own process group (so it isn't killed when the parent's console closes)
     and is detached from any console.
+
+    If `runtime_env` is provided, it is merged into the `env` parameter to
+    ensure GPU-required environment variables (like CUDA_VISIBLE_DEVICES,
+    ENABLE_CUDA) are propagated to the child process.
     """
+    base_kwargs = {}
     if IS_WINDOWS:
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | getattr(
             subprocess, "DETACHED_PROCESS", 0x00000008
         )
-        return {"creationflags": flags}
-    return {"start_new_session": True}
+        base_kwargs = {"creationflags": flags}
+    else:
+        base_kwargs = {"start_new_session": True}
+
+    if runtime_env:
+        # Merge user-specified env into the child process environment
+        env = os.environ.copy()
+        env.update(runtime_env)
+        base_kwargs["env"] = env
+    return base_kwargs
 
 
 def pid_alive(pid: Optional[int]) -> bool:
