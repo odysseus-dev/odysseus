@@ -49,7 +49,7 @@ odysseus/
 | 2 | `routes/email_routes.py` | **3,245** | — | — | **MEDIUM** |
 | 3 | `routes/cookbook_routes.py` | **2,969** | — | — | **MEDIUM** |
 | 4 | `src/agent_loop.py` | **2,961** | 0 | ~24 | **HIGH** |
-| 5 | `src/task_scheduler.py` | **2,330** | — | ~6 | MEDIUM |
+| 5 | `src/task_scheduler.py` | **2,330** | — | 5 | MEDIUM |
 | 6 | `routes/model_routes.py` | **2,266** | — | — | MEDIUM |
 | 7 | `core/database.py` | **2,265** | 27 | ~59 helpers | **HIGH** |
 | 8 | `src/builtin_actions.py` | **2,262** | 2 | ~24 | MEDIUM |
@@ -166,7 +166,7 @@ Routes can be grouped into logical feature domains. Current flat structure obscu
 | Component | File | Lines | Role |
 |-----------|------|-------|------|
 | Tool schemas | `src/tool_schemas.py` | 1,392 | JSON Schema tool definitions (Duck-TypedDict) |
-| Tool index | `src/tool_index.py` | ~580 | RAG-based tool retrieval from ChromaDB |
+| Tool index | `src/tool_index.py` | 542 | RAG-based tool retrieval from ChromaDB |
 | Tool implementations | `src/tool_implementations.py` | 4,032 | 33 `do_*` functions — all tool execution logic |
 | Tool security | `src/tool_security.py` | — | Owner-scoped tool blocking |
 | Tool policy | `src/tool_policy.py` | — | Guide-only directive, plan-mode disabled tools |
@@ -218,7 +218,7 @@ The 33 `do_*` functions in `tool_implementations.py` fall into natural domain gr
 | **7** | Frontend CSS modularization | **MEDIUM** | 36,653 lines. Tracked in #2617. Separate timeline from backend work. |
 | **8** | Frontend JS modularization | **MEDIUM** | 9,776 lines in `document.js`. Introduce ES modules at minimum. |
 
-### 6.3 Recommended First 3 Behavior-Preserving Slices
+### 6.3 Candidate First 3 Behavior-Preserving Slices
 
 **Slice 1: Split `tool_implementations.py`** (Lowest-risk high-impact)
 
