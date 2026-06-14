@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@9d7a3d | 2026-06-13
 
 ## Scope
 
@@ -46,6 +46,12 @@ This spec covers mail and contacts in:
 - scheduled email, summary, reply, tag, calendar extraction, urgency, and signature-boundary side databases.
 
 Email config can fall back to legacy `data/settings.json` or environment variables when no scoped account is configured. Account discovery now owner-scopes the default/first-enabled fallback and can still match legacy account rows by IMAP username or from-address. That fallback remains compatibility-sensitive in multi-user contexts.
+
+Email owner semantics are route-local and compatibility-sensitive:
+
+- `routes.email_helpers._require_auth()` returns `""` in `AUTH_ENABLED=false` mode, rejects configured auth with no user, and only tolerates first-run anonymous loopback fallback.
+- Empty owner is treated as single-user compatibility: account-ownership assertions no-op, default/first-enabled account fallback can be global, and email cache clauses include `owner = '' OR owner IS NULL`.
+- Non-empty owners scope account/config/cache queries, with limited legacy matching by mailbox/from-address for old unowned account rows.
 
 `routes.email_routes` owns the HTTP mail surface:
 
@@ -99,6 +105,8 @@ Remote inbound email HTML is sanitized by frontend email-library utilities befor
 ## MCP Email
 
 `mcp_servers/email_server.py` exposes email tools for MCP/agent use. It has its own account discovery, IMAP/SMTP, attachment, cache, and send paths.
+
+The current MCP email server does not receive the browser request owner. It lists enabled accounts globally, resolves the default/first enabled account globally, resolves model endpoints with `owner=None`, and stamps draft documents from `ODYSSEUS_DOCUMENT_OWNER`, an auth user selected from `auth.json`, or `None`.
 
 MCP email is a separate local/admin trust boundary. Public and non-admin users must not see or execute email MCP tools. If all-account admin MCP behavior remains intentional, it should be documented as such; otherwise MCP must become owner-aware and reuse route-level credential, attachment containment, sanitization, and transport rules.
 
@@ -154,6 +162,7 @@ Route-level and duplicate-path coverage is still thin for email list/read/search
 - Owner-keyed cache policy still needs an explicit decision for thread boundaries, plus continued migration/query audits for every email side table.
 - CardDAV still needs encrypted credential storage, redirect/proxy policy, and route-level tests for URL validation, private-address blocking configuration, and same-origin href enforcement.
 - MCP email needs an explicit owner/scope decision and route-helper parity for credentials, attachment path containment, sanitization, and transport behavior.
+- Empty-owner route compatibility, ownerless email cache rows, and MCP all-account behavior need end-to-end owner-boundary tests.
 - CLI send/contact paths need parity decisions for SMTP security, recipient parsing, local fallback, and normalized contact shapes.
 - Email HTTP route coverage is concentrated in scheduling/account-test helpers rather than full list/read/search/mutation/send/draft/account/attachment flows.
 - Contacts coverage lacks admin-gate, config masking, import/export, CardDAV fallback, and CardDAV write-failure tests.

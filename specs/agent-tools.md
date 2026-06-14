@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@9d7a3d | 2026-06-13
 
 ## Scope
 
@@ -84,6 +84,8 @@ Loop-breaker final-answer rounds, optional verifier retries, and teacher escalat
 
 - `src.tool_security` owns non-admin blocked-tool decisions.
 - Non-admin users must not reach admin tools through agent mode, MCP, retrieval, or loopback calls.
+- Agent owner is passed from chat route `get_current_user(request)`. In `AUTH_ENABLED=false` mode this is `None`, not the `""` value returned by route dependencies. `blocked_tools_for_owner()`, schema hiding, and `execute_tool_block()` all use that owner.
+- Current dev tool security treats owner `None` as single-user only while no auth store is configured, then as non-admin once auth is configured. That differs from route/admin behavior for `AUTH_ENABLED=false`.
 - Path-based tools must remain confined to allowed roots and reject sensitive paths.
 - Tool output is bounded/truncated where native execution owns the path, including displayed agent-tool output through the shared truncation helper. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
 - Provider-emitted native tool calls are requests, not authorization. `tool_execution` and route-level policy remain the authority.
@@ -122,4 +124,5 @@ MCP prompt/schema rendering includes server-provided input schemas, but names, t
 - Tool registry consistency is manual across tags, aliases, schemas, retrieval descriptions, execution dispatch, settings/model routes, and frontend toggles.
 - MCP disabled-tool changes can stale-cache tool retrieval because disabled maps are not always an index generation input.
 - External MCP output truncation and tool-result prompt-injection wrapping need stronger guarantees.
+- Auth-disabled/no-login owner propagation is inconsistent between route dependencies and chat/agent execution, so tool-security and native tool storage behavior need dedicated regression coverage.
 - Agent tests mostly cover helpers and targeted regressions, not an end-to-end fake-LLM `stream_agent_loop` path with retrieval, native schemas, prompted blocks, disabled/admin hiding, MCP tools, plan/workspace state, user-time context, and tool-result SSE.

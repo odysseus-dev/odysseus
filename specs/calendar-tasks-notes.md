@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@9d7a3d | 2026-06-13
 
 ## Scope
 
@@ -28,6 +28,7 @@ This spec covers calendar, reminders, tasks, assistant runs, and notes in:
 Runtime behavior:
 
 - local default calendars are created per owner as needed;
+- route-level no-login calendar access normalizes empty owner values to `ODYSSEUS_FALLBACK_OWNER` or `owner@localhost`, so route-created calendar rows do not use the empty string as their storage owner;
 - CalDAV account config lives in per-user prefs as `caldav_accounts`, with the legacy `/api/calendar/config` route reading/upserting the first account;
 - recurring rules are expanded server-side, including compound recurrence IDs;
 - RRULE expansion is capped and marks truncated responses;
@@ -82,6 +83,8 @@ Email/ntfy failures degrade into channel result fields rather than blocking ever
 
 `do_manage_tasks`, `do_manage_notes`, and `do_manage_calendar` own agent-side writes. `do_manage_calendar` supports batch event creation plus list range aliases, calendar name/short-id lookup, and importance/tag aliases. Event classification reads `Memory.text` for personal context before LLM classification. `src.tool_index` encodes the reminder policy that notes/todos own reminders while calendar events own time blocks.
 
+Agent native tool owner handling is not uniform today. `do_manage_tasks()` filters only when `owner` is truthy and creates tasks with the passed owner, so `owner=None` can create legacy/null-owner tasks. `do_manage_notes()` list/query behavior distinguishes `None` from `""`, with `None` acting as broader single-user compatibility while `""` filters to empty-owner rows in some paths. `do_manage_calendar()` query helpers filter only when owner is not `None`, while calendar creation routes through the calendar fallback owner for default calendars. These are compatibility behaviors, not a cross-user sharing model.
+
 Chat forwards browser timezone offset so natural-language note/calendar tools can anchor dates to the user clock. Chat can auto-promote note/calendar/reminder intents to agent mode.
 
 Codex todo/calendar wrappers enforce bearer-token owner and `todos:*` or `calendar:*` scopes, then delegate to note/calendar behavior as the token owner. Normal calendar/task/note routes are current-user/cookie routes and should not be treated as scoped bearer-token APIs unless they explicitly use token owner/scope policy.
@@ -120,6 +123,8 @@ Natural-language date parsing and timezone behavior are compatibility-sensitive 
 
 Calendar, task, note, and assistant routes are owner-scoped for normal users. Legacy null-owner behavior is compatibility-sensitive and should not silently grant authenticated owners broad mutation rights.
 
+Because auth-disabled chat owners can arrive as `None`, tool-created rows may not use the same owner value as route-created rows. Multi-user or owner-model changes must audit both route and agent paths.
+
 Task creation/update blocks shell-like action types for non-admin users, and tool security blocks privileged task/calendar tools for non-admin use. Assistant defaults reject synthetic owners such as `api` and `internal-tool`.
 
 Note routes store caller-provided `source`, `session_id`, `image_url`, and agent-session provenance. Upload-backed image URLs are protected when fetched through upload routes, but note image/provenance fields are not server-validated today.
@@ -134,6 +139,7 @@ Route-level coverage is thinner for full calendar route behavior, task CRUD/secu
 
 - CardDAV still needs URL hardening parity with CalDAV; CalDAV now resolves hostnames during validation and revalidates writeback URLs.
 - `do_manage_notes()` should match HTTP note-route owner behavior for legacy null-owner notes.
+- Auth-disabled agent tools can produce or read broader owner scopes than route handlers because they receive `owner=None`; tasks, notes, and calendar need aligned policy/tests.
 - Task webhook tests should exercise the live route token behavior, not only middleware/source strings.
 - Reminder delivery needs tests across frontend `/fire-reminder`, backend `dispatch_reminder()`, scheduler note pings, channel degradation, and dedupe.
 - Codex todo/calendar scope and owner mapping needs dedicated regression coverage.

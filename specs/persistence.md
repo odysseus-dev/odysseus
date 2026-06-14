@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@9d7a3d | 2026-06-13
 
 ## Scope
 
@@ -52,11 +52,15 @@ Runtime behavior:
 
 Startup backfills include document-owner backfill from linked sessions, blanket legacy owner assignment for SQL and selected JSON stores, `user_prefs.json` per-user nesting, email account seeding from legacy settings, and encryption rewrites for legacy plaintext endpoint, signature, and email secrets. Failed encryption rewrites are logged and retried on later startup.
 
+Owner-claiming is partly automatic and partly manual. `core.database._migrate_assign_legacy_owner()` assigns many ownerless SQL rows and selected JSON records to the primary admin when auth data exists, while `scripts/claim_ownerless.py` is an explicit local utility for claiming older ownerless memories, skills, sessions, documents, gallery rows, and comparisons.
+
 ## Ownership And Access
 
 Owner columns are security-relevant. Current owner-bearing domains include sessions, documents, gallery images/albums, editor drafts, model endpoints, signatures, API tokens, user tools/tool data, comparisons, crew members, scheduled tasks/task runs, memories, notes, calendars/events, email accounts, and integrations. Webhooks are admin-global today and do not have an owner column.
 
 Route code owns filtering for its domain. `src.auth_helpers.owner_filter()` is the common helper where available; gallery, documents, calendar, email, skills, and other surfaces also use local filters. Null-owner compatibility is domain-specific: shared endpoints may include null owners, while strict gates and disk stores may reject them. Do not rely on frontend filtering for access control.
+
+There is no single anonymous/local owner value today. SQL `NULL` and missing JSON owners usually mean legacy/shared/unscoped compatibility; route-level no-login helpers use the empty string `""` when `AUTH_ENABLED=false`; chat/agent paths can pass `owner=None`; and calendar routes normalize empty owners to `ODYSSEUS_FALLBACK_OWNER` or `owner@localhost`. Lower-level helpers such as `get_upcoming_events(owner=None)` treat `None` as no owner scoping, so multi-user callers must pass a non-empty owner deliberately.
 
 ## Secrets And Local Stores
 
