@@ -2006,7 +2006,7 @@ async def stream_agent_loop(
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
             # Ceiling for the auto-derived budget (no effect on an explicit budget;
-            # see #1190). Falls back to DEFAULT_HARD_MAX on missing/malformed values
+            # see #1230). Falls back to DEFAULT_HARD_MAX on missing/malformed values
             # so misconfig can't zero the budget.
             try:
                 hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)

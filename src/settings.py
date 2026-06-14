@@ -105,14 +105,15 @@ DEFAULT_SETTINGS = {
     # "auto" sentinel: it means "scale the budget to the model's context window"
     # (#1230) — so long-context models aren't capped at 6000. Set ANY OTHER value
     # to enforce an explicit cap (clamped to the window only — hard_max does not
-    # apply to explicit budgets, #1190); set 0 to disable soft-trimming. The
+    # apply to explicit budgets, #1230); set 0 to disable soft-trimming. The
     # default is treated as auto because the settings-save path materializes
     # defaults, so a persisted 6000 can't be told apart from a deliberate 6000 —
     # to pin a budget near the default, use a nearby value (e.g. 5999).
     "agent_input_token_budget": 6000,
-    # Ceiling on the *auto-derived* input budget (#1230). No effect on an explicit
-    # `agent_input_token_budget` — a deliberate user value is honoured regardless
-    # (#1190). Default matches `src.context_budget.DEFAULT_HARD_MAX`; lower this for
+    # Ceiling on the *auto-derived* input budget; a configurable setting since #1273
+    # (the merged #1230 left it a module constant). No effect on an explicit budget
+    # — a deliberate value is honoured (#1230). Default matches
+    # `src.context_budget.DEFAULT_HARD_MAX`; lower this for
     # cost-paranoid setups, raise it on premium APIs with very large windows you
     # want to actually use (e.g. 900_000 to fill a 1M-context model). See
     # `compute_input_token_budget`.

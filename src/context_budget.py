@@ -42,7 +42,7 @@ def compute_input_token_budget(
     Rules:
         - Explicit user budget is honoured exactly, only clamped to the model's
           window when that window is known (the user's deliberate choice wins;
-          ``hard_max`` is an auto-budget ceiling only — see #1190).
+          ``hard_max`` is an auto-budget ceiling only — see #1230).
         - Otherwise (auto), scale to ``headroom`` of the context window, capped at
           ``hard_max`` — so long-context models use their capacity.
         - When the window is unknown (context_length <= 0), use the conservative
