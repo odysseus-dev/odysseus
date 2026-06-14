@@ -149,6 +149,8 @@ html {
 
 /* ── Density Overrides ── */
 
+:root { font-size: 14px; } /* Base size — sidebar text was too small at browser default */
+
 :root.density-compact { font-size: 13px; }
 :root.density-compact .msg { padding: 6px 10px; margin-bottom: 4px; }
 :root.density-compact .list-item { padding: 4px 8px; }
@@ -385,6 +387,7 @@ body.bg-pattern-sparkles {
     }
     .sidebar {
       width: 240px;
+      font-size: 13px; /* Sidebar text was too small — override base */
       background: var(--sidebar-bg, var(--panel));
       border-right: 1px solid var(--border);
       transition: width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
