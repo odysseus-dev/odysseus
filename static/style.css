@@ -182,6 +182,12 @@ html {
 :root.ui-scale-125 .cal-modal-content      { max-height: calc(88dvh / 1.25); }
 :root.ui-scale-125 .settings-modal-content { max-height: calc(85dvh / 1.25); }
 :root.ui-scale-125 #theme-popup            { max-height: min(calc(85dvh / 1.25), 480px); }
+/* Cookbook is the one modal that set its height inline (94vh), which beat the
+   .modal-content compensation above and overflowed the viewport at 1.25x
+   (header + close button pushed off-screen). Own its height here so the same
+   zoom compensation applies. */
+#cookbook-modal .modal-content             { height: 94vh; max-height: 94vh; }
+:root.ui-scale-125 #cookbook-modal .modal-content { height: calc(94dvh / 1.25); max-height: calc(94dvh / 1.25); }
 
 /* ── Background Patterns ── */
 

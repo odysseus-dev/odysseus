@@ -858,7 +858,7 @@ export function openEmailLibrary(opts = {}) {
   modal.className = 'modal';
   modal.id = 'email-lib-modal';
   modal.innerHTML = `
-    <div class="modal-content doclib-modal-content" style="width:min(720px, 92vw);max-height:85vh;background:var(--bg);">
+    <div class="modal-content doclib-modal-content" style="width:min(720px, 92vw);background:var(--bg);">
       <div class="modal-header">
         <h4>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;">
@@ -4866,7 +4866,7 @@ async function _openEmailAsTab(em, folder) {
   modal.className = 'modal email-reader-tab-modal';
   modal.id = modalId;
   modal.innerHTML = `
-    <div class="modal-content doclib-modal-content email-reader-tab-content" style="background:var(--bg);width:min(720px, 92vw);max-height:85vh;display:flex;flex-direction:column;">
+    <div class="modal-content doclib-modal-content email-reader-tab-content" style="background:var(--bg);width:min(720px, 92vw);display:flex;flex-direction:column;">
       <div class="modal-header">
         <h4 style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
           <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:8px;">${_esc(em.subject || '(no subject)')}</span>
@@ -5101,7 +5101,7 @@ async function _openEmailWindow(em, folder) {
   modal.id = winId;
   modal.style.cssText = 'pointer-events:none;background:transparent;';
   modal.innerHTML = `
-    <div class="modal-content email-window-content" style="width:min(640px, 92vw);max-height:80vh;display:flex;flex-direction:column;background:var(--bg);">
+    <div class="modal-content email-window-content" style="width:min(640px, 92vw);display:flex;flex-direction:column;background:var(--bg);">
       <div class="modal-header">
         <h4 style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
