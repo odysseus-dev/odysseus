@@ -624,6 +624,10 @@ app.include_router(setup_copilot_routes())
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
 app.include_router(setup_chatgpt_subscription_routes())
 
+# Claude Subscription OAuth (PKCE) login
+from routes.claude_subscription_routes import setup_claude_subscription_routes
+app.include_router(setup_claude_subscription_routes())
+
 # TTS
 from routes.tts_routes import setup_tts_routes
 app.include_router(setup_tts_routes(tts_service))

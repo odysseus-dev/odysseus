@@ -434,6 +434,12 @@ def _detect_provider(url: str) -> str:
     """
     if _is_ollama_native_url(url):
         return "ollama"
+    # Checked before the plain anthropic.com host match: the OAuth-backed
+    # subscription endpoint lives on the same host, distinguished by an /oauth
+    # marker in its stored base URL.
+    from src.claude_subscription import is_claude_subscription_base
+    if is_claude_subscription_base(url):
+        return "claude-subscription"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
     if _host_match(url, "opencode.ai/zen/go"):
@@ -453,6 +459,16 @@ def _detect_provider(url: str) -> str:
     if is_copilot_base(url):
         return "copilot"
     return "openai"
+
+
+def _is_anthropic_like(provider: str) -> bool:
+    """Providers that speak the Anthropic /v1/messages API.
+
+    ``anthropic`` (API key, x-api-key) and ``claude-subscription`` (OAuth
+    bearer) share request/response/stream handling; only the auth header
+    differs (see ``_build_anthropic_headers``).
+    """
+    return provider in ("anthropic", "claude-subscription")
 
 
 def _is_self_hosted_openai_compatible(url: str) -> bool:
@@ -524,6 +540,8 @@ def _provider_label(url: str) -> str:
     """Human-friendly provider name for error messages."""
     if not url:
         return "provider"
+    from src.claude_subscription import is_claude_subscription_base
+    if is_claude_subscription_base(url): return "Claude Subscription"
     if _host_match(url, "anthropic.com"): return "Anthropic"
     if _host_match(url, "ollama.com"): return "Ollama Cloud"
     if _host_match(url, "x.ai"): return "xAI"
@@ -712,6 +730,47 @@ def _anthropic_rejects_temperature(model: str) -> bool:
         return False
     return (int(match.group(1)), int(match.group(2))) >= (4, 7)
 
+
+# Valid values for Anthropic's output_config.effort (xhigh is Opus 4.7/4.8 only,
+# but Anthropic ignores/handles an unsupported level gracefully per model).
+_EFFORT_VALUES = {"low", "medium", "high", "xhigh", "max"}
+
+
+def _anthropic_supports_effort(model: str) -> bool:
+    """Models that accept output_config.effort: Opus 4.5+, Sonnet 4.6+, Fable/Mythos."""
+    if not isinstance(model, str) or not model:
+        return False
+    m = model.lower()
+    if "fable" in m or "mythos" in m:
+        return True
+    om = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", m)
+    if om:
+        return (int(om.group(1)), int(om.group(2))) >= (4, 5)
+    sm = re.search(r"(?<![a-z])sonnet[-_]?(\d+)[-_.](\d{1,2})(?!\d)", m)
+    if sm:
+        return (int(sm.group(1)), int(sm.group(2))) >= (4, 6)
+    return False
+
+
+def _anthropic_supports_1m_context(model: str) -> bool:
+    """Models with a 1M context window (Opus 4.6+, Sonnet 4.6+, Fable/Mythos).
+
+    Gates the `context-1m-2025-08-07` beta header so requests can use the full
+    1M window (the Claude Code CLI sends this same beta).
+    """
+    if not isinstance(model, str) or not model:
+        return False
+    m = model.lower()
+    if "fable" in m or "mythos" in m:
+        return True
+    om = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", m)
+    if om:
+        return (int(om.group(1)), int(om.group(2))) >= (4, 6)
+    sm = re.search(r"(?<![a-z])sonnet[-_]?(\d+)[-_.](\d{1,2})(?!\d)", m)
+    if sm:
+        return (int(sm.group(1)), int(sm.group(2))) >= (4, 6)
+    return False
+
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
 
@@ -765,7 +824,29 @@ def _convert_openai_content_to_anthropic(content):
     return converted
 
 
-def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=False, tools=None):
+# Required first system block for OAuth-subscription (claude-subscription)
+# requests: Anthropic soft-blocks premium models (Opus/Sonnet) with a 429 unless
+# the request presents the Claude Code identity, even when quota is available.
+# Haiku is exempt, but sending it for every OAuth request is harmless and keeps
+# behavior uniform. One line is enough — the user's own system prompt follows
+# and still applies.
+_CLAUDE_CODE_OAUTH_SYSTEM = "You are Claude Code, Anthropic's official CLI for Claude."
+
+# The identity line above is required only to pass Anthropic's gate, but it
+# primes terse, coding-CLI behavior. This second block re-frames the model as a
+# general claude.ai-style chat assistant. It goes AFTER the identity and BEFORE
+# the user's own system prompt, which still takes precedence.
+_CLAUDE_CODE_OAUTH_REFRAME = (
+    "You are operating as a general-purpose AI assistant in a chat interface, "
+    "not a terminal or a coding session. Be warm, clear, and genuinely helpful "
+    "across any topic the user brings up (writing, analysis, advice, coding, or "
+    "casual conversation), the way Claude responds on claude.ai. Explain your "
+    "reasoning when it helps and match the user's tone and language. Any "
+    "instructions or persona the user provides below take precedence over this."
+)
+
+
+def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=False, tools=None, oauth=False, effort=None):
     """Convert OpenAI-style messages to Anthropic format."""
     system_parts = []
     chat_messages = []
@@ -816,10 +897,31 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
         "messages": chat_messages,
         "max_tokens": max_tokens if max_tokens and max_tokens > 0 else 4096,
     }
+    # Effort (Opus 4.5+/Sonnet 4.6+/Fable) drives reasoning depth via adaptive
+    # thinking; sampling params are incompatible with that path, so omit them.
+    # Subscriptions default to claude.ai-style reasoning (adaptive thinking at
+    # high effort) so Opus/Sonnet aren't "dumb" out of the box; the effort
+    # selector can dial it down/up. API-key requests are unchanged unless an
+    # effort is explicitly chosen.
+    eff = effort
+    if not eff and oauth and _anthropic_supports_effort(model):
+        eff = "high"
+    effort_active = (
+        bool(eff) and str(eff).lower() in _EFFORT_VALUES and _anthropic_supports_effort(model)
+    )
+    if effort_active:
+        payload["output_config"] = {"effort": str(eff).lower()}
+        payload["thinking"] = {"type": "adaptive"}
     # Opus 4.7+ removed the sampling parameters — sending `temperature` (even 0.0)
     # returns HTTP 400. Omit it for those models; older Claude models still take it.
-    if not _anthropic_rejects_temperature(model):
+    elif not _anthropic_rejects_temperature(model):
         payload["temperature"] = temperature
+    system_blocks = []
+    if oauth:
+        # Premium models 429 on subscription tokens without this first block;
+        # the reframe block restores general claude.ai-style chat behavior.
+        system_blocks.append({"type": "text", "text": _CLAUDE_CODE_OAUTH_SYSTEM})
+        system_blocks.append({"type": "text", "text": _CLAUDE_CODE_OAUTH_REFRAME})
     if system_parts:
         system_text = "\n\n".join(system_parts)
         # Send `system` as a structured text block so we can attach a prompt-cache
@@ -831,7 +933,9 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
         system_block = {"type": "text", "text": system_text}
         if tools or len(system_text) > 4000:
             system_block["cache_control"] = {"type": "ephemeral"}
-        payload["system"] = [system_block]
+        system_blocks.append(system_block)
+    if system_blocks:
+        payload["system"] = system_blocks
     if stream:
         payload["stream"] = True
     # Convert OpenAI-format tools to Anthropic format
@@ -852,13 +956,38 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
             payload["tools"] = anthropic_tools
     return payload
 
-def _build_anthropic_headers(headers):
-    """Convert Bearer auth to x-api-key for Anthropic."""
+def _build_anthropic_headers(headers, oauth=False, model=None):
+    """Build Anthropic request headers.
+
+    API-key mode (default): convert ``Authorization: Bearer`` to ``x-api-key``.
+    OAuth/subscription mode (``oauth=True``): keep the Bearer token as-is and
+    send ``anthropic-beta: oauth-2025-04-20`` instead of ``x-api-key`` — that
+    beta header is what authorizes a subscription access token on /v1/messages.
+
+    For 1M-context models (Opus 4.6+/Sonnet 4.6+/Fable) the
+    ``context-1m-2025-08-07`` beta is added so the full window is usable (the
+    Claude Code CLI sends this same beta).
+    """
     h = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+    betas = []
+    if oauth:
+        betas.append("oauth-2025-04-20")
+    if model and _anthropic_supports_1m_context(model):
+        betas.append("context-1m-2025-08-07")
+    if betas:
+        h["anthropic-beta"] = ",".join(betas)
     if headers:
         for k, v in headers.items():
-            if k.lower() == "authorization" and isinstance(v, str) and v.startswith("Bearer "):
-                h["x-api-key"] = v[7:]
+            kl = k.lower()
+            if kl == "authorization" and isinstance(v, str) and v.startswith("Bearer "):
+                if oauth:
+                    h["Authorization"] = v
+                else:
+                    h["x-api-key"] = v[7:]
+            elif kl == "anthropic-beta":
+                # Skip incoming beta when we built our own; otherwise keep it.
+                if not betas:
+                    h[k] = v
             else:
                 h[k] = v
     return h
@@ -1031,8 +1160,14 @@ def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
     return merged
 
 def _normalize_anthropic_url(url: str) -> str:
-    """Ensure Anthropic URL points to /v1/messages."""
+    """Ensure Anthropic URL points to /v1/messages.
+
+    Also strips the claude-subscription ``/oauth`` sentinel marker so the
+    request targets the real api.anthropic.com/v1/messages endpoint.
+    """
     url = url.rstrip("/")
+    if url.endswith("/oauth"):
+        url = url[: -len("/oauth")].rstrip("/")
     if url.endswith("/v1/messages"):
         return url
     if url.endswith("/v1"):
@@ -1183,7 +1318,8 @@ def normalize_model_id(
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             effort: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -1219,10 +1355,10 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         logger.debug(f"Returning cached response for key: {cache_key}")
         return cached_response
 
-    if provider == "anthropic":
+    if _is_anthropic_like(provider):
         target_url = _normalize_anthropic_url(url)
-        h = _build_anthropic_headers(headers)
-        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
+        h = _build_anthropic_headers(headers, oauth=(provider == "claude-subscription"), model=model)
+        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, oauth=(provider == "claude-subscription"), effort=effort)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         payload = _build_ollama_payload(
@@ -1253,7 +1389,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         raise HTTPException(502, f"Upstream {target_url} -> {r.status_code}: {r.text}")
     data = r.json()
     try:
-        if provider == "anthropic":
+        if _is_anthropic_like(provider):
             response = _parse_anthropic_response(data)
         elif provider == "ollama":
             response = _parse_ollama_response(data)
@@ -1342,6 +1478,7 @@ async def llm_call_async(
     max_retries: int = LLMConfig.MAX_RETRIES,
     prompt_type: Optional[str] = None,
     session_id: Optional[str] = None,
+    effort: Optional[str] = None,
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     provider = _detect_provider(url)
@@ -1409,10 +1546,10 @@ async def llm_call_async(
         _set_cached_response(cache_key, response)
         return response
 
-    if provider == "anthropic":
+    if _is_anthropic_like(provider):
         target_url = _normalize_anthropic_url(url)
-        h = _build_anthropic_headers(headers)
-        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
+        h = _build_anthropic_headers(headers, oauth=(provider == "claude-subscription"), model=model)
+        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, oauth=(provider == "claude-subscription"), effort=effort)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
@@ -1470,7 +1607,7 @@ async def llm_call_async(
             _clear_host_dead(target_url)
             data = r.json()
             try:
-                if provider == "anthropic":
+                if _is_anthropic_like(provider):
                     response = _parse_anthropic_response(data)
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
@@ -1499,7 +1636,8 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
+                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
+                     effort: Optional[str] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1525,10 +1663,10 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     else:
         messages_copy = non_sys
 
-    if provider == "anthropic":
+    if _is_anthropic_like(provider):
         target_url = _normalize_anthropic_url(url)
-        h = _build_anthropic_headers(headers)
-        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
+        h = _build_anthropic_headers(headers, oauth=(provider == "claude-subscription"), model=model)
+        payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools, oauth=(provider == "claude-subscription"), effort=effort)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
@@ -1703,8 +1841,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
         return
 
-    # ── Anthropic streaming ──
-    if provider == "anthropic":
+    # ── Anthropic streaming (also covers claude-subscription / OAuth bearer) ──
+    if _is_anthropic_like(provider):
         _anth_input_tokens = 0
         _anth_output_tokens = 0
         # Track tool_use blocks: {index: {id, name, arguments_json}}

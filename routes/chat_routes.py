@@ -474,6 +474,9 @@ def setup_chat_routes(
         use_research = form_data.get("use_research")
         time_filter = form_data.get("time_filter")
         preset_id = form_data.get("preset_id")
+        # Reasoning effort for Anthropic effort-capable models (Opus 4.5+/Sonnet
+        # 4.6+/Fable). Ignored by other providers/models. UI-selectable per turn.
+        effort = form_data.get("effort") or (body or {}).get("effort")
         # Issue #3229: API callers send JSON, not FormData.  Read from the
         # JSON body as fallback so callers who send {"allow_bash": true}
         # actually get bash enabled.
@@ -1035,6 +1038,7 @@ def setup_chat_routes(
                         prompt_type=preset_id,
                         tools=None,
                         session_id=session,
+                        effort=effort,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:

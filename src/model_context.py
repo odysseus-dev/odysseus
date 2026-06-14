@@ -102,8 +102,15 @@ REQUEST_TIMEOUT = 5
 # Substring matching — use the shortest unique prefix so variants get caught.
 KNOWN_CONTEXT_WINDOWS = {
     # --- Anthropic ---
+    # 1M-context models (Opus 4.6+/Sonnet 4.6/Fable) — longest-prefix match wins,
+    # so these override the shorter 200k fallbacks below.
+    'claude-opus-4-6': 1000000,
+    'claude-opus-4-7': 1000000,
+    'claude-opus-4-8': 1000000,
+    'claude-sonnet-4-6': 1000000,
+    'claude-fable-5': 1000000,
+    'claude-mythos-5': 1000000,
     'claude-sonnet-4-5': 200000,
-    'claude-sonnet-4-6': 200000,
     'claude-sonnet-4': 200000,
     'claude-opus-4': 200000,
     'claude-haiku-4': 200000,

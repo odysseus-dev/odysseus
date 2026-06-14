@@ -1007,6 +1007,16 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
               </button>
             </div>
+            <div class="model-picker-effort-row" style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border);font-size:11px;">
+              <span style="opacity:0.7;white-space:nowrap;">Effort</span>
+              <select id="effort-select" aria-label="Reasoning effort" title="Claude Opus 4.5+/Sonnet 4.6+ only; ignored by other models" style="flex:1;padding:4px 6px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--fg);font-size:11px;">
+                <option value="">Auto</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
             <div class="model-picker-list" id="model-picker-list"></div>
           </div>
         </div>
@@ -2096,6 +2106,7 @@
                   <option value="https://api.openai.com/v1" data-logo="openai">OpenAI</option>
                   <option value="copilot" data-logo="github" data-auth-flow="copilot">GitHub Copilot</option>
                   <option value="chatgpt-subscription" data-logo="openai" data-auth-flow="chatgpt-subscription">ChatGPT Subscription</option>
+                  <option value="claude-subscription" data-logo="anthropic" data-auth-flow="claude-subscription">Claude Subscription</option>
                   <option value="https://openrouter.ai/api/v1" data-logo="openrouter">OpenRouter</option>
                   <option value="https://ollama.com/api" data-logo="ollama">Ollama Cloud</option>
                   <option value="https://api.groq.com/openai/v1" data-logo="groq">Groq</option>

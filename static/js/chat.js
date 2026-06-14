@@ -781,6 +781,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const fd = new FormData();
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
+      // Reasoning effort (Claude Opus 4.5+/Sonnet 4.6+); empty = Auto, ignored elsewhere.
+      const _effortSel = el('effort-select');
+      if (_effortSel && _effortSel.value) fd.append('effort', _effortSel.value);
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
       // Auto-save & send active doc ID so the backend sees latest content
       if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {

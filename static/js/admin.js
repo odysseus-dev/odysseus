@@ -730,9 +730,16 @@ function initEndpointForm() {
   function _isDeviceAuthSelected() {
     return !!_selectedDeviceAuthProvider();
   }
+  function _isClaudeSubscriptionSelected() {
+    const opt = _selectedProviderOption();
+    const flow = opt && opt.dataset ? opt.dataset.authFlow : '';
+    return flow === 'claude-subscription' || provider.value === 'claude-subscription';
+  }
   function _setApiFormForProvider() {
     const deviceAuthProvider = _selectedDeviceAuthProvider();
-    const deviceAuthConfig = PROVIDER_DEVICE_FLOWS[deviceAuthProvider] || null;
+    const claudeSub = _isClaudeSubscriptionSelected();
+    const deviceAuthConfig = PROVIDER_DEVICE_FLOWS[deviceAuthProvider]
+      || (claudeSub ? { label: 'Claude Subscription' } : null);
     const apiKey = el('adm-epApiKey');
     const testBtn = el('adm-epApiTestBtn');
     const addBtn = el('adm-epAddBtn');
@@ -740,7 +747,9 @@ function initEndpointForm() {
     const msg = _endpointMsg('api');
     if (deviceAuthConfig) {
       urlInput.value = '';
-      urlInput.placeholder = deviceAuthProvider === 'copilot'
+      urlInput.placeholder = claudeSub
+        ? 'Claude Subscription uses your Anthropic account sign-in'
+        : deviceAuthProvider === 'copilot'
         ? 'GitHub Copilot uses GitHub account sign-in'
         : 'ChatGPT Subscription uses OpenAI account sign-in';
       urlInput.readOnly = true;
@@ -831,7 +840,7 @@ function initEndpointForm() {
   }
 
   provider.addEventListener('change', () => {
-    if (_isDeviceAuthSelected()) {
+    if (_isDeviceAuthSelected() || _isClaudeSubscriptionSelected()) {
       _setApiFormForProvider();
       _renderPickerMenu();
       _syncPickerCurrent();
@@ -981,6 +990,10 @@ function initEndpointForm() {
   }
 
   el('adm-epAddBtn').addEventListener('click', async () => {
+    if (_isClaudeSubscriptionSelected()) {
+      await _startClaudeSubscriptionAuth(el('adm-epAddBtn'));
+      return;
+    }
     const deviceAuthProvider = _selectedDeviceAuthProvider();
     if (deviceAuthProvider) {
       await _startProviderDeviceAuth(deviceAuthProvider, el('adm-epAddBtn'));
@@ -1036,6 +1049,65 @@ function initEndpointForm() {
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
     btn.disabled = false; btn.textContent = 'Add';
   });
+
+  async function _startClaudeSubscriptionAuth(triggerEl = null) {
+    // The Claude subscription OAuth (claude setup-token / the Claude Code CLI)
+    // redirects to a localhost loopback that a browser can't reach for a remote
+    // server, so the user runs it locally and pastes the resulting token here.
+    if (deviceAuthPolling) return;
+    const status = el('adm-deviceAuthStatus') || _endpointMsg('api');
+    if (!status) return;
+    const triggerText = triggerEl ? triggerEl.textContent : '';
+    const reset = () => {
+      if (triggerEl) { triggerEl.disabled = false; triggerEl.textContent = triggerText || 'Add'; }
+      deviceAuthPolling = false;
+      _setApiFormForProvider();
+    };
+    const showAuthError = (text) => {
+      status.className = 'admin-error';
+      status.textContent = text;
+    };
+    deviceAuthPolling = true;
+    _setApiFormForProvider();
+    if (triggerEl) triggerEl.textContent = 'Paste token';
+    status.className = '';
+    status.innerHTML =
+      '<div class="adm-copilot-panel">' +
+        '<div class="adm-copilot-wait"><span>Run <code>claude setup-token</code> in your terminal, then paste the token it gives you (or your Claude Code credential JSON).</span></div>' +
+        '<div class="adm-copilot-coderow">' +
+          '<input type="text" class="adm-claude-token" placeholder="Paste Claude token" style="flex:1;min-width:0;" autocomplete="off" />' +
+          '<button type="button" class="admin-btn-sm adm-claude-connect">Connect</button>' +
+        '</div>' +
+      '</div>';
+    const input = status.querySelector('.adm-claude-token');
+    const connectBtn = status.querySelector('.adm-claude-connect');
+    if (input) input.focus();
+    const doComplete = async () => {
+      const token = (input.value || '').trim();
+      if (!token) { input.focus(); return; }
+      connectBtn.disabled = true; connectBtn.textContent = 'Connecting...';
+      try {
+        const fd = new FormData();
+        fd.append('token', token);
+        const res = await fetch('/api/claude-subscription/complete', { method: 'POST', body: fd, credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((data && data.detail) || ('HTTP ' + res.status));
+        const endpoint = (data && data.endpoint) || {};
+        const n = ((endpoint && endpoint.models) || []).length;
+        status.className = 'admin-success';
+        status.textContent = 'Connected - ' + n + ' Claude model' + (n !== 1 ? 's' : '') + ' available.';
+        if (endpoint && endpoint.id) _recentlyAddedEpId = String(endpoint.id);
+        await loadEndpoints();
+        await _selectAddedModelInChat(endpoint || {});
+        reset();
+      } catch (e) {
+        connectBtn.disabled = false; connectBtn.textContent = 'Connect';
+        showAuthError('Connection failed (' + (e && e.message ? e.message : 'request failed') + ').');
+      }
+    };
+    connectBtn.addEventListener('click', doComplete);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doComplete(); });
+  }
 
   async function _startProviderDeviceAuth(providerKey, triggerEl = null) {
     if (deviceAuthPolling) return;

@@ -572,7 +572,9 @@ def _safe_build_headers(api_key: Optional[str], base_url: str) -> dict:
 
 
 def _is_discovery_only_provider(provider: str) -> bool:
-    return provider == "chatgpt-subscription"
+    # Subscription providers list models via discovery, not per-model completion
+    # probes (a probe would burn subscription quota / trip rate limits).
+    return provider in ("chatgpt-subscription", "claude-subscription")
 
 
 def _resolve_probe_key(ep) -> Optional[str]:
@@ -705,6 +707,11 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
     from src.endpoint_resolver import resolve_url
     base = resolve_url(_normalize_base(base_url))
     provider = _safe_detect_provider(base)
+    if provider == "claude-subscription":
+        from src.claude_subscription import fetch_available_models
+        if api_key:
+            return fetch_available_models(api_key, timeout=timeout)
+        return []
     if provider == "chatgpt-subscription":
         from src.chatgpt_subscription import fetch_available_models
         if api_key:

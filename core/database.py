@@ -379,6 +379,10 @@ class ProviderAuthSession(TimestampMixin, Base):
     refresh_token = Column(EncryptedText, nullable=True)
     last_refresh = Column(DateTime, nullable=True)
     auth_mode = Column(String, nullable=True)
+    # Absolute access-token expiry (naive UTC). Used by OAuth providers whose
+    # access tokens are opaque (not JWTs) — e.g. the Claude subscription — so
+    # expiry can't be read from the token itself and must be stored.
+    expires_at = Column(DateTime, nullable=True)
 
 class McpServer(TimestampMixin, Base):
     """Admin-configured MCP (Model Context Protocol) tool servers."""
@@ -867,6 +871,35 @@ def _migrate_add_provider_auth_id_column():
             logging.getLogger(__name__).info("Migrated: added 'provider_auth_id' column + index to model_endpoints")
     except Exception as e:
         logging.getLogger(__name__).warning(f"model_endpoints.provider_auth_id migration failed: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _migrate_add_provider_auth_expires_at_column():
+    """Add expires_at column to provider_auth_sessions if it doesn't exist.
+
+    OAuth providers with opaque (non-JWT) access tokens — the Claude
+    subscription — store absolute expiry here so the resolver can refresh
+    proactively instead of decoding the token.
+    """
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.execute("PRAGMA table_info(provider_auth_sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        if columns and "expires_at" not in columns:
+            conn.execute("ALTER TABLE provider_auth_sessions ADD COLUMN expires_at DATETIME")
+            conn.commit()
+            logging.getLogger(__name__).info("Migrated: added 'expires_at' column to provider_auth_sessions")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"provider_auth_sessions.expires_at migration failed: {e}")
     finally:
         try:
             conn.close()
@@ -1738,6 +1771,7 @@ def init_db():
     _migrate_add_model_endpoint_refresh_columns()
     _migrate_add_model_endpoint_owner_column()
     _migrate_add_provider_auth_id_column()
+    _migrate_add_provider_auth_expires_at_column()
     _migrate_add_supports_tools_column()
     _migrate_add_task_run_model_column()
     _migrate_add_owner_column()
