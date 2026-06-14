@@ -77,6 +77,7 @@ import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join, serve_html_with_nonce
 from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
+from src.owner_identity import auth_disabled
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -204,7 +205,7 @@ from routes.auth_routes import setup_auth_routes, SESSION_COOKIE
 
 auth_manager = AuthManager()
 app.state.auth_manager = auth_manager
-AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+AUTH_ENABLED = not auth_disabled()
 LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 if LOCALHOST_BYPASS:
     logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")

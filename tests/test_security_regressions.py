@@ -129,6 +129,12 @@ def test_readme_native_quickstart_uses_loopback():
     assert "0.0.0.0` only when you intentionally want" in docs
 
 
+def test_readme_warns_auth_enabled_for_network_access():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "Keep `AUTH_ENABLED=true` for any network-accessible deployment." in readme
+    assert "Keep `LOCALHOST_BYPASS=false` outside local development." in readme
+
+
 def test_ollama_cookbook_runner_does_not_force_public_bind():
     route = Path("routes/cookbook_routes.py").read_text(encoding="utf-8")
     cookbook_js = Path("static/js/cookbook.js").read_text(encoding="utf-8")
@@ -719,6 +725,27 @@ def test_require_admin_allows_when_auth_explicitly_disabled(monkeypatch):
     from core.middleware import require_admin
 
     monkeypatch.setenv("AUTH_ENABLED", "false")
+
+    class _State:
+        current_user = None
+
+    class _AppState:
+        auth_manager = None
+
+    class _App:
+        state = _AppState()
+
+    class _Req:
+        state = _State()
+        app = _App()
+
+    assert require_admin(_Req()) is None
+
+
+def test_require_admin_uses_central_auth_disabled_parser(monkeypatch):
+    from core.middleware import require_admin
+
+    monkeypatch.setenv("AUTH_ENABLED", " false ")
 
     class _State:
         current_user = None
