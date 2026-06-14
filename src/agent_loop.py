@@ -745,6 +745,87 @@ def _assistant_requested_followup(messages: List[Dict]) -> bool:
     return False
 
 
+# Domain keyword patterns for intent classification.
+# Each domain maps to a list of regex patterns — add patterns for new
+# languages by appending to the list. The `has()` helper OR-matches all
+# patterns in the list; a single match adds the domain.
+_DOMAIN_KEYWORD_PATTERNS: Dict[str, List[str]] = {
+    "cookbook": [
+        # en
+        r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|kierkegaard|odysseus|ajax|qwen|gemma|llama|mistral|minimax)\b",
+        # ru
+        r"\b(готовк[аеу]|сервер|обслуж|запусти|запуск|пресет|скачай|загрузк[аеи]|какие модели|что запущено|что работает|модел[ьи] сервер|vllm|sglang|llama|ollama|qwen|gemma|mistral)\b",
+    ],
+    "email": [
+        # en
+        r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b",
+        # ru
+        r"\b(почт[ауеы]|письм[ао]|имейл|email|gmail|инбокс|входящи[ех]|ответ[ьи]|перешли|отправ[ьи]|напиши письмо|черновик|сообщени[ея])\b",
+    ],
+    "notes_calendar_tasks": [
+        # en — one-shot reminders / quick todo patterns
+        r"\b(note|todo|to-do|checklist|task list|remind me|reminder|buy|pickup|pick up)\b",
+        # en — recurring / scheduled patterns
+        r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b",
+        # en — calendar patterns
+        r"\b(calendar|event|meeting|appointment|schedule)\b",
+        # ru — заметки / напоминания
+        r"\b(заметк[ауи]|заметочк|todo|туду|список дел|напомни|напоминани[ея]|купи|забери)\b",
+        # ru — повторяющиеся / фоновые задачи
+        r"\b(каждый день|каждое утро|каждый вечер|регулярно|автоматически|крон|расписани[ея]|фонова[яй] задач)\b",
+        # ru — календарь
+        r"\b(календар[ья]|событи[ея]|встреч[ау]|назнач[ь] встречу)\b",
+    ],
+    "documents": [
+        # en
+        r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b",
+        # ru
+        r"\b(документ[аы]|док[аи]|черновик|сочин|создай|поэм[ау]|рассказ|эссе|редактируй|перепиши|провер[ьи]|предложи|отзыв|создай файл)\b",
+    ],
+    "web": [
+        # en — lookup / search
+        r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b",
+        # en — deep research
+        r"\b(research|deep dive|investigate|look into)\b",
+        # ru — поиск / интернет
+        r"\b(поищи|найди|поиск|интернет[ае]|гугл|погод[ау]|новост[ией]|прогноз|сайт|url|https?://)\b",
+        # ru — исследование
+        r"\b(исследуй|расследуй|узнай|изучи|разберись)\b",
+    ],
+    "ui": [
+        # en
+        r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|theme|panel)\b",
+        # ru
+        r"\b(открой|покажи|переключи|включи|выключи|отключи|смени модель|тема|тему|панель)\b",
+    ],
+    "sessions": [
+        # en
+        r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b",
+        # ru
+        r"\b(сесси[яию]|чат[аы]|истори[яю] чатов|переименуй чат|удали чат|архивируй|список чатов|форкни)\b",
+    ],
+    "files": [
+        # en
+        r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b",
+        # ru
+        r"\b(файл[аы]|папк[ауи]|директори[яию]|репозиторий|гит|найди в файлах|прочитай файл|редактируй файл|терминал|bash|python|питон[ае]?)\b",
+    ],
+    "settings": [
+        # en
+        r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b",
+        # ru
+        r"\b(эндпоинт|api ключ|токен|mcp|вебхук|настройк[аи]|конфиг|сконфигурируй)\b",
+    ],
+}
+
+# "write" / "напиши" is a weak signal — only mapped to documents when no
+# stronger domain (notes/calendar/tasks) has already fired.
+_WEAK_DOCUMENT_PATTERNS: List[str] = [
+    r"\bwrite\b",
+    r"\bнапиши\b",
+]
+
+
 def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, object]:
     """Classify only whether this turn deserves domain tool retrieval.
 
@@ -771,32 +852,16 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     def has(*patterns: str) -> bool:
         return any(re.search(p, q) for p in patterns)
 
-    if has(r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|kierkegaard|odysseus|ajax|qwen|gemma|llama|mistral|minimax)\b"):
-        domains.add("cookbook")
-    if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
-        domains.add("email")
-    if has(r"\b(note|todo|to-do|checklist|task list|remind me|reminder|buy|pickup|pick up)\b"):
-        domains.add("notes_calendar_tasks")
-    if has(r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b"):
-        domains.add("notes_calendar_tasks")
-    if has(r"\b(calendar|event|meeting|appointment|schedule)\b"):
-        domains.add("notes_calendar_tasks")
-    if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
+    # Match all domains from the keyword table — each domain carries 1+
+    # patterns (en + optional ru - and can be expanded).  A single match adds the domain.
+    for domain, patterns in _DOMAIN_KEYWORD_PATTERNS.items():
+        if has(*patterns):
+            domains.add(domain)
+
+    # Weak signal: "write" → documents, but let a stronger
+    # notes/calendar/tasks match take priority.
+    if "notes_calendar_tasks" not in domains and has(*_WEAK_DOCUMENT_PATTERNS):
         domains.add("documents")
-    if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
-        domains.add("documents")
-    if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
-        domains.add("web")
-    if has(r"\b(research|deep dive|investigate|look into)\b"):
-        domains.add("web")
-    if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
-        domains.add("ui")
-    if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
-        domains.add("sessions")
-    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
-        domains.add("files")
-    if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
-        domains.add("settings")
 
     low_signal = not continuation and not domains
     return {
