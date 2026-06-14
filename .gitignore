@@ -15,6 +15,13 @@ venv/
 .env.bak.*
 !.env.example
 
+# SOPS workflow — encrypted `secrets.env` is intentionally committable,
+# but every variant (plaintext, manual decrypt copy, editor backup)
+# must stay out of git. Mirrored in .dockerignore so the same artifacts
+# also cannot enter image build layers.
+secrets.env.*
+!secrets.env.example
+
 # Data — all user data stays local
 data/
 !services/hwfit/data/
