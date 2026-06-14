@@ -826,6 +826,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
+      const _gptOpts = window.chatgptControls && window.chatgptControls.getOptions
+        ? window.chatgptControls.getOptions()
+        : null;
+      if (_gptOpts && _gptOpts.enabled) {
+        fd.append('chatgpt_reasoning_effort', _gptOpts.effort || 'auto');
+        fd.append('chatgpt_response_mode', _gptOpts.mode || 'normal');
+      }
 
 
       const abortCtrl = new AbortController();

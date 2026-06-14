@@ -1733,6 +1733,8 @@ async def stream_agent_loop(
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
     workspace: Optional[str] = None,
+    chatgpt_reasoning_effort: Optional[str] = None,
+    chatgpt_response_mode: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -2190,6 +2192,8 @@ async def stream_agent_loop(
             tools=all_tool_schemas if all_tool_schemas else None,
             timeout=agent_stream_timeout,
             session_id=session_id,
+            chatgpt_reasoning_effort=chatgpt_reasoning_effort,
+            chatgpt_response_mode=chatgpt_response_mode,
         ):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")

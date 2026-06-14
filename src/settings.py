@@ -132,6 +132,13 @@ DEFAULT_SETTINGS = {
     "utility_model_fallbacks": [],
     "teacher_model": "",
     "teacher_enabled": False,
+    # ChatGPT Subscription / Codex Responses reasoning effort. "auto" leaves
+    # the provider default intact; low/medium/high/xhigh are sent as
+    # {"reasoning": {"effort": ...}} for supported GPT subscription models.
+    "chatgpt_subscription_reasoning_effort": "auto",
+    # Separate from reasoning effort. "fast" routes ChatGPT Subscription turns to
+    # the fast Codex model when available; "normal" keeps the selected model.
+    "chatgpt_subscription_response_mode": "normal",
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
     # DRAFT skill to be injected into the agent prompt. Published skills always
     # qualify. Keeps low-confidence auto-skills out of context until they're

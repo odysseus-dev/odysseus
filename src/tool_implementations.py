@@ -930,6 +930,14 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "default endpoint": "default_endpoint_id",
             "task model": "task_model", "background model": "task_model",
             "teacher model": "teacher_model", "teacher": "teacher_enabled",
+            "gpt effort": "chatgpt_subscription_reasoning_effort",
+            "codex effort": "chatgpt_subscription_reasoning_effort",
+            "chatgpt effort": "chatgpt_subscription_reasoning_effort",
+            "reasoning effort": "chatgpt_subscription_reasoning_effort",
+            "gpt mode": "chatgpt_subscription_response_mode",
+            "codex mode": "chatgpt_subscription_response_mode",
+            "chatgpt mode": "chatgpt_subscription_response_mode",
+            "response mode": "chatgpt_subscription_response_mode",
             "utility model": "utility_model", "research model": "research_model",
             "research max tokens": "research_max_tokens",
             "vision model": "vision_model", "vision": "vision_enabled",
@@ -955,6 +963,8 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
         _ENUMS = {
             "image_quality": ["low", "medium", "high"],
             "reminder_channel": ["browser", "email", "ntfy", "webhook"],
+            "chatgpt_subscription_reasoning_effort": ["auto", "low", "medium", "high", "xhigh"],
+            "chatgpt_subscription_response_mode": ["normal", "fast"],
         }
         def _coerce(value, default):
             if isinstance(default, bool):

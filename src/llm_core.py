@@ -25,21 +25,30 @@ class LLMConfig:
 
 
 # Cache for LLM responses
-def _get_cache_key(url: str, model: str, messages: List[Dict], 
-                   temperature: float, max_tokens: int) -> str:
+def _get_cache_key(
+    url: str,
+    model: str,
+    messages: List[Dict],
+    temperature: float,
+    max_tokens: int,
+    extra: Optional[Dict] = None,
+) -> str:
     """Generate cache key for LLM requests."""
     hashable_messages = []
     for msg in messages:
         sorted_items = tuple(sorted(msg.items()))
         hashable_messages.append(sorted_items)
     
-    content = json.dumps({
+    content_parts = {
         'url': url,
         'model': model, 
         'messages': hashable_messages,
         'temp': temperature,
         'max_tokens': max_tokens
-    }, sort_keys=True)
+    }
+    if extra:
+        content_parts['extra'] = extra
+    content = json.dumps(content_parts, sort_keys=True)
     return hashlib.sha256(content.encode()).hexdigest()
 
 _response_cache = {}
@@ -597,12 +606,15 @@ def _build_chatgpt_responses_payload(
     max_tokens: int,
     *,
     stream: bool = False,
+    reasoning_effort: Optional[str] = None,
+    response_mode: Optional[str] = None,
 ) -> Dict:
     from src.chatgpt_subscription import build_responses_input
 
     conversation = [msg for msg in (messages or []) if (msg.get("role") or "") != "system"]
+    effective_model = _chatgpt_subscription_effective_model(model, response_mode)
     payload: Dict = {
-        "model": model,
+        "model": effective_model,
         "instructions": _chatgpt_subscription_instructions(messages),
         "input": build_responses_input(conversation),
         "stream": stream,
@@ -610,10 +622,63 @@ def _build_chatgpt_responses_payload(
     }
     if not _restricts_temperature(model):
         payload["temperature"] = temperature
+    effort = _chatgpt_subscription_reasoning_effort(reasoning_effort)
+    if effort:
+        payload["reasoning"] = {"effort": effort}
     # ChatGPT Subscription Codex API does not support max_output_tokens —
     # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
     # Do not include it in the payload.
     return payload
+
+
+_CHATGPT_SUBSCRIPTION_REASONING_EFFORTS = {"low", "medium", "high", "xhigh"}
+_CHATGPT_SUBSCRIPTION_RESPONSE_MODES = {"normal", "fast"}
+_CHATGPT_SUBSCRIPTION_FAST_MODEL = "gpt-5.3-codex-spark"
+
+
+def _chatgpt_subscription_reasoning_effort(override: Optional[str] = None) -> str:
+    try:
+        if override is None:
+            from src.settings import get_setting
+
+            override = get_setting("chatgpt_subscription_reasoning_effort", "auto")
+        raw = str(override or "").strip().lower()
+    except Exception:
+        return ""
+    if raw in _CHATGPT_SUBSCRIPTION_REASONING_EFFORTS:
+        return raw
+    return ""
+
+
+def _chatgpt_subscription_response_mode(override: Optional[str] = None) -> str:
+    try:
+        if override is None:
+            from src.settings import get_setting
+
+            override = get_setting("chatgpt_subscription_response_mode", "normal")
+        raw = str(override or "").strip().lower()
+    except Exception:
+        return "normal"
+    return raw if raw in _CHATGPT_SUBSCRIPTION_RESPONSE_MODES else "normal"
+
+
+def _chatgpt_subscription_effective_model(model: str, response_mode: Optional[str] = None) -> str:
+    mode = _chatgpt_subscription_response_mode(response_mode)
+    if mode != "fast":
+        return model
+    slug = (model or "").strip().lower()
+    if slug.startswith("gpt-5") and slug != _CHATGPT_SUBSCRIPTION_FAST_MODEL:
+        return _CHATGPT_SUBSCRIPTION_FAST_MODEL
+    return model
+
+
+def _chatgpt_subscription_cache_extra(
+    reasoning_effort: Optional[str] = None,
+    response_mode: Optional[str] = None,
+) -> Dict:
+    effort = _chatgpt_subscription_reasoning_effort(reasoning_effort)
+    mode = _chatgpt_subscription_response_mode(response_mode)
+    return {"reasoning_effort": effort or "auto", "response_mode": mode}
 
 
 def _format_chatgpt_subscription_error(status_code: int, text: str) -> str:
@@ -1213,7 +1278,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         messages_copy = non_sys
 
     provider = _detect_provider(url)
-    cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
+    cache_extra = _chatgpt_subscription_cache_extra() if provider == "chatgpt-subscription" else None
+    cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens, cache_extra)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
@@ -1360,7 +1426,8 @@ async def llm_call_async(
     else:
         messages_copy = non_sys
 
-    cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens)
+    cache_extra = _chatgpt_subscription_cache_extra() if provider == "chatgpt-subscription" else None
+    cache_key = _get_cache_key(url, model, messages_copy, temperature, max_tokens, cache_extra)
     cached_response = _get_cached_response(cache_key)
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
@@ -1499,7 +1566,9 @@ async def llm_call_async(
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
-                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None):
+                     tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
+                     chatgpt_reasoning_effort: Optional[str] = None,
+                     chatgpt_response_mode: Optional[str] = None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -1541,7 +1610,15 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
         h = _provider_headers(provider, headers)
-        payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
+        payload = _build_chatgpt_responses_payload(
+            model,
+            messages_copy,
+            temperature,
+            max_tokens,
+            stream=True,
+            reasoning_effort=chatgpt_reasoning_effort,
+            response_mode=chatgpt_response_mode,
+        )
     else:
         target_url = url
         payload = {

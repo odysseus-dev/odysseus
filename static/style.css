@@ -2315,6 +2315,40 @@ body.bg-pattern-sparkles {
     .chat-input-left > .input-icon-btn.toolbar-collapsed {
       display: none !important;
     }
+    .chatgpt-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 2px;
+      min-width: 0;
+      flex-shrink: 0;
+    }
+    .chatgpt-controls.hidden {
+      display: none !important;
+    }
+    .chatgpt-chip-select {
+      height: 28px;
+      max-width: 106px;
+      padding: 0 22px 0 9px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--fg) 7%, transparent);
+      color: color-mix(in srgb, var(--fg) 70%, transparent);
+      font-family: inherit;
+      font-size: 11px;
+      line-height: 28px;
+      outline: none;
+      cursor: pointer;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    .chatgpt-chip-select:hover,
+    .chatgpt-chip-select:focus-visible {
+      border-color: var(--border);
+      background: color-mix(in srgb, var(--fg) 11%, transparent);
+      color: var(--fg);
+    }
     /* Always keep overflow wrapper visible and leftmost */
     .chat-input-left > .overflow-wrapper {
       flex-shrink: 0;

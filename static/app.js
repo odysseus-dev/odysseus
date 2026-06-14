@@ -11,6 +11,7 @@ import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
+import chatgptControls from './js/chatgptControls.js';
 import compareModule from './js/compare/index.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
@@ -52,6 +53,7 @@ window.sessionModule = sessionModule;
 window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
+window.chatgptControls = chatgptControls;
 
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
@@ -3386,6 +3388,7 @@ function startOdysseusApp() {
   searchModule.init(API_BASE);
   chatModule.init(API_BASE);
   chatModule.initListeners();
+  chatgptControls.initChatGptControls({ sessionModule, modelsModule });
   groupModule.init(API_BASE);
   // Initialize compare module
   if (compareModule) {

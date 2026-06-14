@@ -483,6 +483,10 @@ def setup_chat_routes(
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
         incognito = str(form_data.get("incognito", "")).lower() == "true"
+        _effort_raw = str(form_data.get("chatgpt_reasoning_effort") or (body or {}).get("chatgpt_reasoning_effort") or "").strip().lower()
+        chatgpt_reasoning_effort = _effort_raw if _effort_raw in {"auto", "low", "medium", "high", "xhigh"} else None
+        _mode_raw = str(form_data.get("chatgpt_response_mode") or (body or {}).get("chatgpt_response_mode") or "").strip().lower()
+        chatgpt_response_mode = _mode_raw if _mode_raw in {"normal", "fast"} else None
         # Plan mode is not part of the merge-ready UI. Ignore stale clients or
         # manual form posts that still send plan_mode=true.
         plan_mode = False
@@ -1035,6 +1039,8 @@ def setup_chat_routes(
                         prompt_type=preset_id,
                         tools=None,
                         session_id=session,
+                        chatgpt_reasoning_effort=chatgpt_reasoning_effort,
+                        chatgpt_response_mode=chatgpt_response_mode,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1184,6 +1190,8 @@ def setup_chat_routes(
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
                         workspace=workspace or None,
+                        chatgpt_reasoning_effort=chatgpt_reasoning_effort,
+                        chatgpt_response_mode=chatgpt_response_mode,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
