@@ -62,6 +62,51 @@ def _stream_set(session_id: str, **fields) -> None:
     rec.update(fields)
 
 
+# Emit an SSE keepalive comment if the upstream stays silent this long. Slow
+# endpoints (e.g. a grounding/RAG sidecar that runs a multi-second retrieve →
+# synthesize → verify pipeline before its first token) would otherwise leave
+# the SSE connection idle; mobile browsers and intermediate proxies drop idle
+# connections, so a successful response generated server-side never reaches the
+# client — the request completes and is saved, but the user sees an empty bubble.
+# Comment lines (": ...") are ignored by the SSE parser, so this is invisible to
+# the rendered message and safe for any client.
+_HEARTBEAT_INTERVAL = 10.0
+
+
+async def _with_heartbeat(agen, interval: float = _HEARTBEAT_INTERVAL,
+                          comment: str = ": keepalive\n\n"):
+    """Wrap an async chunk generator, yielding `comment` whenever the wrapped
+    generator produces nothing for `interval` seconds. The pending __anext__()
+    is preserved across timeouts (never cancelled mid-await), so the upstream
+    stream is not disturbed; on close the pending task and the wrapped generator
+    are cleaned up."""
+    pending = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(agen.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                yield comment
+                continue
+            try:
+                item = pending.result()
+            except StopAsyncIteration:
+                return
+            finally:
+                pending = None
+            yield item
+    finally:
+        if pending is not None:
+            pending.cancel()
+        aclose = getattr(agen, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                pass
+
+
 def _resolve_request_workspace(request, raw_value) -> tuple:
     """Resolve the posted workspace for this request: (workspace, rejected).
 
@@ -1022,7 +1067,7 @@ def setup_chat_routes(
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
-                    async for chunk in stream_llm_with_fallback(
+                    async for chunk in _with_heartbeat(stream_llm_with_fallback(
                         _chat_candidates,
                         messages,
                         temperature=ctx.preset.temperature,
@@ -1035,7 +1080,12 @@ def setup_chat_routes(
                         prompt_type=preset_id,
                         tools=None,
                         session_id=session,
-                    ):
+                    )):
+                        if chunk.startswith(":"):
+                            # Keepalive comment from _with_heartbeat — forward it
+                            # to keep the connection warm; not part of the message.
+                            yield chunk
+                            continue
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
                                 data = json.loads(chunk[6:])
