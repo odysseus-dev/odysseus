@@ -2,7 +2,7 @@
 
 > **Purpose**: Phase 0 planning baseline for codebase readability improvements (#4071).
 > **Parent issue**: [#4082](https://github.com/pewdiepie-archdaemon/odysseus/issues/4082)
-> **Last updated**: dev@9d7a3d6 | 2026-06-13
+> **Last updated**: dev@9d7a3d6 | 2026-06-14
 > **Status**: Draft — to be reviewed before follow-up slices open.
 
 This document maps the current runtime module structure, identifies high-risk boundaries, and recommends safe first refactor slices. It does **not** move files, change imports, or alter runtime behavior.
@@ -52,7 +52,7 @@ odysseus/
 | 5 | `src/task_scheduler.py` | **2,330** | — | ~6 | MEDIUM |
 | 6 | `routes/model_routes.py` | **2,266** | — | — | MEDIUM |
 | 7 | `core/database.py` | **2,265** | 27 | ~59 helpers | **HIGH** |
-| 8 | `src/builtin_actions.py` | **2,262** | 0 | ~26 | MEDIUM |
+| 8 | `src/builtin_actions.py` | **2,262** | 2 | ~24 | MEDIUM |
 | 9 | `src/llm_core.py` | **2,164** | — | — | MEDIUM |
 | 10 | `mcp_servers/email_server.py` | 2,197 | — | — | LOW (separate process) |
 | 11 | `src/visual_report.py` | 1,918 | — | — | LOW |
@@ -167,26 +167,29 @@ Routes can be grouped into logical feature domains. Current flat structure obscu
 |-----------|------|-------|------|
 | Tool schemas | `src/tool_schemas.py` | 1,392 | JSON Schema tool definitions (Duck-TypedDict) |
 | Tool index | `src/tool_index.py` | ~580 | RAG-based tool retrieval from ChromaDB |
-| Tool implementations | `src/tool_implementations.py` | 4,032 | 33+ `do_*` functions — all tool execution logic |
+| Tool implementations | `src/tool_implementations.py` | 4,032 | 33 `do_*` functions — all tool execution logic |
 | Tool security | `src/tool_security.py` | — | Owner-scoped tool blocking |
 | Tool policy | `src/tool_policy.py` | — | Guide-only directive, plan-mode disabled tools |
 | Tool utils | `src/tool_utils.py` | — | Shared tool helpers |
 
 ### 5.2 Tool Implementation Categories
 
-Tools in `tool_implementations.py` fall into natural groups:
+The 33 `do_*` functions in `tool_implementations.py` fall into natural domain groups — the basis for slice 1's split in §6.2:
 
-| Category | Tools | Lines (est.) |
-|----------|-------|--------------|
-| **Filesystem** | `read_file`, `write_file`, `list_files`, `edit_file`, `move_file`, `delete_file`, `create_directory`, … | ~600 |
-| **Shell** | `execute_shell`, `manage_sessions` | ~300 |
-| **Email** | `send_email`, `reply_to_email`, `read_email`, `list_emails`, `search_emails`, `manage_email_accounts`, … | ~800 |
-| **Calendar** | `create_event`, `update_event`, `list_events`, `delete_event`, `classify_events`, … | ~500 |
-| **Memory/Notes** | `manage_memory`, `manage_notes`, `search_notes` | ~300 |
-| **Search/Research** | `search_chats`, `deep_research`, `web_search` | ~400 |
-| **Cookbook/Models** | `manage_endpoints`, `manage_cookbook`, `download_model` | ~300 |
-| **System** | `manage_skills`, `manage_tasks`, `manage_mcp`, `ask_user`, `update_plan` | ~400 |
-| **Other** | `manage_contacts`, `manage_vault`, `learn_sender_signatures`, … | ~300 |
+| Category | `do_*` functions | Count |
+|----------|------------------|-------|
+| **System / config** | `do_manage_skills`, `do_manage_tasks`, `do_manage_endpoints`, `do_manage_mcp`, `do_manage_webhooks`, `do_manage_tokens`, `do_manage_settings`, `do_api_call`, `do_app_api` | 9 |
+| **Cookbook / model serving** | `do_download_model`, `do_serve_model`, `do_list_served_models`, `do_stop_served_model`, `do_tail_serve_output`, `do_list_downloads`, `do_cancel_download`, `do_search_hf_models`, `do_adopt_served_model`, `do_list_cookbook_servers`, `do_list_serve_presets`, `do_serve_preset`, `do_list_cached_models` | 13 |
+| **Notes** | `do_manage_notes` | 1 |
+| **Calendar** | `do_manage_calendar` | 1 |
+| **Search** | `do_search_chats` | 1 |
+| **Research** | `do_manage_research`, `do_trigger_research` | 2 |
+| **Contacts** | `do_resolve_contact`, `do_manage_contact` | 2 |
+| **Vault** | `do_vault_search`, `do_vault_get`, `do_vault_unlock` | 3 |
+| **Image** | `do_edit_image` | 1 |
+| | **Total** | **33** |
+
+> Low-level tools (filesystem, subprocess, web fetch, document parsing) live in `src/agent_tools/`, **not** in `tool_implementations.py` — out of scope for this split.
 
 ---
 
@@ -307,9 +310,9 @@ These become real only when the corresponding slices land.
 
 ---
 
-## Appendix A: Complete File Listing
+## Appendix A: File Listing
 
-### `src/` (91 files — representative subset listed)
+### `src/` (91 files — 61 shown; run `ls src/*.py` for the full list)
 
 ```
 agent_loop.py          tool_implementations.py   tool_schemas.py
