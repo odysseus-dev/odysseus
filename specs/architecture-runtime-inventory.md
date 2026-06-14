@@ -25,7 +25,7 @@ odysseus/
 ├── mcp_servers/              # 4 files — MCP server implementations
 ├── scripts/                  # CLI tools and one-shot scripts
 ├── static/                   # Frontend HTML/CSS/JS
-├── tests/                    # 552 test files (~54,800 lines)
+├── tests/                    # 544 test files (~54,800 lines)
 └── services/                 # (exists as needed)
 ```
 
@@ -128,10 +128,10 @@ src/tool_implementations.py ──→ routes/prefs_routes.py
 **Import counts (top-level)**:
 | Direction | Count | Notes |
 |-----------|-------|-------|
-| `routes/` → `src/` | **349** | Expected: HTTP handlers call domain logic |
+| `routes/` → `src/` | **351** | Expected: HTTP handlers call domain logic |
 | `routes/` → `core/` | **124** | Expected: handlers access DB models |
-| `src/` → `routes/` | **38** | **Unexpected**: domain logic reaching into HTTP layer |
-| `src/` → `core/` | **~49** | Acceptable but could be reduced with a data-access layer |
+| `src/` → `routes/` | **30** | **Unexpected**: domain logic reaching into HTTP layer (direct grep of import lines referencing `routes/`) |
+| `src/` → `core/` | **99** | Acceptable but could be reduced with a data-access layer |
 
 ---
 
@@ -191,6 +191,8 @@ Tools in `tool_implementations.py` fall into natural groups:
 ---
 
 ## 6. Risk Assessment & Candidate Slice Ranking
+
+> **Candidate proposals, not a committed plan.** The rankings, package shapes (e.g. `src/pkg/`, `src/domain/`, `src/infra/`, `src/api/`), split ordering, and route-grouping strategy below are **options for maintainer discussion**. Per #4082/#4071, slice ownership and order are settled by maintainers before any follow-up PR. §1–§3 above are the factual current-state inventory.
 
 ### 6.1 Risk Scale
 
@@ -295,7 +297,7 @@ timeout 5 python app.py 2>&1 | head -5 || true
 
 ## 10. Future Direction (NOT current state)
 
-The following are **future refactor targets**, recorded here so this inventory does not imply they exist today. None of them are present in the current `dev` tree:
+The following are **future refactor targets** (candidate directions **pending maintainer agreement**, not committed), recorded here so this inventory does not imply they exist today. None of them are present in the current `dev` tree:
 
 - `main.py` — proposed rename of the `app.py` entrypoint. Today the app boots via `app.py`.
 - `src/agent/` — proposed package to hold `agent_loop.py` submodules (prompt/classifier/verifier/runaway/context). Today `agent_loop.py` is a single flat file in `src/`.
