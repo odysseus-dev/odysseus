@@ -1141,13 +1141,13 @@ function _wkEventTopHeight(ev, dayStr) {
   // Date math if the string isn't shaped as expected.
   const _toMin = (iso, fallbackDate) => {
     if (!iso) return null;
-    const m = iso.match(/T(\d{2}):(\d{2})/);
-    if (m) {
+    const mins = _timeToMin(iso);
+    if (mins !== null && iso.includes('T')) {
       // If the event spans into a previous/next day, clamp to today's bounds.
-      const evDate = iso.slice(0, 10);
+      const evDate = _localDateOf(iso);
       if (evDate < fallbackDate) return 0;             // event started before today
       if (evDate > fallbackDate) return 24 * 60;       // event ends after today
-      return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+      return mins;
     }
     // All-day or date-only — treat as start of day.
     return 0;
@@ -1286,12 +1286,17 @@ async function _renderWeek() {
       if (!ev) return;
       const cols = Array.from(body.querySelectorAll('.cal-wk-grid'));
       if (!cols.length) return;
-      // Original timing
-      const m1 = (ev.dtstart || '').match(/T(\d{2}):(\d{2})/);
-      const m2 = (ev.dtend || '').match(/T(\d{2}):(\d{2})/);
-      const startMin0 = m1 ? parseInt(m1[1], 10) * 60 + parseInt(m1[2], 10) : 0;
-      const endMin0   = m2 ? parseInt(m2[1], 10) * 60 + parseInt(m2[2], 10) : startMin0 + 60;
-      const durationMin = Math.max(15, endMin0 - startMin0);
+      // Local/display timing
+      const startMin0 = _timeToMin(ev.dtstart) ?? 0;
+      const endMin0   = _timeToMin(ev.dtend) ?? startMin0 + 60;
+
+      let durationMin = endMin0 - startMin0;
+      const startDs = _localDateOf(ev.dtstart);
+      const endDs = ev.dtend ? _localDateOf(ev.dtend) : startDs;
+      if (endDs > startDs && endMin0 <= startMin0) {
+        durationMin += 24 * 60;
+      }
+      durationMin = Math.max(15, durationMin);
 
       // Where did the cursor grab the block? (offset from block-top in px)
       const blockRect = block.getBoundingClientRect();
@@ -1365,7 +1370,7 @@ async function _renderWeek() {
         // a plain click (no movement) must still open the event.
         if (moved) block.dataset.justResized = '1';
         // Decide whether anything actually moved.
-        const oldDs = (ev.dtstart || '').slice(0, 10);
+        const oldDs = _localDateOf(ev.dtstart);
         if (!nextDs) return;
         if (nextDs === oldDs && nextStartMin === startMin0) return;
         // Snapshot the original times so we can offer an Undo.
@@ -1374,11 +1379,10 @@ async function _renderWeek() {
         const newEndMin = nextStartMin + durationMin;
         const hh = String(Math.floor(nextStartMin / 60)).padStart(2, '0');
         const mm = String(nextStartMin % 60).padStart(2, '0');
-        const hh2 = String(Math.floor(newEndMin / 60)).padStart(2, '0');
-        const mm2 = String((newEndMin) % 60).padStart(2, '0');
-        const _tz = _tzOffset();
+        const newDtstartDate = new Date(`${nextDs}T${hh}:${mm}:00`);
+        const _tz = _tzOffsetForDate(newDtstartDate);
         const newDtstart = `${nextDs}T${hh}:${mm}:00${_tz}`;
-        const newDtend   = `${nextDs}T${hh2}:${mm2}:00${_tz}`;
+        const newDtend = _addMinutesToLocalIso(newDtstart, durationMin);
         try {
           await _updateEvent(uid, { dtstart: newDtstart, dtend: newDtend });
           _render();
@@ -1410,10 +1414,7 @@ async function _renderWeek() {
       const uid = block.dataset.uid;
       const ev = _events.find(x => x.uid === uid);
       if (!ev || !grid || !ds) return;
-      const startMin = (() => {
-        const m = (ev.dtstart || '').match(/T(\d{2}):(\d{2})/);
-        return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : 0;
-      })();
+      const startMin = _timeToMin(ev.dtstart) ?? 0;
       const initialTop = parseFloat(block.style.top || '0');
       const gridRect = grid.getBoundingClientRect();
       let newEndMin = startMin;
@@ -1438,9 +1439,8 @@ async function _renderWeek() {
         if (resized) block.dataset.justResized = '1';
         if (newEndMin === startMin) return;
         const prevDtend = ev.dtend;
-        const hh = String(Math.floor(newEndMin / 60)).padStart(2, '0');
-        const mm = String(newEndMin % 60).padStart(2, '0');
-        const newDtend = `${ds}T${hh}:${mm}:00${_tzOffset()}`;
+        const durationMin = newEndMin - startMin;
+        const newDtend = _addMinutesToLocalIso(ev.dtstart, durationMin);
         try {
           await _updateEvent(uid, { dtend: newDtend });
           _render();
@@ -1966,10 +1966,10 @@ function _wireAll(body) {
             const ad = document.getElementById('cal-f-allday');
             if (ad && !ad.checked) { ad.checked = true; ad.dispatchEvent(new Event('change')); }
           } else {
-            const t1 = (ev.dtstart || '').match(/T(\d{2}:\d{2})/);
-            const t2 = (ev.dtend || '').match(/T(\d{2}:\d{2})/);
-            if (t1) set('cal-f-start', t1[1]);
-            if (t2) set('cal-f-end', t2[1]);
+            const t1 = _fmtTime(ev.dtstart);
+            const t2 = _fmtTime(ev.dtend);
+            if (t1) set('cal-f-start', t1);
+            if (t2) set('cal-f-end', t2);
             document.getElementById('cal-f-start')?.dispatchEvent(new Event('input'));
           }
           // Make sure the details panel is open so the user can verify time.
@@ -3215,6 +3215,37 @@ function _fmtTime(s) {
   }
   return s.slice(11, 16);
 }
+
+function _timeToMin(iso) {
+  const hm = _fmtTime(iso);
+  if (!hm) return null;
+  const m = hm.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+  return h * 60 + min;
+}
+
+function _tzOffsetForDate(d) {
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const abs = Math.abs(off);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `${sign}${hh}:${mm}`;
+}
+
+function _addMinutesToLocalIso(baseIso, addMinutes) {
+  const d = new Date(new Date(baseIso).getTime() + addMinutes * 60000);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${y}-${mo}-${da}T${h}:${m}:00${_tzOffsetForDate(d)}`;
+}
+
 function _e(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
 // Linkify a location string: URLs become clickable, plain addresses get a Maps link.
