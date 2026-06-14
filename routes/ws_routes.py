@@ -52,6 +52,24 @@ def setup_ws_routes():
 
     @router.websocket("/ws/notifications")
     async def ws_notifications(websocket: WebSocket):
+        # ── Origin check: reject cross-origin requests (CSWSH) ───────────
+        # Browsers include cookies on WebSocket handshakes regardless of
+        # origin, so we must validate before accept(). Non-browser clients
+        # (API tokens) omit the Origin header and are allowed through.
+        origin = websocket.headers.get("origin")
+        if origin:
+            forwarded = websocket.headers.get("x-forwarded-proto", "")
+            effective_scheme = (
+                forwarded if forwarded in ("http", "https")
+                else ("https" if websocket.url.scheme == "wss" else "http")
+            )
+            expected = f"{effective_scheme}://{websocket.url.hostname}"
+            if websocket.url.port:
+                expected += f":{websocket.url.port}"
+            if origin != expected:
+                await websocket.close(code=4001)
+                return
+
         await websocket.accept()
 
         # ── Auth: validate session cookie ────────────────────────────────
