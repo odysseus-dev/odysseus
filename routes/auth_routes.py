@@ -367,6 +367,20 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         except Exception as e:
             logger.warning("Failed to rename user prefs %s -> %s: %s", old_username, new_username, e)
 
+        # In-flight deep-research tasks live in the process-local
+        # ResearchHandler registry. They are not covered by the persisted JSON
+        # migration above, but the research routes filter and cancel by this
+        # owner field while the job is running. Do this before sweeping
+        # completed JSON files so a job that finishes during the rename saves
+        # with the new owner or is caught by the disk sweep below.
+        try:
+            rh = getattr(request.app.state, "research_handler", None)
+            rename_owner = getattr(rh, "rename_owner", None)
+            if callable(rename_owner):
+                rename_owner(old_username, new_username)
+        except Exception as e:
+            logger.warning("Failed to rename active research tasks %s -> %s: %s", old_username, new_username, e)
+
         # deep_research: each completed report is a standalone JSON file with
         # an `owner` field. research_routes filters by d.get("owner") == user,
         # so a stale owner makes every report invisible to the renamed user.
@@ -401,6 +415,17 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                         atomic_write_json(MEMORY_FILE, entries)
         except Exception as e:
             logger.warning("Failed to rename memory.json owner references %s -> %s: %s", old_username, new_username, e)
+
+        # uploads.json: upload rows use owner metadata for access checks and
+        # owner-prefixed index keys for dedupe. Rename both so attachments keep
+        # resolving after the account username changes.
+        try:
+            upload_handler = getattr(request.app.state, "upload_handler", None)
+            rename_owner = getattr(upload_handler, "rename_owner", None)
+            if callable(rename_owner):
+                rename_owner(old_username, new_username)
+        except Exception as e:
+            logger.warning("Failed to rename upload owner references %s -> %s: %s", old_username, new_username, e)
 
         # skills: SKILL.md frontmatter carries owner: <username>; the usage
         # sidecar (_usage.json) keys entries as owner::skill-name. Both must
