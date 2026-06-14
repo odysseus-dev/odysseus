@@ -2014,20 +2014,13 @@ async def stream_agent_loop(
                 hard_max = DEFAULT_HARD_MAX
             if hard_max <= 0:
                 hard_max = DEFAULT_HARD_MAX
-            # The DEFAULT budget value is the "auto" sentinel: scale to the model's
-            # context window so long-context models aren't capped (#1170). Any other
-            # value is an explicit cap. budget_is_explicit() keys off value-vs-default
-            # (NOT is_setting_overridden) because the settings-save path materializes
-            # every default into settings.json — a persisted default 6000 must still
-            # read as auto (#4121).
+            # Default value = auto sentinel (scale to the window); any other value =
+            # explicit cap. Value-based, not presence-based, because the save path
+            # materializes defaults so a persisted default must still read as auto (#4121).
             budget_is_explicit = _budget_is_explicit(soft_budget)
-            # Only scale off a context window we actually discovered, bound to the
-            # value it proves: budget_context_for_model() returns the freshly-probed
-            # window when known, else 0 (conservative). Don't reuse the passed-in
-            # `context_length` — it can be a stale lookup, or 0 for callers that don't
-            # pass one (scheduled tasks, teacher escalation, ...), which would budget
-            # off an unproven number (#4122 review). On probe error it falls back to
-            # the caller's value to preserve prior behaviour.
+            # Scale only off a window we actually discovered, bound to the value it
+            # proves (else 0) — not the passed-in context_length, which can be stale
+            # or unset for some callers (#4122 review).
             ctx_for_budget = budget_context_for_model(endpoint_url, model, fallback=context_length)
             effective_budget = compute_input_token_budget(
                 soft_budget,

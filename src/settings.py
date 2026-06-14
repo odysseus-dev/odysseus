@@ -104,8 +104,8 @@ DEFAULT_SETTINGS = {
     # Soft input-token budget for the agent loop. The DEFAULT value (6000) is the
     # "auto" sentinel: it means "scale the budget to the model's context window"
     # (#1230) — so long-context models aren't capped at 6000. Set ANY OTHER value
-    # to enforce an explicit cap (clamped to the window and to
-    # agent_input_token_hard_max); set 0 to disable soft-trimming entirely. The
+    # to enforce an explicit cap (clamped to the window only — hard_max does not
+    # apply to explicit budgets, #1190); set 0 to disable soft-trimming. The
     # default is treated as auto because the settings-save path materializes
     # defaults, so a persisted 6000 can't be told apart from a deliberate 6000 —
     # to pin a budget near the default, use a nearby value (e.g. 5999).
@@ -230,8 +230,10 @@ def is_setting_overridden(key: str) -> bool:
 
     ``load_settings`` merges DEFAULT_SETTINGS with the saved file, so a value
     equal to its default is indistinguishable from "never set" via get_setting.
-    Callers that need to treat an explicit user choice differently from the
-    default (e.g. adaptive budgets) use this to read the raw saved file.
+    Callers that must distinguish an explicit user choice from a default read
+    the raw saved file via this. (Note: a materialized default is also "present",
+    so value-sensitive callers should compare against the default — see
+    ``context_budget.budget_is_explicit``.)
     """
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
