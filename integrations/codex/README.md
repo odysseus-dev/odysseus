@@ -49,3 +49,21 @@ python3 ~/plugins/odysseus/scripts/odysseus_api.py capabilities
 ```
 
 Codex must use `/api/codex/*` endpoints. SSH, Docker, direct Python imports, database queries, and MCP internals bypass Odysseus Settings and must not be used for user data access.
+
+## Installing custom Codex skills (example: n-agentic-harnesses)
+
+1. Copy the skill folder into your Codex skills directory:
+
+```bash
+mkdir -p ~/.codex/skills
+cp -R /path/to/n-agentic-harnesses ~/.codex/skills/n-agentic-harnesses
+```
+
+2. Activate the Codex-tuned variant by replacing the root `SKILL.md`:
+
+```bash
+cp ~/.codex/skills/n-agentic-harnesses/variants/codex/SKILL.md \
+  ~/.codex/skills/n-agentic-harnesses/SKILL.md
+```
+
+3. Restart Codex to load the new skill.
