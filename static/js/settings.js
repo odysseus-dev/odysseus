@@ -11,6 +11,17 @@ import { isAltGrEvent } from './platform.js';
 let initialized = false;
 let modalEl = null;
 
+const _basePath = window.__odysseusBasePath || '';
+
+// Local fetch wrapper to ensure all module fetches explicitly prepend the base path
+const _globalFetch = window.fetch;
+const fetch = function(url, options) {
+  if (typeof url === 'string' && url.startsWith('/') && _basePath && !url.startsWith(_basePath)) {
+    url = _basePath + url;
+  }
+  return _globalFetch(url, options);
+};
+
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
 function safeRasterDataUrl(raw) {
@@ -2172,7 +2183,7 @@ function initAccount() {
         _toRemove.forEach(k => localStorage.removeItem(k));
         sessionStorage.clear();
       } catch (_) {}
-      window.location.href = '/login';
+      window.location.href = _basePath + '/login';
     });
   }
 }

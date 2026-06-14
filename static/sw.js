@@ -9,10 +9,13 @@
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
 const CACHE_NAME = 'odysseus-v327';
 
+const scopePath = new URL(self.registration.scope || '/').pathname;
+const basePath = scopePath.endsWith('/') ? scopePath.slice(0, -1) : scopePath;
+
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
 // and <link rel="stylesheet"> in index.html.
-const PRECACHE = [
+const PRECACHE_PATHS = [
   '/',
   '/static/style.css',
   '/static/app.js',
@@ -63,6 +66,11 @@ const PRECACHE = [
   '/static/lib/highlight.min.js',
 ];
 
+const PRECACHE = PRECACHE_PATHS.map(path => {
+  if (path === '/') return basePath + '/';
+  return basePath + path;
+});
+
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
@@ -92,18 +100,20 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
 
   // Never touch API calls or non-GET.
-  if (url.pathname.startsWith('/api/') || e.request.method !== 'GET') return;
+  if (url.pathname.startsWith(basePath + '/api/') || e.request.method !== 'GET') return;
 
   // HTML navigation: stale-while-revalidate the app shell — but ONLY for the
   // SPA root. Other navigations (e.g. a deep-linked /static/*.html page) must
   // go to the network/static handlers below; otherwise every navigation was
   // served the app index, replacing the page the user actually asked for.
-  if (e.request.mode === 'navigate' && url.pathname === '/') {
+  const isRootPath = url.pathname === (basePath + '/') || url.pathname === basePath;
+  if (e.request.mode === 'navigate' && isRootPath) {
     e.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
-        const cached = await cache.match('/');
+        const cacheKey = basePath + '/';
+        const cached = await cache.match(cacheKey);
         const network = fetch(e.request).then(res => {
-          if (res && res.ok) cache.put('/', res.clone());
+          if (res && res.ok) cache.put(cacheKey, res.clone());
           return res;
         }).catch(() => cached);
         return cached || network;
@@ -114,7 +124,8 @@ self.addEventListener('fetch', (e) => {
 
   // JS/CSS: network-first — always try the network so code/style edits show up
   // on a normal reload; fall back to cache only when offline.
-  if (url.pathname.startsWith('/static/') && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
+  const isStaticAsset = url.pathname.startsWith(basePath + '/static/');
+  if (isStaticAsset && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
     e.respondWith(
       fetch(e.request).then(res => {
         if (res && res.ok) {
@@ -128,7 +139,7 @@ self.addEventListener('fetch', (e) => {
   }
 
   // Other static assets (images, fonts, libs): cache-first with background refresh.
-  if (url.pathname.startsWith('/static/')) {
+  if (isStaticAsset) {
     e.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
         const cached = await cache.match(e.request);

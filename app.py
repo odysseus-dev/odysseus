@@ -43,7 +43,7 @@ from typing import Dict
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -182,6 +182,8 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        "/manifest.json",
+        "/sw.js",
     }
     AUTH_EXEMPT_PREFIXES = ["/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
@@ -315,7 +317,7 @@ if AUTH_ENABLED:
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
                 if not path.startswith("/api/"):
-                    return RedirectResponse(url="/login", status_code=302)
+                    return RedirectResponse(url=get_base_path(request) + "/login", status_code=302)
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
 
             # --- Bearer token auth (API tokens for external integrations) ---
@@ -378,7 +380,7 @@ if AUTH_ENABLED:
             if not auth_manager.validate_token(token):
                 if path.startswith("/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-                return RedirectResponse(url="/login", status_code=302)
+                return RedirectResponse(url=get_base_path(request) + "/login", status_code=302)
 
             # Attach current username to request state for downstream routes
             request.state.current_user = auth_manager.get_username_for_token(token)
@@ -761,13 +763,67 @@ app.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
+def get_base_path(request: Request) -> str:
+    """Determine the base path prefix of the deployment, ignoring trailing slash."""
+    # 1. Check environment variable first
+    env_base = os.getenv("ODYSSEUS_BASE_PATH", "").strip().rstrip("/")
+    if env_base:
+        if not env_base.startswith("/"):
+            env_base = "/" + env_base
+        return env_base
+
+    # 2. Fall back to X-Forwarded-Prefix header
+    forwarded_prefix = request.headers.get("x-forwarded-prefix", "").strip().rstrip("/")
+    if forwarded_prefix:
+        if not forwarded_prefix.startswith("/"):
+            forwarded_prefix = "/" + forwarded_prefix
+        return forwarded_prefix
+
+    return ""
+
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
-    """Read an HTML file and inject the CSP nonce into inline <script> tags."""
+    """Read an HTML file and inject the CSP nonce and base path."""
     with open(file_path, "r", encoding="utf-8") as f:
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
+
+    # Inject the base path dynamically into the html by rewriting static paths
+    base_path = get_base_path(request)
+    html = html.replace(
+        "<head>",
+        f'<head><script nonce="{nonce}">window.__odysseusBasePath = "{base_path}";</script>'
+    )
+    if base_path:
+        html = html.replace('"/static/', f'"{base_path}/static/')
+        html = html.replace("\'/static/", f"\'{base_path}/static/")
+        html = html.replace('"/sw.js"', f'"{base_path}/sw.js"')
+        html = html.replace("\'/sw.js\'", f"\'{base_path}/sw.js\'")
+        html = html.replace('"/manifest.json"', f'"{base_path}/manifest.json"')
+        html = html.replace("\'/manifest.json\'", f"\'{base_path}/manifest.json\'")
     return HTMLResponse(html)
+
+@app.get("/manifest.json")
+async def serve_manifest(request: Request):
+    static_path = abs_join(BASE_DIR, "static/manifest.json")
+    if os.path.exists(static_path):
+        with open(static_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        base_path = get_base_path(request)
+        if base_path:
+            content = content.replace('"/static/', f'"{base_path}/static/')
+            content = content.replace('"/login', f'"{base_path}/login')
+            content = content.replace('"start_url": "/"', f'"start_url": "{base_path}/"')
+            content = content.replace('"scope": "/"', f'"scope": "{base_path}/"')
+        return Response(content, media_type="application/manifest+json")
+    raise HTTPException(404, "manifest.json not found")
+
+@app.get("/sw.js")
+async def serve_sw(request: Request):
+    static_path = abs_join(BASE_DIR, "static/sw.js")
+    if os.path.exists(static_path):
+        return FileResponse(static_path, media_type="text/javascript")
+    raise HTTPException(404, "sw.js not found")
 
 @app.get("/")
 async def serve_index(request: Request):
@@ -823,7 +879,7 @@ async def serve_backgrounds(request: Request):
 @app.get("/login")
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
-        return RedirectResponse(url="/", status_code=302)
+        return RedirectResponse(url=get_base_path(request) + "/", status_code=302)
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
