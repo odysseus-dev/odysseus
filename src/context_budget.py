@@ -59,3 +59,17 @@ def compute_input_token_budget(
         return max(1, min(scaled, hard_max))
 
     return configured if configured > 0 else default
+
+
+def budget_is_explicit(configured: int, *, default: int = DEFAULT_BUDGET) -> bool:
+    """Whether a configured agent_input_token_budget is a deliberate explicit cap.
+
+    The default value is the "auto" sentinel (scale to the model's window), so only
+    a NON-default positive value counts as explicit. This keys off the VALUE, not
+    settings *presence* — the settings-save path materializes every default into
+    settings.json, so a persisted default must still read as auto (the regression
+    #4121 / #1230 are about). Centralised here so the materialized-default contract
+    is unit-testable and can't silently regress to a presence check.
+    """
+    configured = int(configured or 0)
+    return configured > 0 and configured != default

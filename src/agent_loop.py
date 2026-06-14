@@ -1998,7 +1998,7 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
         from src.model_context import get_context_length_known
 
         soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
@@ -2016,10 +2016,11 @@ async def stream_agent_loop(
                 hard_max = DEFAULT_HARD_MAX
             # The DEFAULT budget value is the "auto" sentinel: scale to the model's
             # context window so long-context models aren't capped (#1170). Any other
-            # value is an explicit cap. We use value-vs-default (not is_setting_overridden)
-            # because the settings-save path materializes every default into
-            # settings.json — a persisted default 6000 must still read as auto.
-            budget_is_explicit = soft_budget != DEFAULT_BUDGET
+            # value is an explicit cap. budget_is_explicit() keys off value-vs-default
+            # (NOT is_setting_overridden) because the settings-save path materializes
+            # every default into settings.json — a persisted default 6000 must still
+            # read as auto (#4121).
+            budget_is_explicit = _budget_is_explicit(soft_budget)
             # Only scale off a context window we actually discovered: a bare
             # DEFAULT_CONTEXT fallback isn't proof the model holds that much, so
             # pass 0 there and let auto-scaling stay conservative (#4122 review).

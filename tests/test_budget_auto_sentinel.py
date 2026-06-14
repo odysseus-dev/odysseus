@@ -8,17 +8,49 @@
   fallback stays conservative instead of scaling off an unproven window.
 """
 
+import json
 from unittest.mock import patch
 
 import src.settings as settings
 import src.model_context as mc
-from src.context_budget import compute_input_token_budget, DEFAULT_BUDGET
+from src.context_budget import compute_input_token_budget, DEFAULT_BUDGET, budget_is_explicit
 
 
 def test_default_value_is_the_auto_sentinel():
     # The settings default equals DEFAULT_BUDGET, so the agent loop (which compares
     # the configured value to DEFAULT_BUDGET) treats the default as "auto".
     assert settings.DEFAULT_SETTINGS["agent_input_token_budget"] == DEFAULT_BUDGET
+
+
+def test_saving_an_unrelated_setting_does_not_re_cap_the_budget(tmp_path, monkeypatch):
+    """End-to-end regression (WGlynn, #4121): changing ANY setting makes the
+    settings-save path persist the merged dict, which materializes the budget
+    default into settings.json. The budget must still AUTO-SCALE — it must not be
+    re-read as an explicit 6000 cap. This locks the exact reopening shut.
+    """
+    settings_file = tmp_path / "settings.json"
+    monkeypatch.setattr(settings, "SETTINGS_FILE", str(settings_file))
+    settings._settings_cache = None
+
+    # Simulate a real settings save: a handler loads the merged dict (defaults +
+    # saved) and persists it after the user changes one *unrelated* setting.
+    merged = settings.load_settings()
+    merged["search_result_count"] = 9                  # unrelated user change
+    settings.save_settings(merged)
+    settings._settings_cache = None
+
+    # The budget default is now physically materialized into the file...
+    raw = json.loads(settings_file.read_text())
+    assert raw["agent_input_token_budget"] == DEFAULT_BUDGET
+    assert raw["search_result_count"] == 9
+
+    # ...yet it must read as AUTO (value == default), not an explicit cap — even
+    # though is_setting_overridden would report True for it now.
+    assert settings.is_setting_overridden("agent_input_token_budget") is True
+    soft = int(settings.get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
+    assert budget_is_explicit(soft) is False
+    # And the effective budget scales to the window rather than capping at 6000.
+    assert compute_input_token_budget(soft, 131072, explicit=budget_is_explicit(soft)) == int(131072 * 0.85)
 
 
 def test_auto_scales_on_a_known_window():
