@@ -15244,6 +15244,10 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   overflow-y: auto !important;
   overscroll-behavior: contain;
 }
+.cookbook-group[data-backend-group="Serve"] > .admin-card > .hwfit-cached-list .doclib-card.doclib-card-expanded {
+  flex: 0 0 auto !important;
+  overflow: visible !important;
+}
 /* Drag-and-drop visual hint for the email compose pane. Subtle accent
    outline + tinted overlay so it's obvious files will attach if dropped. */
 .doc-editor-pane.email-dragover {
