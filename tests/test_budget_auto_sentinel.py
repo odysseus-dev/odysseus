@@ -80,3 +80,32 @@ def test_get_context_length_known_surfaces_endpoint_proven_vs_fallback():
     mc._context_cache.clear()
     with patch.object(mc, "_query_context_length", return_value=(64000, True)):
         assert mc.get_context_length("http://proven/v1", "m3") == 64000
+
+
+def test_budget_context_binds_known_flag_to_its_own_value():
+    """Regression (RaresKeY, #4122): scale the budget off the value the `known`
+    flag actually proves — never a stale/missing context_length from a different
+    lookup. Covers the local-restaleness case (fresh proven value beats a stale
+    fallback) and the no-arg-caller case (discovers a long window despite fallback=0).
+    """
+    # unknown / bare fallback -> 0 (don't scale off an unproven window)
+    with patch.object(mc, "get_context_length_known", return_value=(128000, False)):
+        assert mc.budget_context_for_model("u", "m", fallback=128000) == 0
+    # known -> the freshly-proven value, NOT the (stale) fallback the caller passed
+    with patch.object(mc, "get_context_length_known", return_value=(4096, True)):
+        assert mc.budget_context_for_model("u", "m", fallback=128000) == 4096
+    # no-arg caller (fallback=0) still gets the discovered long window
+    with patch.object(mc, "get_context_length_known", return_value=(131072, True)):
+        assert mc.budget_context_for_model("u", "m", fallback=0) == 131072
+    # probe error -> caller's fallback (prior behaviour)
+    with patch.object(mc, "get_context_length_known", side_effect=RuntimeError):
+        assert mc.budget_context_for_model("u", "m", fallback=4096) == 4096
+
+
+def test_no_arg_caller_scales_from_discovered_window_not_6000():
+    """End-to-end of the fix: a caller that passes no context_length (scheduled
+    tasks, teacher escalation, ...) but whose endpoint reports 131072 now scales to
+    ~111k instead of being capped at the conservative 6000."""
+    with patch.object(mc, "get_context_length_known", return_value=(131072, True)):
+        ctx = mc.budget_context_for_model("u", "m", fallback=0)
+    assert compute_input_token_budget(DEFAULT_BUDGET, ctx, explicit=False) == int(131072 * 0.85)

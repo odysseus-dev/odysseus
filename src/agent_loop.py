@@ -1999,7 +1999,7 @@ async def stream_agent_loop(
     try:
         from src.context_compactor import trim_for_context
         from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
-        from src.model_context import get_context_length_known
+        from src.model_context import budget_context_for_model
 
         soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
         if soft_budget > 0:
@@ -2021,14 +2021,14 @@ async def stream_agent_loop(
             # every default into settings.json — a persisted default 6000 must still
             # read as auto (#4121).
             budget_is_explicit = _budget_is_explicit(soft_budget)
-            # Only scale off a context window we actually discovered: a bare
-            # DEFAULT_CONTEXT fallback isn't proof the model holds that much, so
-            # pass 0 there and let auto-scaling stay conservative (#4122 review).
-            try:
-                _, _ctx_known = get_context_length_known(endpoint_url, model)
-            except Exception:
-                _ctx_known = True  # fail open: behave as before if the probe errors
-            ctx_for_budget = context_length if _ctx_known else 0
+            # Only scale off a context window we actually discovered, bound to the
+            # value it proves: budget_context_for_model() returns the freshly-probed
+            # window when known, else 0 (conservative). Don't reuse the passed-in
+            # `context_length` — it can be a stale lookup, or 0 for callers that don't
+            # pass one (scheduled tasks, teacher escalation, ...), which would budget
+            # off an unproven number (#4122 review). On probe error it falls back to
+            # the caller's value to preserve prior behaviour.
+            ctx_for_budget = budget_context_for_model(endpoint_url, model, fallback=context_length)
             effective_budget = compute_input_token_budget(
                 soft_budget,
                 ctx_for_budget,

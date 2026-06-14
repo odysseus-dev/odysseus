@@ -267,6 +267,23 @@ def get_context_length_known(endpoint_url: str, model: str) -> Tuple[int, bool]:
     return _get_context_length_cached(endpoint_url, model)
 
 
+def budget_context_for_model(endpoint_url: str, model: str, *, fallback: int = 0) -> int:
+    """Context window to scale the agent input budget against.
+
+    Returns the *freshly discovered* window when it was actually proven
+    (endpoint-reported / known table), else 0 so auto-scaling stays conservative.
+    Crucially this binds the ``known`` flag to the value it proves — callers must
+    not pair this flag with a context length from a *different* lookup (a stale
+    local re-query, or a caller that didn't pass one), which would budget off an
+    unproven number (review on #4122). On probe error, returns ``fallback`` (the
+    caller's best-known value) to preserve prior behaviour."""
+    try:
+        ctx, known = get_context_length_known(endpoint_url, model)
+        return ctx if known else 0
+    except Exception:
+        return fallback
+
+
 def _lookup_known(model: str) -> Optional[int]:
     """Check known context windows by substring match.
 
