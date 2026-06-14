@@ -656,6 +656,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             "agent_max_rounds": (1, 200),
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
         }
+        _STRING_VALUES = {
+            "agent_tool_selection": {"auto", "all"},
+        }
         for key in DEFAULT_SETTINGS:
             if key not in body:
                 continue
@@ -667,6 +670,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 except (TypeError, ValueError):
                     raise HTTPException(400, f"{key} must be an integer")
                 val = max(lo, min(val, hi))
+            if key in _STRING_VALUES:
+                if val not in _STRING_VALUES[key]:
+                    raise HTTPException(400, f"{key} must be one of {sorted(_STRING_VALUES[key])}")
             current[key] = val
         _save_settings(current)
         return current

@@ -2264,6 +2264,13 @@
                 <label class="settings-label">Max steps per message</label>
                 <input id="set-agentMaxRounds" type="text" inputmode="numeric" placeholder="20" class="settings-select" style="width:120px;">
               </div>
+              <div class="settings-row">
+                <label class="settings-label">Tool selection</label>
+                <select id="set-agentToolSelection" class="settings-select" style="width:120px;">
+                  <option value="auto">Auto (RAG)</option>
+                  <option value="all">All tools</option>
+                </select>
+              </div>
               <div id="set-agentMsg" style="font-size:11px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
           </div>

@@ -1673,6 +1673,7 @@ async function initResearchSearchSettings() {
 async function initAgentSettings() {
   var toolsInput = el('set-agentMaxTools');
   var roundsInput = el('set-agentMaxRounds');
+  var toolSelInput = el('set-agentToolSelection');
   var supInput = el('set-agentSupervisorLadder');
   var msg = el('set-agentMsg');
   if (!toolsInput) return;
@@ -1682,6 +1683,7 @@ async function initAgentSettings() {
     var settings = await res.json();
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
     if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
+    if (toolSelInput && settings.agent_tool_selection) toolSelInput.value = settings.agent_tool_selection;
     if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
   } catch (e) {}
 
@@ -1700,6 +1702,7 @@ async function initAgentSettings() {
     if (roundsInput) roundsInput.value = rounds;
     var payload = { agent_max_tool_calls: tools };
     if (rounds != null) payload.agent_max_rounds = rounds;
+    if (toolSelInput) payload.agent_tool_selection = toolSelInput.value;
     if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
     try {
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
