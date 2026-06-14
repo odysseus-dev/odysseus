@@ -2105,11 +2105,19 @@ async def stream_agent_loop(
 
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
-    _relevant_tools = relevant_tools
+    # "all" mode skips the entire pipeline — every tool schema is sent.
+    _relevant_tools = set() if guide_only else relevant_tools
+    _tool_selection_all = (
+        not guide_only
+        and _relevant_tools is None
+        and get_setting("agent_tool_selection", "auto") == "all"
+    )
+    if _tool_selection_all:
+        logger.info("[tool-rag] agent_tool_selection=all — sending every tool, no filtering")
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
-    if not guide_only and not _relevant_tools and _low_signal_turn:
+    if not _tool_selection_all and not guide_only and not _relevant_tools and _low_signal_turn:
         from src.tool_index import ALWAYS_AVAILABLE
         if workspace:
             # An active workspace IS the file-work signal: a vague "look at the
@@ -2126,7 +2134,7 @@ async def stream_agent_loop(
             # Non-English queries are flagged low_signal by the English-only
             # intent classifier, but fastembed retrieval works across languages.
             logger.info("[tool-rag] Low-signal query; will run RAG retrieval")
-    if not guide_only and not _relevant_tools:
+    if not _tool_selection_all and not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
             tool_idx = get_tool_index()
@@ -2161,7 +2169,7 @@ async def stream_agent_loop(
 
     # Fallback: if RAG unavailable, use keyword-based tool selection
     # instead of sending ALL tools (which overwhelms the model).
-    if not guide_only and not _relevant_tools and _retrieval_query:
+    if not _tool_selection_all and not guide_only and not _relevant_tools and _retrieval_query:
         from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
         _relevant_tools = set(ALWAYS_AVAILABLE)
         ql = _retrieval_query.lower()
