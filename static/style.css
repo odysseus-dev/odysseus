@@ -1253,6 +1253,21 @@ body.bg-pattern-sparkles {
     #sessions-section .chats-manage-btn:focus-visible {
       opacity: 1;
     }
+    #sessions-section .chats-tree-chevron {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 10px;
+      height: 10px;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      transition: transform 0.18s ease, color 0.12s ease;
+    }
+    #sessions-section .section-header-flex:hover .chats-tree-chevron {
+      color: var(--fg);
+    }
+    #sessions-section.collapsed .chats-tree-chevron {
+      transform: rotate(-90deg);
+    }
     @media (hover: none) {
       #sessions-section .chats-manage-btn { opacity: 0.35; }
       #sessions-section .chats-manage-btn:active { opacity: 1; }
@@ -1556,6 +1571,45 @@ body.bg-pattern-sparkles {
     .session-folder-content { padding-left: 4px; }
     .session-folder-content .list-item { border-bottom: 1px solid color-mix(in srgb, var(--fg) 7%, transparent); }
     .session-folder-content .list-item:last-child { border-bottom: none; }
+    #sessions-section #session-list {
+      position: relative;
+      margin: 2px 0 0 8px;
+      padding-left: 10px;
+    }
+    #sessions-section #session-list::before,
+    #sessions-section .session-folder-content::before {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 2px;
+      bottom: 8px;
+      width: 1px;
+      background: color-mix(in srgb, var(--fg) 18%, transparent);
+    }
+    #sessions-section #session-list > .list-item,
+    #sessions-section #session-list > .session-folder,
+    #sessions-section .session-folder-content .list-item,
+    #sessions-section .session-show-more-btn {
+      position: relative;
+    }
+    #sessions-section #session-list > .list-item::before,
+    #sessions-section #session-list > .session-folder > .session-folder-header::before,
+    #sessions-section #session-list > .session-show-more-btn::before,
+    #sessions-section .session-folder-content .list-item::before,
+    #sessions-section .session-folder-content .session-show-more-btn::before {
+      content: "";
+      position: absolute;
+      left: -7px;
+      top: 50%;
+      width: 7px;
+      border-top: 1px solid color-mix(in srgb, var(--fg) 18%, transparent);
+      transform: translateY(-50%);
+    }
+    #sessions-section .session-folder-content {
+      position: relative;
+      margin-left: 12px;
+      padding-left: 10px;
+    }
     .session-show-more-btn {
       display: block;
       width: 100%;

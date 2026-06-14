@@ -1,12 +1,55 @@
 {
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/pewdiepie-archdaemon/odysseus.git"
-  },
-  "devDependencies": {
-    "@antithesishq/bombadil": "^0.3.2"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.98.0"
-  }
+    "name":  "odysseus",
+    "version":  "1.0.0",
+    "main":  "main.js",
+    "scripts":  {
+                    "start":  "electron .",
+                    "pack":  "electron-builder --dir",
+                    "dist":  "electron-builder"
+                },
+    "repository":  {
+                       "type":  "git",
+                       "url":  "https://github.com/falabellamichael/Odysseus-Simple-Signal.git"
+                   },
+    "devDependencies":  {
+                            "@antithesishq/bombadil":  "^0.3.2",
+                            "electron":  "^42.4.0",
+                            "electron-builder":  "^26.15.3",
+                            "wait-on":  "^9.0.10"
+                        },
+    "dependencies":  {
+                         "@anthropic-ai/sdk":  "^0.98.0"
+                     },
+    "build":  {
+                  "directories":  {
+                                      "output":  "electron-dist"
+                                  },
+                  "files":  [
+                                "main.js",
+                                "package.json",
+                                "node_modules/**/*"
+                            ],
+                  "productName":  "Odysseus",
+                  "extraFiles":  [
+                                     "app.py",
+                                     "core/**/*",
+                                     "routes/**/*",
+                                     "src/**/*",
+                                     "services/**/*",
+                                     "config/**/*",
+                                     "static/**/*",
+                                     "mcp_servers/**/*",
+                                     "integrations/**/*",
+                                     "companion/**/*",
+                                     "scripts/**/*",
+                                     "launch-windows.ps1",
+                                     "requirements.txt",
+                                     "setup.py",
+                                     ".env.example"
+                                 ],
+                  "win":  {
+                              "target":  "nsis"
+                          },
+                  "appId":  "com.odysseus.app"
+              }
 }

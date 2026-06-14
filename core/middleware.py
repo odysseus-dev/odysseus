@@ -15,6 +15,7 @@ from starlette.responses import Response
 # same value from this module. Never persisted or exposed externally.
 INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token_hex(32)
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
+ALLOW_EMBED = os.environ.get("ODYSSEUS_ALLOW_EMBED", "").lower() in {"1", "true", "yes", "on"}
 
 
 def is_cors_preflight(method: str, headers) -> bool:
@@ -106,22 +107,27 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'self'"
             )
         else:
-            response.headers["X-Frame-Options"] = "DENY"
+            if not ALLOW_EMBED:
+                response.headers["X-Frame-Options"] = "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.
             # `static/index.html` and `static/login.html` ship inline <style>
             # blocks, and several JS modules build runtime `style=""` attrs.
             # Migrating to nonce-only requires templating the HTML files +
             # auditing every JS-set style attribute. Since inline styles
             # don't execute script, the residual risk is visual-only.
-            response.headers["Content-Security-Policy"] = (
-                "default-src 'self'; "
-                f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
-                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-                "font-src 'self' https://cdn.jsdelivr.net; "
-                "img-src 'self' data: blob:; "
-                "media-src 'self' blob:; "
-                "connect-src 'self'; "
-                "frame-src 'self'; "
-                "frame-ancestors 'none'"
-            )
+            csp_directives = [
+                "default-src 'self'",
+                f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net",
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+                "font-src 'self' https://cdn.jsdelivr.net",
+                "img-src 'self' data: blob:",
+                "media-src 'self' blob:",
+                "connect-src 'self'",
+                "frame-src 'self'",
+            ]
+            # The Simple Signal extension launches Odysseus in an embedded
+            # local webview, so its installer opts into omitting frame-ancestors.
+            if not ALLOW_EMBED:
+                csp_directives.append("frame-ancestors 'none'")
+            response.headers["Content-Security-Policy"] = "; ".join(csp_directives)
         return response

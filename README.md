@@ -1,5 +1,13 @@
 # Odysseus
 
+## Modified Distribution Notice
+
+This repository is a modified public distribution of
+[pewdiepie-archdaemon/odysseus](https://github.com/pewdiepie-archdaemon/odysseus),
+licensed under the GNU Affero General Public License v3.0. Local modifications
+for the Simple Signal desktop extension and Windows installer were made on
+June 14, 2026. The original AGPL-3.0 license is preserved in [LICENSE](LICENSE).
+
 > **Branch note:** `dev` is the default branch and contains the latest development changes, but it may be unstable. For the more stable curated branch, use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main).
 
 ```

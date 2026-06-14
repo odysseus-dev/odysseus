@@ -9,6 +9,12 @@
 export function initSectionCollapse(Storage) {
   const _chevronHtml = '<button type="button" class="section-collapse-btn" title="Collapse section"><svg class="section-collapse-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>';
   const savedState = Storage.getJSON('section-collapsed') || {};
+  const restoredChatsKey = 'odysseus-chats-tree-restored-v1';
+  if (!Storage.get(restoredChatsKey)) {
+    savedState['sessions-section'] = false;
+    Storage.setJSON('section-collapsed', savedState);
+    Storage.set(restoredChatsKey, '1');
+  }
 
   document.querySelectorAll('.section .section-header-flex').forEach(header => {
     const section = header.closest('.section');
@@ -87,11 +93,13 @@ export function initSectionCollapse(Storage) {
     const title = header.querySelector('h4') || header.querySelector('.section-title');
     if (title) {
       title.style.cursor = 'pointer';
-      title.addEventListener('click', (e) => {
-        e.stopPropagation();
-        toggleCollapse();
-      });
     }
+
+    header.addEventListener('click', (e) => {
+      if (e.target.closest('button, select, input, .dropdown, .section-header-btn')) return;
+      e.stopPropagation();
+      toggleCollapse();
+    });
 
     // Click chevron button
     const chevronBtn = header.querySelector('.section-collapse-btn');

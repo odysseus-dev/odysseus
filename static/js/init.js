@@ -79,9 +79,15 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
    places caused two toggles per click, which read as "clicks aren't doing
    anything" (even-count parity). Keep only the initial-state-apply here. */
 {
-  const KEY = Storage.KEYS.SIDEBAR_COLLAPSED;
+  const KEY = 'section-collapsed';
   const saved = Storage.getJSON(KEY, {});
-  const _defaultCollapsed = { 'sessions-section': true };
+  const restoredChatsKey = 'odysseus-chats-tree-restored-v1';
+  if (!Storage.get(restoredChatsKey)) {
+    saved['sessions-section'] = false;
+    Storage.setJSON(KEY, saved);
+    Storage.set(restoredChatsKey, '1');
+  }
+  const _defaultCollapsed = {};
   document.querySelectorAll('.sidebar .section').forEach((section) => {
     const id = section.id;
     if (!id) return;

@@ -204,11 +204,21 @@ function initializeEventListeners() {
   el('chat-history').addEventListener('click', (e) => {
     const link = e.target.closest('a.chat-link');
     if (!link) return;
-    const href = link.getAttribute('href');
-    if (href && href.startsWith('#') && sessionModule) {
-      e.preventDefault();
-      sessionModule.selectSession(href.slice(1));
+    const href = link.getAttribute('href') || '';
+    if (!href.startsWith('#') || !sessionModule) return;
+
+    const targetId = href.slice(1);
+    if (/^(session|document|note|image|email|event|task|skill|research)-/.test(targetId)) {
+      return;
     }
+
+    const knownSession = (sessionModule.getSessions?.() || [])
+      .some(s => String(s.id) === targetId);
+    if (!knownSession) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    sessionModule.selectSession(targetId);
   });
 
   // Export dropdown button
