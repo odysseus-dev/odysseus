@@ -114,16 +114,56 @@ function _setCookbookOpening(on) {
 // True for the local server entry (empty / "local" / "localhost" host).
 function _isLocalEntry(s) { return !s || !s.host || s.host === 'local' || s.host.toLowerCase() === 'localhost'; }
 
-// Resolve a dropdown option value to a server entry. Option values are the
-// stable HOST string ('local' for the local box) — NOT array indices — because
-// `_envState.servers` gets deduped/reordered, which made index-based selection
-// silently resolve to the wrong (or local) server. Accepts a numeric index too
-// for backwards-compat with any stale value.
-function _serverByVal(val) {
+// Resolve a dropdown option value to a server entry. New option values are
+// stable per-profile keys, so same-host SSH profiles stay distinguishable.
+// Host strings and numeric indices remain accepted for stale saved state.
+export function _serverKey(s) {
+  if (_isLocalEntry(s)) return 'local';
+  return 'srv:' + [
+    s?.name || '',
+    s?.host || '',
+    s?.port || '',
+    s?.envPath || '',
+    s?.platform || '',
+  ].map(v => encodeURIComponent(String(v).trim())).join('|');
+}
+
+export function _serverByVal(val) {
   if (val == null || val === 'local' || val === '') return null;
-  let s = _envState.servers.find(x => x.host === val);
+  const raw = String(val);
+  let s = _envState.servers.find(x => _serverKey(x) === raw);
+  if (!s) s = _envState.servers.find(x => x.host === raw);
+  if (!s) s = _envState.servers.find(x => x.name === raw);
   if (!s && /^\d+$/.test(String(val))) s = _envState.servers[parseInt(val)];
   return s || null;
+}
+
+export function _selectedServer() {
+  if (_envState.remoteServerKey) {
+    const keyed = _serverByVal(_envState.remoteServerKey);
+    if (keyed) return keyed;
+  }
+  if (_envState.remoteHost) return _envState.servers.find(s => s.host === _envState.remoteHost) || null;
+  return null;
+}
+
+export function _currentServerValue() {
+  const selected = _selectedServer();
+  if (selected) return _serverKey(selected);
+  return _envState.remoteHost || 'local';
+}
+
+const GEMMA4_THINKING_CHAT_TEMPLATE = `{% for message in messages %}{% if message['role'] == 'system' %}<|turn>system\n<|think|>{{ message['content'] }}<turn|>\n{% elif message['role'] == 'user' %}<|turn>user\n{{ message['content'] }}<turn|>\n{% elif message['role'] == 'assistant' %}<|turn>model\n{{ message['content'] }}<turn|>\n{% endif %}{% endfor %}{% if add_generation_prompt %}<|turn>model\n<|channel>thought{% endif %}`;
+
+function _isGemma4ThinkingModel(modelName) {
+  const n = (modelName || '').toLowerCase();
+  return n.includes('gemma-4') || n.includes('gemma4');
+}
+
+function _gemma4ThinkingChatTemplateArg(modelName) {
+  return _isGemma4ThinkingModel(modelName)
+    ? _shellQuote(GEMMA4_THINKING_CHAT_TEMPLATE)
+    : '';
 }
 
 function _buildServerOpts(excludeLocal = false) {
@@ -134,13 +174,20 @@ function _buildServerOpts(excludeLocal = false) {
   const _localSrv = _localIdx >= 0 ? _envState.servers[_localIdx] : null;
   const _localLabel = (_localSrv && _localSrv.name) ? _localSrv.name : 'Local';
   let html = `<option value="local"${!_envState.remoteHost ? ' selected' : ''}>${esc(_localLabel)}</option>`;
+  const selectedKey = _envState.remoteServerKey || '';
+  let legacyHostSelected = false;
   for (let i = 0; i < _envState.servers.length; i++) {
     const s = _envState.servers[i];
     if (i === _localIdx) continue;                 // already the synthetic "local" option
     if (excludeLocal && _isLocalEntry(s)) continue;
     const label = s.name || s.host || `Server ${i + 1}`;
-    const selected = _envState.remoteHost === s.host ? ' selected' : '';
-    html += `<option value="${esc(s.host)}"${selected}>${esc(label)}</option>`;
+    const value = _serverKey(s);
+    let selected = selectedKey ? value === selectedKey : false;
+    if (!selectedKey && _envState.remoteHost === s.host && !legacyHostSelected) {
+      selected = true;
+      legacyHostSelected = true;
+    }
+    html += `<option value="${esc(value)}"${selected ? ' selected' : ''}>${esc(label)}</option>`;
   }
   return html;
 }
@@ -154,16 +201,18 @@ export function _sshCmd(host, cmd, port) {
 /** Get SSH port for a given host (or task object) */
 function _getPort(hostOrTask) {
   if (!hostOrTask) return '';
-  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteHost);
-  const srv = _envState.servers.find(s => s.host === hostOrTask);
+  if (typeof hostOrTask === 'object') return hostOrTask.sshPort || _getPort(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
+  const srv = selected || _serverByVal(hostOrTask);
   return srv?.port || '';
 }
 
 /** Get platform for a given host (or task object). Returns 'windows', 'termux', 'linux', or '' */
 export function _getPlatform(hostOrTask) {
   if (!hostOrTask) return _envState.platform || '';
-  if (typeof hostOrTask === 'object') return hostOrTask.platform || _getPlatform(hostOrTask.remoteHost);
-  const srv = _envState.servers.find(s => s.host === hostOrTask);
+  if (typeof hostOrTask === 'object') return hostOrTask.platform || _getPlatform(hostOrTask.remoteServerKey || hostOrTask.remoteHost);
+  const selected = hostOrTask === _envState.remoteHost ? _selectedServer() : null;
+  const srv = selected || _serverByVal(hostOrTask);
   return srv?.platform || '';
 }
 
@@ -255,7 +304,10 @@ export function _detectToolParser(modelName) {
 // ── Backend detection ──
 
 export function _detectBackend(model) {
-  if (model?.backend === 'ollama' || model?.is_ollama) {
+  const _ollamaName = String(model?.repo_id || model?.name || model?.id || '').trim();
+  const _ollamaMeta = `${model?.backend || ''} ${model?.endpoint_kind || ''} ${model?.provider || ''} ${model?.source || ''}`.toLowerCase();
+  const _looksLikeOllamaTag = /^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)$/.test(_ollamaName);
+  if (model?.backend === 'ollama' || model?.is_ollama || _ollamaMeta.includes('ollama') || _looksLikeOllamaTag) {
     return { backend: 'ollama', label: 'Ollama' };
   }
   const q = (model.quant || '').toUpperCase();
@@ -379,6 +431,8 @@ export function _buildServeCmd(f, modelName, backend) {
     const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
     if (_extraEnv) cmd += _extraEnv + ' ';
     cmd += `${_vllmBin} serve ${modelName} --host 0.0.0.0 --port ${f.port || '8000'}`;
+    const _gemma4ChatTemplate = _gemma4ThinkingChatTemplateArg(modelName);
+    if (_gemma4ChatTemplate) cmd += ` --chat-template ${_gemma4ChatTemplate}`;
     cmd += ` --tensor-parallel-size ${f.tp || '1'}`;
     cmd += ` --max-model-len ${f.ctx || '8192'}`;
     cmd += ` --gpu-memory-utilization ${f.gpu_mem || '0.90'}`;
@@ -409,6 +463,8 @@ export function _buildServeCmd(f, modelName, backend) {
     const _extraEnv = (f.extra_env ?? '').toString().replace(/\s+/g, ' ').trim();
     if (_extraEnv) cmd += _extraEnv + ' ';
     cmd += `${_py3Bin} -m sglang.launch_server --model-path ${modelName} --host 0.0.0.0 --port ${f.port || '30000'}`;
+    const _gemma4ChatTemplate = _gemma4ThinkingChatTemplateArg(modelName);
+    if (_gemma4ChatTemplate) cmd += ` --chat-template ${_gemma4ChatTemplate}`;
     if (f.tp && f.tp !== '1') cmd += ` --tp ${f.tp}`;
     if (f.ctx) cmd += ` --context-length ${f.ctx}`;
     if (f.gpu_mem && f.gpu_mem !== '0.90') cmd += ` --mem-fraction-static ${f.gpu_mem}`;
@@ -510,9 +566,34 @@ export function _buildServeCmd(f, modelName, backend) {
     }
   } else if (backend === 'ollama') {
     const ollamaPort = f.port || '11434';
-    const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
-    const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
-    cmd = `${hostEnv}ollama serve`;
+    // GGUF + Ollama: delegate to the iGPU-bound ollama-test container via
+    // its /usr/local/bin/ollama-import helper. Plain `ollama serve` errors
+    // 127 on hosts where ollama isn't on PATH (and even when it is, it
+    // doesn't import the GGUF — it just starts the daemon). Args are all
+    // literal so the cookbook validator (which bans &&/||/;/$() ) is
+    // happy: `docker exec ollama-test ollama-import <repo> <name> <ctx>
+    // <file>`. The helper handles the find/Modelfile/preload dance.
+    if (modelName.includes('/') && (f.gguf_file || /-GGUF$/i.test(modelName))) {
+      // HF-GGUF repo → import + preload + tail
+      const _name = (modelName.split('/').pop() || modelName)
+        .replace(/-GGUF$/i, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9._:-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      const _ctx = f.ctx || '8192';
+      const _file = (f.gguf_file || '').split('/').pop() || '';
+      // Trailing GGUF_FILE is optional; helper picks the first match if empty.
+      cmd = `docker exec ollama-test ollama-import ${modelName} ${_name} ${_ctx}${_file ? ' ' + _file : ''}`;
+    } else if (!modelName.includes('/') && modelName) {
+      // Already-pulled Ollama tag (e.g. `qwen2.5:7b`). On kierkegaard the
+      // runtime is the ROCm Ollama sidecar; this quick command verifies the
+      // tag exists, then the backend auto-registers http://host.docker.internal:11434/v1.
+      cmd = `docker exec ollama-rocm ollama show ${modelName}`;
+    } else {
+      const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';
+      const hostEnv = ollamaPort !== '11434' ? `OLLAMA_HOST=${bindHost}:${ollamaPort} ` : '';
+      cmd = `${hostEnv}ollama serve`;
+    }
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
@@ -848,6 +929,7 @@ async function _fetchDependencies() {
 function _applyServerSelection(val) {
   if (val === 'local') {
     _envState.remoteHost = '';
+    _envState.remoteServerKey = '';
     _envState.env = 'none';
     _envState.envPath = '';
     _envState.platform = '';
@@ -855,6 +937,7 @@ function _applyServerSelection(val) {
     const s = _serverByVal(val);
     if (s) {
       _envState.remoteHost = s.host;
+      _envState.remoteServerKey = _serverKey(s);
       _envState.env = s.env || 'none';
       _envState.envPath = s.envPath || '';
       _envState.platform = s.platform || '';
@@ -865,7 +948,7 @@ function _applyServerSelection(val) {
   // bug: the Download/Cache/Deps dropdowns set the host but never saved it, so
   // it silently reverted and downloads/scans hit the wrong server).
   _persistEnvState();
-  const _want = _envState.remoteHost || 'local';
+  const _want = _currentServerValue();
   document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
     if (!sel || sel.tagName !== 'SELECT') return;
     // Option values are host strings now ('local' for the local box).
@@ -976,7 +1059,7 @@ function _wireTabEvents(body) {
     // UI matches the resolved host. Done in a microtask so the dropdowns
     // exist by the time we set their .value.
     Promise.resolve().then(() => {
-      const _want = _envState.remoteHost || 'local';
+      const _want = _currentServerValue();
       document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
         if (sel && sel.tagName === 'SELECT') sel.value = _want;
       });
@@ -1242,14 +1325,28 @@ function _wireTabEvents(body) {
       if (!m) return { repo: raw, include: null };
       return { repo: m[1], include: `*${m[2]}*` };
     }
+    // Ollama-library name. Matches `qwen2.5:14b`, `llama3:latest`, and the
+    // (rare) `library/<name>:<tag>` form which we normalize by stripping the
+    // namespace. The backend's _is_ollama_download check expects the same
+    // shape (no slash + has a colon).
+    function _ollamaName(raw) {
+      const stripped = raw.replace(/^library\//, '');
+      if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,200}:[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/.test(stripped)) {
+        return stripped;
+      }
+      return null;
+    }
     const triggerDownload = () => {
       const rawRepo = _stripHfUrl(dlInput.value);
       if (!rawRepo) return;
-      const { repo, include: autoInclude } = _splitRepoTag(rawRepo);
+      const ollamaName = _ollamaName(rawRepo);
+      const { repo, include: autoInclude } = ollamaName ? { repo: ollamaName, include: null } : _splitRepoTag(rawRepo);
       // HuggingFace repo IDs must be `org/model`. A bare model name would 404
       // at snapshot_download time with a raw traceback, so reject it up front.
-      if (!/^[^\s/]+\/[^\s/]+$/.test(repo)) {
-        uiModule.showToast('Enter a full HuggingFace repo ID like "org/model-name" (or paste the full HF URL).');
+      // Ollama names (single-segment with a tag) skip this check — they go
+      // through `ollama pull` server-side, not snapshot_download.
+      if (!ollamaName && !/^[^\s/]+\/[^\s/]+$/.test(repo)) {
+        uiModule.showToast('Enter a full HuggingFace repo ID like "org/model-name", or an Ollama name like "qwen2.5:14b".');
         dlInput.focus();
         return;
       }
@@ -1268,8 +1365,9 @@ function _wireTabEvents(body) {
       let env = host ? (_hsrv.env || 'none') : _envState.env;
       let envPath = host ? (_hsrv.envPath || '') : _envState.envPath;
       const payload = { repo_id: repo };
+      if (ollamaName) payload.backend = 'ollama';
       if (autoInclude) payload.include = autoInclude;
-      if (_envState.hfToken) payload.hf_token = _envState.hfToken;
+      if (_envState.hfToken && !ollamaName) payload.hf_token = _envState.hfToken;
       if (host) { payload.remote_host = host; const _sp3 = _getPort(host); if (_sp3) payload.ssh_port = _sp3; }
       const srvPlatform = _getPlatform(host);
       if (srvPlatform) payload.platform = srvPlatform;
@@ -1472,6 +1570,84 @@ function _wireTabEvents(body) {
     document.getElementById('hwfit-server-select')?.addEventListener('change', _onServerChange);
   }
 
+  // Browse Ollama library — popular models from ollama.com via cached backend
+  // proxy. Click a row → fills the download input with `<name>:<size>` so the
+  // existing Download button kicks off `ollama pull`.
+  const olToggle = document.getElementById('cookbook-ollama-toggle');
+  const olArrow = document.getElementById('cookbook-ollama-arrow');
+  const olList = document.getElementById('cookbook-ollama-list');
+  const olRefresh = document.getElementById('cookbook-ollama-refresh');
+  if (olToggle && olList) {
+    let _olLoaded = false;
+    async function _loadOllama(refresh = false) {
+      olList.innerHTML = '<div class="hwfit-loading" style="opacity:0.5;font-size:11px;text-align:center;padding:12px;">Loading…</div>';
+      try {
+        const res = await fetch(`/api/cookbook/ollama/library${refresh ? '?refresh=1' : ''}`);
+        const data = await res.json();
+        const models = data.models || [];
+        if (!models.length) {
+          olList.innerHTML = '<div class="hwfit-loading">No models</div>';
+          return;
+        }
+        let html = '';
+        for (const m of models) {
+          const sizes = Array.isArray(m.sizes) && m.sizes.length ? m.sizes : ['latest'];
+          const sizeChips = sizes.map(s => `<button type="button" class="memory-toolbar-btn cookbook-ol-size" data-name="${esc(m.name)}" data-size="${esc(s)}" style="height:20px;padding:0 6px;font-size:10px;border-radius:3px;">${esc(s)}</button>`).join('');
+          html += `<div class="doclib-card memory-item cookbook-ollama-card" data-name="${esc(m.name)}">`;
+          html += `<div style="flex:1;min-width:0;">`;
+          html += `<div class="memory-item-title">${esc(m.name)} <a href="https://ollama.com/library/${esc(m.name)}" target="_blank" rel="noopener" class="cookbook-hf-link">ollama ↗</a></div>`;
+          if (m.description) html += `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:2px;">${esc(m.description)}</div>`;
+          html += `<div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:4px;">${sizeChips}</div>`;
+          html += `</div></div>`;
+        }
+        olList.innerHTML = html;
+        olList.querySelectorAll('.cookbook-ol-size').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const name = btn.dataset.name;
+            const size = btn.dataset.size;
+            if (dlInput) {
+              dlInput.value = `${name}:${size}`;
+              dlInput.focus();
+            }
+          });
+        });
+        // Clicking the card body (not a size chip / link) → default to first size
+        olList.querySelectorAll('.cookbook-ollama-card').forEach(card => {
+          card.addEventListener('click', (e) => {
+            if (e.target.closest('a') || e.target.closest('.cookbook-ol-size')) return;
+            const name = card.dataset.name;
+            const firstSize = card.querySelector('.cookbook-ol-size')?.dataset.size || 'latest';
+            if (dlInput) {
+              dlInput.value = `${name}:${firstSize}`;
+              dlInput.focus();
+            }
+          });
+        });
+      } catch (e) {
+        olList.innerHTML = '<div class="hwfit-loading">Failed to load</div>';
+      }
+    }
+    olToggle.addEventListener('click', () => {
+      const isOpen = olList.style.display !== 'none';
+      olList.style.display = isOpen ? 'none' : 'flex';
+      if (olArrow) olArrow.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(90deg)';
+      if (!isOpen && !_olLoaded) {
+        _olLoaded = true;
+        _loadOllama(false);
+      }
+    });
+    if (olRefresh) olRefresh.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _olLoaded = true;
+      _loadOllama(true);
+      if (olList.style.display === 'none') {
+        olList.style.display = 'flex';
+        if (olArrow) olArrow.style.transform = 'rotate(90deg)';
+      }
+    });
+  }
+
   // Server add button, row removal, model-dir add/remove, and per-row wiring
   // are ALL owned by cookbook-hwfit.js's _hwfitInit / _wireServerEntry.
   // A duplicate add handler used to live here and fired alongside the hwfit
@@ -1655,8 +1831,21 @@ function _renderRecipes() {
   html += `<button class="memory-toolbar-btn cookbook-dl-add-server" title="Add server in Settings" style="height:28px;">add server</button>`;
   html += `</div>`;
   html += `<div class="cookbook-dl-input" style="margin-top:0;">`;
-  html += `<input type="text" class="cookbook-dl-repo" id="cookbook-dl-repo" placeholder="org/model-name, HF URL, or org/model:QUANT_TAG" />`;
+  html += `<input type="text" class="cookbook-dl-repo" id="cookbook-dl-repo" placeholder="org/model-name, qwen2.5:14b, or HF URL" />`;
   html += `<button class="cookbook-btn cookbook-dl-btn" id="cookbook-dl-btn">Download</button>`;
+  html += `</div>`;
+  // Browse Ollama library — fetches popular models from ollama.com via the
+  // /api/cookbook/ollama/library cached proxy, click → fills the input with
+  // `<name>:<size>` so the existing Download button kicks off `ollama pull`.
+  html += `<div style="margin-top:5px;position:relative;top:-3px;">`;
+  html += `<div style="display:flex;gap:4px;align-items:center;">`;
+  html += `<button type="button" class="memory-toolbar-btn" id="cookbook-ollama-toggle" style="flex:1;text-align:left;height:26px;display:flex;align-items:center;gap:6px;border-radius:4px;">`;
+  html += `<span id="cookbook-ollama-arrow" style="display:inline-block;transition:transform 0.15s;pointer-events:none;">▸</span>`;
+  html += `<span style="pointer-events:none;">Browse Ollama library</span>`;
+  html += `</button>`;
+  html += `<button type="button" class="memory-toolbar-btn" id="cookbook-ollama-refresh" title="Refresh" style="height:26px;width:26px;padding:0;border-radius:4px;">↻</button>`;
+  html += `</div>`;
+  html += `<div id="cookbook-ollama-list" style="display:none;margin-top:4px;max-height:320px;overflow-y:auto;flex-direction:column;gap:4px;"></div>`;
   html += `</div>`;
   // Latest HF models that fit — collapsible card list
   html += `<div style="margin-top:5px;position:relative;top:-3px;">`;
@@ -1693,6 +1882,7 @@ function _renderRecipes() {
   html += '<select class="cookbook-field-input hwfit-engine" id="hwfit-engine" style="height:28px;" title="Filter by serving engine">';
   html += '<option value="">Engine</option>';
   html += '<option value="llamacpp">llama.cpp</option>';
+  html += '<option value="ollama">Ollama</option>';
   html += '<option value="vllm">vLLM</option>';
   html += '<option value="sglang">SGLang</option>';
   html += '</select>';
@@ -1749,9 +1939,9 @@ function _renderRecipes() {
   // Footer: link to the public discussion where users can request additions
   // to the curated model list. Sits below the list so it reads as a callout
   // after browsing, not a header.
-  html += '<div class="hwfit-list-footer" style="margin-top:8px;padding-top:6px;border-top:1px solid color-mix(in srgb, var(--border) 50%, transparent);font-size:9.5px;opacity:0.65;text-align:right;">'
+  html += '<div class="hwfit-list-footer" style="display:none;">'
        + 'Don\'t see a model? '
-       + '<a href="https://github.com/pewdiepie-archdaemon/odysseus/discussions/1962" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;">'
+       + '<a href="https://github.com/pewdiepie-archdaemon/odysseus/discussions/1962" target="_blank" rel="noopener" style="color:var(--accent,var(--red));text-decoration:none;display:inline-flex;align-items:center;gap:4px;vertical-align:middle;position:relative;top:-1px;">'
        + 'Request it →'
        + '<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style="flex-shrink:0;"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>'
        + '</a>'
@@ -1789,7 +1979,7 @@ function _renderRecipes() {
   html += '<label class="memory-bulk-check-all"><input type="checkbox" id="serve-select-all"> All</label>';
   html += '<span id="serve-bulk-count" style="font-size:10px;opacity:0.5;">0 selected</span>';
   html += '<button class="memory-toolbar-btn danger" id="serve-bulk-delete" style="position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>';
-  html += '<button class="memory-toolbar-btn" id="serve-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-3px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+  html += '<button class="memory-toolbar-btn" id="serve-bulk-cancel" title="Cancel (Esc)" style="margin-left:4px;padding:3px 6px;position:relative;top:-7px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
   html += '</div>';
 
   html += '<div class="doclib-grid hwfit-cached-list" id="hwfit-cached-list"></div>';
@@ -2096,6 +2286,8 @@ const shared = {
   _sshCmd,
   _getPort,
   _sshPrefix,
+  _serverByVal,
+  _selectedServer,
   _getPlatform,
   _isWindows,
   _isMetal,
@@ -2148,7 +2340,7 @@ export {
   _startBackgroundMonitor,
   _setPanelField, _setPanelCheckbox,
   _wirePanelEvents, _runPanelCmd, _runModelDownload, _buildDownloadCmd,
-  _serverByVal, _isLocalEntry,
+  _isLocalEntry,
 };
 
 const cookbookModule = { open, close, isVisible, startBackgroundMonitor: _startBackgroundMonitor };

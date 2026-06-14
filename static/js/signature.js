@@ -25,7 +25,7 @@ function _esc(s) {
 
 function _safeSignatureDataUrl(raw) {
   const value = String(raw || '').trim();
-  return /^data:image\/(?:png|jpe?g);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
+  return /^data:image\/png;base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
 }
 
 // Last signature the user picked or created in this session. Lets the export

@@ -5,6 +5,7 @@ Query and cache model context window sizes from OpenAI-compatible APIs.
 Provides token estimation for context usage tracking.
 """
 
+import ipaddress
 import logging
 import sys
 from typing import Dict, List, Optional, Tuple
@@ -19,7 +20,20 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.interna
 _PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
                      "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
                      "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
-                     "172.30.", "172.31.", "192.168.", "100.")
+                     "172.30.", "172.31.", "192.168.")
+
+# Tailscale uses the CGNAT range 100.64.0.0/10, NOT all of 100.0.0.0/8.
+# A bare "100." prefix would classify public addresses (e.g. AWS ranges
+# under 100.x outside the CGNAT block) as local; routes/model_routes.py
+# already narrows this the same way for endpoint classification.
+_TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
+def _in_tailscale_range(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host) in _TAILSCALE_CGNAT
+    except ValueError:
+        return False
 
 
 def _normalize_base_for_compare(url: str) -> str:
@@ -64,7 +78,7 @@ def _configured_endpoint_kind(url: str) -> Optional[str]:
         return None
 
 
-def _is_local_endpoint(url: str) -> bool:
+def is_local_endpoint(url: str) -> bool:
     """Check if URL points to a local/private/tailscale address."""
     kind = _configured_endpoint_kind(url)
     if kind in ("api", "proxy"):
@@ -73,7 +87,7 @@ def _is_local_endpoint(url: str) -> bool:
         return True
     try:
         host = urlparse(url).hostname or ""
-        return host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES)
+        return host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES) or _in_tailscale_range(host)
     except Exception:
         return False
 
@@ -219,7 +233,7 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
     configured_kind = _configured_endpoint_kind(endpoint_url)
-    is_local = _is_local_endpoint(endpoint_url)
+    is_local = is_local_endpoint(endpoint_url)
     # Key on (endpoint_url, model): the same model id can be served by two
     # different remote endpoints with different real context windows (e.g. a
     # capped proxy vs. the full provider), so caching by model id alone would
@@ -273,7 +287,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
         return DEFAULT_CONTEXT
 
     # Try llama.cpp /slots endpoint first — reports actual serving context
-    if _is_local_endpoint(endpoint_url):
+    if is_local_endpoint(endpoint_url):
         try:
             base = endpoint_url.split("/v1")[0] if "/v1" in endpoint_url else endpoint_url.rsplit("/", 1)[0]
             r = httpx.get(f"{base}/slots", timeout=REQUEST_TIMEOUT)
@@ -297,7 +311,9 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
             logger.info(f"Using known context window for {model}: {known}")
         return known or DEFAULT_CONTEXT
 
-    models_url = endpoint_url.replace("/chat/completions", "/models")
+    from src.endpoint_resolver import build_models_url
+
+    models_url = build_models_url(endpoint_url)
     try:
         r = httpx.get(models_url, timeout=REQUEST_TIMEOUT)
         if r.is_success:
@@ -335,7 +351,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     # For local/self-hosted endpoints, trust the API value (user set --max-model-len)
     # For cloud APIs, use the larger value (API can report low defaults)
     if api_ctx and known:
-        _is_local = _is_local_endpoint(endpoint_url)
+        _is_local = is_local_endpoint(endpoint_url)
         if _is_local and api_ctx < known:
             logger.info(f"Local endpoint reports {api_ctx} for {model} (known max: {known}) — using API value")
             return api_ctx
@@ -357,7 +373,11 @@ def estimate_tokens(messages: List[Dict]) -> int:
 
     Uses chars * 0.3 which is closer to real BPE tokenizer output
     than the commonly-cited chars/4 (which underestimates by ~20-30%).
-    Also adds ~4 tokens per message for role/formatting overhead.
+    Also adds ~4 tokens per message for role/formatting overhead, and counts
+    assistant tool_calls (name + arguments) — a tool-only turn carries
+    content=None with the real payload in tool_calls, so ignoring them made the
+    estimate (and the compaction/trim gates that rely on it) blind to large
+    tool arguments.
     """
     total = 0
     for msg in messages:
@@ -369,4 +389,20 @@ def estimate_tokens(messages: List[Dict]) -> int:
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
                     total += int(len(item.get("text", "")) * 0.3)
+        # Tool calls carry real payload too: a tool-only assistant turn is stored
+        # with content=None and the actual args (e.g. a create_document body) in
+        # tool_calls[].function.arguments. Ignoring them made large tool arguments
+        # read as ~0 tokens, so the compaction/trim gates missed genuine overflow.
+        tool_calls = msg.get("tool_calls")
+        if isinstance(tool_calls, list):
+            for tc in tool_calls:
+                if not isinstance(tc, dict):
+                    continue
+                fn = tc.get("function") if isinstance(tc.get("function"), dict) else tc
+                name = fn.get("name", "") or ""
+                args = fn.get("arguments", "") or ""
+                if not isinstance(args, str):
+                    args = str(args)  # some shapes store arguments as a dict
+                total += 4  # per tool-call overhead (id, type, wrapper)
+                total += int((len(str(name)) + len(args)) * 0.3)
     return total
