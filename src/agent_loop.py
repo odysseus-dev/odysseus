@@ -1855,6 +1855,15 @@ async def stream_agent_loop(
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
+    # PATCH(local): the web-search toggle (allow_web_search) removes
+    # web_search/web_fetch from disabled_tools when web search is ON, but
+    # RAG/domain/keyword selection can still fail to surface them (e.g.
+    # "find out everything about <X>" matches no web heuristic), so the model
+    # is offered no web tool and reports it cannot search despite being
+    # enabled. If web search is enabled (not disabled), guarantee it.
+    if not guide_only and _relevant_tools is not None and "web_search" not in set(disabled_tools or []):
+        _relevant_tools.update({"web_search", "web_fetch"})
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
