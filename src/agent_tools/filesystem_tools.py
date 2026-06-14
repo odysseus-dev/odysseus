@@ -7,6 +7,7 @@ import shutil
 from typing import Optional, Dict, Any, Tuple
 
 from src.constants import MAX_READ_CHARS, MAX_DIFF_LINES, MAX_OUTPUT_CHARS
+from src.tool_execution import requires_write_access
 
 _CODENAV_SKIP_DIRS = frozenset({
     ".git", ".hg", ".svn", "node_modules", "venv", ".venv", "__pycache__",
@@ -45,6 +46,7 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     }
 
 class EditFileTool:
+    @requires_write_access("edit_file")
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         try:
@@ -155,6 +157,7 @@ class ReadFileTool:
         return {"output": data, "exit_code": 0}
 
 class WriteFileTool:
+    @requires_write_access("write_file")
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         lines = content.split("\n", 1)

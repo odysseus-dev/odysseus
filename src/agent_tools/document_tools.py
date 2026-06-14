@@ -3,6 +3,7 @@ import logging
 import re
 import json
 from src.constants import MAX_READ_CHARS
+from src.tool_execution import assert_mutating_action_allowed, requires_write_access
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,7 @@ def parse_suggest_blocks(content: str) -> list:
 
 
 class CreateDocumentTool:
+    @requires_write_access("create_document")
     async def execute(self, content: str, ctx: dict) -> dict:
         """Create a new document. Supports two formats:
         1) Line-based: line 1 = title, line 2 (optional) = language, rest = content
@@ -337,6 +339,7 @@ class CreateDocumentTool:
             db.close()
 
 class UpdateDocumentTool:    
+    @requires_write_access("update_document")
     async def execute(self, content: str, ctx: dict) -> Dict:
         """Update an existing document. Content = full new document text."""
         import uuid
@@ -393,6 +396,7 @@ class UpdateDocumentTool:
             db.close()
 
 class EditDocumentTool:
+    @requires_write_access("edit_document")
     async def execute(self, content: str, ctx: dict) -> Dict:
         """Apply targeted FIND/REPLACE edits to an existing document."""
         import uuid
@@ -542,6 +546,7 @@ class ManageDocumentTool:
             return {"error": "Invalid JSON arguments", "exit_code": 1}
 
         action = args.get("action", "list")
+        assert_mutating_action_allowed("manage_documents", action, {"delete", "tidy"})
         db = SessionLocal()
 
         def _rel(ts):

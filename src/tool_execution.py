@@ -17,7 +17,8 @@ import pathlib
 import re
 import sys
 import time
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from functools import wraps
+from typing import AbstractSet, Any, Awaitable, Callable, Dict, Optional, Tuple
 
 
 
@@ -231,6 +232,73 @@ _active_workspace: contextvars.ContextVar = contextvars.ContextVar(
 def get_active_workspace() -> Optional[str]:
     """The folder the agent is confined to this turn, or None."""
     return _active_workspace.get()
+
+
+# Fail-open by default for backward compatibility: legacy callers outside
+# agent_loop historically invoked tools with full write access. The chat turn
+# lifecycle is therefore responsible for explicitly opting exploratory / plan
+# turns into read-only mode before any tool executes.
+_turn_readonly: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_turn_readonly", default=False
+)
+_turn_readonly_reason: contextvars.ContextVar = contextvars.ContextVar(
+    "agent_turn_readonly_reason", default=None
+)
+_READONLY_HTTP_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def get_turn_readonly() -> bool:
+    """Whether the current tool execution is bound as read-only."""
+    return bool(_turn_readonly.get())
+
+
+def get_turn_readonly_reason() -> Optional[str]:
+    """Why the current tool execution is read-only, when set."""
+    return _turn_readonly_reason.get()
+
+
+class ReadonlyTurnViolation(RuntimeError):
+    def __init__(self, tool_name: str, reason: Optional[str] = None):
+        self.tool_name = tool_name
+        self.reason = reason
+        detail = f" ({reason})" if reason else ""
+        super().__init__(
+            f"Tool '{tool_name}' is blocked in this read-only turn{detail}. "
+            "Ask for an explicit write/execute action first."
+        )
+
+
+def assert_not_readonly(tool_name: str, reason: Optional[str] = None) -> None:
+    if get_turn_readonly():
+        raise ReadonlyTurnViolation(tool_name, reason or get_turn_readonly_reason())
+
+
+def assert_mutating_action_allowed(
+    tool_name: str,
+    action: Optional[str],
+    mutating_actions: AbstractSet[str],
+) -> None:
+    action_name = str(action or "").strip().lower()
+    if action_name in mutating_actions:
+        assert_not_readonly(tool_name, reason=f"action={action_name}")
+
+
+def assert_mutating_http_method_allowed(tool_name: str, method: Optional[str]) -> None:
+    method_name = str(method or "GET").strip().upper()
+    if method_name not in _READONLY_HTTP_METHODS:
+        assert_not_readonly(tool_name, reason=f"method={method_name}")
+
+
+def requires_write_access(tool_name: str):
+    def decorator(fn):
+        @wraps(fn)
+        async def wrapper(*args, **kwargs):
+            assert_not_readonly(tool_name)
+            return await fn(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
 def vet_workspace(raw: str) -> Optional[str]:
@@ -472,6 +540,8 @@ async def _direct_fallback(
         if tool in TOOL_HANDLERS:
             return await TOOL_HANDLERS[tool](content, ctx)
 
+    except ReadonlyTurnViolation as e:
+        return {"error": str(e), "exit_code": 1, "blocked_by": "turn_readonly"}
     except Exception as e:
         return {"error": f"{tool}: {e}", "exit_code": 1}
 
@@ -504,14 +574,21 @@ async def execute_tool_block(
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
     workspace: Optional[str] = None,
     tool_policy: Optional[Any] = None,
+    turn_readonly: bool = False,
+    turn_readonly_reason: Optional[str] = None,
 ) -> Tuple[str, Dict]:
     """Execute a single tool block. Returns (description, result_dict).
 
-    Thin wrapper: bind the per-turn workspace (so the path resolvers + subprocess
-    cwd confine to it) for the duration of this call, then delegate. Reset on the
-    way out so the binding never leaks to the next tool call.
+    Thin wrapper: bind the per-turn workspace and read-only posture (so path
+    resolvers, subprocess cwd, and leaf-level write assertions share the same
+    task-local state) for the duration of this call, then delegate. Reset on
+    the way out so the bindings never leak to the next tool call.
     """
-    token = _active_workspace.set(workspace or None)
+    ws_token = _active_workspace.set(workspace or None)
+    ro_token = _turn_readonly.set(bool(turn_readonly))
+    reason_token = _turn_readonly_reason.set(
+        turn_readonly_reason if turn_readonly else None
+    )
     try:
         return await _execute_tool_block_impl(
             block,
@@ -521,8 +598,17 @@ async def execute_tool_block(
             progress_cb=progress_cb,
             tool_policy=tool_policy,
         )
+    except ReadonlyTurnViolation as e:
+        desc = f"{e.tool_name}: BLOCKED"
+        return desc, {
+            "error": str(e),
+            "exit_code": 1,
+            "blocked_by": "turn_readonly",
+        }
     finally:
-        _active_workspace.reset(token)
+        _turn_readonly_reason.reset(reason_token)
+        _turn_readonly.reset(ro_token)
+        _active_workspace.reset(ws_token)
 
 
 async def _execute_tool_block_impl(
@@ -707,6 +793,7 @@ async def _execute_tool_block_impl(
     if tool == "bash" and session_id:
         _is_bg, _bg_cmd = _split_bg_marker(content)
         if _is_bg and _bg_cmd:
+            assert_not_readonly("bash", reason="background execution")
             from src import bg_jobs
             rec = bg_jobs.launch(_bg_cmd, session_id=session_id, cwd=agent_cwd())
             short = _bg_cmd.strip().split(chr(10))[0][:80]

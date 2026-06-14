@@ -26,6 +26,7 @@ from src.tool_execution import (
     agent_cwd,
     execute_tool_block,
     get_active_workspace,
+    get_turn_readonly,
 )
 
 
@@ -161,6 +162,60 @@ async def test_get_workspace_tool(ws, admin):
 # ── no leak across calls ────────────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_readonly_turn_blocks_write_and_allows_read(ws, admin):
+    with open(os.path.join(ws, "note.txt"), "w") as f:
+        f.write("hello")
+
+    _, read_result = await execute_tool_block(
+        _block("read_file", "note.txt"),
+        owner="a",
+        workspace=ws,
+        turn_readonly=True,
+        turn_readonly_reason="exploratory_turn",
+    )
+    assert read_result["exit_code"] == 0
+
+    _, write_result = await execute_tool_block(
+        _block("write_file", "note.txt\nchanged"),
+        owner="a",
+        workspace=ws,
+        turn_readonly=True,
+        turn_readonly_reason="exploratory_turn",
+    )
+    assert write_result["exit_code"] == 1
+    assert write_result["blocked_by"] == "turn_readonly"
+    assert "explicit write/execute action" in write_result["error"]
+    with open(os.path.join(ws, "note.txt")) as f:
+        assert f.read() == "hello"
+
+
+@pytest.mark.asyncio
+async def test_readonly_turn_blocks_background_bash(ws, admin):
+    desc, bash_result = await execute_tool_block(
+        _block("bash", "#!bg\necho hi"),
+        owner="a",
+        workspace=ws,
+        session_id="session-1",
+        turn_readonly=True,
+        turn_readonly_reason="exploratory_turn",
+    )
+    assert bash_result["blocked_by"] == "turn_readonly"
+
+
+@pytest.mark.asyncio
+async def test_readonly_binding_does_not_leak(ws, admin):
+    await execute_tool_block(
+        _block("read_file", "a.txt"),
+        owner="a",
+        workspace=ws,
+        turn_readonly=True,
+        turn_readonly_reason="exploratory_turn",
+    )
+    assert get_active_workspace() is None
+    assert get_turn_readonly() is False
+
+
+@pytest.mark.asyncio
 async def test_binding_does_not_leak(ws, admin):
     await execute_tool_block(_block("ls", ""), owner="a", workspace=ws)
     assert get_active_workspace() is None
@@ -175,6 +230,7 @@ async def test_binding_does_not_leak(ws, admin):
 def _sent_tool_names(monkeypatch, *, workspace):
     import asyncio
     import src.agent_loop as al
+    import src.tool_index as ti
 
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
@@ -183,6 +239,25 @@ def _sent_tool_names(monkeypatch, *, workspace):
     monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
 
     captured = []
+    rag_queries = []
+
+    class _FakeToolIndex:
+        def index_mcp_tools(self, mcp_mgr, disabled_map):
+            return None
+
+        def get_tools_for_query(self, query, limit):
+            rag_queries.append((query, limit))
+            return {
+                "read_file",
+                "get_workspace",
+                "grep",
+                "write_file",
+                "edit_file",
+                "bash",
+                "python",
+            }
+
+    monkeypatch.setattr(ti, "get_tool_index", lambda: _FakeToolIndex(), raising=False)
 
     async def _fake_stream(_candidates, messages, **kwargs):
         captured.append(kwargs.get("tools"))
@@ -201,26 +276,27 @@ def _sent_tool_names(monkeypatch, *, workspace):
 
     asyncio.run(_run())
     schemas = captured[0] or []
-    return {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
+    names = {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
+    return names, rag_queries
 
 
-def test_low_signal_with_workspace_surfaces_readonly_file_tools(monkeypatch):
-    names = _sent_tool_names(monkeypatch, workspace="/tmp")
-    # read-only nav tools surface so the agent can explore
+def test_exploratory_prompt_with_workspace_uses_rag_and_announces_mutative_tools(monkeypatch):
+    names, rag_queries = _sent_tool_names(monkeypatch, workspace="/tmp")
+    assert rag_queries == [("look at the local project", 8)]
     assert "read_file" in names
     assert "get_workspace" in names
     assert "grep" in names
-    # write/shell tools do NOT surface on a vague message
-    assert "write_file" not in names
-    assert "edit_file" not in names
-    assert "bash" not in names
-    assert "python" not in names
+    assert "write_file" in names
+    assert "edit_file" in names
+    assert "bash" in names
+    assert "python" in names
 
 
-def test_low_signal_without_workspace_excludes_file_tools(monkeypatch):
-    names = _sent_tool_names(monkeypatch, workspace=None)
-    assert "read_file" not in names
-    assert "get_workspace" not in names
+def test_exploratory_prompt_without_workspace_still_uses_rag(monkeypatch):
+    names, rag_queries = _sent_tool_names(monkeypatch, workspace=None)
+    assert rag_queries == [("look at the local project", 8)]
+    assert "write_file" in names
+    assert "bash" in names
 
 
 # ── browse route is admin-gated ─────────────────────────────────────────

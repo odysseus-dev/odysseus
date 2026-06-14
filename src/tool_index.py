@@ -67,73 +67,274 @@ COLLECTION_NAME = "odysseus_tool_index"
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
-    "bash": "Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing); use bash only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
-    "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
-    "web_search": "Quick single web lookup for a fact, current event, latest/current information, or doc mid-task. Use this instead of bash/curl/python/requests for web searches. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
-    "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
-    "read_file": "Read a file from disk and return its contents. View source code, config files, logs. Supports an optional line range (offset/limit) for large files.",
-    "grep": "Search file CONTENTS for a regex across a directory tree (ripgrep-backed, honours .gitignore). Returns file:line:match. Use to find where code/symbols/strings live — prefer over bash grep.",
-    "glob": "Find FILES by glob pattern (e.g. '**/*.py'), newest first. Use to locate files by name/extension — prefer over bash find/ls.",
-    "ls": "List a directory's entries (folders then files with sizes). Use to see what's in a folder — prefer over bash ls.",
-    "get_workspace": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without giving a path, instead of asking them.",
-    "write_file": "Write/create or fully rewrite a file ON DISK (source code, configs, project files). Use for new files or full rewrites — NOT create_document (editor panel) and NOT a bash heredoc.",
-    "edit_file": "Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.",
-    "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
-    "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
-    "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
-    "suggest_document": "Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.",
-    "generate_image": "Generate an AI image from a text prompt. Specify model, size, and quality. Art, illustrations, photos.",
-    "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
-    "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
-    "pipeline": "Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.",
-    "list_models": "List all available AI models and their endpoints.",
-    "manage_session": "Chat management: rename, archive, delete, or fork chats (the UI calls these 'chats'; internally 'sessions'). Use for 'rename my chats', 'rename this chat', 'archive/delete a chat'.",
-    "manage_memory": "Memory management: list, add, edit, delete, or search persistent memories.",
-    "manage_skills": "Skill management: add, update, publish, or search reusable skills/presets.",
-    "manage_tasks": "Scheduled task management: list, create, edit, delete, pause, resume, or run cron tasks.",
-    "manage_endpoints": "Endpoint management: list, add, delete, enable, or disable model API endpoints.",
-    "manage_mcp": "MCP server management: list, add, delete, reconnect servers, or list available tools.",
-    "manage_webhooks": "Webhook management: list, add, delete, enable, or disable webhooks.",
-    "manage_tokens": "API token management: list, create, or delete API access tokens.",
-    "manage_documents": "List, read, delete, or tidy documents in the editor panel. action='list' returns clickable rows (most-recent first) so the user can open any doc by clicking. action='read' (aka view/open/get) with document_id returns the content. action='delete' with document_id removes a doc (only way to delete). Use this for ANY 'show/read/list/open my documents/docs/files/notes' request — never shell or curl.",
-    "manage_research": "List, read/open, or delete saved DEEP RESEARCH results from the Library. action='list' returns clickable [query](#research-<id>) rows (most-recent first). action='read' (aka open/view/get) with id returns the report + sources. action='delete' with id removes it. Use this for ANY 'open/read/find/delete my research / that report / the research on X' request. NOTE: this is for EXISTING research; to START new research use trigger_research.",
-    "manage_settings": "Change ANY real app setting (the ones the Settings panel writes) so the user never has to open it: TTS voice/provider/speed, STT, search engine + result count, default/teacher/task/utility/vision/image/research models, image quality, reminder channel (browser/email/ntfy), agent timeout/tool-call budget, and more. action=set with key (friendly aliases ok: voice, 'search engine', 'default model', 'teacher model', 'image quality', 'reminder channel'...) + value; get/list/reset too. Also toggles tools on/off (disable_tool/enable_tool/list_tools). Secrets/API keys are read-only. Use for any 'change my…/set my…/use X for…/turn on…' preference request.",
-    "create_session": "Create a new chat with a name and model.",
-    "list_sessions": "List all chats with their metadata (the UI calls these 'chats'). Use for 'list my chats', 'rename all my chats' (list first, then manage_session to rename each).",
-    "send_to_session": "Send a message to another chat. Cross-chat communication.",
-    "search_chats": "Search past session transcripts across chats.",
-    "ask_user": "Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.",
-    "update_plan": "Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.",
-    "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
-    "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
-    "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
-    "read_email": "Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.",
-    "send_email": "Send a new email via SMTP. Provide recipient, subject, body, and optional account from list_email_accounts. For replying to a thread use reply_to_email instead.",
-    "reply_to_email": "SEND a reply email immediately by UID. Do not use for open/start reply draft requests; use ui_control open_email_reply for those. For follow-up 'reply ...' send requests, use the exact UID and account from latest read_email/list_emails output; never invent UID 1. Threads automatically with In-Reply-To/References, prefixes Re:, marks original as Answered.",
-    "archive_email": "Move an email out of the inbox into the Archive folder. Use after handling messages you want to keep but get out of the way.",
-    "delete_email": "Delete an email — moves to Trash by default, or expunges permanently with permanent=true.",
-    "mark_email_read": "Mark an email as read or unread by toggling the \\Seen flag.",
-    "bulk_email": "Perform one action on many emails at once. Use for delete all those, archive these, mark all read, move spam to junk. Takes explicit UIDs from list_emails or all_unread=true. Always pass account for Gmail/work/custom mailbox results.",
-    "resolve_contact": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.",
-    "manage_contact": "Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.",
-    "manage_notes": "Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.",
-    "manage_calendar": "Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Resolve today/tomorrow using the Current date and time context, then use ISO datetimes in the user's local wall time; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.",
-    "download_model": "Download a HuggingFace model to a local or remote server. Specify repo_id (e.g. 'Qwen/Qwen3-8B'), optional server host, and optional include filter for specific files.",
-    "serve_model": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. cmd MUST start with the binary directly — e.g. `vllm serve /mnt/HADES/models/Qwen3.5-397B-A17B-AWQ --port 8003 --tensor-parallel-size 8 …`. NEVER prefix with `cd …`, `source …`, or chain with `&&`/`||` — those get rejected by the validator. The venv activation (env_prefix) and CUDA env are added automatically from the target host's saved settings. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions. If serve_model fails with 'Invalid characters in cmd', simplify to the bare binary + args.",
-    "list_served_models": "List currently running model servers in the Cookbook — shows status (loading, ready, idle, error), model name, port, throughput, and serve failure diagnosis/retry suggestions. Use when the user asks 'what's running', 'show my cookbook', 'which models are up', 'what's serving'.",
-    "stop_served_model": "Stop a running model server in the Cookbook by session ID or model name. Use when the user says 'kill my cookbook', 'stop the model', 'kill the serve', 'shut down vLLM', 'cancel the running model'.",
-    "tail_serve_output": "Read the actual tmux stderr/traceback of a cookbook serve/download task. Use to debug WHY a task is `crashed`/`error` (compute_89 nvcc mismatch, OOM, missing kernels, wrong attention backend, etc.) so you can call serve_model with adjusted flags. Pass session_id from list_served_models; tail defaults to 300, bump if the error references 'see root cause above'.",
-    "list_downloads": "List in-progress HuggingFace model downloads in the Cookbook. Shows model name, phase, percent, session ID. Use for 'what's downloading', 'show my downloads', 'check download progress'.",
-    "cancel_download": "Cancel an in-progress model download by tmux session ID. Use for 'cancel the download', 'stop downloading X', 'kill the download'. Call list_downloads first to get the session_id.",
-    "search_hf_models": "Search HuggingFace for models matching a query (e.g. 'qwen 8B', 'flux', 'llama-3 instruct'). Returns ranked repo IDs with sizes and download counts. Use for 'find a model', 'search huggingface for X', 'what models are there for Y'.",
-    "list_cached_models": "List models already cached on disk locally or on a remote host. Accepts friendly Cookbook server names like ajax. Use for 'what models do I have', 'show cached models', 'is X downloaded', 'list my models'. Avoids re-downloading.",
-    "list_serve_presets": "List saved Cookbook serve presets (templates with model+host+port+cmd). Always call this BEFORE serve_model when the user asks to launch a known model — they probably have a preset for it from the UI.",
-    "serve_preset": "Launch a saved Cookbook serve preset by name. Reuses the exact tmux command + host the user already saved. Use for 'run stable diffusion 3.5', 'serve vllm-qwen', 'start the inpaint model' — preset-name matches the user's UI labels.",
-    "adopt_served_model": "Register an existing tmux model server (one started manually or outside the cookbook flow) into Cookbook tracking AND add it as a chat endpoint. Use when the user (or a previous turn) launched something via ssh+tmux and now wants it visible in the UI, stoppable via stop_served_model, and usable in the model picker.",
-    "list_cookbook_servers": "List the cookbook's configured servers (remote GPU boxes + local) and which is the current default. Use this BEFORE download_model/serve_model when the user didn't name a host — to decide where to run, or to ask the user which server when ambiguous. Downloads/serves default to the cookbook's selected server, NOT localhost.",
-    "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
-    "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
-    "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
+    "bash": """function_description: Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing); use bash only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.
+tags: [file, folder, code, repo, grep, terminal]
+when_to_use: When the user asks to bash
+limitations: None specified.""",
+    "python": """function_description: Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.
+tags: [file, folder, code, repo, grep, terminal]
+when_to_use: When the user asks to python
+limitations: None specified.""",
+    "web_search": """function_description: Quick single web lookup for a fact, current event, latest/current information, or doc mid-task. Use this instead of bash/curl/python/requests for web searches. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.
+tags: [search, web, google, research, url, look up]
+when_to_use: When the user asks to web search
+limitations: None specified.""",
+    "web_fetch": """function_description: Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.
+tags: [search, web, google, research, url, look up]
+when_to_use: When the user asks to web fetch
+limitations: None specified.""",
+    "read_file": """function_description: Read a file from disk and return its contents. View source code, config files, logs. Supports an optional line range (offset/limit) for large files.
+tags: [read, file]
+when_to_use: When the user asks to read file
+limitations: None specified.""",
+    "grep": """function_description: Search file CONTENTS for a regex across a directory tree (ripgrep-backed, honours .gitignore). Returns file:line:match. Use to find where code/symbols/strings live — prefer over bash grep.
+tags: [grep]
+when_to_use: When the user asks to grep
+limitations: None specified.""",
+    "glob": """function_description: Find FILES by glob pattern (e.g. '**/*.py'), newest first. Use to locate files by name/extension — prefer over bash find/ls.
+tags: [glob]
+when_to_use: When the user asks to glob
+limitations: None specified.""",
+    "ls": """function_description: List a directory's entries (folders then files with sizes). Use to see what's in a folder — prefer over bash ls.
+tags: [ls]
+when_to_use: When the user asks to ls
+limitations: None specified.""",
+    "get_workspace": """function_description: Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without giving a path, instead of asking them.
+tags: [get, workspace]
+when_to_use: When the user asks to get workspace
+limitations: None specified.""",
+    "write_file": """function_description: Write/create or fully rewrite a file ON DISK (source code, configs, project files). Use for new files or full rewrites — NOT create_document (editor panel) and NOT a bash heredoc.
+tags: [file, folder, code, repo, grep, terminal]
+when_to_use: When the user asks to write file
+limitations: None specified.""",
+    "edit_file": """function_description: Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.
+tags: [file, folder, code, repo, grep, terminal]
+when_to_use: When the user asks to edit file
+limitations: None specified.""",
+    "create_document": """function_description: Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.
+tags: [document, docs, writing, essay, draft, poem]
+when_to_use: When the user asks to create document
+limitations: None specified.""",
+    "edit_document": """function_description: Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.
+tags: [document, docs, writing, essay, draft, poem]
+when_to_use: When the user asks to edit document
+limitations: None specified.""",
+    "update_document": """function_description: Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.
+tags: [document, docs, writing, essay, draft, poem]
+when_to_use: When the user asks to update document
+limitations: None specified.""",
+    "suggest_document": """function_description: Suggest changes to the active document with explanations. For code review, proofreading, feedback requests.
+tags: [document, docs, writing, essay, draft, poem]
+when_to_use: When the user asks to suggest document
+limitations: None specified.""",
+    "generate_image": """function_description: Generate an AI image from a text prompt. Specify model, size, and quality. Art, illustrations, photos.
+tags: [generate, image]
+when_to_use: When the user asks to generate image
+limitations: None specified.""",
+    "chat_with_model": """function_description: Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.
+tags: [chat, with, model]
+when_to_use: When the user asks to chat with model
+limitations: None specified.""",
+    "ask_teacher": """function_description: Ask a more capable model for help with a difficult problem. Escalate complex tasks.
+tags: [ask, teacher]
+when_to_use: When the user asks to ask teacher
+limitations: None specified.""",
+    "pipeline": """function_description: Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.
+tags: [pipeline]
+when_to_use: When the user asks to pipeline
+limitations: None specified.""",
+    "list_models": """function_description: List all available AI models and their endpoints.
+tags: [list, models]
+when_to_use: When the user asks to list models
+limitations: None specified.""",
+    "manage_session": """function_description: Chat management: rename, archive, delete, or fork chats (the UI calls these 'chats'; internally 'sessions'). Use for 'rename my chats', 'rename this chat', 'archive/delete a chat'.
+tags: [session, chat history, archive, rename chat]
+when_to_use: When the user asks to manage session
+limitations: None specified.""",
+    "manage_memory": """function_description: Memory management: list, add, edit, delete, or search persistent memories.
+tags: [note, todo, task, calendar, meeting, reminder]
+when_to_use: When the user asks to manage memory
+limitations: None specified.""",
+    "manage_skills": """function_description: Skill management: add, update, publish, or search reusable skills/presets.
+tags: [manage, skills]
+when_to_use: When the user asks to manage skills
+limitations: None specified.""",
+    "manage_tasks": """function_description: Scheduled task management: list, create, edit, delete, pause, resume, or run cron tasks.
+tags: [note, todo, task, calendar, meeting, reminder]
+when_to_use: When the user asks to manage tasks
+limitations: None specified.""",
+    "manage_endpoints": """function_description: Endpoint management: list, add, delete, enable, or disable model API endpoints.
+tags: [settings, preference, api key, config, endpoint]
+when_to_use: When the user asks to manage endpoints
+limitations: None specified.""",
+    "manage_mcp": """function_description: MCP server management: list, add, delete, reconnect servers, or list available tools.
+tags: [settings, preference, api key, config, endpoint]
+when_to_use: When the user asks to manage mcp
+limitations: None specified.""",
+    "manage_webhooks": """function_description: Webhook management: list, add, delete, enable, or disable webhooks.
+tags: [settings, preference, api key, config, endpoint]
+when_to_use: When the user asks to manage webhooks
+limitations: None specified.""",
+    "manage_tokens": """function_description: API token management: list, create, or delete API access tokens.
+tags: [settings, preference, api key, config, endpoint]
+when_to_use: When the user asks to manage tokens
+limitations: None specified.""",
+    "manage_documents": """function_description: List, read, delete, or tidy documents in the editor panel. action='list' returns clickable rows (most-recent first) so the user can open any doc by clicking. action='read' (aka view/open/get) with document_id returns the content. action='delete' with document_id removes a doc (only way to delete). Use this for ANY 'show/read/list/open my documents/docs/files/notes' request — never shell or curl.
+tags: [document, docs, writing, essay, draft, poem]
+when_to_use: When the user asks to manage documents
+limitations: None specified.""",
+    "manage_research": """function_description: List, read/open, or delete saved DEEP RESEARCH results from the Library. action='list' returns clickable [query](#research-<id>) rows (most-recent first). action='read' (aka open/view/get) with id returns the report + sources. action='delete' with id removes it. Use this for ANY 'open/read/find/delete my research / that report / the research on X' request. NOTE: this is for EXISTING research; to START new research use trigger_research.
+tags: [search, web, google, research, url, look up]
+when_to_use: When the user asks to manage research
+limitations: None specified.""",
+    "manage_settings": """function_description: Change ANY real app setting (the ones the Settings panel writes) so the user never has to open it: TTS voice/provider/speed, STT, search engine + result count, default/teacher/task/utility/vision/image/research models, image quality, reminder channel (browser/email/ntfy), agent timeout/tool-call budget, and more. action=set with key (friendly aliases ok: voice, 'search engine', 'default model', 'teacher model', 'image quality', 'reminder channel'...) + value; get/list/reset too. Also toggles tools on/off (disable_tool/enable_tool/list_tools). Secrets/API keys are read-only. Use for any 'change my…/set my…/use X for…/turn on…' preference request.
+tags: [settings, preference, api key, config, endpoint]
+when_to_use: When the user asks to manage settings
+limitations: None specified.""",
+    "create_session": """function_description: Create a new chat with a name and model.
+tags: [session, chat history, archive, rename chat]
+when_to_use: When the user asks to create session
+limitations: None specified.""",
+    "list_sessions": """function_description: List all chats with their metadata (the UI calls these 'chats'). Use for 'list my chats', 'rename all my chats' (list first, then manage_session to rename each).
+tags: [session, chat history, archive, rename chat]
+when_to_use: When the user asks to list sessions
+limitations: None specified.""",
+    "send_to_session": """function_description: Send a message to another chat. Cross-chat communication.
+tags: [session, chat history, archive, rename chat]
+when_to_use: When the user asks to send to session
+limitations: None specified.""",
+    "search_chats": """function_description: Search past session transcripts across chats.
+tags: [session, chat history, archive, rename chat]
+when_to_use: When the user asks to search chats
+limitations: None specified.""",
+    "ask_user": """function_description: Ask the user a multiple-choice question to get a decision or clarification. Use this when the task is genuinely ambiguous and the answer changes what you do next — pick between approaches, confirm an assumption, choose among options — instead of guessing. Provide a clear `question` and 2-6 `options` (each with a short `label`, optional `description`). Calling this ENDS your turn: the user sees clickable buttons and their choice arrives as your next message. Don't use it for things you can decide from context or sensible defaults, or for irreversible-action confirmation if a dedicated flow exists.
+tags: [ask, user]
+when_to_use: When the user asks to ask user
+limitations: None specified.""",
+    "update_plan": """function_description: Write back to the ACTIVE PLAN while executing an approved plan: mark steps done or revise them. After finishing a step call this with the full checklist and that step marked done; when the user asks to change the plan call it with the revised checklist. Always pass the COMPLETE markdown checklist (`- [ ]` / `- [x]`), not a diff. The user's docked plan window updates live. No effect when there is no active plan.
+tags: [update, plan]
+when_to_use: When the user asks to update plan
+limitations: None specified.""",
+    "ui_control": """function_description: Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. Also switches between chat/agent modes, changes the current model, and applies/creates themes.
+tags: [ui, theme, toggle, panel, show]
+when_to_use: When the user asks to ui control
+limitations: None specified.""",
+    "list_email_accounts": """function_description: List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to list email accounts
+limitations: None specified.""",
+    "list_emails": """function_description: List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to list emails
+limitations: None specified.""",
+    "read_email": """function_description: Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to read email
+limitations: None specified.""",
+    "send_email": """function_description: Send a new email via SMTP. Provide recipient, subject, body, and optional account from list_email_accounts. For replying to a thread use reply_to_email instead.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to send email
+limitations: None specified.""",
+    "reply_to_email": """function_description: SEND a reply email immediately by UID. Do not use for open/start reply draft requests; use ui_control open_email_reply for those. For follow-up 'reply ...' send requests, use the exact UID and account from latest read_email/list_emails output; never invent UID 1. Threads automatically with In-Reply-To/References, prefixes Re:, marks original as Answered.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to reply to email
+limitations: None specified.""",
+    "archive_email": """function_description: Move an email out of the inbox into the Archive folder. Use after handling messages you want to keep but get out of the way.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to archive email
+limitations: None specified.""",
+    "delete_email": """function_description: Delete an email — moves to Trash by default, or expunges permanently with permanent=true.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to delete email
+limitations: None specified.""",
+    "mark_email_read": """function_description: Mark an email as read or unread by toggling the \Seen flag.
+tags: [email, mail, inbox, gmail, reply, send email]
+when_to_use: When the user asks to mark email read
+limitations: None specified.""",
+    "bulk_email": """function_description: Perform one action on many emails at once. Use for delete all those, archive these, mark all read, move spam to junk. Takes explicit UIDs from list_emails or all_unread=true. Always pass account for Gmail/work/custom mailbox results.
+tags: [bulk, email]
+when_to_use: When the user asks to bulk email
+limitations: None specified.""",
+    "resolve_contact": """function_description: Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]', 'email [name]', or 'send to [name]' without an email address.
+tags: [resolve, contact]
+when_to_use: When the user asks to resolve contact
+limitations: None specified.""",
+    "manage_contact": """function_description: Create, update, delete, or list CardDAV contacts. Use to save a new contact, change an existing one's email/phone, or remove one. Action=list returns uids needed for update/delete. Use when the user says 'save this contact', 'add [name] to contacts', 'update [name]'s email', 'delete [name] from contacts'. Do not use for user identity facts like 'my name is <name>'; those are memory.
+tags: [manage, contact]
+when_to_use: When the user asks to manage contact
+limitations: None specified.""",
+    "manage_notes": """function_description: Create and manage notes and checklists (Google Keep-style). ALWAYS use this for note/todo/checklist/reminder creation — NEVER hit /api/notes via app_api. Accepts natural-language `due_date` like 'tomorrow at 9am' or '11pm today' (parsed in the USER'S timezone). The due_date IS the reminder — it fires a notification at that time, so do NOT also create a calendar event for the same reminder. Set colors, labels, pin, archive. Do NOT use manage_memory for note content.
+tags: [manage, notes]
+when_to_use: When the user asks to manage notes
+limitations: None specified.""",
+    "manage_calendar": """function_description: Calendar event management: list, create, update, delete. Each event can carry a tag/category (event_type — work/personal/health/travel/meal/social/admin/other) and importance (low/normal/high/critical). Resolve today/tomorrow using the Current date and time context, then use ISO datetimes in the user's local wall time; supports all-day events. For event reminders/alarms, pass reminder_minutes; this creates the Notes reminder, so do not also call manage_notes for the same reminder.
+tags: [manage, calendar]
+when_to_use: When the user asks to manage calendar
+limitations: None specified.""",
+    "download_model": """function_description: Download a HuggingFace model to a local or remote server. Specify repo_id (e.g. 'Qwen/Qwen3-8B'), optional server host, and optional include filter for specific files.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to download model
+limitations: None specified.""",
+    "serve_model": """function_description: Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. cmd MUST start with the binary directly — e.g. `vllm serve /mnt/HADES/models/Qwen3.5-397B-A17B-AWQ --port 8003 --tensor-parallel-size 8 …`. NEVER prefix with `cd …`, `source …`, or chain with `&&`/`||` — those get rejected by the validator. The venv activation (env_prefix) and CUDA env are added automatically from the target host's saved settings. For image/inpainting/diffusion use python3 scripts/diffusion_server.py --model <repo> --port 8100. After launch, call list_served_models for readiness/errors and retry suggestions. If serve_model fails with 'Invalid characters in cmd', simplify to the bare binary + args.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to serve model
+limitations: None specified.""",
+    "list_served_models": """function_description: List currently running model servers in the Cookbook — shows status (loading, ready, idle, error), model name, port, throughput, and serve failure diagnosis/retry suggestions. Use when the user asks 'what's running', 'show my cookbook', 'which models are up', 'what's serving'.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to list served models
+limitations: None specified.""",
+    "stop_served_model": """function_description: Stop a running model server in the Cookbook by session ID or model name. Use when the user says 'kill my cookbook', 'stop the model', 'kill the serve', 'shut down vLLM', 'cancel the running model'.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to stop served model
+limitations: None specified.""",
+    "tail_serve_output": """function_description: Read the actual tmux stderr/traceback of a cookbook serve/download task. Use to debug WHY a task is `crashed`/`error` (compute_89 nvcc mismatch, OOM, missing kernels, wrong attention backend, etc.) so you can call serve_model with adjusted flags. Pass session_id from list_served_models; tail defaults to 300, bump if the error references 'see root cause above'.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to tail serve output
+limitations: None specified.""",
+    "list_downloads": """function_description: List in-progress HuggingFace model downloads in the Cookbook. Shows model name, phase, percent, session ID. Use for 'what's downloading', 'show my downloads', 'check download progress'.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to list downloads
+limitations: None specified.""",
+    "cancel_download": """function_description: Cancel an in-progress model download by tmux session ID. Use for 'cancel the download', 'stop downloading X', 'kill the download'. Call list_downloads first to get the session_id.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to cancel download
+limitations: None specified.""",
+    "search_hf_models": """function_description: Search HuggingFace for models matching a query (e.g. 'qwen 8B', 'flux', 'llama-3 instruct'). Returns ranked repo IDs with sizes and download counts. Use for 'find a model', 'search huggingface for X', 'what models are there for Y'.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to search hf models
+limitations: None specified.""",
+    "list_cached_models": """function_description: List models already cached on disk locally or on a remote host. Accepts friendly Cookbook server names like ajax. Use for 'what models do I have', 'show cached models', 'is X downloaded', 'list my models'. Avoids re-downloading.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to list cached models
+limitations: None specified.""",
+    "list_serve_presets": """function_description: List saved Cookbook serve presets (templates with model+host+port+cmd). Always call this BEFORE serve_model when the user asks to launch a known model — they probably have a preset for it from the UI.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to list serve presets
+limitations: None specified.""",
+    "serve_preset": """function_description: Launch a saved Cookbook serve preset by name. Reuses the exact tmux command + host the user already saved. Use for 'run stable diffusion 3.5', 'serve vllm-qwen', 'start the inpaint model' — preset-name matches the user's UI labels.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to serve preset
+limitations: None specified.""",
+    "adopt_served_model": """function_description: Register an existing tmux model server (one started manually or outside the cookbook flow) into Cookbook tracking AND add it as a chat endpoint. Use when the user (or a previous turn) launched something via ssh+tmux and now wants it visible in the UI, stoppable via stop_served_model, and usable in the model picker.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to adopt served model
+limitations: None specified.""",
+    "list_cookbook_servers": """function_description: List the cookbook's configured servers (remote GPU boxes + local) and which is the current default. Use this BEFORE download_model/serve_model when the user didn't name a host — to decide where to run, or to ask the user which server when ambiguous. Downloads/serves default to the cookbook's selected server, NOT localhost.
+tags: [cookbook, serve, local models, vllm, gpu, download, preset]
+when_to_use: When the user asks to list cookbook servers
+limitations: None specified.""",
+    "app_api": """function_description: Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.
+tags: [app, api]
+when_to_use: When the user asks to app api
+limitations: None specified.""",
+    "edit_image": """function_description: Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.
+tags: [edit, image]
+when_to_use: When the user asks to edit image
+limitations: None specified.""",
+    "trigger_research": """function_description: Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.
+tags: [search, web, google, research, url, look up]
+when_to_use: When the user asks to trigger research
+limitations: None specified.""",
 }
 
 

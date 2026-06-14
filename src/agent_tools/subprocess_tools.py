@@ -4,6 +4,7 @@ import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
 from src.constants import MAX_OUTPUT_CHARS
+from src.tool_execution import requires_write_access
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
 DEFAULT_PYTHON_TIMEOUT = 60 * 60
@@ -101,6 +102,7 @@ async def _run_subprocess_streaming(
     )
 
 class BashTool:
+    @requires_write_access("bash")
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
@@ -127,6 +129,7 @@ class BashTool:
         return {"output": output or "(no output)", "exit_code": rc or 0}
 
 class PythonTool:
+    @requires_write_access("python")
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
         progress_cb = ctx.get("progress_cb")
