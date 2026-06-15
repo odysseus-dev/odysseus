@@ -14,7 +14,7 @@ from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
@@ -78,7 +78,7 @@ def _enforce_chat_privileges(request, sess) -> None:
     which means unrestricted allowed_models / zero cap -> no-op for them.
     """
     try:
-        user = get_current_user(request)
+        user = effective_user(request)
     except Exception:
         user = None
     if not user:
@@ -350,7 +350,7 @@ def fire_message_event(request, webhook_manager, session_id: str, sess, message:
             "session_id": session_id, "model": sess.model, "message": message[:2000],
         }))
     from src.event_bus import fire_event
-    user = get_current_user(request)
+    user = effective_user(request)
     fire_event("message_sent", user)
 
 
@@ -577,7 +577,7 @@ async def build_chat_context(
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
     # Resolve user prefs
-    user = get_current_user(request)
+    user = effective_user(request)
     uprefs = load_prefs_for_user(user)
 
     # Memory enabled?

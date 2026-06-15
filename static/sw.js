@@ -35,6 +35,7 @@ const PRECACHE = [
   '/static/js/document.js',
   '/static/js/gallery.js',
   '/static/js/chatRenderer.js',
+  '/static/js/chatUserScrollMarker.js',
   '/static/js/codeRunner.js',
   '/static/js/chatStream.js',
   '/static/js/chat.js',

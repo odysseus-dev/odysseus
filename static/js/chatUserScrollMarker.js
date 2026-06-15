@@ -160,11 +160,6 @@ function createController(options = {}) {
   };
 }
 
-
-document.addEventListener("DOMContentLoaded", () => {
-
-});
-
 export function createMarkerPlugin(options = {}) {
   return createController(options);
 }
