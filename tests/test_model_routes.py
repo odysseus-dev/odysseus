@@ -1286,6 +1286,14 @@ class _ImmediateThread:
         self.target()
 
 
+class _NoopThread:
+    def __init__(self, target, daemon=None):
+        self.target = target
+
+    def start(self):
+        return None
+
+
 def _wait_for(predicate, timeout=2.0):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -1313,6 +1321,7 @@ def _route_ep(
     pinned_models=None,
     refresh_mode="auto",
     refresh_timeout=None,
+    owner=None,
 ):
     return SimpleNamespace(
         id=id,
@@ -1329,7 +1338,7 @@ def _route_ep(
         model_refresh_interval=None,
         model_refresh_timeout=refresh_timeout,
         supports_tools=None,
-        owner=None,
+        owner=owner,
         created_at=None,
         updated_at=None,
     )
@@ -1340,6 +1349,72 @@ def _route_request():
         state=SimpleNamespace(current_user=None),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     )
+
+
+def test_api_models_rejects_api_token_without_chat_scope(monkeypatch):
+    router = model_routes.setup_model_routes(model_discovery=None)
+
+    def fail_session():
+        raise AssertionError("model DB should not be queried without chat scope")
+
+    monkeypatch.setattr(model_routes, "SessionLocal", fail_session)
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api",
+            api_token=True,
+            api_token_owner="alice",
+            api_token_scopes=["documents:read"],
+        ),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(is_configured=True, is_admin=lambda user: False),
+            ),
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        _route_endpoint(router, "/api/models")(request)
+
+    assert exc.value.status_code == 403
+    assert "chat" in str(exc.value.detail)
+
+
+def test_api_models_scopes_api_token_to_token_owner(monkeypatch):
+    rows = [
+        _route_ep("alice", "http://alice.example/v1", cached_models=["alice-model"], owner="alice"),
+        _route_ep("shared", "http://shared.example/v1", cached_models=["shared-model"], owner=None),
+        _route_ep("bob", "http://bob.example/v1", cached_models=["bob-model"], owner="bob"),
+    ]
+    db = _RouteDb(rows)
+    router = model_routes.setup_model_routes(model_discovery=None)
+    admin_checks = []
+
+    monkeypatch.setattr(model_routes, "ModelEndpoint", _RouteModelEndpoint)
+    monkeypatch.setattr(model_routes, "SessionLocal", lambda: db)
+    monkeypatch.setattr(threading, "Thread", _NoopThread)
+
+    request = SimpleNamespace(
+        state=SimpleNamespace(
+            current_user="api",
+            api_token=True,
+            api_token_owner="alice",
+            api_token_scopes=["chat"],
+        ),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                auth_manager=SimpleNamespace(
+                    is_configured=True,
+                    is_admin=lambda user: admin_checks.append(user) or False,
+                ),
+            ),
+        ),
+    )
+
+    result = _route_endpoint(router, "/api/models")(request)
+
+    assert [item["endpoint_name"] for item in result["items"]] == ["alice", "shared"]
+    assert admin_checks == ["alice"]
 
 
 def test_api_models_returns_cached_proxy_models_without_refresh_probe(monkeypatch):
