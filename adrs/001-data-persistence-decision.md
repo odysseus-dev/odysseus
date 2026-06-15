@@ -442,7 +442,7 @@ All domains in this group are already in SQLite `app.db`.
 | Ownership model | Owner-scoped chunk IDs; lane separation for HTTP vs FastEmbed embeddings |
 | Atomicity | ChromaDB-managed |
 | Backup coverage | Not included in standard backup; optional Chroma state in Docker volumes |
-| Notes | Admin wipe vector clearing currently broken (imports nonexistent helper). |
+| Notes | **Live bug (warrants its own issue):** Admin wipe route does `from src.memory_vector import get_memory_vector_store`, but that function does not exist — the only accessor is the `MemoryVectorStore` class constructed in `app_initializer`. The import throws, the `try/except` swallows it, and "wipe memory" silently leaves every embedding behind. Semantic search returns ghost results after a full wipe. This is a runtime bug, not a persistence-architecture question. |
 
 **Recommendation:** Keep current
 
@@ -534,13 +534,13 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/presets.json` (atomic writes, corrupt-store fallback) |
 | Access pattern | Low write (admin mutations), moderate read (preset expansion); shared store |
 | Ownership model | Shared/global — not owner-scoped |
-| Atomicity | Atomic writes via `PresetManager` |
+| Atomicity | Atomic writes via shared `core.atomic_io.atomic_write_json` |
 | Backup coverage | Included in HTTP export/import |
 | Notes | |
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** The `PresetManager` implements custom atomic-write logic and corrupt-store fallback — complexity that exists specifically because JSON files lack crash safety. SQLite provides this natively. `McpServer` is an equally low-traffic global admin store and nobody questioned putting it in SQLite. A `presets` table eliminates the custom atomic writer and corrupt-recovery code while gaining transactional consistency. Presets contain structured data (templates, groups) that would benefit from per-row queries rather than full-file reads. The specs also note an unresolved decision about whether `user_templates` and `group_presets` should be owner-scoped — SQLite would make adding owner columns trivial if that decision goes that way. See [Open Question 1](#open-questions) for counter-arguments.
+**Rationale:** `PresetManager` uses the shared `atomic_write_json` (not a custom writer), but implements its own corrupt-store fallback in `load()` — that fallback code would be eliminated by SQLite. `McpServer` is an equally low-traffic global admin store and nobody questioned putting it in SQLite. Presets contain structured data (templates, groups) that would benefit from per-row queries rather than full-file reads. The specs also note an unresolved decision about whether `user_templates` and `group_presets` should be owner-scoped — SQLite would make adding owner columns trivial if that decision goes that way. See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 32. Model Endpoints
 
@@ -798,7 +798,7 @@ All domains in this group are already in SQLite `app.db`.
    |--------|--------------|-------------|-----------------|
    | Settings (`settings.json`) | Migrate | Crash safety, secret-bearing state in one place | Simple config, read from cache, write rarely — works fine as-is |
    | Feature flags (`features.json`) | Migrate | Consolidate with settings | Boolean map — database adds friction for no real gain |
-   | Presets (`presets.json`) | Migrate | Eliminates custom atomic writer | Atomic writer works, low-traffic, simple structure |
+   | Presets (`presets.json`) | Migrate | Eliminates corrupt-store fallback in `load()` | Uses shared `atomic_write_json`, low-traffic, simple structure |
    | Integration presets (`integrations.json`) | Migrate | Resolves dormant model ambiguity | Tiny store — code cleanup, not a storage problem |
    | Embedding endpoint (`embedding_endpoint.json`) | Migrate | One fewer file | Single config value — trivially simple as a file |
    | Cookbook state (`cookbook_state.json`) | Migrate | Row-level updates, encrypted token pattern | Process management state, shared with CLI, low-traffic |
@@ -822,7 +822,7 @@ All domains in this group are already in SQLite `app.db`.
 
 2. Ownership normalization: this ADR recommends a single canonical owner representation (see below). What should the canonical no-login / single-user owner value be? Should this be addressed here or in a dedicated ownership ADR?
 3. Should `auth.json` and `sessions.json` migrate to SQLite for crash safety, or does the working lock-guard pattern justify keeping them as JSON? These are the highest-risk migration candidates due to security sensitivity.
-4. Migration ordering: which domains should migrate first? A suggested priority based on impact vs. risk: (a) settings/features/embedding config → `config` table (low risk, eliminates 3 files), (b) presets + integration presets (low risk, eliminates custom atomic writers), (c) memories (medium risk, biggest user-facing improvement), (d) user preferences (low risk, eliminates full-file-rewrite scaling problem), (e) cookbook state (low-medium risk, CLI needs updating), (f) upload/skills/research metadata as SQLite references.
+4. Migration ordering: which domains should migrate first? A suggested priority based on impact vs. risk: (a) settings/features/embedding config → `config` table (low risk, eliminates 3 files), (b) presets + integration presets (low risk, eliminates corrupt-store fallback and dormant model ambiguity), (c) memories (medium risk, biggest user-facing improvement), (d) user preferences (low risk, eliminates full-file-rewrite scaling problem), (e) cookbook state (low-medium risk, CLI needs updating), (f) upload/skills/research metadata as SQLite references.
 
 ### Ownership Model — The Bigger Problem
 
@@ -893,7 +893,7 @@ For domains where migration is recommended:
 | Research index → SQLite | Low — metadata only, JSON files unchanged | Scan directory, insert metadata rows |
 | Settings + Features → SQLite | Low — single-document stores, in-process cache unchanged | Read JSON on startup, write to `config` table; keep JSON reader as one-time migration fallback |
 | User Preferences → SQLite | Low — per-user key-value pairs | Read `_users` map, insert rows per user; legacy flat-prefs support becomes a migration step, not permanent code |
-| Presets → SQLite | Low — admin-managed, atomic writer already exists | Read JSON, insert rows; `PresetManager` atomic-write and corrupt-recovery code can be removed |
+| Presets → SQLite | Low — admin-managed | Read JSON, insert rows; `PresetManager` corrupt-store fallback in `load()` can be removed |
 | Integration Presets → SQLite | Low — tiny store, dormant model already exists | Read JSON, populate `Integration` rows; remove dormant model ambiguity |
 | Embedding Endpoint Config → SQLite | Low — single config value | Merge into `config` table or `ModelEndpoint` metadata |
 | Cookbook State → SQLite | Low-Medium — shared with CLI, contains encrypted tokens | Read JSON, insert rows; CLI updated to read SQLite; encrypted tokens use `EncryptedText` pattern |
