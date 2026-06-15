@@ -2429,7 +2429,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis', 'emoji-killer']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2460,6 +2460,14 @@ function initializeEventListeners() {
     // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
     // like `:blush:` render through the normal monochrome emoji path.
     applyTextEmojis(state['text-emojis'] === true);
+    // Emoji Killer toggle: completely removes emoji characters from rendered output.
+    // Also retroactively strip existing messages when toggled on.
+    if (state["emoji-killer"] === true && markdownModule.stripAllEmoji) {
+      document.querySelectorAll(".msg .body").forEach(el => {
+        el.innerHTML = markdownModule.stripAllEmoji(el.innerHTML);
+      });
+    }
+    document.body.classList.toggle('emoji-killer', state['emoji-killer'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }
@@ -2653,13 +2661,20 @@ function initializeEventListeners() {
     }
   }
 
-  // Observe chat history for new/changed messages — de-emojify on the fly
+  // Observe chat history for new/changed messages — de-emojify or strip on the fly
   let _deEmojifyTimer = null;
   const _chatObs = new MutationObserver(() => {
-    if (!document.body.classList.contains('text-emojis')) return;
+    const needsDeEmojify = document.body.classList.contains('text-emojis');
+    const needsStrip = document.body.classList.contains('emoji-killer');
+    if (!needsDeEmojify && !needsStrip) return;
     clearTimeout(_deEmojifyTimer);
     _deEmojifyTimer = setTimeout(() => {
-      document.querySelectorAll('.msg .body').forEach(deEmojify);
+      document.querySelectorAll('.msg .body').forEach(el => {
+        if (needsDeEmojify) deEmojify(el);
+        if (needsStrip && markdownModule.stripAllEmoji) {
+          el.innerHTML = markdownModule.stripAllEmoji(el.innerHTML);
+        }
+      });
     }, 150);
   });
   const _chatBox = document.getElementById('chat-history');

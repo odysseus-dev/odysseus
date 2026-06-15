@@ -388,6 +388,37 @@ function _svgifyText(text) {
 function _useSvgEmoji() {
   return typeof document === 'undefined' || !document.body?.classList.contains('text-emojis');
 }
+/** When "Emoji Killer" is on, strip all emoji from rendered HTML. */
+function _shouldStripEmoji() {
+  return typeof document !== 'undefined' && document.body?.classList.contains('emoji-killer');
+}
+/** Remove all Extended_Pictographic characters from HTML via DOM traversal.
+ *  Skips <code>/<pre> to preserve code content. Uses DOMParser instead of
+ *  regex-split to handle attributes containing > and malformed markup safely. */
+export function stripAllEmoji(html) {
+  if (!html || !_EMOJI_RE.test(html)) return html;
+  var doc = new DOMParser().parseFromString(html, 'text/html');
+  var walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
+  var nodes = [];
+  while (walker.nextNode()) {
+    var p = walker.currentNode.parentElement;
+    if (p && (p.tagName === 'CODE' || p.tagName === 'PRE')) continue;
+    if (_EMOJI_RE.test(walker.currentNode.textContent)) nodes.push(walker.currentNode);
+  }
+  for (var i = 0; i < nodes.length; i++) {
+    var text = nodes[i].textContent;
+    if (!_emojiSeg) {
+      nodes[i].textContent = text.replace(/\p{Extended_Pictographic}/gu, '');
+    } else {
+      var out = '';
+      for (var s of _emojiSeg.segment(text)) {
+        out += _EMOJI_RE.test(s.segment) ? '' : s.segment;
+      }
+      nodes[i].textContent = out;
+    }
+  }
+  return doc.body.innerHTML;
+}
 
 // `opts.shortcodes` (default true) controls the issue-#345 `:name:` → emoji
 // expansion. Chat passes it through as true; document/email body renderers pass
@@ -737,7 +768,9 @@ export function mdToHtml(src, opts) {
     s = s.replace(`___CODE_BLOCK_${index}___`, block);
   });
 
-  return _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
+  let result = _useSvgEmoji() ? svgifyEmoji(s, opts) : s;
+  if (_shouldStripEmoji()) result = stripAllEmoji(result);
+  return result;
 }
 
 /**
