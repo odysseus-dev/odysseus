@@ -2373,7 +2373,17 @@ function _renderTokenScopeRows(t) {
   }).join('');
 }
 
+function clearTokenReveal() {
+  // The full token is shown ONCE on create. Never leave it lingering in the DOM
+  // (it survives the settings modal being hidden/reshown), so wipe it on refresh.
+  const value = el('adm-tokenValue');
+  const reveal = el('adm-tokenReveal');
+  if (value) value.textContent = '';
+  if (reveal) reveal.style.display = 'none';
+}
+
 async function loadTokens() {
+  clearTokenReveal();
   const list = el('adm-tokenList');
   if (!list) return;
   try {
@@ -2479,11 +2489,11 @@ function initTokenForm() {
       const res = await fetch('/api/tokens', { method: 'POST', body: fd, credentials: 'same-origin' });
       const data = await res.json();
       if (res.ok) {
-        el('adm-tokenValue').textContent = data.token;
-        reveal.style.display = '';
         el('adm-tokenName').value = '';
         if (el('adm-tokenScopes')) el('adm-tokenScopes').value = '';
-        loadTokens();
+        await loadTokens();              // refresh list (also clears any stale reveal)
+        el('adm-tokenValue').textContent = data.token;
+        reveal.style.display = '';       // then surface the fresh one-time token
       }
       else { msg.textContent = data.detail || 'Failed'; msg.className = 'admin-error'; }
     } catch (e) { msg.textContent = 'Request failed'; msg.className = 'admin-error'; }
@@ -2501,6 +2511,8 @@ function initTokenForm() {
         btn.innerHTML = TOKEN_COPY_ICON;
         btn.style.color = '';
         btn.style.opacity = '0.7';
+        // Once it's safely on the clipboard, retire the one-time reveal.
+        clearTokenReveal();
       }, 1600);
     });
   });
