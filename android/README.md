@@ -6,8 +6,9 @@ does not bundle the Python/FastAPI backend into the APK yet.
 The app now has two modes:
 
 - **Standalone Mobile**: native Android chat storage plus direct
-  OpenAI-compatible `/chat/completions` requests from the phone. This mode does
-  not require the PC Odysseus backend.
+  a phone-local backend which serves the same Odysseus web UI from bundled
+  `static/` assets. This mode does not require the PC Odysseus backend and
+  starts with fresh mobile-only sessions/endpoints.
 - **Connect to PC**: the original WebView shell that opens an already-running
   Odysseus server on a computer.
 
@@ -45,9 +46,18 @@ testing, set `APP_BIND=0.0.0.0` only on a trusted network or VPN.
 
 ## Standalone Mobile Mode
 
-Standalone mode stores its chat history, endpoint URL, model name, and optional
-API key/token in the app's private Android preferences. It is meant as a
-mobile-first scaffold that can run without a PC.
+Standalone mode starts a small local backend on the phone and opens the same
+Odysseus frontend at:
+
+```text
+http://127.0.0.1:7019/static/index.html
+```
+
+If that port is busy, the app tries the next local port up to `7039`.
+
+The mobile backend stores chat history, model endpoints, model names, and
+optional API keys/tokens in the app's private Android preferences. This keeps
+the phone install separate from the PC database, so the UI is a fresh slate.
 
 Supported now:
 
@@ -58,16 +68,20 @@ https://openrouter.ai/api/v1
 other OpenAI-compatible /v1 endpoints reachable by the phone
 ```
 
-Enter the endpoint base URL, model, and optional API key in the in-app
-**Settings** button. The app posts to:
+Add endpoints through the normal Odysseus Settings / Model Endpoints UI. The
+mobile backend posts to:
 
 ```text
 <endpoint>/chat/completions
 ```
 
-This first pass intentionally does not include on-device GGUF/llama.cpp model
-execution yet. That is the next native-runtime step for fully local phone
-inference.
+This first pass intentionally implements the mobile subset of the backend:
+model endpoint setup, sessions, history, and chat streaming. Desktop-heavy
+features such as PC filesystem tools, email/calendar sync, RAG indexing, and
+document processing still need native/mobile backend equivalents.
+
+It also does not include on-device GGUF/llama.cpp model execution yet. That is
+the next native-runtime step for fully local phone inference.
 
 ## Build-Time URL Override
 
@@ -86,11 +100,12 @@ Included now:
 
 - Gradle Android project
 - Native Java `MainActivity`
-- Native Java `StandaloneChatActivity`
+- Native Java `MobileBackendServer`
 - First-run mode picker
-- Standalone chat history stored on the phone
-- Standalone OpenAI-compatible endpoint/model/key settings
-- Native Android HTTP calls to `/chat/completions`
+- Same Odysseus web UI in standalone mode
+- Bundled `static/` frontend assets
+- Standalone sessions/endpoints/history stored on the phone
+- Mobile backend routes for model endpoints, sessions, history, and chat
 - WebView with JavaScript, DOM storage, cookies, progress bar, back navigation,
   and file upload support
 - Error/fallback screen for configuring the Odysseus server URL
@@ -102,6 +117,8 @@ Still for Android Studio / next pass:
 - Add signing config for release builds
 - Move standalone API key storage to Android Keystore-backed encryption
 - Add import/export or sync between Standalone Mobile and PC Odysseus
+- Expand mobile backend coverage for documents, notes, gallery, calendar, and
+  other desktop backend routes
 - Add an on-device model runtime such as llama.cpp/GGUF if desired
 - Decide whether to package a real on-device Python backend later
 - Tighten cleartext HTTP rules before production distribution

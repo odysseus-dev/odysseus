@@ -50,7 +50,7 @@ public class MainActivity extends Activity {
         configureSystemBars();
         String mode = getSavedMode();
         if (MODE_STANDALONE.equals(mode)) {
-            openStandaloneMode();
+            startStandaloneMode();
             return;
         }
         if (mode.isEmpty()) {
@@ -175,10 +175,7 @@ public class MainActivity extends Activity {
             saveConfiguredUrl(BuildConfig.ODYSSEUS_DEFAULT_URL);
             loadUrl(BuildConfig.ODYSSEUS_DEFAULT_URL);
         });
-        standalone.setOnClickListener(v -> {
-            saveMode(MODE_STANDALONE);
-            openStandaloneMode();
-        });
+        standalone.setOnClickListener(v -> startStandaloneMode());
         urlInput.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_GO) {
                 retry.performClick();
@@ -262,10 +259,7 @@ public class MainActivity extends Activity {
         remoteHelpParams.setMargins(0, dp(8), 0, 0);
         root.addView(remoteHelp, remoteHelpParams);
 
-        standalone.setOnClickListener(v -> {
-            saveMode(MODE_STANDALONE);
-            openStandaloneMode();
-        });
+        standalone.setOnClickListener(v -> startStandaloneMode());
         remote.setOnClickListener(v -> {
             saveMode(MODE_REMOTE);
             startRemoteMode();
@@ -354,10 +348,17 @@ public class MainActivity extends Activity {
         progressBar.setVisibility(View.GONE);
     }
 
-    private void openStandaloneMode() {
-        Intent intent = new Intent(this, StandaloneChatActivity.class);
-        startActivity(intent);
-        finish();
+    private void startStandaloneMode() {
+        saveMode(MODE_STANDALONE);
+        buildLayout();
+        configureWebView();
+        try {
+            String baseUrl = MobileBackendServer.getInstance().start(this);
+            loadUrl(baseUrl + "/static/index.html?mobile=standalone");
+        } catch (Exception ex) {
+            Toast.makeText(this, "Mobile backend failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
+            showFallback();
+        }
     }
 
     @Override

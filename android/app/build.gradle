@@ -24,6 +24,12 @@ android {
         buildConfig = true
     }
 
+    sourceSets {
+        main {
+            assets.srcDirs += ["../../static"]
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
