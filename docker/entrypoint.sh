@@ -48,6 +48,8 @@ repair_tree() {
 # in these mount roots, without scanning their existing contents.
 for path in \
     /app \
+    /app/services \
+    /app/services/cache \
     /app/.cache \
     /app/.cache/huggingface \
     /app/.local \
@@ -68,6 +70,7 @@ fi
 
 repair_tree /app/logs
 repair_tree /app/.ssh
+repair_tree /app/services/cache
 
 # Escape hatch for installations that already have root-owned package/model
 # caches. It is intentionally opt-in because these trees can be multi-GB on
