@@ -339,10 +339,13 @@ function _submitComposedMessage(text) {
   const msgInput = document.getElementById('message');
   const form = document.getElementById('chat-form');
   if (!msgInput || !form) return false;
-  msgInput.value = text;
-  msgInput.dispatchEvent(new Event('input', { bubbles: true }));
-  if (typeof form.requestSubmit === 'function') form.requestSubmit();
-  else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  // The slash handler and app-level form debounce must both release before
+  // sending the pinned prompt, otherwise the follow-up submit is dropped.
+  setTimeout(() => {
+    msgInput.value = text;
+    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  }, 350);
   return true;
 }
 

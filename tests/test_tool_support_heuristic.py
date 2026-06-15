@@ -25,6 +25,7 @@ def _compute_is_api_model(model: str, endpoint_url: str, endpoint_supports=None)
     ))
     model_no_tools = any(kw in model_lc for kw in (
         "deepseek-r1",
+        "gpt-oss",
     ))
 
     if endpoint_supports is True:
@@ -72,6 +73,11 @@ class TestDeepSeekToolSupport:
             "gemma4:e4b", "http://host.docker.internal:11434/v1"
         ) is False
 
+    def test_gpt_oss_local_openai_compat_defaults_to_fenced_tools(self):
+        assert _compute_is_api_model(
+            "gpt-oss-20b", "http://localhost:8000/v1"
+        ) is False
+
     def test_qwen_native_ollama_defaults_to_fenced_tools(self):
         assert _compute_is_api_model(
             "qwen3.5:4b", "http://localhost:11434/api/chat"
@@ -114,6 +120,12 @@ class TestDeepSeekToolSupport:
     def test_endpoint_supports_true_overrides_native_ollama_default(self):
         result = _compute_is_api_model(
             "qwen3.5:4b", "http://localhost:11434/api/chat", endpoint_supports=True
+        )
+        assert result is True
+
+    def test_endpoint_supports_true_overrides_gpt_oss_default(self):
+        result = _compute_is_api_model(
+            "gpt-oss-20b", "http://localhost:8000/v1", endpoint_supports=True
         )
         assert result is True
 
