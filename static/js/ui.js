@@ -1286,3 +1286,298 @@ if (!window._odyEscExpandGuard) {
     else { try { topModal.classList.add('hidden'); } catch {} }
   }, true);
 }
+
+// ── CustomSelect ──────────────────────────────────────────────
+// Lightweight, themeable replacement for native <select> dropdowns.
+// Moved here from customSelect.js to avoid a separate file.
+
+class CustomSelect {
+  constructor(selectEl) {
+    if (!selectEl || selectEl.tagName !== 'SELECT') return;
+    this.select = selectEl;
+
+    // Respect explicit opt-out
+    if (this.select.dataset.nativeSelect !== undefined) return;
+
+    // Skip if already enhanced
+    if (this.select.closest('.custom-select')) {
+      this.wrapper = this.select.closest('.custom-select');
+      this.trigger = this.wrapper.querySelector('.custom-select__trigger');
+      this.dropdown = this.wrapper.querySelector('.custom-select__dropdown');
+      this._sync();
+      return;
+    }
+
+    this._build();
+    this._bind();
+    this._buildOptions();
+    this._sync();
+
+    // Re-sync after a tick in case options are populated asynchronously
+    // by the caller after the element is already in the DOM.
+    setTimeout(() => this._sync(), 0);
+  }
+
+  _build() {
+    // Wrap native select
+    this.wrapper = document.createElement('div');
+    this.wrapper.className = 'custom-select';
+
+    // Copy layout-critical computed styles so the wrapper sits in the exact
+    // same spot as the original <select> (block, flex-item margins, etc.)
+    const cs = window.getComputedStyle(this.select);
+    this.wrapper.style.display = cs.display;
+    this.wrapper.style.margin = cs.margin;
+    this.wrapper.style.verticalAlign = cs.verticalAlign;
+    this.wrapper.style.lineHeight = cs.lineHeight;
+    if (cs.width !== 'auto') this.wrapper.style.width = cs.width;
+    if (cs.height !== 'auto') this.wrapper.style.height = cs.height;
+    if (cs.minWidth !== '0px') this.wrapper.style.minWidth = cs.minWidth;
+    if (cs.maxWidth !== 'none') this.wrapper.style.maxWidth = cs.maxWidth;
+    if (cs.flex && cs.flex !== '0 1 auto') this.wrapper.style.flex = cs.flex;
+    if (cs.flexGrow !== '0') this.wrapper.style.flexGrow = cs.flexGrow;
+    if (cs.flexShrink !== '1') this.wrapper.style.flexShrink = cs.flexShrink;
+    if (cs.flexBasis !== 'auto') this.wrapper.style.flexBasis = cs.flexBasis;
+    if (cs.alignSelf !== 'auto') this.wrapper.style.alignSelf = cs.alignSelf;
+
+    this.select.parentNode.insertBefore(this.wrapper, this.select);
+    this.wrapper.appendChild(this.select);
+    this.select.classList.add('custom-select-native');
+    this.select.tabIndex = -1;
+
+    // Trigger button — copy text styling from native select
+    this.trigger = document.createElement('button');
+    this.trigger.type = 'button';
+    this.trigger.className = 'custom-select__trigger';
+    this.trigger.role = 'combobox';
+    this.trigger.setAttribute('aria-haspopup', 'listbox');
+    this.trigger.setAttribute('aria-expanded', 'false');
+    const ariaLabel = this.select.getAttribute('aria-label') || this.select.getAttribute('title');
+    if (ariaLabel) this.trigger.setAttribute('aria-label', ariaLabel);
+    this.trigger.style.color = cs.color;
+    this.trigger.style.fontSize = cs.fontSize;
+    this.trigger.style.fontWeight = cs.fontWeight;
+    this.trigger.style.fontFamily = cs.fontFamily;
+    this.wrapper.appendChild(this.trigger);
+
+    // Dropdown container (portaled to body)
+    this.dropdown = document.createElement('div');
+    this.dropdown.className = 'custom-select__dropdown';
+    this.dropdown.role = 'listbox';
+    document.body.appendChild(this.dropdown);
+    this._dropdownOwner = this.wrapper;
+  }
+
+  _bind() {
+    // Shim .value setter so programmatic assignments sync the trigger label
+    const originalDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+    if (originalDesc && originalDesc.set) {
+      const nativeSet = originalDesc.set.bind(this.select);
+      Object.defineProperty(this.select, 'value', {
+        get() { return originalDesc.get.call(this); },
+        set(v) { nativeSet(v); if (this._csInstance) this._csInstance._sync(); },
+        configurable: true,
+      });
+    }
+    this.select._csInstance = this;
+
+    // Toggle dropdown on trigger click
+    this.trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.wrapper.classList.contains('is-open')) {
+        this.close();
+      } else {
+        CustomSelect.closeAll();
+        this.open();
+      }
+    });
+
+    // Clicks inside the dropdown menu must not bubble to document click-away
+    this.wrapper.addEventListener('click', (e) => {
+      if (this.dropdown.contains(e.target)) e.stopPropagation();
+    });
+
+    // Keyboard navigation inside dropdown
+    this.dropdown.addEventListener('keydown', (e) => {
+      const options = Array.from(this.dropdown.querySelectorAll('.custom-select__option'));
+      const idx = options.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = options[idx + 1] || options[0];
+        if (next) next.focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const prev = options[idx - 1] || options[options.length - 1];
+        if (prev) prev.focus();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.close();
+        this.trigger.focus();
+      }
+    });
+
+    // Rebuild when <option> children change or selected attribute changes
+    this._observer = new MutationObserver(() => this._buildOptions());
+    this._observer.observe(this.select, { childList: true, subtree: true, attributes: true, attributeFilter: ['selected'] });
+
+    // Sync when select value changes programmatically
+    this.select.addEventListener('change', () => this._sync());
+  }
+
+  _buildOptions() {
+    this.dropdown.innerHTML = '';
+    const opts = Array.from(this.select.options);
+    this._optionIdBase = this._optionIdBase || `cs-opt-${Math.random().toString(36).slice(2, 9)}`;
+    opts.forEach((opt, i) => {
+      const div = document.createElement('div');
+      div.className = 'custom-select__option';
+      div.id = `${this._optionIdBase}-${i}`;
+      div.role = 'option';
+      div.textContent = opt.text || opt.label || opt.value || '';
+      div.dataset.value = opt.value;
+      div.tabIndex = 0;
+      div.setAttribute('aria-selected', 'false');
+
+      div.addEventListener('click', () => {
+        this.select.value = opt.value;
+        this._sync();
+        this.select.dispatchEvent(new Event('change', { bubbles: true }));
+        this.close();
+      });
+
+      div.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          div.click();
+        }
+      });
+
+      this.dropdown.appendChild(div);
+    });
+
+    // Ensure something is selected if options exist but nothing is picked
+    if (this.select.selectedIndex < 0 && opts.length > 0) {
+      this.select.selectedIndex = 0;
+    }
+    this._sync();
+  }
+
+  _sync() {
+    let idx = this.select.selectedIndex;
+    if (idx < 0 && this.select.options.length > 0) {
+      this.select.selectedIndex = 0;
+      idx = 0;
+    }
+    const selected = this.select.options[idx];
+    this.trigger.textContent = selected ? (selected.text || selected.label || selected.value || '') : '';
+    this.dropdown.querySelectorAll('.custom-select__option').forEach((opt) => {
+      const isSelected = opt.dataset.value === this.select.value;
+      opt.classList.toggle('is-selected', isSelected);
+      opt.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+      if (isSelected) this.trigger.setAttribute('aria-activedescendant', opt.id);
+    });
+  }
+
+  open() {
+    this._sync();
+    const rect = this.wrapper.getBoundingClientRect();
+    this.dropdown.style.position = 'fixed';
+    this.dropdown.style.left = `${rect.left}px`;
+    this.dropdown.style.top = `${rect.bottom + 4}px`;
+    this.dropdown.style.width = `${rect.width}px`;
+    this.dropdown.style.zIndex = '9999';
+    this.wrapper.classList.add('is-open');
+    this.trigger.setAttribute('aria-expanded', 'true');
+    const selected = this.dropdown.querySelector('.custom-select__option.is-selected');
+    if (selected) selected.focus();
+  }
+
+  close() {
+    this.wrapper.classList.remove('is-open');
+    this.trigger.setAttribute('aria-expanded', 'false');
+    this.trigger.removeAttribute('aria-activedescendant');
+  }
+
+  destroy() {
+    if (this._observer) this._observer.disconnect();
+    this.close();
+    if (this.dropdown && this.dropdown.parentNode) {
+      this.dropdown.remove();
+    }
+    if (this.wrapper && this.select) {
+      this.wrapper.parentNode.insertBefore(this.select, this.wrapper);
+      this.select.classList.remove('custom-select-native');
+      this.select.tabIndex = 0;
+      delete this.select._csInstance;
+      this.wrapper.remove();
+    }
+  }
+
+  static closeAll() {
+    document.querySelectorAll('.custom-select.is-open').forEach((el) => {
+      el.classList.remove('is-open');
+      const trigger = el.querySelector('.custom-select__trigger');
+      if (trigger) {
+        trigger.setAttribute('aria-expanded', 'false');
+        trigger.removeAttribute('aria-activedescendant');
+      }
+    });
+    document.querySelectorAll('.custom-select__dropdown').forEach((dd) => {
+      dd.style.zIndex = '';
+    });
+  }
+
+  static enhanceAll(selector = 'select') {
+    document.querySelectorAll(selector).forEach((el) => {
+      if (el.tagName !== 'SELECT') return;
+      if (el.dataset.nativeSelect !== undefined) return;
+      if (el.closest('.custom-select')) return; // already wrapped
+      new CustomSelect(el);
+    });
+  }
+}
+
+// Expose globally so non-module scripts can use it
+window.CustomSelect = CustomSelect;
+
+// Global click-away listener (attached once)
+document.addEventListener('click', () => CustomSelect.closeAll());
+
+// Auto-enhance selects already in the DOM
+function _customSelectAutoEnhance() {
+  CustomSelect.enhanceAll();
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _customSelectAutoEnhance);
+} else {
+  _customSelectAutoEnhance();
+}
+
+// Watch for dynamically added selects
+if (typeof MutationObserver !== 'undefined') {
+  const _customSelectObserver = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (node.tagName === 'SELECT' && node.dataset.nativeSelect === undefined && !node.closest('.custom-select')) {
+            new CustomSelect(node);
+          } else if (node.querySelectorAll) {
+            node.querySelectorAll('select:not([data-native-select])').forEach((el) => {
+              if (!el.closest('.custom-select')) {
+                new CustomSelect(el);
+              }
+            });
+          }
+        }
+      }
+    }
+  });
+  function _customSelectStartObserver() {
+    _customSelectObserver.observe(document.body, { childList: true, subtree: true });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _customSelectStartObserver);
+  } else {
+    _customSelectStartObserver();
+  }
+}

@@ -37673,3 +37673,109 @@ body.theme-frosted .modal {
 .log-line-default {
   color: var(--fg, #9cdef2);
 }
+
+/* ── Unified custom select (replaces native <select>) ── */
+.custom-select-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+.custom-select {
+  position: relative;
+  display: inline-block;
+  font-family: inherit;
+  vertical-align: middle;
+}
+.custom-select__trigger {
+  background: var(--select-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--fg);
+  padding: 6px 28px 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  position: relative;
+  line-height: 1.5;
+  transition: border-color 0.15s, background 0.15s;
+}
+.custom-select__trigger:hover {
+  border-color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 85%, var(--fg));
+}
+.custom-select__trigger::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--fg);
+  opacity: 0.6;
+}
+.custom-select.is-open .custom-select__trigger {
+  border-color: var(--accent);
+}
+.custom-select__dropdown {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  z-index: 500;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.custom-select.is-open .custom-select__dropdown {
+  display: block;
+  animation: custom-select-in 0.12s ease-out;
+}
+@keyframes custom-select-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.custom-select__option {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--fg);
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.08s;
+}
+.custom-select__option:hover,
+.custom-select__option:focus {
+  background: var(--select-option-active-bg, color-mix(in srgb, var(--accent) 12%, transparent));
+  color: var(--select-option-fg, var(--fg));
+  outline: none;
+}
+.custom-select__option.is-selected {
+  background: var(--select-option-active-bg, color-mix(in srgb, var(--accent) 12%, transparent));
+  color: var(--select-option-fg, var(--fg));
+}
+.custom-select__dropdown::-webkit-scrollbar { width: 6px; }
+.custom-select__dropdown::-webkit-scrollbar-track { background: transparent; }
+.custom-select__dropdown::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}

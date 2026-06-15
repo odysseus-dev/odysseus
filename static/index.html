@@ -1595,7 +1595,7 @@
                   </button>
                   <div class="adm-provider-menu hidden" id="search-provider-menu"></div>
                 </div>
-                <select id="set-searchProvider" class="settings-select" style="display:none;">
+                <select id="set-searchProvider" class="settings-select" style="display:none;" data-native-select>
                   <option value="searxng" data-search-logo="searxng">SearXNG (self-hosted)</option>
                   <option value="duckduckgo" data-search-logo="duckduckgo">DuckDuckGo (free, no key)</option>
                   <option value="brave" data-search-logo="brave">Brave Search</option>
@@ -2088,19 +2088,38 @@
             <div class="adm-add-section">
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
-                  <div class="adm-fused-group" style="display:flex;flex:1 1 180px;min-width:0;">
-                    <select id="adm-epLocalType" style="padding:5px;width:66px;flex-shrink:0;border-top-right-radius:0;border-bottom-right-radius:0;border-right:0;">
-                      <option value="llm" selected>LLM</option>
-                      <option value="image">Image</option>
-                    </select>
-                    <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1;min-width:0;border-top-left-radius:0;border-bottom-left-radius:0;">
-                  </div>
-                  <button class="admin-btn-add" id="adm-epLocalAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
-                  </button>
+                  <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1">
                 </div>
+                <!-- API key row stays in the DOM but is collapsed until the
+                     user clicks the Key button on the action row. Local
+                     endpoints rarely need a key; hiding it by default keeps
+                     the form a single visual line. -->
                 <div class="admin-model-form-row" id="adm-epLocalApiKey-row" style="display:none;">
                   <input id="adm-epLocalApiKey" type="password" placeholder="API key (optional — for protected local endpoints)" autocomplete="off" style="flex:1">
+                </div>
+                <!-- Action row: LLM/Image type, Quickstart buttons (Scan,
+                     Ollama), Key reveal toggle, Test, Add — all inline so
+                     the Quickstart fold is gone and Type sits with the
+                     primary actions. -->
+                <div class="admin-model-form-row">
+                  <div style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;"><span style="font-size:11px;opacity:0.6;">Type:</span><select id="adm-epLocalType" style="padding:5px;width:72px;flex-shrink:0;">
+                    <option value="llm" selected>LLM</option>
+                    <option value="image">Image</option>
+                  </select></div>
+                  <button class="admin-btn-sm" id="adm-epDiscoverBtn" title="Scan your network for running model servers" style="display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Scan
+                  </button>
+                  <button class="admin-btn-sm" id="adm-epOllamaBtn" title="Fill the default Ollama endpoint" style="display:inline-flex;align-items:center;gap:5px;"><span class="adm-ollama-logo" style="display:inline-flex;width:13px;height:13px;"></span>Ollama</button>
+                  <span style="flex:1"></span>
+                  <button class="admin-btn-sm" id="adm-epLocalKeyBtn" title="Show / hide the API key field" aria-expanded="false" aria-controls="adm-epLocalApiKey-row" style="opacity:0.75;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>API
+                  </button>
+                  <button class="admin-btn-sm" id="adm-epLocalTestBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+                  </button>
+                  <button class="admin-btn-add" id="adm-epLocalAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
+                  </button>
                 </div>
                 <div id="adm-epLocalMsg" class="adm-ep-inline-msg"></div>
               </div>
@@ -2151,7 +2170,7 @@
                   <option value="proxy">proxy</option>
                   <option value="api" selected>api</option>
                 </select>
-                <select id="adm-epProvider" style="display:none">
+                <select id="adm-epProvider" style="display:none" data-native-select>
                   <option value="">Custom URL</option>
                   <option value="https://api.anthropic.com" data-logo="anthropic">Anthropic</option>
                   <option value="https://api.deepseek.com/v1" data-logo="deepseek" selected>DeepSeek</option>
@@ -2172,12 +2191,31 @@
                   <option value="https://api.z.ai/api/coding/paas/v4" data-logo="zhipu">Z.AI Coding Plan</option>
                   <option value="https://integrate.api.nvidia.com/v1" data-logo="nvidia">NVIDIA</option>
                 </select>
-                <div class="admin-model-form-row" id="adm-epApiKey-row">
-                  <div style="position:relative;flex:1;display:flex;align-items:center;">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position:absolute;left:9px;top:50%;transform:translateY(-50%);opacity:0.55;pointer-events:none;"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>
-                    <input id="adm-epApiKey" type="password" placeholder="API key, e.g. sk-proj-AbCdEf…" autocomplete="off" style="flex:1;padding-left:28px;height:32px;box-sizing:border-box;">
-                  </div>
-                  <button class="admin-btn-add" id="adm-epAddBtn" style="height:32px;min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;flex-shrink:0;box-sizing:border-box;">
+                <!-- API key row stays in DOM, hidden until Key button is
+                     clicked. Mirrors the Local section pattern: most users
+                     paste a key via the provider preset flow rather than
+                     typing it free-form, so the row only appears on demand. -->
+                <div class="admin-model-form-row" id="adm-epApiKey-row" style="display:none;">
+                  <input id="adm-epApiKey" type="password" placeholder="API key" autocomplete="off" style="flex:1">
+                </div>
+                <div class="admin-model-form-row" style="margin-top:-4px;">
+                  <select id="adm-epKind" style="padding:5px;width:82px;">
+                    <option value="proxy">Proxy</option>
+                    <option value="api">API</option>
+                  </select>
+                  <div style="display:inline-flex;align-items:center;gap:4px;flex-shrink:0;"><span style="font-size:11px;opacity:0.6;">Type:</span><select id="adm-epType" style="padding:5px;width:80px;flex-shrink:0;">
+                    <option value="llm" selected>LLM</option>
+                    <option value="image">Image</option>
+                  </select></div>
+                  <span style="flex:1"></span>
+                  <button class="admin-btn-sm" id="adm-epApiKeyBtn" title="Show / hide the API key field" aria-expanded="false" aria-controls="adm-epApiKey-row" style="opacity:0.75;display:inline-flex;align-items:center;gap:4px;">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="M15.5 7.5l3 3"/></svg>API
+                  </button>
+                  <button class="admin-btn-sm" id="adm-epApiTestBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>Test
+                  </button>
+                  <button class="admin-btn-sm hidden" id="adm-epApiCancelTestBtn" style="width:62px;text-align:center;">Cancel</button>
+                  <button class="admin-btn-add" id="adm-epAddBtn" style="min-width:55px;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:4px;">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Add
                   </button>
                 </div>
