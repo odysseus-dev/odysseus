@@ -169,6 +169,25 @@ def _anthropic_api_root(base: str) -> str:
     return base
 
 
+def _bare_host_uses_v1_models(base: str) -> bool:
+    """Return True when a pathless OpenAI-compatible base should probe /v1/models."""
+    parsed = urlparse(base)
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if host in {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}:
+        return True
+    return _host_match(
+        base,
+        "api.openai.com",
+        "deepseek.com",
+        "x.ai",
+        "nvidia.com",
+        "groq.com",
+        "openrouter.ai",
+        "together.xyz",
+        "together.ai",
+    )
+
+
 def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
@@ -187,11 +206,11 @@ def build_models_url(base: str) -> Optional[str]:
 
     For OpenAI-compatible servers (LM Studio, llama.cpp, vLLM,
     text-generation-webui, etc.) the model list is exposed at ``/v1/models``.
-    When the user-supplied base has no path — e.g. ``http://localhost:1234`` —
-    we still need to land on ``/v1/models`` (issue #25); insert the ``/v1``
-    segment only when the path is empty, leaving any explicit non-empty path
-    untouched (so custom prefixes like ``/openai`` or ``/api/openai/v1`` keep
-    their semantics).
+    When a local OpenAI-compatible base has no path — e.g.
+    ``http://localhost:1234`` — we still need to land on ``/v1/models`` (issue
+    #25). Known cloud provider roots also use ``/v1/models``. For arbitrary
+    unknown hosts, append ``/models`` without inventing a version prefix so
+    look-alike provider domains are not silently rerouted.
     """
     base = normalize_base(resolve_url(base))
     provider = _detect_provider(base)
@@ -205,7 +224,7 @@ def build_models_url(base: str) -> Optional[str]:
     # when the user omitted a path entirely. If a non-empty path is already
     # present (e.g. /openai, /api/openai/v1, /v1), trust the caller — the
     # /models suffix is appended as-is and the caller's prefix is preserved.
-    if not urlparse(base).path:
+    if not urlparse(base).path and _bare_host_uses_v1_models(base):
         base = base + "/v1"
     return base + "/models"
 
