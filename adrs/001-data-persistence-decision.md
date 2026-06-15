@@ -442,7 +442,7 @@ All domains in this group are already in SQLite `app.db`.
 | Ownership model | Owner-scoped chunk IDs; lane separation for HTTP vs FastEmbed embeddings |
 | Atomicity | ChromaDB-managed |
 | Backup coverage | Not included in standard backup; optional Chroma state in Docker volumes |
-| Notes | **Live bug (warrants its own issue):** Admin wipe route does `from src.memory_vector import get_memory_vector_store`, but that function does not exist — the only accessor is the `MemoryVectorStore` class constructed in `app_initializer`. The import throws, the `try/except` swallows it, and "wipe memory" silently leaves every embedding behind. Semantic search returns ghost results after a full wipe. This is a runtime bug, not a persistence-architecture question. |
+| Notes | **Live bug ([#1967](https://github.com/pewdiepie-archdaemon/odysseus/issues/1967), fix in [#1968](https://github.com/pewdiepie-archdaemon/odysseus/pull/1968)):** Admin wipe route does `from src.memory_vector import get_memory_vector_store`, but that function does not exist — the only accessor is the `MemoryVectorStore` class constructed in `app_initializer`. The import throws, the `try/except` swallows it, and "wipe memory" silently leaves every embedding behind. Semantic search returns ghost results after a full wipe. |
 
 **Recommendation:** Keep current
 
