@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
-from core.auth import AuthManager
+from core.auth import AuthManager, SetAdminResult
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, SKILLS_DIR
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
@@ -72,6 +72,11 @@ class DeleteUserRequest(BaseModel):
 
 class RenameUserRequest(BaseModel):
     username: str
+
+
+class SetAdminRequest(BaseModel):
+    is_admin: bool
+
 
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
@@ -486,6 +491,31 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if callable(invalidator):
             invalidator()
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
+
+    @router.put("/users/{username}/admin")
+    async def set_user_admin(username: str, body: SetAdminRequest, request: Request):
+        """Promote/demote a user to/from admin. Admin only.
+
+        The last remaining admin can't be demoted (no lockout). Self-demotion
+        is allowed while another admin exists; the `self` flag tells the UI to
+        reload the acting user into the normal-user view.
+        """
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        result = auth_manager.set_admin(username, body.is_admin, user)
+        if result is SetAdminResult.USER_NOT_FOUND:
+            raise HTTPException(404, "User not found")
+        if result is SetAdminResult.NOT_AUTHORIZED:
+            raise HTTPException(403, "Admin only")
+        if result is SetAdminResult.LAST_ADMIN:
+            raise HTTPException(400, "Cannot demote the last admin")
+        target = (username or "").strip().lower()
+        return {
+            "ok": True,
+            "is_admin": body.is_admin,
+            "self": target == (user or "").strip().lower(),
+        }
 
     @router.post("/signup-toggle", deprecated=True)
     async def toggle_signup(request: Request):

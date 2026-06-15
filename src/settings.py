@@ -29,7 +29,15 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
-    "image_gen_enabled": True,
+    # Agent email safety: when True, the MCP send_email / reply_to_email
+    # tools don't SMTP directly. They stage the composed message into the
+    # scheduled_emails table with status='agent_draft' and return a
+    # pending_id + the rendered email so the user can review and approve
+    # (or cancel) before it actually goes out. Default ON because models
+    # have been observed inventing signatures and sending to real
+    # recipients without confirmation.
+    "agent_email_confirm": True,
+    "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
     "vision_model": "",
@@ -151,6 +159,7 @@ DEFAULT_SETTINGS = {
     # Reminders
     "reminder_channel": "browser",   # "browser" | "email" | "ntfy" | "webhook"
     "reminder_llm_synthesis": False,
+    "reminder_llm_persona": "",
     "reminder_ntfy_topic": "Reminders",
     "reminder_email_to": "",
     # Generic outbound webhook channel: pick any saved Integration as the
