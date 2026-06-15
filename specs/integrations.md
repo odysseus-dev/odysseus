@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@0750486 | 2026-06-15
+Last updated: dev@270b857 | 2026-06-15
 
 ## Scope
 
@@ -132,7 +132,7 @@ The Settings Integrations view aggregates several subsystem surfaces:
 
 - generic API integrations;
 - Codex/Claude agent token setup;
-- CalDAV, CardDAV, email accounts, MCP/OAuth links, provider device-flow links, and agent tokens.
+- CalDAV, CardDAV, email accounts including Google Workspace/.edu OAuth connect flows, MCP/OAuth links, provider device-flow links, and agent tokens.
 
 Vault and companion/mobile setup are separate settings/route surfaces today, not entries in the unified add-integration list.
 
@@ -163,7 +163,7 @@ This spec owns the cross-integration framing and agent/token/webhook surfaces. D
 
 ## Testing Notes
 
-Current targeted coverage includes API-token CRUD basics, chat-scoped `/api/models` token access, companion pairing/read-only owner scoping, webhook SSRF validation, webhook auth-exempt source checks, webhook CLI token masking, integration-store shape/encryption migration, Cookbook API-token scopes, Cookbook adopt SSH host validation, and `/api/v1/chat` base-url/fallback owner scoping.
+Current targeted coverage includes API-token CRUD basics, chat-scoped `/api/models` token access, companion pairing/read-only owner scoping, webhook SSRF validation, webhook auth-exempt source checks, webhook CLI token masking, integration-store shape/encryption migration, Google email OAuth route/helper behavior, Cookbook API-token scopes, Cookbook adopt SSH host validation, and `/api/v1/chat` base-url/fallback owner scoping.
 
 The integration audit also ran the targeted venv subset covering those areas with 52 passing tests and one warning.
 

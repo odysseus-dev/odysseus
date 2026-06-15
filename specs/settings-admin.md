@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@0750486 | 2026-06-15
+Last updated: dev@270b857 | 2026-06-15
 
 ## Scope
 
@@ -73,7 +73,7 @@ Admin gates inherit the auth contracts in `auth-security.md`: normal deployments
 - custom font selection and `/api/fonts/custom` discovery;
 - CSS variable application.
 
-`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, scoped-token helpers, and unified integrations forms. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes.
+`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, scoped-token helpers, and unified integrations forms. Its email account forms include provider presets, Google Workspace/.edu OAuth connect/reconnect controls, display-name fields, password-field hiding for OAuth flows, and redirect result banners. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes.
 
 Logout/user-switch flows clear local/session storage to avoid stale cross-account UI state.
 
@@ -169,7 +169,7 @@ Vault tool paths duplicate some route behavior and can return vault item secrets
 
 ## Testing Notes
 
-Current targeted coverage includes settings store fallback/error paths, settings scrub, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore safety, cleanup owner scope, diagnostics admin-gate/source/service-health/log-tail checks, admin promote/demote, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, and a token-budget `manage_settings` path.
+Current targeted coverage includes settings store fallback/error paths, settings scrub, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore safety, cleanup owner scope, diagnostics admin-gate/source/service-health/log-tail checks, admin promote/demote, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, Google email OAuth route/helper behavior, and a token-budget `manage_settings` path.
 
 ## Current Gaps
 

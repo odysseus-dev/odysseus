@@ -1,6 +1,6 @@
 # Persistence
 
-Last updated: dev@0750486 | 2026-06-15
+Last updated: dev@270b857 | 2026-06-15
 
 ## Scope
 
@@ -37,6 +37,8 @@ Current model families include:
 
 Current calendar/task persistence includes CalDAV remote identity columns (`CalendarCal.remote_href`, `CalendarCal.remote_etag`, `CalendarEvent.remote_href`, `CalendarEvent.remote_etag`), `CalendarEvent.caldav_sync_pending` for retryable writeback state, and `ScheduledTask.character_id` for built-in task persona selection.
 
+`EmailAccount` includes encrypted password fields plus Google OAuth fields (`oauth_provider`, encrypted access/refresh tokens, token expiry) and optional `display_name`. Startup migrations add those OAuth/display columns idempotently for older databases.
+
 `core/models.py` owns pure dataclasses used by `SessionManager`. It does not own database persistence.
 
 `routes/email_helpers.py` owns a second SQLite database at `data/scheduled_emails.db` for scheduled email, summary, reply, tag, sender-signature, urgency-alert, calendar-extraction, and cache state. Its migrations and owner backfills are local to that module, not `core/database.py`, and those auxiliary tables are owner-scoped.
@@ -72,7 +74,7 @@ There is no single anonymous/local owner value today. SQL `NULL` and missing JSO
 
 `CalendarCal.account_id` links synced local calendars back to one saved CalDAV account so multi-account sync/writeback can round-trip remote calendar identity. Remote href/etag columns on calendars and events preserve CalDAV server identity across pull/push cycles, while `caldav_sync_pending` marks local create/update/delete work that still needs remote writeback.
 
-`EncryptedText` owns transparent encrypted-at-rest DB columns via `src.secret_storage` for model endpoint keys and signatures. Email passwords are `String` columns encrypted/decrypted manually. Integrations, CalDAV/CardDAV prefs, and other JSON stores can use `src.secret_storage` directly. API tokens are bcrypt-hashed, API-key manager state uses `data/.key` plus `data/api_keys.json` with restrictive chmod where supported, and vault state in `data/vault.json` is chmod-restricted JSON. Legacy plaintext rows are tolerated until migration or rewrite.
+`EncryptedText` owns transparent encrypted-at-rest DB columns via `src.secret_storage` for model endpoint keys and signatures. Email passwords and Google OAuth access/refresh tokens are `String` columns encrypted/decrypted manually. Integrations, CalDAV/CardDAV prefs, and other JSON stores can use `src.secret_storage` directly. API tokens are bcrypt-hashed, API-key manager state uses `data/.key` plus `data/api_keys.json` with restrictive chmod where supported, and vault state in `data/vault.json` is chmod-restricted JSON. Legacy plaintext rows are tolerated until migration or rewrite.
 
 Current JSON/local stores include:
 

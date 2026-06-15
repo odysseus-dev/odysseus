@@ -1,6 +1,6 @@
 # Testing And Devops
 
-Last updated: dev@0750486 | 2026-06-15
+Last updated: dev@270b857 | 2026-06-15
 
 ## Scope
 
@@ -37,7 +37,7 @@ Activated-venv `python -m pytest <test path>` is equivalent. System/global `pyte
 
 `tests/conftest.py` inserts the repo root on `sys.path` and conditionally stubs missing heavy/runtime dependencies such as SQLAlchemy, FastAPI, Starlette, Pydantic, httpx, bcrypt, and pyotp. Tests that need real dependencies use explicit imports/skips. Tests that stub `sys.modules`, environment variables, globals, or parent packages must restore them with `monkeypatch` or an equivalent cleanup pattern.
 
-Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
+Focused regression tests are preferred for narrow behavior changes. Broaden tests when touching shared contracts such as auth, owner filtering, OAuth/token custody, tool output, context building, provider calls, persistence, frontend rendering, or route/API shapes.
 
 `tests/run_focus.py` and `tests/_taxonomy.py` provide a local focused-run helper and category map. `tests/TESTING_STANDARD.md` documents expectations for targeted validation, and `tests/LAYOUT_INVENTORY.md` records the test-suite layout. CLI tests live under `tests/cli/`.
 
@@ -192,7 +192,7 @@ Run the app for user-facing or integration changes. Unit tests and syntax checks
 - Fresh install smoke coverage across Linux native, Docker, macOS native/app, Windows native, WSL/Git Bash, missing Node/npm, missing Chroma service, and GPU overlays remains a roadmap item.
 - There is no frontend build/type-check/npm test pipeline.
 - CI now covers Python compile, first-party JS syntax, and pytest smoke; it does not cover Docker compose validation, launcher smoke tests, browser/module-graph execution, or platform installs.
-- Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper` behavior and provider combinations not covered by focused tests.
+- Optional dependency behavior is broad; remaining gaps include local STT missing-`faster-whisper` behavior and provider/OAuth combinations not covered by focused tests.
 - GitHub description-check scripts and `scripts/pr_blocker_audit.py` need continued local fixtures for section parsing, placeholder stripping, label swaps, workflow-safe behavior, and duplicate/hot-file heuristics.
 - Spec bootstrap rules lack meta tests for reading `_readme.md`, spec shape, `.env*` handling, draft/report placement, and shared helper conventions.
 - NVIDIA helper install/`.env` mutation paths and real Docker/GPU startup are not covered by local tests.

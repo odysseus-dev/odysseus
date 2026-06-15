@@ -1,6 +1,6 @@
 # Frontend
 
-Last updated: dev@0750486 | 2026-06-15
+Last updated: dev@270b857 | 2026-06-15
 
 ## Scope
 
@@ -104,7 +104,7 @@ Coordinator ownership:
 
 Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete, and `static/js/modalSnap.js` for reusable desktop modal edge docking.
 
-Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, notes search reset on reopen, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, admin promote/demote buttons, and admin diagnostics log polling.
+Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, notes search reset on reopen, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, Google Workspace/.edu email OAuth controls in both email account forms, admin promote/demote buttons, and admin diagnostics log polling.
 
 ## UI Policy
 

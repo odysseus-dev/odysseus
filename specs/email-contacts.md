@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@0750486 | 2026-06-15
+Last updated: dev@270b857 | 2026-06-15
 
 ## Scope
 
@@ -33,12 +33,13 @@ This spec covers mail and contacts in:
 
 ## Email Accounts And Transport
 
-`EmailAccount` rows own IMAP/SMTP configuration. Password fields are string columns containing encrypted ciphertext written with `src.secret_storage`; startup migrations handle legacy plaintext rows. Do not return decrypted credentials or write them to logs.
+`EmailAccount` rows own IMAP/SMTP configuration. Password fields are string columns containing encrypted ciphertext written with `src.secret_storage`; startup migrations handle legacy plaintext rows. Google OAuth account rows also carry `oauth_provider`, encrypted access/refresh tokens, token expiry, and an optional outbound `display_name`. Do not return decrypted credentials or OAuth tokens, or write them to logs.
 
 `routes.email_helpers` owns:
 
 - account owner assertions and config fallback order;
 - IMAP/SMTP connection helpers and related transport utilities;
+- Google OAuth2 state signing/verification, token refresh, and XOAUTH2 framing;
 - SMTP security modes (`ssl`, `starttls`, `none`);
 - envelope recipients and Odysseus headers;
 - attachment extraction helpers;
@@ -56,6 +57,7 @@ Email owner semantics are route-local and compatibility-sensitive:
 `routes.email_routes` owns the HTTP mail surface:
 
 - account CRUD, test, default, and masked config reads;
+- Google OAuth authorize/callback for Workspace and .edu Gmail-style accounts;
 - list, search, read, folders, and contacts;
 - folder role resolution and UID fetch/search helpers used by the route surface;
 - owner-scoped route caches and IMAP pool behavior;
@@ -64,6 +66,14 @@ Email owner semantics are route-local and compatibility-sensitive:
 - schedule/list/delete scheduled emails;
 - pending agent-draft approval/cancel flows;
 - mark read/unread/answered, spam flags, move, archive, and delete.
+
+Google OAuth behavior is account-owned:
+
+- `/api/email/oauth/google/authorize` requires an authenticated owner, checks account ownership, HMAC-signs state with account id, owner, and nonce, and redirects to Google with mail/userinfo scopes;
+- `/api/email/oauth/google/callback` verifies signed state before token exchange, re-checks the target account owner before writing tokens, stores access/refresh tokens encrypted, stores token expiry as a timestamp, and redirects with generic success/error codes rather than raw provider errors;
+- token refresh uses `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, stores refreshed access tokens encrypted, and logs only generic/account-id context on failures;
+- SMTP and IMAP use XOAUTH2 when `oauth_provider == "google"`; OAuth accounts are send-capable without an SMTP password when host and user are configured;
+- outbound mail formats the `From` header with `display_name` when present.
 
 MCP full-message read/reply/attachment fetches use IMAP `BODY.PEEK[]` rather than bare `RFC822`, so iCloud-style servers return the full body without marking messages seen. Poller UID handling must tolerate both bytes and string UIDs.
 
@@ -139,8 +149,9 @@ Codex email routes are the scoped bearer-token email API. They enforce `email:re
 Known security policy details:
 
 - decrypted email credentials stay process-local;
-- account/config reads mask passwords;
+- account/config reads mask passwords and expose only OAuth status fields, not access or refresh token values;
 - SMTP/IMAP security mode behavior is part of the credential contract;
+- Google OAuth state and callback owner checks are part of the account-boundary contract;
 - scheduled emails must remain owner-scoped;
 - email pre-retrieval contacts context is allowed only for admin/single-user situations;
 - MCP attachment downloads need route-level path-containment parity; current MCP paths are separate from the HTTP compose/attachment helper path.
@@ -150,6 +161,7 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 ## Degraded Behavior
 
 - IMAP/SMTP providers can be slow or inconsistent; folder resolution, pooled connections, and reconnect behavior should fail with clear errors.
+- Google OAuth requires external Google endpoints plus configured `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`; missing client credentials or refresh failures degrade to reconnect-required or generic OAuth error paths.
 - Scheduled email delivery depends on `scheduled_emails.db`, poller runtime, and configured SMTP.
 - Attachment handling must tolerate missing staged files, unsupported formats, and inaccessible remote messages.
 - CardDAV local fallback applies only when CardDAV is unconfigured; configured CardDAV outages are not treated as local-write mode.
@@ -157,9 +169,9 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 
 ## Testing Coverage
 
-Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, iCloud-compatible MCP full-message fetch shape, owner scope, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
+Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, Google OAuth state/callback/token-refresh/XOAUTH2 behavior, OAuth account token non-disclosure, iCloud-compatible MCP full-message fetch shape, owner scope, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
 
-Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
+Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security outside the OAuth path, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
 
 ## Current Gaps
 
