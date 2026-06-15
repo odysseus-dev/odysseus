@@ -67,6 +67,14 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
+    if not path.exists():
+        cwd_root = (Path.cwd() / "data" / "generated_images").resolve()
+        cwd_path = (cwd_root / safe_name).resolve()
+        try:
+            if os.path.commonpath([str(cwd_root), str(cwd_path)]) == str(cwd_root) and cwd_path.exists():
+                return cwd_path
+        except Exception:
+            pass
     return path
 
 
@@ -931,14 +939,22 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(404, "Image not found")
 
             img_filename = img.filename
-            # Remove the file from disk
-            img_path = _gallery_image_path(img_filename)
-            if img_path.exists():
-                img_path.unlink()
-
-            # Soft-delete the record
+            # Soft-delete the record first; the DB is the source of truth.
             img.is_active = False
             db.commit()
+
+            # Only after the soft-delete commit succeeds do we remove the file.
+            # If the file were deleted first and the commit then failed/rolled
+            # back, the still-active record would point at a missing file.
+            # Best-effort so a missing or locked file can't 500 a delete that
+            # already succeeded logically. Uses the path-confined resolver so a
+            # malformed stored filename can't escape generated_images.
+            try:
+                img_path = _gallery_image_path(img_filename)
+                if img_path.exists():
+                    img_path.unlink()
+            except Exception as e:
+                logger.warning(f"Could not remove gallery image file for {img_filename}: {e}")
 
             # Strip stale chat-history references so the image bubble
             # (and its prompt caption) doesn't come back after a server

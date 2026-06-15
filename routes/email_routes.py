@@ -1097,7 +1097,12 @@ def setup_email_routes():
         account_id: str | None = Query(None),
         owner: str = Depends(require_owner),
     ):
-        """Search emails server-side via IMAP SEARCH. Matches subject, from, or body text."""
+        """Search emails server-side via IMAP SEARCH. Matches subject, from, or body text.
+
+        When the caller asks for INBOX and the account has an "All Mail"
+        folder (Gmail does), we transparently swap to All Mail so the
+        search surfaces archived / labelled emails too. Plain IMAP
+        accounts fall back to whatever folder the caller specified."""
         if not q or len(q) < 2:
             return {"emails": [], "total": 0, "query": q}
         # CRLF in q would terminate the IMAP command early — reject defensively.
@@ -1105,7 +1110,27 @@ def setup_email_routes():
             raise HTTPException(400, "Invalid query")
         try:
             with _imap(account_id, owner=owner) as conn:
-                conn.select(_q(folder), readonly=True)
+                # If the user asked for INBOX, try to upgrade to All Mail —
+                # one folder == every email on Gmail-class servers.
+                effective_folder = folder
+                if (folder or "").upper() == "INBOX":
+                    try:
+                        status, folder_lines = conn.list()
+                        if status == "OK" and folder_lines:
+                            for raw in folder_lines:
+                                if isinstance(raw, bytes):
+                                    raw = raw.decode("utf-8", errors="replace")
+                                m = re.match(r"\((?P<flags>[^)]*)\)\s+\"[^\"]*\"\s+(?P<name>.+)", raw)
+                                if not m:
+                                    continue
+                                flags = (m.group("flags") or "").lower()
+                                name = m.group("name").strip().strip('"')
+                                if "\\all" in flags or "all mail" in name.lower():
+                                    effective_folder = name
+                                    break
+                    except Exception:
+                        pass
+                conn.select(_q(effective_folder), readonly=True)
 
                 # Escape backslash and quote for the IMAP-SEARCH quoted-string.
                 q_escaped = q.replace('\\', '\\\\').replace('"', '\\"')
@@ -1113,7 +1138,7 @@ def setup_email_routes():
 
                 status, data = _imap_uid_search(conn, search_cmd)
                 if status != "OK" or not data[0]:
-                    return {"emails": [], "total": 0, "query": q}
+                    return {"emails": [], "total": 0, "query": q, "folder": effective_folder}
 
                 uid_list = data[0].split()
                 total = len(uid_list)
@@ -1178,6 +1203,13 @@ def setup_email_routes():
                             "is_flagged": "\\Flagged" in flags,
                             "flags": flags,
                             "has_attachments": has_attachments,
+                            # Stamp the folder so the frontend opens each
+                            # email from the folder it actually lives in
+                            # (the search may have run against All Mail
+                            # even though the caller asked for INBOX),
+                            # otherwise clicks open whatever happens to
+                            # have the same UID in INBOX → wrong email.
+                            "folder": effective_folder,
                         })
                     except Exception as e:
                         logger.warning(f"Error parsing search result {uid}: {e}")
@@ -1724,6 +1756,22 @@ def setup_email_routes():
             logger.error(f"Failed to mark unread {uid}: {e}")
             return {"success": False, "error": "Mail operation failed"}
 
+    @router.post("/flag/{uid}")
+    async def flag_email(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None),
+                         on: bool = Query(True), owner: str = Depends(require_owner)):
+        """Toggle the \\Flagged flag (a.k.a. favorite / star) on an email.
+        Pass `on=true` to favorite, `on=false` to unfavorite."""
+        try:
+            with _imap(account_id, owner=owner) as conn:
+                conn.select(_q(folder))
+                if not _store_email_flag(conn, uid, "\\Flagged", add=bool(on)):
+                    return {"success": False, "error": "Email not found"}
+            _invalidate_list_cache(account_id, folder)
+            return {"success": True, "flagged": bool(on)}
+        except Exception as e:
+            logger.error(f"Failed to flag {uid}: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
     @router.post("/mark-read/{uid}")
     async def mark_read(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Mark an email as read (set \\Seen flag)."""
@@ -2102,6 +2150,79 @@ def setup_email_routes():
             return {"success": True}
         except Exception as e:
             logger.error(f"cancel_scheduled {sid!r} failed: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    # ── Agent send-confirm: list/approve/cancel ──────────────────────────
+    # When `agent_email_confirm` is on, the MCP send_email tool drops the
+    # composed email into scheduled_emails with status='agent_draft' (a
+    # far-future send_at so the poller never picks it up). These endpoints
+    # let the chat UI surface them for the user and either approve (flip
+    # to status='pending' with send_at=now so the poller delivers it) or
+    # cancel (status='cancelled').
+    @router.get("/pending")
+    async def list_pending_agent_drafts(owner: str = Depends(require_owner)):
+        import sqlite3
+        try:
+            conn = sqlite3.connect(SCHEDULED_DB)
+            conn.row_factory = sqlite3.Row
+            # The MCP server can't easily set owner, so it stores '' — fall
+            # back to those rows in addition to the caller's owner.
+            rows = conn.execute(
+                """SELECT id, to_addr, subject, body, created_at, account_id
+                   FROM scheduled_emails
+                   WHERE status = 'agent_draft' AND (owner = ? OR owner = '')
+                   ORDER BY created_at DESC""",
+                (owner or "",),
+            ).fetchall()
+            conn.close()
+            return {"pending": [dict(r) for r in rows]}
+        except Exception as e:
+            logger.error(f"list_pending_agent_drafts failed: {e}")
+            return {"pending": [], "error": "Mail operation failed"}
+
+    @router.post("/pending/{sid}/approve")
+    async def approve_agent_draft(sid: str, owner: str = Depends(require_owner)):
+        """Approve a draft staged by the agent: flip status → pending and
+        backdate send_at so the scheduled-send poller picks it up
+        immediately."""
+        import sqlite3
+        try:
+            conn = sqlite3.connect(SCHEDULED_DB)
+            cur = conn.execute(
+                """UPDATE scheduled_emails
+                   SET status = 'pending', send_at = ?
+                   WHERE id = ? AND status = 'agent_draft' AND (owner = ? OR owner = '')""",
+                (datetime.utcnow().isoformat(), sid, owner or ""),
+            )
+            conn.commit()
+            affected = cur.rowcount
+            conn.close()
+            if not affected:
+                return {"success": False, "error": "Draft not found or already handled"}
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"approve_agent_draft {sid!r} failed: {e}")
+            return {"success": False, "error": "Mail operation failed"}
+
+    @router.delete("/pending/{sid}")
+    async def cancel_agent_draft(sid: str, owner: str = Depends(require_owner)):
+        """Discard a draft the agent staged for approval."""
+        import sqlite3
+        try:
+            conn = sqlite3.connect(SCHEDULED_DB)
+            cur = conn.execute(
+                """UPDATE scheduled_emails SET status = 'cancelled'
+                   WHERE id = ? AND status = 'agent_draft' AND (owner = ? OR owner = '')""",
+                (sid, owner or ""),
+            )
+            conn.commit()
+            affected = cur.rowcount
+            conn.close()
+            if not affected:
+                return {"success": False, "error": "Draft not found or already handled"}
+            return {"success": True}
+        except Exception as e:
+            logger.error(f"cancel_agent_draft {sid!r} failed: {e}")
             return {"success": False, "error": "Mail operation failed"}
 
     @router.get("/resolve-contact")
@@ -2617,11 +2738,15 @@ def setup_email_routes():
             source_uid = (data.get("uid") or "").strip()
             source_folder = (data.get("folder") or "INBOX").strip()
             fast_reply = bool(data.get("fast", False))
+            user_hint = (data.get("user_hint") or "").strip()
 
             if not original_body:
                 return {"success": False, "error": "No email body provided"}
 
-            if message_id:
+            # Skip cache lookup when the caller supplied a user_hint — the
+            # cached generic reply doesn't reflect the instructions and
+            # would silently override them.
+            if message_id and not user_hint:
                 try:
                     _c = _sql3.connect(SCHEDULED_DB)
                     owner_clause, owner_params = _email_cache_owner_clause(owner)
@@ -2761,8 +2886,13 @@ def setup_email_routes():
             user_msg = (
                 f"Recipient: {to}\nSubject: {subject}\n\n"
                 f"Original email and any current draft:\n{original_body[:6000]}\n\n"
-                f"Draft a reply. Return only the reply body text."
             )
+            if user_hint:
+                user_msg += (
+                    f"User's instructions for THIS reply (follow these — they override "
+                    f"defaults like length/tone):\n{user_hint[:2000]}\n\n"
+                )
+            user_msg += "Draft a reply. Return only the reply body text."
 
             # Build a candidate chain so a stale session-stored API key
             # (the most common cause of "authentication failed" here)

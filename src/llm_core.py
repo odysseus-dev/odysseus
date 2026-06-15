@@ -682,6 +682,8 @@ def _detect_provider(url: str, *, probe: bool = False) -> str:
         return "groq"
     if _host_match(url, "nvidia.com"):
         return "nvidia"
+    if _host_match(url, "moonshot.ai") or _host_match(url, "moonshot.cn"):
+        return "moonshot"
     if probe:
         try:
             if _is_local_host(urlparse(url).hostname) and _fingerprint_is_lmstudio(url):
@@ -940,6 +942,28 @@ def _restricts_temperature(model: str) -> bool:
         return False
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
+
+
+# The official Moonshot API fixes temperature at 1.0 in thinking mode and 0.6
+# when thinking is explicitly disabled for Kimi K2.5/K2.6. Any other explicit
+# value returns HTTP 400. Odysseus does not currently send the `thinking` mode
+# control, so omit temperature and let Moonshot use its default thinking mode.
+# Keep the gate provider-specific: self-hosted Kimi deployments may accept
+# custom sampling values, and older Moonshot models have different defaults.
+def _moonshot_rejects_custom_temperature(provider: str, model: str) -> bool:
+    """Check if the official Moonshot API fixes temperature for this model."""
+    if provider != "moonshot" or not isinstance(model, str):
+        return False
+    model_id = model.lower().rsplit("/", 1)[-1]
+    return bool(re.match(r"^kimi-k2\.(?:5|6)(?:$|[-_:])", model_id))
+
+
+def _omit_temperature(provider: str, model: str) -> bool:
+    """Check if a request should use the provider's default temperature."""
+    return _restricts_temperature(model) or _moonshot_rejects_custom_temperature(
+        provider, model
+    )
+
 
 # Anthropic removed the sampling parameters (temperature, top_p, top_k) starting
 # with Claude Opus 4.7. On Opus 4.7 and later, sending `temperature` at all —
@@ -1489,7 +1513,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             "messages": messages_copy,
             "temperature": temperature,
         }
-        if _restricts_temperature(model):
+        if _omit_temperature(provider, model):
             payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
@@ -1683,7 +1707,7 @@ async def llm_call_async(
             "messages": messages_copy,
             "temperature": temperature,
         }
-        if _restricts_temperature(model):
+        if _omit_temperature(provider, model):
             payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
@@ -1800,7 +1824,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             "temperature": temperature,
             "stream": True,
         }
-        if _restricts_temperature(model):
+        if _omit_temperature(provider, model):
             payload.pop("temperature", None)
         if provider not in {"openrouter", "groq", "lmstudio"}:
             payload["stream_options"] = {"include_usage": True}

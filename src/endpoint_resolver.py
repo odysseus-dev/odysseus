@@ -201,11 +201,15 @@ def build_models_url(base: str) -> Optional[str]:
         return _ollama_api_root(base) + "/tags"
     if provider == "chatgpt-subscription":
         return None
-    # Generic OpenAI-compatible fallback: ensure the path lands on /v1/models
-    # when the user omitted a path entirely. If a non-empty path is already
-    # present (e.g. /openai, /api/openai/v1, /v1), trust the caller — the
-    # /models suffix is appended as-is and the caller's prefix is preserved.
-    if not urlparse(base).path:
+    # Generic OpenAI-compatible fallback: local model servers with no explicit
+    # path conventionally expose `/v1/models` (LM Studio, llama.cpp, vLLM).
+    # For non-local unknown hosts, do not invent `/v1`; append `/models` to the
+    # caller's base so look-alike provider hosts stay generic.
+    parsed = urlparse(base)
+    host = (parsed.hostname or "").lower()
+    is_local = host in {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
+    uses_v1_models_by_default = is_local or host in {"api.deepseek.com"}
+    if not parsed.path and uses_v1_models_by_default:
         base = base + "/v1"
     return base + "/models"
 

@@ -408,7 +408,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "ask_teacher": "- ```ask_teacher``` — Escalate a hard question to a more capable model. Line 1 = model name or 'auto', rest = the question. Use when stuck or need expert knowledge.",
     "list_models": "- ```list_models``` — Show all available AI models across all endpoints. Use when user asks what models are available.",
     "manage_session": "- ```manage_session``` — Rename, archive, delete, fork, switch, or `list` chats (the UI calls them 'chats'; 'session' is internal). Line 1 = action (list/switch/rename/archive/unarchive/delete/important/unimportant/truncate/fork), Line 2 = exact chat id from `list_sessions` (or `current` where supported). For delete/archive/truncate, always list first and reuse the exact id; never invent placeholder ids. `switch`/`open` returns a clickable anchor link the user can tap to open the chat — use for \"open my X chat\".",
-    "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts, identity, preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this', states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories.",
+    "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts about the USER themselves, their preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this' about themselves, states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories. DO NOT use for info about another person (their address, phone, email, birthday) — that goes in `manage_contact`. If the user pastes an address/phone with a name and says 'save this for <person>', use `manage_contact add` with the address arg, NOT manage_memory.",
     "manage_skills": "- ```manage_skills``` — Skill registry (SKILL.md format). Args (JSON): {\"action\": \"list|view|view_ref|search|add|edit|patch|publish|delete\", ...}. `list` returns the index of available skills (published + teacher-escalation drafts); `view name=foo` fetches the full SKILL.md; `view_ref name=foo path=...` loads a reference file under the skill directory. For `add`, provide an explicit kebab-case `name` and only report the exact returned name, because storage may normalize or dedupe it. Use this BEFORE doing domain work — there may already be a procedure (published or draft) that prescribes the correct steps. Drafts written by the teacher loop are authoritative guidance even though they're not yet published.",
     "manage_tasks": "- ```manage_tasks``` — Create and manage scheduled background tasks (recurring AI jobs). Args (JSON): {\"action\": \"list|create|edit|delete|pause|resume|run\", ...}",
     "manage_endpoints": "- ```manage_endpoints``` — Add, remove, or configure AI model API endpoints. Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}. Use when user wants to add a new AI provider.",
@@ -428,7 +428,9 @@ Notes, checklists, AND user reminders. Use this for "create/add/write a note", t
 ```send_email
 {"to": "recipient@example.com", "subject": "Re: Your question", "body": "Hi, ...", "account": "gmail"}
 ```
-Send a new email via SMTP. Use `resolve_contact` first if you only have a name. If multiple email accounts exist, call `list_email_accounts` first and pass the chosen `account`.""",
+Send a new email via SMTP. Use `resolve_contact` first if you only have a name. If multiple email accounts exist, call `list_email_accounts` first and pass the chosen `account`.
+
+CRITICAL — signatures: DO NOT invent a sign-off name. End the body with just `Thanks,` or similar — never type a person's name unless the user explicitly told you what to sign as. When `agent_email_confirm` is on (default), the tool returns `{pending: true, pending_id: ...}` and stages the email for the user to approve in the chat UI instead of SMTPing immediately.""",
     "list_emails": """\
 ```list_emails
 {"folder": "INBOX", "max_results": 20, "unread_only": false, "account": "gmail"}
@@ -439,7 +441,9 @@ List recent emails from a folder, newest first, including read messages by defau
 ```reply_to_email
 {"uid": "1234", "body": "Sounds good — talk Friday.", "account": "gmail"}
 ```
-SEND a reply email immediately by UID. Do not use this for "open a reply" or "start a reply" — those should use `ui_control` with `open_email_reply <uid> <folder> reply` to open the email draft document. For follow-up requests like "reply ..." after reading/listing email where the user clearly wants to send now, use the exact UID and account from the latest `read_email`/`list_emails` result. Never invent UID `1`. Threads automatically (In-Reply-To/References handled).""",
+SEND a reply email immediately by UID. Do not use this for "open a reply" or "start a reply" — those should use `ui_control` with `open_email_reply <uid> <folder> reply` to open the email draft document. For follow-up requests like "reply ..." after reading/listing email where the user clearly wants to send now, use the exact UID and account from the latest `read_email`/`list_emails` result. Never invent UID `1`. Threads automatically (In-Reply-To/References handled).
+
+CRITICAL — signatures: DO NOT invent a sign-off name. End the body with just `Thanks,` or similar — never type a person's name unless the user explicitly told you what to sign as. When `agent_email_confirm` is on (default), the tool returns `{pending: true, pending_id: ...}` and stages the email for the user to approve in the chat UI instead of SMTPing immediately.""",
     "bulk_email": """\
 ```bulk_email
 {"action": "delete", "uids": ["10997", "10998"], "folder": "INBOX", "account": "Gmail"}
@@ -449,7 +453,7 @@ Bulk delete/archive/mark emails. Use this for "delete all those" after listing e
     "archive_email": "- ```archive_email``` — Archive one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "mark_email_read": "- ```mark_email_read``` — Mark one email read/unread. Args (JSON): {\"uid\":\"...\", \"read\":true, \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "resolve_contact": "- ```resolve_contact``` — Look up a contact's email by name. Searches CardDAV address book + sent email history. Args (JSON): {\"name\": \"...\"}. Use BEFORE send_email when the user gives only a name.",
-    "manage_contact": "- ```manage_contact``` — Create/update/delete/list CardDAV contacts. Args (JSON): {\"action\": \"list|add|update|delete\", \"name\": \"...\", \"email\": \"...\", \"uid\": \"...\"}. Use only for explicit address-book/contact requests with contact details. Do NOT use for user identity facts like 'my name is <name>'; save those with manage_memory. For update/delete, call action=list first to get the uid.",
+    "manage_contact": "- ```manage_contact``` — Create/update/delete/list CardDAV contacts. Args (JSON): {\"action\": \"list|add|update|delete\", \"name\": \"...\", \"email\": \"...\", \"phones\": [...], \"address\": \"...\", \"uid\": \"...\"}. Use for info about another person: email, phone, postal address. For 'save this for <person>' / address paste / phone next to a name, use this — NOT manage_memory. Do NOT use for user identity facts ('my name is X'); those are manage_memory. For update/delete, call action=list first for the uid.",
     "manage_calendar": """\
 ```manage_calendar
 {"action": "create_event", "summary": "<event title>", "dtstart": "<natural language or ISO datetime>"}
@@ -859,6 +863,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    active_email: Optional[Dict[str, str]] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -1050,6 +1055,66 @@ def _build_system_prompt(
             )
     else:
         set_active_document(None)
+
+    # Active email reader — frontend told us the user has an email open.
+    # Inject a context block so "reply", "summarize this", "what does it say"
+    # resolve to the real UID instead of the agent inventing a fresh .md
+    # draft with fake headers. This is the email equivalent of _doc_message.
+    _email_message = None
+    if active_email and active_email.get("uid"):
+        _em_uid = active_email.get("uid", "")
+        _em_folder = active_email.get("folder", "INBOX")
+        _em_account = active_email.get("account", "")
+        _em_subject = active_email.get("subject", "") or "(no subject)"
+        _em_from = active_email.get("from", "") or "(unknown sender)"
+        _em_preview = (active_email.get("body_preview", "") or "").strip()
+        _preview_block = f"\nBody preview:\n```\n{_em_preview[:1800]}\n```" if _em_preview else ""
+        _acct_arg = f" {_em_account}" if _em_account else ""
+        email_ctx = (
+            f"ACTIVE EMAIL OPEN (the user has this email open in a reader window right now)\n"
+            f"UID: {_em_uid}\n"
+            f"Folder: {_em_folder}\n"
+            f"Account: {_em_account or '(default)'}\n"
+            f"From: {_em_from}\n"
+            f"Subject: {_em_subject}{_preview_block}\n\n"
+            f"CRITICAL DEFAULT — every request about email this turn refers to "
+            f"THIS email unless the user names a DIFFERENT specific recipient "
+            f"(a name, an email address, or another thread). Examples that "
+            f"ALL mean reply-to-the-open-email:\n"
+            f"  • 'reply' / 'reply to this' / 'respond'\n"
+            f"  • 'write email saying X' / 'send email saying X' / 'draft something'\n"
+            f"  • 'tell them X' / 'say hi' / 'thanks' / 'ack' / 'lmk'\n"
+            f"  • 'summarize it' / 'what does it say' / 'tldr'\n"
+            f"  • 'forward this' / 'forward to <addr>'\n"
+            f"DO NOT ASK THE USER 'who do you want to send this to?' — the "
+            f"answer is ALWAYS the sender of the open email (above) unless they "
+            f"named someone else. Asking that is the wrong move every time.\n\n"
+            f"RULES for the open email:\n"
+            f"1. DRAFT a reply (default for any 'write/send/reply/tell them' "
+            f"request without a different recipient): call `ui_control` with "
+            f"`action=\"open_email_reply\"` and `extra=\"{_em_uid} {_em_folder} "
+            f"reply\"`. This opens the proper reply doc with To/Subject/"
+            f"In-Reply-To pre-filled by the backend. The user will see and edit "
+            f"it before sending. DO NOT `create_document` a markdown file with "
+            f"hand-written `To:` / `Subject:` / `In-Reply-To:` headers — that "
+            f"is wrong every time.\n"
+            f"2. SEND a reply immediately (skip the draft): call "
+            f"`reply_to_email` with the UID above. Only do this when the user "
+            f"explicitly says 'send' / 'send the reply' / 'reply and send'.\n"
+            f"3. READ the full body (the preview above may be truncated): "
+            f"call `read_email` with the UID/folder/account above.\n"
+            f"4. SUMMARIZE / answer questions about it: read it first, then "
+            f"answer in chat. Don't create a document for a summary unless "
+            f"the user explicitly asks for one.\n"
+            f"5. Never ask the user to paste the email or 'share it with you' "
+            f"— you already have its identity above and can read the full body.\n"
+            f"6. The ONLY time you ask 'who to send to?' is when the user "
+            f"explicitly says 'send a NEW email to someone else' or names a "
+            f"recipient you can't identify. A bare 'send email saying X' = the "
+            f"open email's sender.\n"
+        )
+        _email_message = untrusted_context_message("active email reader", email_ctx)
+        _email_message["_protected"] = True
 
     # Inject writing style for any email writing path. This is deliberately
     # broader than read/list: models may compose via send_email, reply_to_email,
@@ -1258,6 +1323,9 @@ def _build_system_prompt(
     if _doc_message:
         merged.insert(last_user_idx, _doc_message)
         last_user_idx += 1  # the document message is now at last_user_idx
+    if _email_message:
+        merged.insert(last_user_idx, _email_message)
+        last_user_idx += 1
     if _skills_message:
         merged.insert(last_user_idx, _skills_message)
         last_user_idx += 1
@@ -1292,12 +1360,18 @@ def _build_base_prompt(
     from src.tool_index import ALWAYS_AVAILABLE
 
     disabled = set(disabled_tools or [])
-    if not get_setting("image_gen_enabled", True):
+    if not get_setting("image_gen_enabled", False):
         disabled.add("generate_image")
 
     if relevant_tools is not None:
-        # RAG mode: include always-available + retrieved + admin (if needed)
-        tool_names = set(ALWAYS_AVAILABLE) | set(relevant_tools)
+        # RAG mode: trust the relevant_tools set as already-composed.
+        # get_tools_for_query starts from ALWAYS_AVAILABLE and may
+        # *discard* tools that conflict with the query's intent (e.g.
+        # drop manage_memory for clear contact-save patterns). Unioning
+        # ALWAYS_AVAILABLE back in here used to silently undo those
+        # drops. Only force-include the irreducible loop primitives
+        # (ask_user, update_plan) as belt-and-suspenders.
+        tool_names = set(relevant_tools) | {"ask_user", "update_plan"}
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
         agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
@@ -1738,6 +1812,7 @@ async def stream_agent_loop(
     max_tool_calls: int = 0,
     context_length: int = 0,
     active_document=None,
+    active_email: Optional[Dict[str, str]] = None,
     session_id: Optional[str] = None,
     disabled_tools: Optional[Set[str]] = None,
     owner: Optional[str] = None,
@@ -1904,6 +1979,44 @@ async def stream_agent_loop(
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
+    # The skill index injected by _build_system_prompt tells the model to
+    # call `manage_skills action=view`, and Jaccard-matched skills are pasted
+    # into the prompt as procedures to follow — but neither path goes through
+    # tool selection, so the model can be handed a procedure naming tools
+    # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
+    # in lockstep: manage_skills is callable whenever any skill is indexed,
+    # and a matched skill's declared requires_toolsets ride along with it.
+    if not guide_only and _relevant_tools is not None:
+        try:
+            from services.memory.skills import SkillsManager
+            from src.constants import DATA_DIR
+            _skills_on = True
+            try:
+                from routes.prefs_routes import _load_for_user as _load_prefs
+                _skills_on = (_load_prefs(owner) or {}).get("skills_enabled", True)
+            except Exception:
+                pass
+            _sm = SkillsManager(DATA_DIR)
+            _owner_skills = _sm.load(owner=owner) if _skills_on else []
+            if _owner_skills:
+                _relevant_tools.add("manage_skills")
+                if _retrieval_query:
+                    # Validate against every known executable tool, not just
+                    # TOOL_SECTIONS — code-nav tools (grep/glob/ls) ship as
+                    # schemas without a prompt-prose section.
+                    from src.tool_policy import known_tool_names
+                    _known = known_tool_names()
+                    for _sk in _sm.get_relevant_skills(
+                        _retrieval_query, skills=_owner_skills,
+                        threshold=0.25, max_items=3,
+                    ):
+                        _relevant_tools.update(
+                            t for t in (_sk.get("requires_toolsets") or [])
+                            if t in _known
+                        )
+        except Exception as _e:
+            logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
@@ -1987,6 +2100,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         suppress_local_context=guide_only,
+        active_email=active_email,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
@@ -2167,9 +2281,17 @@ async def stream_agent_loop(
         elif _is_api_model:
             # Filter schemas by RAG-selected tools (if available)
             if _relevant_tools:
+                # _build_base_prompt unions _ADMIN_TOOLS into the prompt
+                # sections when admin intent fires — the schema list must
+                # offer the same names, or the model reads prose describing
+                # tools it cannot call and substitutes the nearest schema
+                # it does have (e.g. manage_memory for manage_skills).
+                _schema_names = set(_relevant_tools)
+                if _needs_admin:
+                    _schema_names |= _ADMIN_TOOLS
                 base_schemas = [
                     s for s in FUNCTION_TOOL_SCHEMAS
-                    if s.get("function", {}).get("name") in _relevant_tools
+                    if s.get("function", {}).get("name") in _schema_names
                 ]
                 _mcp_filtered = [
                     s for s in mcp_schemas
@@ -2705,6 +2827,46 @@ async def stream_agent_loop(
                     )
                 desc, result = await _tool_task
 
+            # A skill the model just loaded can prescribe tools that weren't
+            # RAG-selected this turn (declared via requires_toolsets in its
+            # frontmatter). Union them into the selection so the NEXT round's
+            # schema list includes them — otherwise the model reads "use
+            # grep" from the skill it fetched but has no grep schema to call.
+            if (
+                block.tool_type == "manage_skills"
+                and _relevant_tools is not None
+                and not result.get("error")
+            ):
+                _ms_args = {}
+                _ms_raw = (block.content or "").strip()
+                if _ms_raw.startswith("{"):
+                    try:
+                        _ms_args = json.loads(_ms_raw)
+                    except json.JSONDecodeError:
+                        _ms_args = {}
+                _ms_name = str(_ms_args.get("name", "") or "").strip()
+                if _ms_name and _ms_args.get("action") in ("view", "view_ref"):
+                    try:
+                        from services.memory.skills import SkillsManager as _SkM
+                        from src.constants import DATA_DIR as _DD
+                        from src.tool_policy import known_tool_names as _ktn
+                        _known = _ktn()
+                        for _sk in _SkM(_DD).load(owner=owner):
+                            if _sk.get("name") == _ms_name:
+                                _new = {
+                                    t for t in (_sk.get("requires_toolsets") or [])
+                                    if t in _known and t not in _relevant_tools
+                                }
+                                if _new:
+                                    _relevant_tools.update(_new)
+                                    logger.info(
+                                        "[tool-rag] skill '%s' unlocked tools for next round: %s",
+                                        _ms_name, sorted(_new),
+                                    )
+                                break
+                    except Exception as _e:
+                        logger.debug(f"skill requires_toolsets unlock skipped: {_e}")
+
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
             # first so the <!-- SOURCES:…--> marker is found and stripped even
@@ -2824,7 +2986,19 @@ async def stream_agent_loop(
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
-                for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):
+                for k in (
+                    "toggle_name", "state", "mode", "model", "endpoint_url",
+                    "theme_name", "colors",
+                    # ui_control open_email_reply payload — without these the
+                    # frontend openReplyDraft bails on undefined uid and the
+                    # reply window silently never opens.
+                    "uid", "folder", "account_id",
+                    # Optional pre-filled body for open_email_reply so the
+                    # agent can compose-and-open in one tool call.
+                    "body",
+                    # ui_control open_panel payload
+                    "panel",
+                ):
                     if k in result:
                         tool_output_data[k] = result[k]
             # Forward image data from generate_image tool

@@ -421,6 +421,8 @@ Key settings:
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
 | `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
+| `APP_DATA_DIR` | `./data` | Docker Compose host directory for application data volumes. |
+| `APP_LOGS_DIR` | `./logs` | Docker Compose host directory for application logs. |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `ALLOWED_ORIGINS` | `http://localhost,http://127.0.0.1` | Comma-separated exact permitted origins for cross-origin browser/API clients. |
@@ -466,6 +468,9 @@ docs/      landing page (index.html) + preview clips
 ## Data
 All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
+
+To back up or restore everything in `data/`, see the
+[Backup & Restore guide](docs/backup-restore.md).
 
 ## Star History
 
