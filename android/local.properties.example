@@ -1,0 +1,9 @@
+# Android Studio creates android/local.properties automatically.
+# If you need to set it by hand, copy this file to local.properties and update
+# the path for your Android SDK.
+#
+# Windows example:
+# sdk.dir=C\:\\Users\\Falab\\AppData\\Local\\Android\\Sdk
+#
+# macOS example:
+# sdk.dir=/Users/you/Library/Android/sdk

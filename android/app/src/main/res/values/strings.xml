@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Odysseus Simple Signal</string>
+    <string name="default_odysseus_url">http://10.0.2.2:7000</string>
+</resources>

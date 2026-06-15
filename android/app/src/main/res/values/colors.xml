@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="odysseus_bg">#050805</color>
+    <color name="odysseus_panel">#101410</color>
+    <color name="odysseus_green">#22ff22</color>
+    <color name="odysseus_text">#edf4ed</color>
+</resources>

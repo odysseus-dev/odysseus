@@ -9,6 +9,8 @@
 *.bash text eol=lf
 entrypoint.sh text eol=lf
 docker/entrypoint.sh text eol=lf
+gradlew text eol=lf
+android/gradlew text eol=lf
 
 # Windows-native scripts stay CRLF.
 *.ps1 text eol=crlf
@@ -23,5 +25,6 @@ docker/entrypoint.sh text eol=lf
 *.webp binary
 *.pdf  binary
 *.ico  binary
+*.jar  binary
 *.woff binary
 *.woff2 binary

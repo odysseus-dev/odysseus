@@ -1,0 +1,26 @@
+plugins {
+    id "com.android.application"
+}
+
+def odysseusDefaultUrl = providers.gradleProperty("ODYSSEUS_ANDROID_URL")
+        .orElse("http://10.0.2.2:7000")
+        .get()
+
+android {
+    namespace = "com.odysseus.simplesignal"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.odysseus.simplesignal"
+        minSdk = 26
+        targetSdk = 37
+        versionCode = 1
+        versionName = "0.1.0"
+
+        buildConfigField "String", "ODYSSEUS_DEFAULT_URL", "\"${odysseusDefaultUrl}\""
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+}
