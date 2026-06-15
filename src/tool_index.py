@@ -384,6 +384,10 @@ class ToolIndex:
                    "delegate to", "have model"}):
             {"chat_with_model", "ask_teacher", "list_models"},
         # Deep research intent (incl. common typo "reserach")
+        frozenset({"web search", "search the web", "search online", "look up",
+                   "google", "latest", "current", "news", "weather",
+                   "forecast", "stock price", "price of"}):
+            {"web_search", "web_fetch"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
                    "report on", "do research", "look up everything"}):

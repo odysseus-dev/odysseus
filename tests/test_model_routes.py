@@ -625,7 +625,39 @@ def test_generic_endpoint_error_message_preserves_probe_error():
         {"error": "HTTP 401"},
     )
 
-    assert msg == "No models found for that provider/key. Last probe error: HTTP 401."
+    # Issue #25: the message must include the probed URL so the user can
+    # self-diagnose (was opaque "No models found for that provider/key").
+    assert "No models found for that provider/key" in msg
+    assert "HTTP 401" in msg
+    assert "https://api.example.com/v1/models" in msg
+
+
+def test_lmstudio_endpoint_error_message_includes_hint_and_probed_url():
+    # Issue #25: when the user pastes an LM Studio URL, surface a port-aware
+    # hint and the URL we actually probed (not the bare base URL).
+    msg = model_routes._model_endpoint_error_message(
+        "http://localhost:1234/v1",
+        {"error": "HTTP 200"},  # 200-with-empty-list is the LM Studio trap
+    )
+
+    assert "LM Studio" in msg
+    assert "port 1234" in msg
+    assert "http://localhost:1234/v1/models" in msg
+    assert "Developer Server" in msg
+
+
+def test_lmstudio_error_for_bare_host_port_probes_v1_models(monkeypatch):
+    # Regression: build_models_url must add /v1 for path-less LM Studio URLs
+    # (the OpenAI-compatible branch lands on /v1/models for LM Studio).
+    # _is_ollama_native_url would otherwise match localhost+empty path and
+    # route to /api/tags, masking the LM Studio URL we want to assert on.
+    monkeypatch.setattr("src.llm_core._is_ollama_native_url", lambda url: False)
+    msg = model_routes._model_endpoint_error_message(
+        "http://localhost:1234",
+        {"error": "HTTP 200"},
+    )
+    assert "LM Studio" in msg
+    assert "http://localhost:1234/v1/models" in msg
 
 
 # ── _rewrite_loopback_for_docker (issue #25: LM Studio on host loopback) ──

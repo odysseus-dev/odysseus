@@ -29,6 +29,7 @@ from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
+from src.task_endpoint import resolve_task_endpoint
 from src.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
 
 logger = logging.getLogger(__name__)
@@ -240,14 +241,18 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         }
         messages = [system_msg] + sess.get_context_messages()
 
+        t_url, t_model, t_headers = resolve_task_endpoint(
+            sess.endpoint_url, sess.model, sess.headers, owner=_owner(request)
+        )
+
         try:
             suggestion_text = await llm_call_async(
-                sess.endpoint_url,
-                sess.model,
+                t_url,
+                t_model,
                 messages,
                 temperature=0.2,
                 max_tokens=500,
-                headers=sess.headers,
+                headers=t_headers,
             )
             try:
                 suggestions = json.loads(suggestion_text)
@@ -278,42 +283,50 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         endpoint_url = model = None
         headers = {}
 
-        # Try default model from settings first
-        settings = _load_settings()
-        ep_id = settings.get("default_endpoint_id", "")
-        default_model = settings.get("default_model", "")
-        if ep_id:
-            db = SessionLocal()
-            try:
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
-                ).first()
-                if ep:
-                    base = _normalize_base(ep.base_url)
-                    endpoint_url = build_chat_url(base)
-                    model = default_model
-                    if not model and ep.models:
-                        try:
-                            models = _json.loads(ep.models) if isinstance(ep.models, str) else ep.models
-                            if models:
-                                model = models[0]
-                        except Exception:
-                            pass
-                    if ep.api_key:
-                        headers = {"Authorization": f"Bearer {ep.api_key}"}
-            finally:
-                db.close()
+        # Try utility model from settings first — memory audit is a background
+        # task and should prefer the lighter utility model over the main chat model.
+        from src.task_endpoint import resolve_task_endpoint
+        user = _owner(request)
+        t_url, t_model, t_headers = resolve_task_endpoint(owner=user)
+        if t_url and t_model:
+            endpoint_url, model, headers = t_url, t_model, t_headers
+        else:
+            # Fall back to default model if no task/utility model configured
+            settings = _load_settings()
+            ep_id = settings.get("default_endpoint_id", "")
+            default_model = settings.get("default_model", "")
+            if ep_id:
+                db = SessionLocal()
+                try:
+                    ep = db.query(ModelEndpoint).filter(
+                        ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
+                    ).first()
+                    if ep:
+                        base = _normalize_base(ep.base_url)
+                        endpoint_url = build_chat_url(base)
+                        model = default_model
+                        if not model and ep.models:
+                            try:
+                                models = _json.loads(ep.models) if isinstance(ep.models, str) else ep.models
+                                if models:
+                                    model = models[0]
+                            except Exception:
+                                pass
+                        if ep.api_key:
+                            headers = {"Authorization": f"Bearer {ep.api_key}"}
+                finally:
+                    db.close()
 
-        # Fall back to session model if no default configured
-        if not endpoint_url and session:
-            try:
-                sess = session_manager.get_session(session)
-                _assert_session_owner(sess, _owner(request))
-                endpoint_url = sess.endpoint_url
-                model = sess.model
-                headers = sess.headers
-            except KeyError:
-                pass
+            # Fall back to session model if no default configured
+            if not endpoint_url and session:
+                try:
+                    sess = session_manager.get_session(session)
+                    _assert_session_owner(sess, _owner(request))
+                    endpoint_url = sess.endpoint_url
+                    model = sess.model
+                    headers = sess.headers
+                except KeyError:
+                    pass
 
         if not endpoint_url or not model:
             raise HTTPException(400, "No default model configured — set one in Settings")
@@ -360,13 +373,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             try:
                 sess = session_manager.get_session(session)
                 _assert_session_owner(sess, _owner(request))
-                endpoint_url = sess.endpoint_url
-                model = sess.model
-                headers = sess.headers
+                endpoint_url, model, headers = resolve_task_endpoint(
+                    sess.endpoint_url, sess.model, sess.headers, owner=_owner(request)
+                )
             except KeyError:
                  raise HTTPException(404, "Session not found — needed for LLM config")
         else:
-            endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
+            endpoint_url, model, headers = resolve_task_endpoint(owner=_owner(request))
     
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")

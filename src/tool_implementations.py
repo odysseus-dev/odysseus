@@ -1643,6 +1643,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
 
+            if end_dt <= start_dt:
+                end_dt = start_dt + timedelta(days=1)
+
             q = _event_query().filter(
                 CalendarEvent.dtstart < end_dt,
                 CalendarEvent.dtend > start_dt,

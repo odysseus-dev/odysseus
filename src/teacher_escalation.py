@@ -594,6 +594,8 @@ async def run_teacher_inline(
                         "exit_code": payload.get("exit_code"),
                     })
                 if "delta" in payload and isinstance(payload["delta"], str):
+                    if payload.get("thinking"):
+                        continue
                     captured_text_parts.append(payload["delta"])
                 yield 'data: ' + json.dumps(payload) + '\n\n'
                 continue

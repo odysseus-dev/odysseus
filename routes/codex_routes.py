@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
+from routes._validators import validate_remote_host, validate_ssh_port
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -34,6 +35,21 @@ CALENDAR_WRITE_SCOPES = {"calendar:write"}
 DOCS_READ_SCOPES = {"documents:read", "documents:write"}
 DOCS_WRITE_SCOPES = {"documents:write"}
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
+
+
+def _ssh_prefix_for_task(task: dict) -> tuple[str, str]:
+    """Resolve a cookbook task's stored SSH target into ``(host, port_flag)``.
+
+    ``host`` is ``""`` for a local task. ``remoteHost`` / ``sshPort`` come from
+    cookbook_state.json and get interpolated into an ``ssh`` command string, so
+    validate them the same way the cookbook routes do. A tampered entry with
+    shell metacharacters in ``remoteHost`` is rejected with 400 rather than
+    injected.
+    """
+    host = validate_remote_host((task.get("remoteHost") or "").strip() or None) or ""
+    ssh_port = validate_ssh_port((task.get("sshPort") or "").strip() or None) or ""
+    port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+    return host, port_flag
 
 
 async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
@@ -486,8 +502,7 @@ def setup_codex_routes(
         task = next((t for t in tasks if t.get("sessionId") == session_id), None)
         if task is None:
             raise HTTPException(404, "task not found")
-        host = (task.get("remoteHost") or "").strip()
-        ssh_port = (task.get("sshPort") or "").strip()
+        host, port_flag = _ssh_prefix_for_task(task)
         # Prefer the persisted log file over the tmux pane. The pane gets
         # overwritten by the post-crash neofetch banner + bash prompt the
         # moment vllm exits; the log file is the raw stdout/stderr and
@@ -499,7 +514,6 @@ def setup_codex_routes(
             f"else tmux capture-pane -t {session_id} -p -S -{tail}; fi"
         )
         if host:
-            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             import shlex
             cmd = f"ssh {port_flag}{host} {shlex.quote(inner)}"
         else:
@@ -561,10 +575,8 @@ def setup_codex_routes(
         state = _read_cookbook_state()
         tasks = state.get("tasks") or []
         task = next((t for t in tasks if t.get("sessionId") == session_id), None)
-        host = ((task or {}).get("remoteHost") or "").strip()
-        ssh_port = ((task or {}).get("sshPort") or "").strip()
+        host, port_flag = _ssh_prefix_for_task(task or {})
         if host:
-            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             cmd = f"ssh {port_flag}{host} \"tmux kill-session -t {session_id}\""
         else:
             cmd = f"tmux kill-session -t {session_id}"
