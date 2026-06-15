@@ -788,6 +788,17 @@ async def _execute_tool_block_impl(
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
 
+
+    # HACK:
+    # This is a temporary workaround for a circular dependency between
+    # tool_execution.py and agent_tools.__init__.py.
+    #
+    # See issue #4277:
+    # refactor(tools): Move the registry from __init__.py into a
+    # dedicated registry.py module.
+    #
+    # Do not copy this pattern elsewhere. This import should be removed
+    # once the registry refactor is completed.
     elif tool in __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"]).TOOL_HANDLERS:
         first_line = content.split(chr(10))[0][:80]
         desc = f"registry: {tool} {first_line}".strip()
