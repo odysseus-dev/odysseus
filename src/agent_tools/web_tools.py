@@ -106,8 +106,7 @@ class WebFetchTool:
 
         # Tell the model when the download budget cut the body short and how
         # to get the rest, instead of silently presenting a partial page as
-        # the whole thing. The notice leads the output so MAX_OUTPUT_CHARS
-        # trimming below can never drop it.
+        # the whole thing.
         size_note = ""
         if result.get("truncated"):
             fetched = result.get("fetched_bytes") or 0
@@ -119,8 +118,14 @@ class WebFetchTool:
                 f"{WEB_FETCH_HARD_MAX_BYTES:,} bytes.]\n\n"
             )
 
-        header = (f"# {title}\n" if title else "") + f"Source: {url}\n\n" + size_note
-        output = header + text
+        # The notice must lead the output so the MAX_OUTPUT_CHARS trim below can
+        # never drop it. The title is untrusted, uncapped page content, so a
+        # giant title ahead of the notice could push it out of range; keep the
+        # notice first and cap the title as a second guard.
+        if len(title) > 300:
+            title = title[:300] + "..."
+        header = (f"# {title}\n" if title else "") + f"Source: {url}\n\n"
+        output = size_note + header + text
         if len(output) > MAX_OUTPUT_CHARS:
             output = output[:MAX_OUTPUT_CHARS] + "\n\n[...truncated]"
         return {"output": output, "exit_code": 0}

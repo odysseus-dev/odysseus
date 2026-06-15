@@ -153,7 +153,15 @@ def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 
     for _ in range(max_redirects + 1):
         if not _public_http_url(current):
             raise httpx.RequestError("Blocked private/internal URL", request=httpx.Request("GET", current))
-        with httpx.stream("GET", current, headers=headers, timeout=timeout,
+        # Force identity transfer-encoding. With gzip/deflate the wire bytes
+        # (and Content-Length) can be a small fraction of the decoded body, so
+        # a tiny compressed response could pass the hard-cap preflight and then
+        # expand past the ceiling in a single decoded chunk before the streamed
+        # cap below can slice it. Identity makes Content-Length the true body
+        # size and keeps each streamed chunk bounded by the network read.
+        req_headers = dict(headers or {})
+        req_headers["Accept-Encoding"] = "identity"
+        with httpx.stream("GET", current, headers=req_headers, timeout=timeout,
                           follow_redirects=False) as response:
             if response.status_code in (301, 302, 303, 307, 308):
                 location = response.headers.get("location")
@@ -176,8 +184,9 @@ def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 
             chunks = []
             read = 0
             truncated = False
-            # iter_bytes yields decompressed bytes, so the cap bounds what we
-            # actually hold in memory regardless of Content-Encoding.
+            # We requested identity above, so iter_bytes yields the raw body in
+            # network-read-sized chunks (no decompression expansion); the cap
+            # therefore bounds what we actually buffer.
             for chunk in response.iter_bytes():
                 read += len(chunk)
                 if read > cap:
@@ -349,7 +358,9 @@ def fetch_webpage_content(url: str, timeout: int = 5, retry_attempt: int = 0,
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
-            "Accept-Encoding": "gzip, deflate",
+            # identity so the streamed size cap in _get_public_url stays honest
+            # (a compressed body can decode to far more than Content-Length).
+            "Accept-Encoding": "identity",
             "Connection": "keep-alive",
         }
         response = _get_public_url(url, headers=headers, timeout=timeout,

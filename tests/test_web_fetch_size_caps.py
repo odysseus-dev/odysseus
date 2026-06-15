@@ -115,6 +115,50 @@ def test_truncated_pdf_is_an_error_not_garbage(monkeypatch, no_cache):
     assert "TooLarge" in r["error"]
 
 
+def test_fetch_requests_identity_encoding(monkeypatch, no_cache):
+    # Compressed responses can decode to far more than Content-Length, so the
+    # streamed cap and the hard-cap preflight are only honest when we refuse
+    # transfer compression. Pin that the fetch advertises identity, not gzip.
+    seen = {}
+
+    @contextmanager
+    def fake_stream(method, url, **kwargs):
+        seen["headers"] = kwargs.get("headers") or {}
+        yield _FakeStream(b"hello")
+    monkeypatch.setattr(content_mod.httpx, "stream", fake_stream)
+
+    content_mod.fetch_webpage_content("https://example.com/a.txt")
+    assert seen["headers"].get("Accept-Encoding") == "identity"
+
+
+def test_oversized_title_does_not_hide_partial_notice(monkeypatch):
+    # The partial-content notice is the PR's core contract; an untrusted,
+    # oversized page title must not push it past MAX_OUTPUT_CHARS.
+    import asyncio
+    from src.agent_tools.web_tools import WebFetchTool
+    from src.constants import MAX_OUTPUT_CHARS
+
+    def fake_fetch(url, timeout=10, max_bytes=None):
+        return {
+            "content": "partial body",
+            "title": "T" * (MAX_OUTPUT_CHARS + 5_000),
+            "error": "",
+            "truncated": True,
+            "fetched_bytes": WEB_FETCH_SOFT_MAX_BYTES,
+            "total_bytes": 9_000_000,
+        }
+
+    import src.search.content as alias_mod
+    monkeypatch.setattr(alias_mod, "fetch_webpage_content", fake_fetch)
+
+    out = asyncio.run(WebFetchTool().execute(
+        json.dumps({"url": "https://example.com/big.txt"}), ctx={}
+    ))
+    assert out["exit_code"] == 0
+    assert out["output"].startswith("[partial content:")
+    assert '"full": true' in out["output"]
+
+
 def test_tool_layer_emits_partial_notice_and_parses_full(monkeypatch):
     import asyncio
     from src.agent_tools.web_tools import WebFetchTool
