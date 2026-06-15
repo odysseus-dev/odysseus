@@ -3369,6 +3369,9 @@ body.bg-pattern-sparkles {
       --ctx-cat-web: color-mix(in srgb, hsl(192 74% 46%) 78%, var(--fg));
       --ctx-cat-summarized_conversation: color-mix(in srgb, hsl(24 78% 52%) 78%, var(--fg));
       --ctx-cat-conversation: color-mix(in srgb, hsl(252 62% 58%) 78%, var(--fg));
+      /* Unused window in the bar — low-chroma wash only (never --border: accent on many themes) */
+      --ctx-bar-empty: color-mix(in srgb, var(--fg) 4%, var(--panel, var(--bg)));
+      --ctx-bar-empty-border: color-mix(in srgb, var(--fg) 7%, transparent);
     }
     .ctx-popup-header {
       display: flex;
@@ -3425,13 +3428,14 @@ body.bg-pattern-sparkles {
       display: flex;
       width: 100%;
       height: 8px;
-      /* Unused window — neutral track only; do not mix --fg or it matches segments */
-      background: color-mix(in srgb, var(--border) 88%, var(--bg));
-      border: 1px solid color-mix(in srgb, var(--border) 65%, var(--fg));
       border-radius: 4px;
       overflow: hidden;
       margin-bottom: 10px;
       box-sizing: border-box;
+    }
+    .ctx-detail-popup--expanded .ctx-segmented-bar {
+      background: var(--ctx-bar-empty);
+      border: 1px solid var(--ctx-bar-empty-border);
     }
     .ctx-segment {
       height: 100%;
