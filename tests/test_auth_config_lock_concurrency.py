@@ -8,11 +8,49 @@ with missing users or assertion errors.
 import json
 import threading
 import time
+import contextlib
+import sys
+import types
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
 from tests.helpers.import_state import clear_module
+
+
+class _OwnerColumn:
+    def __eq__(self, other):
+        return ("owner ==", other)
+
+
+class _FakeApiToken:
+    owner = _OwnerColumn()
+
+
+class _FakeQuery:
+    def filter(self, *_conds):
+        return self
+
+    def delete(self, *args, **kwargs):
+        return 0
+
+
+class _FakeSession:
+    def query(self, model):
+        assert model is _FakeApiToken
+        return _FakeQuery()
+
+
+@pytest.fixture(autouse=True)
+def _stub_api_token_purge(monkeypatch):
+    @contextlib.contextmanager
+    def _fake_db_session():
+        yield _FakeSession()
+
+    db_stub = types.ModuleType("core.database")
+    db_stub.get_db_session = _fake_db_session
+    db_stub.ApiToken = _FakeApiToken
+    monkeypatch.setitem(sys.modules, "core.database", db_stub)
 
 
 def _fresh_auth_manager(tmp_path):
@@ -25,6 +63,7 @@ def _fresh_auth_manager(tmp_path):
 class TestConcurrentCreateUser:
     """Concurrent create_user calls must not lose accounts."""
 
+    @pytest.mark.slow
     def test_parallel_creates_no_lost_users(self, tmp_path):
         mgr = _fresh_auth_manager(tmp_path)
         num_users = 50
@@ -63,6 +102,7 @@ class TestConcurrentCreateUser:
 class TestConcurrentDeleteUser:
     """Concurrent deletes must not corrupt state."""
 
+    @pytest.mark.slow
     def test_parallel_deletes_no_corruption(self, tmp_path):
         mgr = _fresh_auth_manager(tmp_path)
         mgr.create_user("admin", "adminpw", is_admin=True)
@@ -90,6 +130,7 @@ class TestConcurrentDeleteUser:
 class TestConcurrentRenameUser:
     """Concurrent renames must not lose or duplicate users."""
 
+    @pytest.mark.slow
     def test_parallel_renames_no_lost_users(self, tmp_path):
         mgr = _fresh_auth_manager(tmp_path)
         mgr.create_user("admin", "adminpw", is_admin=True)
@@ -115,6 +156,7 @@ class TestConcurrentRenameUser:
 class TestConcurrentMixedOperations:
     """Mixed create/delete/rename at the same time."""
 
+    @pytest.mark.slow
     def test_mixed_operations_no_corruption(self, tmp_path):
         mgr = _fresh_auth_manager(tmp_path)
         mgr.create_user("admin", "adminpw", is_admin=True)
@@ -161,6 +203,7 @@ class TestConcurrentMixedOperations:
 class TestDiskConsistency:
     """Verify auth.json is never in a corrupt state during concurrent writes."""
 
+    @pytest.mark.slow
     def test_file_always_valid_json_during_concurrent_ops(self, tmp_path):
         mgr = _fresh_auth_manager(tmp_path)
         mgr.create_user("admin", "adminpw", is_admin=True)

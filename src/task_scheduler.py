@@ -1324,7 +1324,10 @@ class TaskScheduler:
             db.commit()
             if self._session_manager:
                 try:
-                    self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
+                    self._session_manager.ensure_task_session(
+                        session_id, f"[Task] {task.name}", endpoint_url, model,
+                        owner=task.owner, task=task
+                    )
                 except Exception:
                     pass
 
@@ -1335,11 +1338,24 @@ class TaskScheduler:
             return await self._execute_checkin(task, crew, db, session_id, endpoint_url, model)
 
         # Build system prompt: crew member persona overrides the default.
+        # Built-in character_id (Socrates, Razor, etc.) further biases the
+        # voice — it prepends to whichever base prompt we landed on so the
+        # task still knows it's executing a scheduled task but in that
+        # character's tone.
         system_prompt = (
             (crew.personality or "").strip()
             if crew and crew.personality
             else "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         )
+        char_id = (getattr(task, "character_id", None) or "").strip()
+        if char_id:
+            try:
+                from src.reminder_personas import PERSONAS as _PERSONAS
+                char_prompt = _PERSONAS.get(char_id.lower())
+                if char_prompt:
+                    system_prompt = f"{char_prompt}\n\n{system_prompt}"
+            except Exception:
+                pass
         # Inject current time so the model knows what's past vs upcoming
         tz_name = _resolve_task_timezone(db, task)
         try:
@@ -1417,6 +1433,7 @@ class TaskScheduler:
         task's visible output target.
         """
         from core.database import Session as DbSession, ChatMessage, CrewMember
+        from core.models import ChatMessage as MemChatMessage
 
         output = task.output_target or "session"
         if (
@@ -1473,7 +1490,10 @@ class TaskScheduler:
             db.commit()
             if self._session_manager:
                 try:
-                    self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
+                    self._session_manager.ensure_task_session(
+                        session_id, f"[Task] {task.name}", endpoint_url, model_name,
+                        owner=task.owner, task=task
+                    )
                 except Exception:
                     pass
 
@@ -1482,36 +1502,50 @@ class TaskScheduler:
             meta["model"] = model_name
         if crew and crew.is_default_assistant:
             meta.update({"source": "cron", "task_id": task.id, "task_name": task.name})
-        msg_meta = json.dumps(meta)
-        user_content = task.prompt or f"[Task] {task.name}"
-        user_msg = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            role="user",
-            content=user_content,
-            timestamp=_utcnow(),
-            meta_data=msg_meta,
-        )
-        assistant_msg = ChatMessage(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            role="assistant",
-            content=result or "",
-            timestamp=_utcnow(),
-            meta_data=msg_meta,
-        )
-        db.add(user_msg)
-        db.add(assistant_msg)
-        db.commit()
 
-        if self._session_manager:
+        # Use SessionManager for persistence so in-memory cache stays in sync
+        if self._session_manager and session_id:
             try:
-                from core.models import ChatMessage as MemMsg
-                sess_obj = self._session_manager.get_session(session_id)
-                sess_obj.history.append(MemMsg(role="user", content=user_msg.content, metadata=meta))
-                sess_obj.history.append(MemMsg(role="assistant", content=assistant_msg.content, metadata=meta))
+                self._session_manager.add_message(
+                    session_id,
+                    MemChatMessage(
+                        "user",
+                        task.prompt or f"[Task] {task.name}",
+                        metadata=dict(meta),
+                    ),
+                )
+                self._session_manager.add_message(
+                    session_id,
+                    MemChatMessage(
+                        "assistant",
+                        result or "",
+                        metadata=dict(meta),
+                    ),
+                )
             except Exception:
-                pass
+                logger.exception("Failed to deliver task %s through SessionManager", task.id)
+        else:
+            # Fallback: raw DB write (no session manager available)
+            msg_meta = json.dumps(meta)
+            user_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="user",
+                content=task.prompt or f"[Task] {task.name}",
+                timestamp=_utcnow(),
+                meta_data=msg_meta,
+            )
+            assistant_msg = ChatMessage(
+                id=str(uuid.uuid4()),
+                session_id=session_id,
+                role="assistant",
+                content=result or "",
+                timestamp=_utcnow(),
+                meta_data=msg_meta,
+            )
+            db.add(user_msg)
+            db.add(assistant_msg)
+            db.commit()
 
     @staticmethod
     def _is_email_output_target(output: str) -> bool:
@@ -1628,6 +1662,8 @@ class TaskScheduler:
                     data = json.loads(event_str[6:])
                     # Capture text from all event types, not just delta
                     if "delta" in data:
+                        if data.get("thinking"):
+                            continue
                         full_text += data["delta"]
                     elif data.get("type") == "tool_output":
                         # Tool results — capture summary so we have SOMETHING even

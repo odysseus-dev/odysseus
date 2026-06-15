@@ -30,7 +30,7 @@ class _Session:
 
 
 def test_allowed_models_legacy_empty_list_remains_unrestricted(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     _enforce_chat_privileges(
         _Request({"allowed_models": [], "max_messages_per_day": 0}),
@@ -39,7 +39,7 @@ def test_allowed_models_legacy_empty_list_remains_unrestricted(monkeypatch):
 
 
 def test_allowed_models_explicit_empty_restricted_list_blocks_all_models(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     with pytest.raises(HTTPException) as exc:
         _enforce_chat_privileges(
@@ -56,7 +56,7 @@ def test_allowed_models_explicit_empty_restricted_list_blocks_all_models(monkeyp
 
 
 def test_allowed_models_nonempty_list_still_restricts_without_new_flag(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     _enforce_chat_privileges(
         _Request({"allowed_models": ["provider/model-a"], "max_messages_per_day": 0}),
@@ -70,7 +70,7 @@ def test_allowed_models_nonempty_list_still_restricts_without_new_flag(monkeypat
 
 
 def test_no_restriction_allows_any_model(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     privs = {"allowed_models": [], "block_all_models": False, "max_messages_per_day": 0}
     _enforce_chat_privileges(_Request(privs), _Session("provider/model-a"))
@@ -78,7 +78,7 @@ def test_no_restriction_allows_any_model(monkeypatch):
 
 
 def test_specific_allowlist_blocks_models_outside_it(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     privs = {
         "allowed_models": ["gpt-4"],
@@ -92,7 +92,7 @@ def test_specific_allowlist_blocks_models_outside_it(monkeypatch):
 
 
 def test_block_all_models_blocks_regardless_of_allowed_models_contents(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     # Even if allowed_models contains entries, block_all_models wins.
     privs = {
@@ -111,7 +111,7 @@ def test_block_all_models_blocks_regardless_of_allowed_models_contents(monkeypat
 def test_admin_user_is_never_blocked(monkeypatch):
     from core.auth import ADMIN_PRIVILEGES
 
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "admin")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "admin")
 
     class _AdminAuthManager:
         def get_privileges(self, username):
@@ -218,3 +218,47 @@ def test_save_assistant_response_preserves_actual_and_requested_model():
 
     assert sess.history[-1].metadata["requested_model"] == "selected-model"
     assert sess.history[-1].metadata["model"] == "actual-model"
+
+
+from types import SimpleNamespace
+from routes.chat_helpers import _session_is_research_spinoff
+
+
+class _SpinMsg:
+    def __init__(self, role, metadata=None):
+        self.role = role
+        self.metadata = metadata
+
+
+def test_spinoff_detected_from_chatmessage_history():
+    sess = SimpleNamespace(history=[
+        _SpinMsg("system", {"research_spinoff_from": "rp-1"}),
+        _SpinMsg("user", None),
+    ])
+    assert _session_is_research_spinoff(sess) is True
+
+
+def test_spinoff_detected_from_dict_history():
+    sess = SimpleNamespace(history=[
+        {"role": "system", "metadata": {"research_spinoff_from": "rp-2"}},
+        {"role": "user", "content": "hi"},
+    ])
+    assert _session_is_research_spinoff(sess) is True
+
+
+def test_non_spinoff_plain_session_is_false():
+    sess = SimpleNamespace(history=[
+        _SpinMsg("system", {"compacted": True}),
+        _SpinMsg("user", None),
+    ])
+    assert _session_is_research_spinoff(sess) is False
+
+
+def test_metadata_on_non_system_message_ignored():
+    sess = SimpleNamespace(history=[_SpinMsg("user", {"research_spinoff_from": "rp-3"})])
+    assert _session_is_research_spinoff(sess) is False
+
+
+def test_empty_or_missing_history():
+    assert _session_is_research_spinoff(SimpleNamespace(history=[])) is False
+    assert _session_is_research_spinoff(SimpleNamespace()) is False
