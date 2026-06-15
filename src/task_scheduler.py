@@ -1338,11 +1338,24 @@ class TaskScheduler:
             return await self._execute_checkin(task, crew, db, session_id, endpoint_url, model)
 
         # Build system prompt: crew member persona overrides the default.
+        # Built-in character_id (Socrates, Razor, etc.) further biases the
+        # voice — it prepends to whichever base prompt we landed on so the
+        # task still knows it's executing a scheduled task but in that
+        # character's tone.
         system_prompt = (
             (crew.personality or "").strip()
             if crew and crew.personality
             else "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
         )
+        char_id = (getattr(task, "character_id", None) or "").strip()
+        if char_id:
+            try:
+                from src.reminder_personas import PERSONAS as _PERSONAS
+                char_prompt = _PERSONAS.get(char_id.lower())
+                if char_prompt:
+                    system_prompt = f"{char_prompt}\n\n{system_prompt}"
+            except Exception:
+                pass
         # Inject current time so the model knows what's past vs upcoming
         tz_name = _resolve_task_timezone(db, task)
         try:

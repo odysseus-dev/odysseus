@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -335,6 +336,37 @@ def _detect_apple_silicon():
     if total_gb <= 0:
         return None
 
+    def _parse_apple_gpu_cores(text):
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            data = None
+        if isinstance(data, dict):
+            for gpu in data.get("SPDisplaysDataType") or []:
+                if not isinstance(gpu, dict):
+                    continue
+                model = str(gpu.get("sppci_model") or gpu.get("_name") or "")
+                if "apple" not in model.lower():
+                    continue
+                cores = gpu.get("sppci_cores")
+                try:
+                    return int(str(cores).strip())
+                except (TypeError, ValueError):
+                    continue
+        m = re.search(r"Total Number of Cores:\s*(\d+)", text)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                return None
+        return None
+
+    gpu_cores = _parse_apple_gpu_cores(_run(["system_profiler", "SPDisplaysDataType", "-json"]))
+    if gpu_cores is None:
+        gpu_cores = _parse_apple_gpu_cores(_run(["system_profiler", "SPDisplaysDataType"]))
+
     # Usable GPU budget. macOS lets Metal use most of unified memory, but the
     # default working-set limit scales with RAM: small machines have to keep
     # more back for the OS + app. These fractions track Apple's
@@ -357,7 +389,7 @@ def _detect_apple_silicon():
         pass
 
     gpu = {"index": 0, "name": brand, "vram_gb": vram_gb}
-    return {
+    info = {
         "gpu_name": brand,
         "gpu_vram_gb": vram_gb,
         "gpu_count": 1,
@@ -369,6 +401,9 @@ def _detect_apple_silicon():
         # separate pool — downstream fit logic uses this to avoid double-budgeting.
         "unified_memory": True,
     }
+    if gpu_cores is not None:
+        info["gpu_cores"] = gpu_cores
+    return info
 
 
 def _read_file(path):
@@ -772,6 +807,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "gpu_name": gpu_info["gpu_name"],
             "gpu_vram_gb": gpu_info["gpu_vram_gb"],
             "gpu_count": gpu_info["gpu_count"],
+            "gpu_cores": gpu_info.get("gpu_cores"),
             "gpus": gpu_info.get("gpus", []),
             "gpu_groups": gpu_info.get("gpu_groups", []),
             "homogeneous": gpu_info.get("homogeneous", True),

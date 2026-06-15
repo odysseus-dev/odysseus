@@ -71,21 +71,24 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     safe_name = _sanitize_gallery_filename(filename)
     original = str(filename or "")
+    root = GALLERY_IMAGE_DIR.resolve()
+    path = (GALLERY_IMAGE_DIR / safe_name).resolve()
+    try:
+        if os.path.commonpath([str(root), str(path)]) != str(root):
+            raise ValueError
+    except Exception:
+        raise HTTPException(400, "Unsafe gallery filename")
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
-    candidates: list[Path] = []
-    for image_root in _gallery_image_roots():
-        root = image_root.resolve()
-        path = (image_root / safe_name).resolve()
+    if not path.exists():
+        cwd_root = (Path.cwd() / "data" / "generated_images").resolve()
+        cwd_path = (cwd_root / safe_name).resolve()
         try:
-            if os.path.commonpath([str(root), str(path)]) != str(root):
-                raise ValueError
+            if os.path.commonpath([str(cwd_root), str(cwd_path)]) == str(cwd_root) and cwd_path.exists():
+                return cwd_path
         except Exception:
-            raise HTTPException(400, "Unsafe gallery filename")
-        candidates.append(path)
-        if path.exists():
-            return path
-    return candidates[0]
+            pass
+    return path
 
 
 def _normalize_image_endpoint_base(url: str) -> str:
@@ -242,8 +245,6 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/{image_id}/replace")
     async def gallery_replace(request: Request, image_id: str):
         """Replace an existing gallery image file with a new one."""
-        from pathlib import Path
-
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -259,9 +260,8 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(400, "No image provided")
 
             content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
-            img_dir = Path(GENERATED_IMAGES_DIR)
-            img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / _sanitize_gallery_filename(img.filename)
+            GALLERY_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+            img_path = _gallery_image_path(img.filename)
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.
