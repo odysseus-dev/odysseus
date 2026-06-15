@@ -5,9 +5,11 @@ import json
 import logging
 import ntpath
 import os
+import platform
 import posixpath
 import re
 import shlex
+import subprocess
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -135,6 +137,58 @@ def _validate_gpus(v: str | None) -> str | None:
     if not _GPU_LIST_RE.fullmatch(str(v)):
         raise HTTPException(400, "Invalid gpus — expected comma-separated GPU indexes")
     return str(v)
+
+
+def _windows_cuda_wheel_index() -> str | None:
+    r"""Return the llama-cpp-python CUDA wheel index for this Windows host.
+
+    Checks ``nvcc --version`` first, then falls back to the CUDA Toolkit install
+    path under ``C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA``.  Maps the
+    detected CUDA version (e.g. 12.4) to the prebuilt wheel index tag (cu124).
+    Returns ``None`` when not on Windows, when no CUDA toolkit is found, or when
+    the detected CUDA version does not have a prebuilt wheel.
+    """
+    if platform.system() != "Windows":
+        return None
+    major = minor = 0
+    try:
+        out = subprocess.run(
+            ["nvcc", "--version"], capture_output=True, text=True, timeout=5
+        ).stdout
+        m = re.search(r"release (\d+)\.(\d+)", out)
+        if m:
+            major, minor = int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+    if major == 0:
+        cuda_base = Path("C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA")
+        if cuda_base.exists():
+            try:
+                versions = []
+                for d in cuda_base.iterdir():
+                    if d.is_dir():
+                        m = re.match(r"v?(\d+)\.(\d+)", d.name)
+                        if m:
+                            versions.append((int(m.group(1)), int(m.group(2))))
+                if versions:
+                    versions.sort(reverse=True)
+                    major, minor = versions[0]
+            except Exception:
+                pass
+    if major == 0:
+        return None
+    # Only return an index when abetlen publishes a prebuilt wheel for it.
+    # https://abetlen.github.io/llama-cpp-python/whl/
+    _KNOWN = {"cu118", "cu121", "cu122", "cu123", "cu124", "cu125", "cu130", "cu132"}
+    tag = f"cu{major}{minor}"
+    if tag not in _KNOWN:
+        logger.warning(
+            "CUDA %s.%s detected but no prebuilt llama-cpp-python wheel exists (%s). "
+            "Falling back to CPU wheel or source build.",
+            major, minor, tag,
+        )
+        return None
+    return f"https://abetlen.github.io/llama-cpp-python/whl/{tag}"
 
 
 def _shell_path(p: str) -> str:

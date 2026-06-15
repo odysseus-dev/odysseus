@@ -49,7 +49,7 @@ from routes.cookbook_helpers import (
     _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
-    _normalize_llama_cpp_python_cache_types,
+    _normalize_llama_cpp_python_cache_types, _windows_cuda_wheel_index,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -1246,7 +1246,16 @@ def setup_cookbook_routes() -> APIRouter:
             req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])", "llama-cpp-python[server]", req.cmd)
             req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama-cpp-python(?!\[)", "llama-cpp-python[server]", req.cmd)
             if "llama-cpp-python" in req.cmd and "--extra-index-url" not in req.cmd:
-                req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+                # On Windows, prefer a CUDA prebuilt wheel when a toolkit is
+                # installed so GPU inference works out of the box.
+                if req.platform == "windows":
+                    _cuda_index = _windows_cuda_wheel_index()
+                    if _cuda_index:
+                        req.cmd += f" --extra-index-url {_cuda_index}"
+                    else:
+                        req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+                else:
+                    req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which
@@ -1322,7 +1331,19 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('try { python -c "import llama_cpp" 2>$null } catch {}')
                 ps_lines.append('if ($LASTEXITCODE -ne 0) {')
                 ps_lines.append('  Write-Host "Installing llama-cpp-python..."')
-                ps_lines.append('  python -m pip install llama-cpp-python[server]')
+                # Prefer a CUDA prebuilt wheel when a toolkit is present.
+                ps_lines.append('  $cudaVer = $null')
+                ps_lines.append(r'  try { $nvcc = & nvcc --version 2>$null; if ($LASTEXITCODE -eq 0) { if ($nvcc -match "release (\d+)\.(\d+)") { $cudaVer = "cu$($Matches[1])$($Matches[2])" } } } catch {}')
+                ps_lines.append('  if (-not $cudaVer) {')
+                ps_lines.append(r'    $cudaDirs = Get-ChildItem -Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "^v?(\d+)\.(\d+)$" }')
+                ps_lines.append(r'    if ($cudaDirs) { $best = $cudaDirs | Sort-Object { [version]($_.Name -replace "^v","") } -Descending | Select-Object -First 1; if ($best.Name -match "v?(\d+)\.(\d+)") { $cudaVer = "cu$($Matches[1])$($Matches[2])" } }')
+                ps_lines.append('  }')
+                ps_lines.append('  if ($cudaVer) {')
+                ps_lines.append('    Write-Host "Using CUDA wheel index: $cudaVer"')
+                ps_lines.append('    python -m pip install llama-cpp-python[server] --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/$cudaVer')
+                ps_lines.append('  } else {')
+                ps_lines.append('    python -m pip install llama-cpp-python[server] --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu')
+                ps_lines.append('  }')
                 ps_lines.append('}')
             elif "vllm" in req.cmd:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')

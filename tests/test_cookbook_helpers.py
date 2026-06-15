@@ -29,6 +29,7 @@ from routes.cookbook_helpers import (
     _validate_serve_cmd,
     _validate_serve_model_id,
     _shell_path,
+    _windows_cuda_wheel_index,
     run_ssh_command_async,
 )
 
@@ -350,7 +351,10 @@ def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
 
     assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
     assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
+    # The CPU fallback must still exist for non-Windows or when CUDA is absent.
     assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
+    # Windows CUDA path should reference the dynamic helper.
+    assert "_windows_cuda_wheel_index()" in src
 
 
 def test_vllm_preflight_reports_cli_and_version():
@@ -866,3 +870,59 @@ def test_cached_model_scan_runs_additional_hf_cache(tmp_path):
     assert rec["size_bytes"] == len(b"abc123")
     assert rec["has_incomplete"] is False
     assert rec["is_diffusion"] is False
+
+
+def test_windows_cuda_wheel_index_returns_none_on_non_windows():
+    """On Linux/macOS the helper must return None so the caller falls back to
+    the CPU wheel index."""
+    import platform
+    if platform.system() != "Windows":
+        assert _windows_cuda_wheel_index() is None
+
+
+def test_windows_cuda_wheel_index_url_formatting():
+    """The URL builder should produce the expected wheel index tag for a
+    known CUDA version.  We exercise the internal formatting by calling the
+    helper with a patched Path that simulates a Windows CUDA install."""
+    import platform
+    from unittest.mock import patch, MagicMock
+
+    with patch("routes.cookbook_helpers.platform.system", return_value="Windows"):
+        with patch("routes.cookbook_helpers.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = ""
+            # Simulate a CUDA v12.4 directory on disk (cu124 is a known wheel)
+            fake_dir = MagicMock()
+            fake_dir.name = "v12.4"
+            fake_dir.is_dir.return_value = True
+            fake_dir2 = MagicMock()
+            fake_dir2.name = "v11.8"
+            fake_dir2.is_dir.return_value = True
+
+            with patch("routes.cookbook_helpers.Path") as MockPath:
+                mock_base = MagicMock()
+                mock_base.exists.return_value = True
+                mock_base.iterdir.return_value = [fake_dir, fake_dir2]
+                MockPath.return_value = mock_base
+                result = _windows_cuda_wheel_index()
+                assert result == "https://abetlen.github.io/llama-cpp-python/whl/cu124"
+
+
+def test_windows_cuda_wheel_index_unknown_version_fallback():
+    """If the detected CUDA version has no prebuilt wheel, the helper should
+    return None so the caller falls back to CPU."""
+    from unittest.mock import patch, MagicMock
+
+    with patch("routes.cookbook_helpers.platform.system", return_value="Windows"):
+        with patch("routes.cookbook_helpers.subprocess.run") as mock_run:
+            mock_run.return_value.stdout = ""
+            fake_dir = MagicMock()
+            fake_dir.name = "v99.9"
+            fake_dir.is_dir.return_value = True
+
+            with patch("routes.cookbook_helpers.Path") as MockPath:
+                mock_base = MagicMock()
+                mock_base.exists.return_value = True
+                mock_base.iterdir.return_value = [fake_dir]
+                MockPath.return_value = mock_base
+                result = _windows_cuda_wheel_index()
+                assert result is None
