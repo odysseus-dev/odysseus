@@ -26,7 +26,7 @@ from src.endpoint_resolver import (
     build_models_url,
     build_headers,
 )
-from src.auth_helpers import _auth_disabled, owner_filter
+from src.auth_helpers import _auth_disabled, effective_user, owner_filter
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,21 @@ def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
         if isinstance(prefs, dict) and _clear_endpoint_settings_for_endpoint(prefs, ep_id):
             cleared_users += 1
     return cleared_users
+
+
+def _default_endpoint_needs_assignment(current_default_id: str, enabled_endpoint_ids) -> bool:
+    """Whether the global default chat endpoint should be (re)assigned.
+
+    True when nothing is configured yet, or the configured default no longer
+    resolves to an enabled endpoint (e.g. the user disabled it). Without the
+    second case, adding a new endpoint after disabling the previous default
+    leaves `default_endpoint_id` pointing at the disabled endpoint, so features
+    that read the raw setting (Memory → Tidy) fail with "No default model
+    configured" even though an enabled endpoint exists. See #3586.
+    """
+    if not current_default_id:
+        return True
+    return current_default_id not in enabled_endpoint_ids
 
 
 # Loopback hosts a user might type for a local model server (LM Studio,
@@ -233,6 +248,9 @@ _PROVIDER_CURATED = {
     "zai-coding": [
         "glm-5.1", "glm-5v-turbo", "glm-5-turbo", "glm-4.7", "glm-4.5-air",
     ],
+    "kimi-code": [
+        "kimi-for-coding",
+    ],
     "deepseek": [
         "deepseek-chat", "deepseek-reasoner",
     ],
@@ -300,6 +318,8 @@ def _match_provider_curated(base_url: str, provider: str) -> str:
     parsed = urlparse(base_url)
     if _host_match(base_url, "z.ai") and "/api/coding" in (parsed.path or ""):
         return "zai-coding"
+    if _host_match(base_url, "kimi.com") and "/coding" in (parsed.path or ""):
+        return "kimi-code"
     for domain, key in _HOST_TO_CURATED:
         if _host_match(base_url, domain):
             return key
@@ -719,6 +739,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5, model_
     historical behavior), "image" keeps image-generation models."""
     model_type = (model_type or "llm").strip().lower()
     from src.endpoint_resolver import resolve_url
+    from src.llm_core import httpx_get_kimi_aware
     base = resolve_url(_normalize_base(base_url))
     provider = _safe_detect_provider(base)
     if provider == "chatgpt-subscription":
@@ -754,7 +775,7 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5, model_
     url = _safe_build_models_url(base)
     headers = _safe_build_headers(api_key, base)
     try:
-        r = httpx.get(url, headers=headers, timeout=timeout, verify=llm_verify())
+        r = httpx_get_kimi_aware(url, headers, timeout=timeout, verify=llm_verify())
         r.raise_for_status()
         data = r.json()
         # OpenAI format: {"data": [{"id": "model-name"}]}
@@ -766,6 +787,11 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5, model_
             # Z.AI coding plan omits some working models from /models;
             # append curated-only entries for that endpoint only.
             if _host_match(base, "z.ai") and "/api/coding" in (urlparse(base).path or ""):
+                _ck = _match_provider_curated(base, None)
+                for _e in _PROVIDER_CURATED.get(_ck, []):
+                    if _e not in set(models) and not any(m.startswith(_e) for m in models):
+                        models.append(_e)
+            if _host_match(base, "kimi.com") and "/coding" in (urlparse(base).path or ""):
                 _ck = _match_provider_curated(base, None)
                 for _e in _PROVIDER_CURATED.get(_ck, []):
                     if _e not in set(models) and not any(m.startswith(_e) for m in models):
@@ -888,15 +914,52 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
 
 
 def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) -> str:
-    """Return a provider-aware error message for failed endpoint probes."""
+    """Return a provider-aware error message for failed endpoint probes.
+
+    Surfaces the URL we actually probed and, when the endpoint looks like
+    LM Studio (port 1234 or hostname match), adds a hint about loading a
+    model and confirming the Developer Server is running. The user previously
+    saw a generic "No models found for that provider/key" with no way to
+    tell whether the URL was wrong, the server was down, or the server was
+    reachable but had no model loaded (issue #25).
+    """
     ping = ping or {}
     error = ping.get("error")
+    from src.endpoint_resolver import build_models_url
+    try:
+        probed = build_models_url(base_url) or base_url
+    except Exception:
+        probed = base_url
     parsed = urlparse(base_url)
     host = (parsed.hostname or "").lower()
     is_ollama = parsed.port == 11434 or "ollama" in host or "ollama" in base_url.lower()
+    is_lmstudio = (
+        parsed.port == 1234
+        or "lmstudio" in host
+        or "lm-studio" in host
+        or "lm_studio" in host
+    )
+
+    if is_lmstudio:
+        parts = [
+            "LM Studio is reachable, but no models were reported.",
+            f"Probed {probed}.",
+        ]
+        if error:
+            parts.append(f"Last probe error: {error}.")
+        parts.append(
+            "Open LM Studio, load at least one model, and confirm the "
+            "Developer Server is running on port 1234."
+        )
+        parts.append(
+            "Base URL should be http://localhost:1234/v1 (native) or "
+            "http://host.docker.internal:1234/v1 (Docker)."
+        )
+        return " ".join(parts)
 
     if is_ollama:
         parts = ["No Ollama models found for that endpoint."]
+        parts.append(f"Probed {probed}.")
         if error:
             parts.append(f"Last probe error: {error}.")
         parts.append("Check that Ollama is running and that the base URL is correct.")
@@ -906,9 +969,9 @@ def _model_endpoint_error_message(base_url: str, ping: Dict[str, Any] = None) ->
         return " ".join(parts)
 
     if error:
-        return f"No models found for that provider/key. Last probe error: {error}."
+        return f"No models found for that provider/key. Probed {probed}. Last probe error: {error}."
 
-    return "No models found for that provider/key."
+    return f"No models found for that provider/key. Probed {probed}."
 
 
 def _normalize_model_ids(value):
@@ -1232,13 +1295,16 @@ def setup_model_routes(model_discovery):
         # Require auth; "" is the unconfigured single-user mode, treated as
         # "see everything" by _fetch_models.
         try:
-            from src.auth_helpers import get_current_user as _gcu
-            owner = _gcu(request) or ""
-        except Exception:
-            owner = ""
-        # Reject anonymous in configured deployments — no leaking the model
-        # list to unauthenticated callers.
-        try:
+            if getattr(request.state, "api_token", False):
+                scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+                if "chat" not in scopes:
+                    raise HTTPException(403, "API token is not scoped for chat")
+                if not getattr(request.state, "api_token_owner", None):
+                    raise HTTPException(403, "API token has no owner")
+            owner = effective_user(request) or ""
+
+            # Reject anonymous in configured deployments — no leaking the model
+            # list to unauthenticated callers.
             auth_mgr = getattr(request.app.state, "auth_manager", None)
             if not owner and not _auth_disabled() and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
                 raise HTTPException(401, "Not authenticated")
@@ -1769,12 +1835,19 @@ def setup_model_routes(model_discovery):
             )
             db.add(ep)
             db.commit()
-            # Auto-set as default chat endpoint if none configured yet. Seed
-            # the first CHAT model (not raw model_ids[0]) so we don't pin the
-            # global default to an embedding/tts/etc. entry a provider happens
-            # to list first.
+            # Auto-set as default chat endpoint when none is usable yet — either
+            # nothing is configured, or the configured default points at an
+            # endpoint that is now missing/disabled (#3586). Seed the first CHAT
+            # model (not raw model_ids[0]) so we don't pin the global default to
+            # an embedding/tts/etc. entry a provider happens to list first.
             settings = _load_settings()
-            if not settings.get("default_endpoint_id"):
+            enabled_ids = {
+                e.id
+                for e in db.query(ModelEndpoint).filter(
+                    ModelEndpoint.is_enabled == True  # noqa: E712
+                ).all()
+            }
+            if _default_endpoint_needs_assignment(settings.get("default_endpoint_id") or "", enabled_ids):
                 from src.endpoint_resolver import _first_chat_model
                 settings["default_endpoint_id"] = ep.id
                 settings["default_model"] = _first_chat_model(model_ids) or ""

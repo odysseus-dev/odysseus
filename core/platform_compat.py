@@ -191,6 +191,8 @@ def _windows_bash_fallbacks() -> List[str]:
         base = os.environ.get(env_name)
         if base:
             roots.append(ntpath.join(base, "Git"))
+            if env_name == "LocalAppData":
+                roots.append(ntpath.join(base, "Programs", "Git"))
     roots.extend(_WINDOWS_BASH_DEFAULT_ROOTS)
 
     paths: List[str] = []
@@ -298,7 +300,7 @@ def is_wsl() -> bool:
     import sys
     if sys.platform.startswith("linux") or os.name == "posix":
         try:
-            with open("/proc/version", "r") as f:
+            with open("/proc/version", "r", encoding="utf-8", errors="ignore") as f:
                 if "microsoft" in f.read().lower():
                     return True
         except Exception:

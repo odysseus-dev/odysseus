@@ -89,6 +89,23 @@ def find_remote_calendar(calendars, local_cal_id: str, owner: str = "", account_
     return None
 
 
+def _resource_href(obj) -> str:
+    try:
+        return str(getattr(obj, "url", "") or "")
+    except Exception:
+        return ""
+
+
+def _resource_etag(obj) -> str:
+    try:
+        etag = getattr(obj, "etag", None)
+        if callable(etag):
+            etag = etag()
+        return str(etag or "")
+    except Exception:
+        return ""
+
+
 def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False,
                owner: str = "", account_id: str = "") -> dict:
     """Create/update (or delete) ``ev`` on the matching remote calendar.
@@ -105,6 +122,7 @@ def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False,
     remote = find_remote_calendar(calendars, local_cal_id, owner=owner, account_id=account_id)
     if remote is None:
         return {"ok": False, "error": "remote calendar not found"}
+    remote_url = str(getattr(remote, "url", "") or "")
 
     try:
         existing = remote.event_by_uid(uid)
@@ -113,17 +131,34 @@ def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False,
 
     if delete:
         if existing is None:
-            return {"ok": True, "note": "already absent on remote"}
+            return {"ok": True, "note": "already absent on remote", "calendar_url": remote_url}
         existing.delete()
-        return {"ok": True}
+        return {
+            "ok": True,
+            "calendar_url": remote_url,
+            "remote_href": _resource_href(existing),
+            "remote_etag": _resource_etag(existing),
+        }
 
     ical = build_event_ical(ev)
     if existing is not None:
         existing.data = ical
         existing.save()
-        return {"ok": True, "updated": True}
-    remote.save_event(ical)
-    return {"ok": True, "created": True}
+        return {
+            "ok": True,
+            "updated": True,
+            "calendar_url": remote_url,
+            "remote_href": _resource_href(existing),
+            "remote_etag": _resource_etag(existing),
+        }
+    created = remote.save_event(ical)
+    return {
+        "ok": True,
+        "created": True,
+        "calendar_url": remote_url,
+        "remote_href": _resource_href(created),
+        "remote_etag": _resource_etag(created),
+    }
 
 
 def _discover_calendars(client):
@@ -152,6 +187,54 @@ def _writeback_blocking(local_cal_id, ev, delete, url, username, password,
         return {"ok": False, "error": "no remote calendars discovered"}
     return push_event(calendars, local_cal_id, ev, delete=delete,
                       owner=owner, account_id=account_id)
+
+
+def _persist_writeback_result(owner: str, calendar_id: str, uid: str, result: dict, *, delete: bool) -> None:
+    from core.database import CalendarCal, CalendarDeletedEvent, CalendarEvent, SessionLocal
+
+    if not uid or not isinstance(result, dict):
+        return
+
+    db = SessionLocal()
+    try:
+        calendar = db.query(CalendarCal).filter(
+            CalendarCal.id == calendar_id,
+            CalendarCal.owner == owner,
+        ).first()
+        if calendar and result.get("calendar_url"):
+            calendar.caldav_base_url = result.get("calendar_url")
+
+        if delete:
+            tombstone = db.query(CalendarDeletedEvent).filter(
+                CalendarDeletedEvent.uid == uid,
+                CalendarDeletedEvent.owner == owner,
+            ).first()
+            if result.get("ok"):
+                if tombstone:
+                    db.delete(tombstone)
+            elif tombstone:
+                tombstone.last_error = str(result.get("error") or result)[:500]
+            db.commit()
+            return
+
+        event = (
+            db.query(CalendarEvent)
+            .join(CalendarCal)
+            .filter(CalendarEvent.uid == uid, CalendarCal.owner == owner)
+            .first()
+        )
+        if event and result.get("ok"):
+            if result.get("remote_href"):
+                event.remote_href = result.get("remote_href")
+            if result.get("remote_etag"):
+                event.remote_etag = result.get("remote_etag")
+            event.caldav_sync_pending = None
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("CalDAV write-back metadata persistence failed")
+    finally:
+        db.close()
 
 
 async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
@@ -204,9 +287,12 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
         result = await asyncio.to_thread(
             _writeback_blocking, calendar_id, ev, delete, url, user, pw, owner, acc_id
         )
+        _persist_writeback_result(owner, calendar_id, (ev or {}).get("uid", ""), result, delete=delete)
         if not result.get("ok"):
             logger.warning("CalDAV write-back did not apply: %s", result.get("error") or result)
         return result
     except Exception as e:
         logger.exception("CalDAV write-back raised")
-        return {"ok": False, "error": str(e)[:200]}
+        result = {"ok": False, "error": str(e)[:200]}
+        _persist_writeback_result(owner, calendar_id, (ev or {}).get("uid", ""), result, delete=delete)
+        return result

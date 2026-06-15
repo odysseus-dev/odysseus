@@ -15,6 +15,7 @@ import re
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "static/js/cookbook.js"
+SERVE_SRC = Path(__file__).resolve().parent.parent / "static/js/cookbookServe.js"
 
 
 def test_cpu_only_drops_gpu_only_flags():
@@ -28,3 +29,25 @@ def test_cpu_only_drops_gpu_only_flags():
     # The CUDA unified-memory env must be suppressed for CPU-only too.
     assert "f.unified_mem && !_cpuOnly" in text, \
         "GGML_CUDA_ENABLE_UNIFIED_MEMORY must be gated on !_cpuOnly"
+
+
+def test_diffusers_is_not_blocked_on_windows_dependencies_panel():
+    text = SRC.read_text(encoding="utf-8")
+
+    assert "const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);" in text
+    assert "new Set(['diffusers'" not in text
+
+
+def test_diffusers_is_available_on_windows_serve_panel():
+    text = SERVE_SRC.read_text(encoding="utf-8")
+
+    assert "? ['llamacpp', 'diffusers']" in text
+    assert "? [['llamacpp','llama.cpp'],['diffusers','Diffusers']]" in text
+
+
+def test_windows_diffusers_uses_python_not_python3():
+    text = SRC.read_text(encoding="utf-8")
+
+    assert "const diffusersPy = _isWindows() ? 'python' : _py3Bin;" in text
+    assert "cmd += `${diffusersPy} scripts/diffusion_server.py" in text
+    assert "cmd += `python3 scripts/diffusion_server.py" not in text
