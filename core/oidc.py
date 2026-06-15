@@ -164,11 +164,15 @@ class OidcManager:
                     f"OIDC discovery document missing required key: {key}"
                 )
 
-        # The issuer in the discovery doc SHOULD match the configured issuer
-        doc_issuer = self._config.get("issuer", "")
-        if doc_issuer and doc_issuer.rstrip("/") != self.issuer:
-            logger.warning(
-                "OIDC issuer mismatch: configured=%r doc=%r", self.issuer, doc_issuer,
+        # The issuer in the discovery doc MUST match the configured issuer
+        # (OIDC Discovery §1.1).  Failing closed prevents trust-path confusion
+        # where a misconfigured or malicious discovery document could cause
+        # id_token validation to accept a different issuer.
+        doc_issuer = (self._config.get("issuer") or "").rstrip("/")
+        if doc_issuer and doc_issuer != self.issuer:
+            raise OidcError(
+                f"OIDC issuer mismatch: configured {self.issuer!r}, "
+                f"discovery doc returned {doc_issuer!r}"
             )
 
         # Pin signing algorithms to those the provider supports.
@@ -416,17 +420,22 @@ class OidcManager:
             )
 
         # Validate audience: aud may be a string or a JSON array.
-        # When multiple audiences are present, azp MUST be present and match
-        # the client_id (per OIDC Core 1.0 § 2).
+        # OIDC Core 1.0 § 2: azp is REQUIRED when aud contains multiple
+        # values, and MUST equal client_id.  We reject multi-audience tokens
+        # without azp — there is no trusted-additional-audience model.
         aud = claims.get("aud")
         if isinstance(aud, list):
             if self.client_id not in aud:
                 raise OidcError(
                     f"id_token aud mismatch: client_id {self.client_id!r} not in aud {aud!r}"
                 )
-            # Multiple audiences — azp MUST identify the authorized party
             azp = claims.get("azp")
-            if azp and azp != self.client_id:
+            if not azp:
+                raise OidcError(
+                    "id_token has multiple audiences but no azp claim "
+                    "(required by OIDC Core 1.0 § 2)"
+                )
+            if azp != self.client_id:
                 raise OidcError(
                     f"id_token azp mismatch: expected {self.client_id!r}, got {azp!r}"
                 )

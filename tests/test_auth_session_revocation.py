@@ -138,6 +138,7 @@ def test_login_route_does_not_set_cookie_when_trusted_session_rejects_stale_user
 def test_change_password_route_revokes_other_sessions_after_success(monkeypatch):
     auth = MagicMock()
     auth.get_username_for_token.return_value = "alice"
+    auth.is_oidc_user.return_value = False
     auth.change_password.return_value = True
     endpoint, ChangePasswordRequest = _change_password_endpoint(auth)
     monkeypatch.setattr(
@@ -157,6 +158,7 @@ def test_change_password_route_revokes_other_sessions_after_success(monkeypatch)
 def test_change_password_route_wrong_password_does_not_revoke(monkeypatch):
     auth = MagicMock()
     auth.get_username_for_token.return_value = "alice"
+    auth.is_oidc_user.return_value = False
     auth.change_password.return_value = False
     endpoint, ChangePasswordRequest = _change_password_endpoint(auth)
     monkeypatch.setattr(

@@ -74,8 +74,10 @@ def _make_test_jwks_and_key():
     return jwks, private_jwk
 
 
-def _make_id_token(sub, nonce, issuer=FAKE_ISSUER, aud=FAKE_CLIENT_ID, exp=None):
-    """Sign a test id_token with the test RSA key."""
+def _make_id_token(sub, nonce, issuer=FAKE_ISSUER, aud=FAKE_CLIENT_ID, exp=None, azp=None):
+    """Sign a test id_token with the test RSA key.
+
+    When *azp* is provided it is included in the payload."""
     from authlib.jose import jwt
 
     _, jwk = _make_test_jwks_and_key()
@@ -95,6 +97,8 @@ def _make_id_token(sub, nonce, issuer=FAKE_ISSUER, aud=FAKE_CLIENT_ID, exp=None)
         "name": sub.title(),
         "preferred_username": sub,
     }
+    if azp is not None:
+        payload["azp"] = azp
     return jwt.encode(header, payload, jwk).decode()
 
 
@@ -180,6 +184,22 @@ class TestOidcManagerInit:
         with patch.object(mod.httpx, "get") as mock_get:
             mock_get.return_value = _FakeResponse(200, bad_doc)
             with pytest.raises(mod.OidcError, match="authorization_endpoint"):
+                mod.OidcManager(
+                    issuer=FAKE_ISSUER,
+                    client_id=FAKE_CLIENT_ID,
+                    client_secret=FAKE_CLIENT_SECRET,
+                )
+
+    def test_discovery_issuer_mismatch_fails_closed(self):
+        """Discovery doc with a different issuer MUST abort (OIDC Discovery §1.1)."""
+        import core.oidc as mod
+
+        bad_doc = dict(DISCOVERY_DOC)
+        bad_doc["issuer"] = "https://evil-idp.example.com"
+
+        with patch.object(mod.httpx, "get") as mock_get:
+            mock_get.return_value = _FakeResponse(200, bad_doc)
+            with pytest.raises(mod.OidcError, match="issuer mismatch"):
                 mod.OidcManager(
                     issuer=FAKE_ISSUER,
                     client_id=FAKE_CLIENT_ID,
@@ -456,7 +476,7 @@ class TestExchangeCode:
         """aud as a JSON array containing the client_id should pass."""
         jwt_jwks, jwk = _make_test_jwks_and_key()
         nonce = "f" * 64
-        id_token = _make_id_token("user123", nonce, aud=[FAKE_CLIENT_ID, "other-client"])
+        id_token = _make_id_token("user123", nonce, aud=[FAKE_CLIENT_ID, "other-client"], azp=FAKE_CLIENT_ID)
         import core.oidc as mod
 
         with patch.object(mod.httpx, "get") as mock_get, \
@@ -480,6 +500,47 @@ class TestExchangeCode:
 
             claims = mgr.exchange_code("code", state, "https://app.example.com/callback")
             assert claims["sub"] == "user123"
+
+    def test_id_token_aud_array_without_azp_rejected(self):
+        """Multi-audience token without azp MUST be rejected (OIDC Core §2)."""
+        from authlib.jose import jwt
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "g2" * 32
+        # Manually build a multi-audience token without azp
+        header = {"alg": "RS256", "kid": "test-key-1"}
+        payload = {
+            "iss": FAKE_ISSUER,
+            "sub": "user123",
+            "aud": [FAKE_CLIENT_ID, "other-client"],
+            # deliberately omit azp
+            "exp": int(time.time()) + 3600,
+            "iat": int(time.time()),
+            "nonce": nonce,
+        }
+        id_token = jwt.encode(header, payload, jwk).decode()
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),
+            ]
+
+            with pytest.raises(mod.OidcError, match="no azp"):
+                mgr.exchange_code("code", state, "https://app.example.com/callback")
 
     def test_id_token_aud_array_missing_client_id(self):
         """aud as a JSON array WITHOUT the client_id should fail."""
