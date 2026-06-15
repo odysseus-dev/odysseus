@@ -46,7 +46,7 @@ def test_on_exit():
 def test_open_browser():
     with mock.patch("webbrowser.open") as mock_open, \
          mock.patch("time.sleep") as mock_sleep:
-        
+
         # Test when splash_root is None
         with mock.patch("launcher.splash_root", None):
             open_browser("http://127.0.0.1:7000")
