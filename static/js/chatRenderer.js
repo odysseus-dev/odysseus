@@ -1992,8 +1992,9 @@ export function displayMetrics(messageElement, metrics) {
             <button class="ctx-expand-btn ctx-collapse-btn" aria-label="Collapse context breakdown" title="Collapse">${collapseIcon}</button>
           </div>
           <div class="ctx-usage-subheader">
-            <span>${ctxPct}% Full</span>
-            <span>~${fmtNum(total)} / ${fmtNum(totalCtx)} tokens</span>
+            <span class="ctx-usage-pct">${ctxPct}% Full</span>
+            <span class="ctx-usage-sep" aria-hidden="true">·</span>
+            <span class="ctx-usage-tokens">~${fmtNum(total)} / ${fmtNum(totalCtx)} tokens</span>
           </div>
           <div class="ctx-segmented-bar">${segments}</div>
           <div class="ctx-cat-list">${rows}</div>
