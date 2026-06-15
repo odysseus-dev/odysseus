@@ -775,16 +775,16 @@ All domains in this group are already in SQLite `app.db`.
 
 | Attribute | Value |
 |-----------|-------|
-| Current backend | File — `data/memory_doc.md` (atomic text write) |
-| Access pattern | Low write, low read; markdown document summarizing user memory |
+| Current backend | File — `data/memory_doc.md` (defined in `src/constants.py`) |
+| Access pattern | **No active read or write path found in codebase** |
 | Ownership model | Global |
-| Atomicity | Atomic write via `atomic_write_text` |
-| Backup coverage | Included in backup |
-| Notes | |
+| Atomicity | N/A — never written to |
+| Backup coverage | Included in backup if file exists |
+| Notes | **Likely dead code.** `MEMORY_DOC` constant is defined in `src/constants.py` and `src/config.py` but is never imported or used by any other module. No code writes to or reads from this file. |
 
-**Recommendation:** Keep current
+**Recommendation:** Remove
 
-**Rationale:** A single markdown file generated from memory state. This is a derived/rendered artifact, not a primary data store. It should follow whatever backend memories use — if memories move to SQLite, this file could become a generated view rather than a separate store.
+**Rationale:** The `MEMORY_DOC` constant and config field should be removed as dead code. No application code references this file.
 
 ---
 
