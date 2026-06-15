@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -21,6 +22,7 @@ from routes.cookbook_helpers import (
     _safe_env_prefix,
     _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
+    _normalize_llama_cpp_python_cache_types,
     _validate_gpus,
     _validate_local_dir,
     _validate_repo_id,
@@ -466,7 +468,13 @@ def test_local_tooling_path_export_converts_windows_paths_for_bash():
 
 def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
     script = "\n".join(_user_shell_path_bootstrap())
-    assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+    # A missing python3 OR a Microsoft Store App Execution Alias stub under
+    # WindowsApps must shim python3 -> python so the venv interpreter is used.
+    assert '_odys_py3="$(command -v python3 2>/dev/null || true)"' in script
+    assert (
+        'case "$_odys_py3" in ""|*[Ww]indows[Aa]pps*) python3() { python "$@"; } ;; esac'
+        in script
+    )
     assert 'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }' in script
 
 
@@ -549,6 +557,35 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
     assert _validate_serve_cmd(cmd) == cmd
 
 
+def test_normalize_llama_cpp_python_cache_types_for_stale_client_cmd():
+    cmd = (
+        "python -m llama_cpp.server --model model.gguf --host 0.0.0.0 --port 8000 "
+        "--type_k q4_0 --type_v q4_0"
+    )
+
+    assert _normalize_llama_cpp_python_cache_types(cmd).endswith("--type_k 2 --type_v 2")
+
+
+def test_normalize_llama_cpp_python_cache_types_preserves_native_cache_flags():
+    cmd = (
+        "llama-server --model model.gguf --cache-type-k q4_0 --cache-type-v q4_0 "
+        "|| python3 -m llama_cpp.server --model model.gguf --type_k=q8_0 --type_v='f16'"
+    )
+
+    normalized = _normalize_llama_cpp_python_cache_types(cmd)
+    assert "--cache-type-k q4_0 --cache-type-v q4_0" in normalized
+    assert "--type_k=8" in normalized
+    assert "--type_v='1'" in normalized
+
+
+def test_model_serve_normalizes_llama_cpp_python_cache_types_after_validation():
+    src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert "req.cmd = _validate_serve_cmd(req.cmd) or \"\"" in src
+    assert "req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or \"\"" in src
+    assert src.index("_validate_serve_cmd(req.cmd)") < src.index("_normalize_llama_cpp_python_cache_types(req.cmd)")
+
+
 def test_ollama_serve_defaults_to_loopback_bind():
     assert _ollama_bind_from_cmd("ollama serve") == ("127.0.0.1", "11434")
     assert _ollama_bind_from_cmd("ollama run qwen2.5:0.5b") == ("127.0.0.1", "11434")
@@ -588,6 +625,8 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
     script = "\n".join(runner_lines)
 
+    assert "mkdir -p ~/bin" in script
+    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp && rm -rf build")
     assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
@@ -671,6 +710,16 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
     assert 'pip install' not in cmd
     assert 'git clone' not in cmd
     assert 'curl' not in cmd and 'wget' not in cmd
+
+
+def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
+    routes_src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
+    running_src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js").read_text(encoding="utf-8")
+
+    assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
+    assert "function Stop-Tree([int]$Id)" in running_src
+    assert "ParentProcessId = $Id" in running_src
+    assert "Stop-Tree ([int]$p)" in running_src
 
 
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):

@@ -19,22 +19,32 @@ GPU_BANDWIDTH = {
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
     "9070 xt": 624, "9070": 488, "9060 xt": 322, "9060": 322,
-    # Apple Silicon unified-memory bandwidth (GB/s). Keyed off the chip name
-    # reported by sysctl machdep.cpu.brand_string (e.g. "Apple M4 Max"). Listed
-    # before the bare "m_" keys matters less than length-sorting (done below),
-    # which guarantees "m4 max" is tried before "m4".
-    "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
-    "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
-    "m3 ultra": 800, "m3 max": 300, "m3 pro": 150, "m3": 100,
-    "m4 max": 546, "m4 pro": 273, "m4": 120,
-    "m5 max": 546, "m5 pro": 273, "m5": 150,
 }
 
 # Pre-sort keys by length descending for correct substring matching
 _BW_KEYS_SORTED = sorted(GPU_BANDWIDTH.keys(), key=len, reverse=True)
 
-# metal: backstop for Apple Silicon chips not in GPU_BANDWIDTH (e.g. a future
-# M5) — the named chips above take the accurate bandwidth path instead.
+# Apple Silicon unified-memory bandwidth (GB/s). For chip families with both
+# binned and full variants under the same "Apple Mx Max" brand string, prefer
+# GPU core count when hardware detection provides it; otherwise fall back to the
+# conservative tier so speed estimates do not over-promise.
+APPLE_BANDWIDTH_FIXED = {
+    "m1 ultra": 800, "m1 max": 400, "m1 pro": 200, "m1": 68,
+    "m2 ultra": 800, "m2 max": 400, "m2 pro": 200, "m2": 100,
+    "m3 ultra": 800, "m3 pro": 150, "m3": 100,
+    "m4 pro": 273, "m4": 120,
+    "m5 pro": 307, "m5": 153,
+}
+APPLE_BANDWIDTH_BY_CORES = {
+    "m3 max": {30: 300, 40: 400},
+    "m4 max": {32: 410, 40: 546},
+    "m5 max": {32: 460, 40: 614},
+}
+_APPLE_FIXED_KEYS_SORTED = sorted(APPLE_BANDWIDTH_FIXED.keys(), key=len, reverse=True)
+_APPLE_VARIANT_KEYS_SORTED = sorted(APPLE_BANDWIDTH_BY_CORES.keys(), key=len, reverse=True)
+
+# metal: backstop for Apple Silicon chips not in the explicit tables above
+# (e.g. a future M6) — use a conservative generic estimate when unknown.
 FALLBACK_K = {"cuda": 220, "rocm": 180, "metal": 150, "cpu_x86": 70, "cpu_arm": 90}
 
 USE_CASE_WEIGHTS = {
@@ -60,9 +70,55 @@ CONTEXT_TARGET = {
 }
 
 
-def _lookup_bandwidth(gpu_name):
+def _lookup_apple_bandwidth(system):
+    gpu_name = system.get("gpu_name")
     if not isinstance(gpu_name, str) or not gpu_name:
         return None
+    gn = gpu_name.lower()
+
+    # Guard against false matches on non-Apple GPUs whose names contain
+    # "m3"/"m4"/"m5" (e.g. NVIDIA Quadro M4 000).
+    if "apple" not in gn:
+        return None
+
+    raw_cores = system.get("gpu_cores")
+    try:
+        gpu_cores = int(raw_cores) if raw_cores is not None else None
+    except (TypeError, ValueError):
+        gpu_cores = None
+
+    for key in _APPLE_VARIANT_KEYS_SORTED:
+        if key not in gn:
+            continue
+        if gpu_cores in APPLE_BANDWIDTH_BY_CORES[key]:
+            return APPLE_BANDWIDTH_BY_CORES[key][gpu_cores]
+        return min(APPLE_BANDWIDTH_BY_CORES[key].values())
+
+    for key in _APPLE_FIXED_KEYS_SORTED:
+        if key in gn:
+            return APPLE_BANDWIDTH_FIXED[key]
+    return None
+
+
+def _lookup_bandwidth(system):
+    if isinstance(system, dict):
+        gpu_name = system.get("gpu_name")
+    else:
+        gpu_name = system
+
+    if not isinstance(gpu_name, str) or not gpu_name:
+        return None
+
+    # Apple tiers live only in the Apple-specific table now (#2564), so route
+    # BOTH dict and bare-string callers through it. A bare string carries no
+    # gpu_cores, so the helper falls back to the conservative (lowest) tier for
+    # that model -- before #2564 the generic table answered string lookups, and
+    # dropping that made _lookup_bandwidth("Apple M3 Max") return None.
+    apple_input = system if isinstance(system, dict) else {"gpu_name": gpu_name}
+    bw = _lookup_apple_bandwidth(apple_input)
+    if bw is not None:
+        return bw
+
     gn = gpu_name.lower()
     for key in _BW_KEYS_SORTED:
         if key in gn:
@@ -84,7 +140,7 @@ def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     """
     pb = _active_params_b(model)
     is_moe = model.get("is_moe", False)
-    bw = _lookup_bandwidth(system.get("gpu_name"))
+    bw = _lookup_bandwidth(system)
     backend = system.get("backend", "cpu_x86")
 
     if bw and run_mode in ("gpu", "cpu_offload"):

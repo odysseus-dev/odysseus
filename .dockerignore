@@ -10,6 +10,12 @@ dist/
 build/
 .env
 .env.bak.*
+# Secrets: keep plaintext and every transient secrets.env variant out of
+# the build context. If an encrypted secrets.env is used, it is mounted
+# at runtime — never baked into the image. Mirrored in .gitignore.
+secrets.env
+secrets.env.*
+!secrets.env.example
 /data/
 /logs/
 .git/
