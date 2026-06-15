@@ -1087,7 +1087,10 @@ def setup_email_routes():
             return {"contacts": [], "error": "Mail operation failed"}
 
     @router.get("/search")
-    async def search_emails(
+    # Sync def: the body is blocking IMAP I/O with no awaits. As `async def` it ran
+    # directly on the event loop and stalled the whole app during a search; as a sync
+    # def FastAPI runs it in a threadpool, keeping the loop responsive.
+    def search_emails(
         q: str = Query(""),
         folder: str = Query("INBOX"),
         limit: int = Query(50),
@@ -1736,7 +1739,9 @@ def setup_email_routes():
             return {"success": False, "error": "Mail operation failed"}
 
     @router.post("/archive/{uid}")
-    async def archive_email(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
+    # Sync def: blocking IMAP I/O with no awaits — see search_emails above. Runs in a
+    # threadpool instead of blocking the event loop.
+    def archive_email(uid: str, folder: str = Query("INBOX"), account_id: str | None = Query(None), owner: str = Depends(require_owner)):
         """Move email to Archive folder."""
         try:
             with _imap(account_id, owner=owner) as conn:

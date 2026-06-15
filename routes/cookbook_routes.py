@@ -30,7 +30,10 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
-from routes.cookbook_output import error_aware_output_tail
+from routes.cookbook_output import (
+    error_aware_output_tail, classify_dead_download,
+    HF_CACHE_COMPLETE_PROBE, HF_CACHE_INCOMPLETE_PROBE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,7 @@ from routes.cookbook_helpers import (
     _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _normalize_llama_cpp_python_cache_types,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -54,7 +58,7 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'echo "[odysseus] HF token: applied"; '
     'else '
     'echo "[odysseus] HF token: NOT SET — gated/private models will be denied. '
-    'Add one in Odysseus Settings -> Cookbook -> HuggingFace Token."; '
+    'Add one in Odysseus Cookbook -> Settings -> HuggingFace Token."; '
     'fi'
 )
 
@@ -169,6 +173,16 @@ def setup_cookbook_routes() -> APIRouter:
                 r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
                 "vLLM is not installed or not in PATH on this server.",
                 [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
+            ),
+            (
+                r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|"
+                r"(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|"
+                r"Please ensure sgl_kernel is properly installed",
+                "SGLang native dependencies are missing on this server.",
+                [
+                    {"label": "install OS packages: libnuma-dev python3.12-dev build-essential", "op": "manual"},
+                    {"label": "upgrade sglang-kernel after OS packages are installed", "op": "manual"},
+                ],
             ),
             (
                 r"sglang.*command not found|No module named sglang|SGLang is not installed",
@@ -353,7 +367,11 @@ def setup_cookbook_routes() -> APIRouter:
             # all output to the log the poller reads. Paths handed to bash use
             # POSIX form + shell-quoting so drive paths / spaces survive.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
+            pp = shlex.quote(pid_path.as_posix())
+            inner.write_text(
+                f"printf '%s\\n' \"$$\" > {pp}\n" + "\n".join(bash_lines) + "\n",
+                encoding="utf-8",
+            )
             lp = shlex.quote(log_path.as_posix())
             ip = shlex.quote(inner.as_posix())
             script_path = TMUX_LOG_DIR / f"{session_id}.sh"
@@ -1211,6 +1229,7 @@ def setup_cookbook_routes() -> APIRouter:
         # many downstream `"engine" in req.cmd` membership checks can't hit
         # `TypeError: argument of type 'NoneType'` (a 500 instead of a clean 400).
         req.cmd = _validate_serve_cmd(req.cmd) or ""
+        req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or ""
         req.cmd = _venv_safe_local_pip_install_cmd(
             req.cmd,
             local=not bool(req.remote_host),
@@ -2622,30 +2641,20 @@ def setup_cookbook_routes() -> APIRouter:
     def _cookbook_tasks_status_sync():
         import subprocess
 
-        def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "") -> bool:
+        def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "", cache_root: str = "") -> bool:
             """Best-effort check for a completed HF cache entry.
 
             tmux output can stop at a stale progress line if the pane/session
             disappears before Cookbook captures the final DOWNLOAD_OK marker.
             In that case, trust the cache shape: a snapshot directory with files
             and no *.incomplete blobs means HuggingFace finished materializing the
-            model.
+            model. cache_root is the task's custom download dir — the runner
+            pointed HF_HOME there, so the cache lives under <cache_root>/hub,
+            not wherever this probe's environment says.
             """
             if not repo_id or "/" not in repo_id:
                 return False
-            py = (
-                "import os,sys;"
-                "repo=sys.argv[1];"
-                "base=os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub');"
-                "d=os.path.join(base,'models--'+repo.replace('/','--'));"
-                "snap=os.path.join(d,'snapshots');"
-                "ok=os.path.isdir(snap) and any(os.path.isdir(os.path.join(snap,x)) and os.listdir(os.path.join(snap,x)) for x in os.listdir(snap));"
-                "inc=False;"
-                "blobs=os.path.join(d,'blobs');"
-                "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
-                "sys.exit(0 if ok and not inc else 1)"
-            )
-            cmd = ["python3", "-c", py, repo_id]
+            cmd = ["python3", "-c", HF_CACHE_COMPLETE_PROBE, repo_id, cache_root or ""]
             try:
                 if remote_host:
                     ssh_base = ["ssh"]
@@ -2659,7 +2668,7 @@ def setup_cookbook_routes() -> APIRouter:
             except Exception:
                 return False
 
-        def _download_cache_incomplete(repo_id: str, remote_host: str = "", ssh_port: str = "") -> bool:
+        def _download_cache_incomplete(repo_id: str, remote_host: str = "", ssh_port: str = "", cache_root: str = "") -> bool:
             """Best-effort check for resumable HF partial blobs.
 
             A lost SSH/tmux session can leave a real download still incomplete.
@@ -2668,16 +2677,7 @@ def setup_cookbook_routes() -> APIRouter:
             """
             if not repo_id or "/" not in repo_id:
                 return False
-            py = (
-                "import os,sys;"
-                "repo=sys.argv[1];"
-                "base=os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub');"
-                "d=os.path.join(base,'models--'+repo.replace('/','--'));"
-                "blobs=os.path.join(d,'blobs');"
-                "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
-                "sys.exit(0 if inc else 1)"
-            )
-            cmd = ["python3", "-c", py, repo_id]
+            cmd = ["python3", "-c", HF_CACHE_INCOMPLETE_PROBE, repo_id, cache_root or ""]
             try:
                 if remote_host:
                     ssh_base = ["ssh"]
@@ -2882,7 +2882,7 @@ def setup_cookbook_routes() -> APIRouter:
                 and (
                     ".incomplete" in full_snapshot
                     or bool(re.search(r'model-\d+-of-\d+\.[A-Za-z0-9_.-]+:\s+(?:[0-9]|[1-8][0-9])%', full_snapshot))
-                    or _download_cache_incomplete(_payload.get("repo_id") or model, remote, str(_tport or ""))
+                    or _download_cache_incomplete(_payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or "")
                 )
             )
             if is_alive or (local_win_task and full_snapshot):
@@ -2923,11 +2923,19 @@ def setup_cookbook_routes() -> APIRouter:
                 else:
                     status = "running"
             else:
-                # Session is dead — check if it completed or crashed
-                if (
+                # Session is dead — check if it completed or crashed. The
+                # runner markers in the retained output are conclusive
+                # (DOWNLOAD_OK only prints after exit 0), so check them before
+                # the cache probe, which can't see ollama pulls at all.
+                marker = classify_dead_download(full_snapshot) if task_type == "download" else None
+                if marker is not None:
+                    status, download_zero_files = marker
+                    if status == "completed" and not progress_text:
+                        progress_text = "Download complete"
+                elif (
                     task_type == "download"
                     and not download_has_incomplete_evidence
-                    and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or ""))
+                    and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or "")
                 ):
                     status = "completed"
                     if not progress_text:

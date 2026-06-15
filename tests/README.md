@@ -83,6 +83,60 @@ python3 -m pytest tests/test_auth_config_lock_concurrency.py
 python3 -m pytest -m slow
 ```
 
+## Order-sensitivity reporting (report-only)
+
+`tests/run_order_report.py` runs pytest with the collected test items shuffled
+by a seeded RNG, to surface order-sensitive tests (hidden coupling through
+shared import state, module caches, databases, etc.). It is report-only: it is
+not wired into CI, adds no gate, and changes no normal pytest collection or
+ordering - the shuffle exists only inside this runner. The seed is always
+printed, and pytest targets/options go after a literal `--`:
+
+```bash
+python3 tests/run_order_report.py --seed 123 -- tests/cli/ -q
+python3 tests/run_order_report.py -- tests/cli/ -q   # generates and prints a seed
+```
+
+The same seed reproduces the same order when the reported working directory,
+pytest target arguments, and test environment are also the same. The runner
+prints all command arguments with shell-safe POSIX quoting and uses the
+invoking Python interpreter.
+
+A generated-seed run starts with output like:
+
+```text
+[order-report] working directory: /path/to/odysseus
+[order-report] shuffling test order with seed 284734921
+[order-report] reproduce from this working directory with the same test environment:
+[order-report] reproduce with: /path/to/odysseus/.venv/bin/python /path/to/odysseus/tests/run_order_report.py --seed 284734921 -- tests/cli/ -q
+```
+
+Run the printed command from the reported working directory to reproduce the
+same fixed-seed order:
+
+```text
+[order-report] working directory: /path/to/odysseus
+[order-report] shuffling test order with seed 284734921
+[order-report] reproduce from this working directory with the same test environment:
+[order-report] reproduce with: /path/to/odysseus/.venv/bin/python /path/to/odysseus/tests/run_order_report.py --seed 284734921 -- tests/cli/ -q
+```
+
+Pytest output remains visible between the report header and footer. A failing
+run ends with pytest's normal failure report followed by:
+
+```text
+FAILED tests/example_test.py::test_example - AssertionError
+[order-report] seed 284734921: pytest exit code 1 (report-only; fix order-sensitive failures in separate scoped PRs)
+```
+
+Failures discovered this way are real isolation bugs: fix them in separate
+scoped PRs - do not silence them with `skip`/`xfail`, and do not "fix" them by
+depending on a particular order.
+
+The runner propagates pytest's exit code, so it composes with normal local
+workflows; "report-only" means it is not a CI gate, not that failures are
+swallowed.
+
 ## Core principles
 
 - Keep PRs small and homogeneous: one kind of change per PR.

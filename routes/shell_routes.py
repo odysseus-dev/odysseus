@@ -1,6 +1,7 @@
 """Shell routes — user-facing command execution endpoint."""
 
 import asyncio
+import importlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
 from core.platform_compat import IS_APPLE_SILICON, which_tool
+from src.optional_deps import prepare_optional_dependency_import
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
 # on Windows, so importing them unconditionally crashed app startup there
@@ -147,6 +149,11 @@ def _pip_dist_name(pkg: dict) -> str:
         if base:
             return base
     return (pkg.get("name") or "").replace("_", "-")
+
+
+def _import_optional_dependency_for_status(name: str):
+    prepare_optional_dependency_import(name)
+    return importlib.import_module(name)
 
 
 def _package_installed_from_probe(name: str, probe: dict) -> bool:
@@ -970,7 +977,6 @@ def setup_shell_routes() -> APIRouter:
         """
         _require_admin(request)
         _reject_cross_site(request)
-        import importlib
         import importlib.metadata as importlib_metadata
         import shlex
         import json as _json
@@ -1054,6 +1060,13 @@ def setup_shell_routes() -> APIRouter:
                 "name": "diffusers",
                 "pip": "diffusers[torch]",
                 "desc": "Image generation pipelines (SD, Flux) with PyTorch",
+                "category": "Image",
+                "target": "remote",
+            },
+            {
+                "name": "transformers",
+                "pip": "transformers",
+                "desc": "Hugging Face model components used by SD/Flux pipelines and image tools",
                 "category": "Image",
                 "target": "remote",
             },
@@ -1202,7 +1215,7 @@ def setup_shell_routes() -> APIRouter:
                     pkg["status_note"] = _package_status_note("vllm", probe)
             else:
                 try:
-                    importlib.import_module(pkg["name"])
+                    _import_optional_dependency_for_status(pkg["name"])
                     importlib_metadata.version(_pip_dist_name(pkg))
                     pkg["installed"] = True
                 except ImportError:
@@ -1251,6 +1264,7 @@ def setup_shell_routes() -> APIRouter:
             "sglang[all]",
             "diffusers",
             "diffusers[torch]",
+            "transformers",
             "TTS",
             "bark",
             "faster-whisper",
