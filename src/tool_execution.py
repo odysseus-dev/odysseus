@@ -492,6 +492,19 @@ async def _document_tool_dispatch(
     return None
 
 
+async def _cookbook_tool_dispatch(
+    tool: str,
+    content: str,
+    owner: Optional[str] = None,
+) -> Optional[Dict]:
+    """Route a cookbook tool through TOOL_HANDLERS with the right ctx shape."""
+    from src.agent_tools import TOOL_HANDLERS
+    ctx = {"owner": owner}
+    if tool in TOOL_HANDLERS:
+        return await TOOL_HANDLERS[tool](content, ctx)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
@@ -545,11 +558,6 @@ async def _execute_tool_block_impl(
         do_manage_mcp, do_manage_webhooks, do_manage_tokens,
         do_manage_settings, do_manage_notes,
         do_manage_calendar,
-        do_download_model, do_serve_model, do_list_served_models, do_stop_served_model,
-        do_tail_serve_output,
-        do_list_downloads, do_cancel_download, do_search_hf_models, do_list_cached_models,
-        do_list_serve_presets, do_serve_preset, do_adopt_served_model,
-        do_list_cookbook_servers,
         do_edit_image, do_trigger_research, do_manage_research, do_resolve_contact,
         do_manage_contact,
         do_vault_search, do_vault_get, do_vault_unlock,
@@ -785,48 +793,17 @@ async def _execute_tool_block_impl(
     elif tool == "manage_calendar":
         desc = "manage_calendar"
         result = await do_manage_calendar(content, owner=owner)
-    elif tool == "download_model":
-        desc = "download_model"
-        result = await do_download_model(content, owner=owner)
-    elif tool == "serve_model":
-        desc = "serve_model"
-        result = await do_serve_model(content, owner=owner)
-    elif tool == "list_served_models":
-        desc = "list_served_models"
-        result = await do_list_served_models(content, owner=owner)
-    elif tool == "stop_served_model":
-        desc = "stop_served_model"
-        result = await do_stop_served_model(content, owner=owner)
-    elif tool == "tail_serve_output":
-        desc = "tail_serve_output"
-        result = await do_tail_serve_output(content, owner=owner)
-    elif tool == "list_downloads":
-        desc = "list_downloads"
-        result = await do_list_downloads(content, owner=owner)
-    elif tool == "cancel_download":
-        desc = "cancel_download"
-        result = await do_cancel_download(content, owner=owner)
-    elif tool == "search_hf_models":
-        desc = "search_hf_models"
-        result = await do_search_hf_models(content, owner=owner)
-    elif tool == "list_cached_models":
-        desc = "list_cached_models"
-        result = await do_list_cached_models(content, owner=owner)
+    elif tool in ("download_model", "serve_model", "list_served_models",
+                  "stop_served_model", "tail_serve_output", "list_downloads",
+                  "cancel_download", "search_hf_models", "list_cached_models",
+                  "list_serve_presets", "serve_preset", "adopt_served_model",
+                  "list_cookbook_servers"):
+        desc = tool
+        result = await _cookbook_tool_dispatch(tool, content, owner=owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool == "app_api":
         desc = "app_api"
         result = await do_app_api(content, owner=owner)
-    elif tool == "list_serve_presets":
-        desc = "list_serve_presets"
-        result = await do_list_serve_presets(content, owner=owner)
-    elif tool == "serve_preset":
-        desc = "serve_preset"
-        result = await do_serve_preset(content, owner=owner)
-    elif tool == "adopt_served_model":
-        desc = "adopt_served_model"
-        result = await do_adopt_served_model(content, owner=owner)
-    elif tool == "list_cookbook_servers":
-        desc = "list_cookbook_servers"
-        result = await do_list_cookbook_servers(content, owner=owner)
     elif tool == "edit_image":
         desc = "edit_image"
         result = await do_edit_image(content, owner=owner)

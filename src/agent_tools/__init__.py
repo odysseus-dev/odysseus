@@ -22,6 +22,12 @@ from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+from .cookbook_tools import (
+    DownloadModelTool, ServeModelTool, ListServedModelsTool, StopServedModelTool,
+    TailServeOutputTool, ListDownloadsTool, CancelDownloadTool, SearchHFModelsTool,
+    ListCachedModelsTool, ListServePresetsTool, ServePresetTool, AdoptServedModelTool,
+    ListCookbookServersTool,
+)
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -40,6 +46,19 @@ TOOL_HANDLERS = {
     "suggest_document": SuggestDocumentTool().execute,
     "manage_documents": ManageDocumentTool().execute,
     "get_workspace": GetWorkspaceTool().execute,
+    "download_model": DownloadModelTool().execute,
+    "serve_model": ServeModelTool().execute,
+    "list_served_models": ListServedModelsTool().execute,
+    "stop_served_model": StopServedModelTool().execute,
+    "tail_serve_output": TailServeOutputTool().execute,
+    "list_downloads": ListDownloadsTool().execute,
+    "cancel_download": CancelDownloadTool().execute,
+    "search_hf_models": SearchHFModelsTool().execute,
+    "list_cached_models": ListCachedModelsTool().execute,
+    "list_serve_presets": ListServePresetsTool().execute,
+    "serve_preset": ServePresetTool().execute,
+    "adopt_served_model": AdoptServedModelTool().execute,
+    "list_cookbook_servers": ListCookbookServersTool().execute,
 }
 
 # ---------------------------------------------------------------------------
