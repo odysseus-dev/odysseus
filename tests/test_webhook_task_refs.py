@@ -7,16 +7,20 @@ releases it on completion.
 """
 import asyncio
 import sys
+import types
 
-# webhook_manager does `from src.database import SessionLocal, Webhook` at import
-# time. The shared test harness stubs src.database without Webhook, so ensure the
-# attribute exists before importing the manager. These tests never touch the DB
-# (the manager is built via __new__), so a placeholder class is sufficient.
-_db = sys.modules.get("src.database")
-if _db is not None and not hasattr(_db, "Webhook"):
+from tests.helpers.import_state import clear_module, preserve_import_state
+
+# Import the manager against a private database stub, then restore both modules
+# so collection does not mutate shared import state.
+with preserve_import_state("src.database", "src.webhook_manager"):
+    clear_module("src.database")
+    clear_module("src.webhook_manager")
+    _db = types.ModuleType("src.database")
+    _db.SessionLocal = object()
     _db.Webhook = type("Webhook", (), {})
-
-from src.webhook_manager import WebhookManager  # noqa: E402
+    sys.modules["src.database"] = _db
+    from src.webhook_manager import WebhookManager
 
 
 def test_spawn_tracked_holds_then_releases_reference():

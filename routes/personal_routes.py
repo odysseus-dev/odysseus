@@ -160,8 +160,11 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             JSON response confirming removal
         """
         try:
-            if not directory:
-                raise HTTPException(400, "Directory path is required")
+            # Confine to PERSONAL_DIR — parity with add_directory_to_rag (which
+            # resolves the path the same way). Without this, an arbitrary or
+            # `..`-escaping path is passed straight to
+            # personal_docs_manager.remove_directory / rag.remove_directory.
+            directory = _resolve_allowed_personal_dir(directory)
 
             logger.info(f"Removing directory from RAG: {directory}")
 
@@ -275,8 +278,8 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
             # Delete file from disk if it's in uploads dir
             deleted_from_disk = False
             try:
-                abs_target = os.path.abspath(filepath)
-                base_abs = os.path.abspath(UPLOADS_DIR)
+                abs_target = os.path.realpath(filepath)
+                base_abs = os.path.realpath(UPLOADS_DIR)
                 in_uploads = (
                     abs_target == base_abs
                     or os.path.commonpath([abs_target, base_abs]) == base_abs

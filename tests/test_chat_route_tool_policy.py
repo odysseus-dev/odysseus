@@ -89,6 +89,9 @@ def test_disabled_tools_does_not_bash_when_allow_bash_is_none():
     assert "allow_web_search is not None" in source, (
         "disabled_tools check must guard against allow_web_search being None"
     )
+    assert "_explicit_web_intent" in source and "not _explicit_web_intent" in source, (
+        "explicit web-search requests must override an off web toggle for that turn"
+    )
 
 
 # ── Functional tests of the disabled-tools logic ───────────────
@@ -99,6 +102,7 @@ def _build_disabled_tools(
     allow_web_search=None,
     can_use_bash=True,
     can_use_browser=True,
+    explicit_web_intent=False,
 ):
     """Replicate the disabled-tools logic from chat_stream for unit testing.
 
@@ -109,7 +113,11 @@ def _build_disabled_tools(
     # Issue #3229 fix: only disable when explicitly set to a falsy value.
     if allow_bash is not None and str(allow_bash).lower() != "true":
         disabled_tools.add("bash")
-    if allow_web_search is not None and str(allow_web_search).lower() != "true":
+    if (
+        allow_web_search is not None
+        and str(allow_web_search).lower() != "true"
+        and not explicit_web_intent
+    ):
         disabled_tools.add("web_search")
         disabled_tools.add("web_fetch")
 
@@ -146,6 +154,17 @@ def test_json_body_allow_web_search_false_disables_web():
     disabled = _build_disabled_tools(allow_web_search="false")
     assert "web_search" in disabled
     assert "web_fetch" in disabled
+
+
+def test_explicit_web_intent_overrides_false_web_toggle_for_turn():
+    """A stale/off web toggle must not remove web tools when the message
+    explicitly asks to use web search."""
+    disabled = _build_disabled_tools(
+        allow_web_search="false",
+        explicit_web_intent=True,
+    )
+    assert "web_search" not in disabled
+    assert "web_fetch" not in disabled
 
 
 def test_admin_user_gets_bash_enabled_by_default():

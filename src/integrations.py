@@ -6,6 +6,7 @@ import re
 from typing import Dict, List, Optional, Any
 
 import httpx
+from fastapi import HTTPException
 
 from core.atomic_io import atomic_write_json
 from core.platform_compat import safe_chmod
@@ -258,6 +259,11 @@ def add_integration(data: Dict[str, Any]) -> Dict[str, Any]:
     integration.setdefault("name", "")
     integration.setdefault("base_url", "")
 
+    if not isinstance(integration.get("name"), str) or not integration["name"].strip():
+        raise HTTPException(400, "Integration name is required")
+    if not isinstance(integration.get("base_url"), str) or not integration["base_url"].strip():
+        raise HTTPException(400, "Integration base URL is required")
+
     integrations = load_integrations()
     integrations.append(integration)
     save_integrations(integrations)
@@ -266,6 +272,11 @@ def add_integration(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def update_integration(integration_id: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Update fields on an existing integration. Returns updated integration or None."""
+    if "name" in data and (not isinstance(data["name"], str) or not data["name"].strip()):
+        raise HTTPException(400, "Integration name is required")
+    if "base_url" in data and (not isinstance(data["base_url"], str) or not data["base_url"].strip()):
+        raise HTTPException(400, "Integration base URL is required")
+
     integrations = load_integrations()
     for item in integrations:
         if item.get("id") == integration_id:
