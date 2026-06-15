@@ -33,6 +33,9 @@ import android.widget.Toast;
 public class MainActivity extends Activity {
     private static final String PREFS_NAME = "odysseus_android";
     private static final String PREF_URL = "server_url";
+    private static final String PREF_MODE = "app_mode";
+    private static final String MODE_REMOTE = "remote";
+    private static final String MODE_STANDALONE = "standalone";
     private static final int FILE_CHOOSER_REQUEST = 1001;
 
     private WebView webView;
@@ -45,6 +48,19 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         configureSystemBars();
+        String mode = getSavedMode();
+        if (MODE_STANDALONE.equals(mode)) {
+            openStandaloneMode();
+            return;
+        }
+        if (mode.isEmpty()) {
+            showModeChooser();
+            return;
+        }
+        startRemoteMode();
+    }
+
+    private void startRemoteMode() {
         buildLayout();
         configureWebView();
         loadConfiguredUrl();
@@ -139,6 +155,12 @@ public class MainActivity extends Activity {
         resetParams.setMargins(dp(8), 0, 0, 0);
         actions.addView(reset, resetParams);
 
+        Button standalone = new Button(this);
+        standalone.setText("Standalone");
+        LinearLayout.LayoutParams standaloneParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+        standaloneParams.setMargins(dp(8), 0, 0, 0);
+        actions.addView(standalone, standaloneParams);
+
         retry.setOnClickListener(v -> {
             String normalized = normalizeUrl(urlInput.getText().toString());
             if (normalized.isEmpty()) {
@@ -153,6 +175,10 @@ public class MainActivity extends Activity {
             saveConfiguredUrl(BuildConfig.ODYSSEUS_DEFAULT_URL);
             loadUrl(BuildConfig.ODYSSEUS_DEFAULT_URL);
         });
+        standalone.setOnClickListener(v -> {
+            saveMode(MODE_STANDALONE);
+            openStandaloneMode();
+        });
         urlInput.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_GO) {
                 retry.performClick();
@@ -165,6 +191,85 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
+
+        setContentView(root);
+    }
+
+    private void showModeChooser() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER_HORIZONTAL);
+        root.setPadding(dp(24), dp(42), dp(24), dp(24));
+        root.setBackgroundColor(Color.rgb(5, 8, 5));
+
+        TextView title = new TextView(this);
+        title.setText("Odysseus");
+        title.setTextColor(Color.rgb(34, 255, 34));
+        title.setTextSize(30);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        TextView subtitle = new TextView(this);
+        subtitle.setText("Choose how this phone should run Odysseus.");
+        subtitle.setTextColor(Color.rgb(205, 215, 205));
+        subtitle.setTextSize(15);
+        subtitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        subtitleParams.setMargins(0, dp(12), 0, dp(24));
+        root.addView(subtitle, subtitleParams);
+
+        Button standalone = new Button(this);
+        standalone.setText("Standalone Mobile");
+        root.addView(standalone, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        TextView standaloneHelp = new TextView(this);
+        standaloneHelp.setText("Chat from the phone with OpenAI-compatible APIs. No PC server required.");
+        standaloneHelp.setTextColor(Color.rgb(145, 165, 145));
+        standaloneHelp.setTextSize(13);
+        standaloneHelp.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams standaloneHelpParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        standaloneHelpParams.setMargins(0, dp(8), 0, dp(18));
+        root.addView(standaloneHelp, standaloneHelpParams);
+
+        Button remote = new Button(this);
+        remote.setText("Connect to PC");
+        root.addView(remote, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        TextView remoteHelp = new TextView(this);
+        remoteHelp.setText("Use the full Python Odysseus backend running on your computer.");
+        remoteHelp.setTextColor(Color.rgb(145, 165, 145));
+        remoteHelp.setTextSize(13);
+        remoteHelp.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams remoteHelpParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        remoteHelpParams.setMargins(0, dp(8), 0, 0);
+        root.addView(remoteHelp, remoteHelpParams);
+
+        standalone.setOnClickListener(v -> {
+            saveMode(MODE_STANDALONE);
+            openStandaloneMode();
+        });
+        remote.setOnClickListener(v -> {
+            saveMode(MODE_REMOTE);
+            startRemoteMode();
+        });
 
         setContentView(root);
     }
@@ -214,6 +319,18 @@ public class MainActivity extends Activity {
         return prefs.getString(PREF_URL, BuildConfig.ODYSSEUS_DEFAULT_URL);
     }
 
+    private String getSavedMode() {
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        return prefs.getString(PREF_MODE, "");
+    }
+
+    private void saveMode(String mode) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(PREF_MODE, mode)
+                .apply();
+    }
+
     private void saveConfiguredUrl(String url) {
         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
@@ -235,6 +352,12 @@ public class MainActivity extends Activity {
         webView.setVisibility(View.GONE);
         fallbackView.setVisibility(View.VISIBLE);
         progressBar.setVisibility(View.GONE);
+    }
+
+    private void openStandaloneMode() {
+        Intent intent = new Intent(this, StandaloneChatActivity.class);
+        startActivity(intent);
+        finish();
     }
 
     @Override

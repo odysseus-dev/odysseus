@@ -13,6 +13,11 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Odysseus">
         <activity
+            android:name=".StandaloneChatActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
+        <activity
             android:name=".MainActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="true"
