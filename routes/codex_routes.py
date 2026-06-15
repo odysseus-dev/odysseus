@@ -790,7 +790,7 @@ def setup_codex_routes(
         norm = dict(body or {})
         sess = (norm.get("tmux_session") or norm.get("session_id") or "").strip()
         model = (norm.get("model") or norm.get("repo_id") or "").strip()
-        host = (norm.get("host") or norm.get("remote_host") or "").strip()
+        host = validate_remote_host((norm.get("host") or norm.get("remote_host") or "").strip() or None) or ""
         port = norm.get("port") or 8000
         import re as _re
         if not sess or not _re.fullmatch(r"[a-zA-Z0-9_-]+", sess):
