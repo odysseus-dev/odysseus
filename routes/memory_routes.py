@@ -369,18 +369,28 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         model = None
         headers = {}
 
+        user = _owner(request)
+
         if session:
             try:
                 sess = session_manager.get_session(session)
-                _assert_session_owner(sess, _owner(request))
-                endpoint_url, model, headers = resolve_task_endpoint(
-                    sess.endpoint_url, sess.model, sess.headers, owner=_owner(request)
-                )
+                _assert_session_owner(sess, user)
             except KeyError:
-                logger.warning("Session %s not found, falling back to utility endpoint", session)
-                endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
+                sess = None
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                sess = None
+
+            if sess is None:
+                logger.warning("Session %s not found or inaccessible, falling back to utility endpoint", session)
+                endpoint_url, model, headers = resolve_endpoint("utility", owner=user)
+            else:
+                endpoint_url, model, headers = resolve_task_endpoint(
+                    sess.endpoint_url, sess.model, sess.headers, owner=user
+                )
         else:
-            endpoint_url, model, headers = resolve_task_endpoint(owner=_owner(request))
+            endpoint_url, model, headers = resolve_task_endpoint(owner=user)
     
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
