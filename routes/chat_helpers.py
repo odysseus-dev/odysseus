@@ -505,6 +505,29 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
     return None
 
 
+def _session_is_research_spinoff(sess) -> bool:
+    """True if this session was created via research "Discuss" spin-off.
+
+    Detected by the primer system message the spin-off endpoint seeds into
+    history (metadata ``research_spinoff_from``). Such sessions are grounded
+    on the seeded report, so global memory + personal-doc RAG injection is
+    suppressed for them (the report is the sole knowledge base). Handles both
+    ChatMessage objects and plain dicts.
+    """
+    for m in getattr(sess, "history", []) or []:
+        role = getattr(m, "role", None)
+        if role is None and isinstance(m, dict):
+            role = m.get("role")
+        if role != "system":
+            continue
+        md = getattr(m, "metadata", None)
+        if md is None and isinstance(m, dict):
+            md = m.get("metadata")
+        if (md or {}).get("research_spinoff_from"):
+            return True
+    return False
+
+
 async def build_chat_context(
     sess,
     request,
@@ -570,9 +593,17 @@ async def build_chat_context(
         mem_enabled, user, incognito, no_memory, uprefs.get("memory_enabled", "NOT_SET"),
     )
 
+    # Research-spinoff ("Discuss") sessions are grounded on the seeded report:
+    # the primer system message IS the knowledge base. Injecting global memory
+    # or personal-doc RAG on every turn pulls in keyword-matched but off-topic
+    # facts ("wrong data") and competes with the report, so suppress both here.
+    is_research_spinoff = _session_is_research_spinoff(sess)
+    if is_research_spinoff:
+        mem_enabled = False
+
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito or not allow_tool_preprocessing:
+    if incognito or not allow_tool_preprocessing or is_research_spinoff:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
@@ -595,7 +626,7 @@ async def build_chat_context(
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None:
+    if use_rag is not None or is_research_spinoff:
         _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 

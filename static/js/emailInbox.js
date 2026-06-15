@@ -22,8 +22,8 @@ const _replyIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" 
 const _archiveIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg>';
 const _deleteIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
 const _unreadIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>';
-const _starIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
-const _starFilledIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+const _starIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
+const _starFilledIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
 const _bellIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
 const _icon = (svg) => `<span class="dropdown-icon">${svg}</span>`;
 const _replySeparator = '---------- Previous message ----------';
@@ -74,6 +74,11 @@ window.addEventListener('email-answered', (e) => {
     item.classList.remove('email-unread');
     const check = item.querySelector('.email-done-check');
     if (check) check.classList.add('active');
+    // Auto-mark from sending a reply — flash the row so the user sees the
+    // state change without staring at it. Class self-removes after the
+    // animation so it doesn't replay on re-renders.
+    item.classList.add('email-auto-done-flash');
+    setTimeout(() => item.classList.remove('email-auto-done-flash'), 1200);
   });
 });
 let _loading = false;
@@ -113,19 +118,19 @@ export function init(documentModule) {
       } catch (_) {}
       if (opts.compose) { _composeNew(); return; }
       if (opts.email) {
-        await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply');
+        await _openEmail(opts.email, null, opts.emailData, opts.mode || 'reply', opts.noteHint || '');
       }
     },
   });
   _watchDocOpenToReDockEmail();
 }
 
-export async function openReplyDraft(uid, folder = 'INBOX', mode = 'reply') {
+export async function openReplyDraft(uid, folder = 'INBOX', mode = 'reply', prefilledBody = '') {
   if (!uid) return;
   const previousFolder = _currentFolder;
   _currentFolder = folder || 'INBOX';
   try {
-    await _openEmail({ uid: String(uid), subject: '' }, null, null, mode || 'reply');
+    await _openEmail({ uid: String(uid), subject: '' }, null, null, mode || 'reply', '', prefilledBody || '');
   } finally {
     _currentFolder = previousFolder || _currentFolder;
   }
@@ -525,11 +530,6 @@ function _createEmailItem(em) {
       </div>
       <div class="email-subject">${_esc(em.subject)}${unreadIcon}${attachIcon}${tagPills}${spamTag}</div>
     </div>
-    <div class="email-menu-wrap">
-      <button class="hamburger email-menu-btn" title="Actions">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-      </button>
-    </div>
   `;
 
   // Click sender name → filter list to that sender
@@ -562,15 +562,8 @@ function _createEmailItem(em) {
 
   // Click to open — do NOT close sidebar
   item.addEventListener('click', (e) => {
-    if (e.target.closest('.email-menu-wrap')) return;
     if (item.dataset.swipeBlock === '1') return;
     _openEmail(em, item);
-  });
-
-  const menuWrap = item.querySelector('.email-menu-wrap');
-  menuWrap.addEventListener('click', (e) => {
-    e.stopPropagation();
-    _showEmailMenu(em, menuWrap, item);
   });
 
   // Swipe left to archive (mobile). Mirrors sidebar-layout.js swipe pattern.
@@ -580,7 +573,6 @@ function _createEmailItem(em) {
     const VERT_CANCEL = 30;     // px vertical motion cancels swipe (treat as scroll)
 
     item.addEventListener('touchstart', (e) => {
-      if (e.target.closest('.email-menu-wrap')) return;
       const t = e.touches[0];
       startX = t.clientX; startY = t.clientY;
       dx = 0; dy = 0; swiping = true; swiped = false;
@@ -638,10 +630,13 @@ function _createEmailItem(em) {
   return item;
 }
 
-async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
+async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply', noteHint = '', prefilledBody = '') {
   const aiReplyMode = mode === 'ai-reply-fast' ? 'fast' : (mode === 'ai-reply-full' ? 'full' : '');
   const wantsAiReply = mode === 'ai-reply' || !!aiReplyMode;
-  let aiSuggestedBody = null;
+  // Body pre-fill from the agent's open_email_reply tool call takes the
+  // same insertion slot as an AI-suggested body — both land just before
+  // the quoted-original block.
+  let aiSuggestedBody = (typeof prefilledBody === 'string' && prefilledBody.trim()) ? prefilledBody.trim() : null;
   if (wantsAiReply) {
     // Fall through to reply-all (not plain reply) so the generated AI
     // draft addresses everyone on the original thread. On single-
@@ -698,6 +693,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
               uid: String(em.uid || ''),
               folder: _currentFolder,
               fast: aiReplyMode ? aiReplyMode === 'fast' : _shouldUseFastAiReply(data),
+              user_hint: (noteHint || '').trim() || undefined,
             }),
           });
           const result = await res.json();

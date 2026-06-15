@@ -885,8 +885,109 @@ def _smtp_connect(account=None, cfg=None):
     return conn
 
 
+def _read_agent_email_confirm_setting() -> bool:
+    """True if the user wants agent send_email/reply_to_email calls to be
+    queued for manual approval instead of SMTPed immediately. Defaults to
+    True so a fresh install is safe — agents have been observed inventing
+    signatures and sending to real recipients without the user's review."""
+    try:
+        from src.settings import get_setting
+        return bool(get_setting("agent_email_confirm", True))
+    except Exception:
+        return True
+
+
+def _stash_agent_draft(*, to, subject, body, in_reply_to=None, references=None,
+                      cc=None, bcc=None, account=None) -> dict:
+    """Insert the composed email into scheduled_emails with status
+    'agent_draft' and a far-future send_at so the scheduled-send poller
+    never picks it up. Returns the pending payload the model surfaces to
+    the user (and that the chat UI can render as an approval card)."""
+    try:
+        from src.constants import SCHEDULED_EMAILS_DB
+    except Exception:
+        return {"success": False, "error": "Pending-email storage unavailable"}
+    pending_id = uuid.uuid4().hex[:16]
+    far_future = "9999-12-31T00:00:00"
+    now = datetime.utcnow().isoformat()
+    try:
+        conn = sqlite3.connect(SCHEDULED_EMAILS_DB)
+        # Touch the schema in case the email-routes init hasn't run yet
+        # (MCP server can boot independently).
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS scheduled_emails (
+                id TEXT PRIMARY KEY,
+                to_addr TEXT NOT NULL,
+                cc TEXT,
+                bcc TEXT,
+                subject TEXT,
+                body TEXT NOT NULL,
+                in_reply_to TEXT,
+                references_hdr TEXT,
+                attachments TEXT,
+                send_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                owner TEXT DEFAULT '',
+                account_id TEXT,
+                odysseus_kind TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO scheduled_emails
+            (id, to_addr, cc, bcc, subject, body, in_reply_to, references_hdr,
+             attachments, send_at, created_at, status, account_id, odysseus_kind, owner)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'agent_draft', ?, ?, ?)
+        """, (
+            pending_id,
+            to if isinstance(to, str) else ", ".join(to),
+            cc if isinstance(cc, str) else (", ".join(cc) if cc else None),
+            bcc if isinstance(bcc, str) else (", ".join(bcc) if bcc else None),
+            subject or "",
+            body or "",
+            in_reply_to or None,
+            references if isinstance(references, str) else (" ".join(references) if references else None),
+            "[]",
+            far_future,
+            now,
+            account or None,
+            "agent_draft",
+            "",
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        return {"success": False, "error": f"Failed to stash draft: {e}"}
+    return {
+        "success": True,
+        "pending": True,
+        "pending_id": pending_id,
+        "to": to if isinstance(to, str) else ", ".join(to),
+        "subject": subject or "",
+        "body": body or "",
+        "message": (
+            "✋ Draft staged for your approval — nothing has been sent yet.\n"
+            "Review the To/Subject/Body above. Reply 'send' to deliver, or "
+            "'cancel' to discard."
+        ),
+    }
+
+
 def _send_email(to, subject, body, in_reply_to=None, references=None, cc=None, bcc=None, account=None):
-    """Send an email via SMTP. Returns dict with status."""
+    """Send an email via SMTP. Returns dict with status.
+
+    When the `agent_email_confirm` setting is on (the default), the email
+    is NOT SMTPed — instead it lands in scheduled_emails as an
+    `agent_draft` row and the user reviews + approves it from the chat
+    UI. This closes the auto-send hole that let earlier models invent
+    signatures and ship them to real recipients without confirmation."""
+    if _read_agent_email_confirm_setting():
+        return _stash_agent_draft(
+            to=to, subject=subject, body=body,
+            in_reply_to=in_reply_to, references=references,
+            cc=cc, bcc=bcc, account=account,
+        )
     send_account, cfg = _resolve_send_config(account)
     msg = EmailMessage()
     msg["From"] = _clean_header_value(cfg["from_address"])

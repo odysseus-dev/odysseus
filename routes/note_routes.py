@@ -208,14 +208,17 @@ async def dispatch_reminder(
         try:
             from src.endpoint_resolver import resolve_endpoint
             from src.llm_core import llm_call_async
+            from src.reminder_personas import synthesis_system_prompt
             url, model, headers = resolve_endpoint("utility", owner=owner or None)
             if not url:
                 url, model, headers = resolve_endpoint("default", owner=owner or None)
             if url and model:
+                persona_id = (settings.get("reminder_llm_persona") or "").strip()
+                sys_prompt = synthesis_system_prompt(persona_id)
                 raw = await llm_call_async(
                     url=url, model=model,
                     messages=[
-                        {"role": "system", "content": "You are a reminder assistant. Write a single short, warm, motivating sentence (max 25 words) reminding the user about the note below. Do not add greetings, preamble, or hashtags. Output only the sentence."},
+                        {"role": "system", "content": sys_prompt},
                         {"role": "user", "content": f"Title: {title}\n\n{note_body}".strip()},
                     ],
                     temperature=0.7, max_tokens=200, headers=headers, timeout=30,
@@ -826,6 +829,12 @@ def setup_note_routes(task_scheduler=None):
                 _override["reminder_webhook_integration_id"] = body["webhook_integration_id"]
             if body.get("webhook_payload_template"):
                 _override["reminder_webhook_payload_template"] = body["webhook_payload_template"]
+            # Mirror the in-UI AI Synthesis toggle + persona so the test
+            # actually exercises the synthesis path before/without a Save.
+            if "llm_synthesis" in body:
+                _override["reminder_llm_synthesis"] = bool(body["llm_synthesis"])
+            if "llm_persona" in body:
+                _override["reminder_llm_persona"] = str(body["llm_persona"] or "")
         else:
             db = SessionLocal()
             try:
