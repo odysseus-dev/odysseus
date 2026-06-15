@@ -755,6 +755,9 @@ def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     bash = find_bash() or "bash"
     env = dict(os.environ)
     env["HOME"] = git_bash_path(tmp_path)
+    # Unset the persistent-path env vars so the command falls back to $HOME
+    env.pop("ODYSSEUS_LLAMA_CPP_DIR", None)
+    env.pop("ODYSSEUS_LLAMA_CPP_BIN_DIR", None)
     result = subprocess.run(
         [bash, "-c", _llama_cpp_rebuild_cmd()],
         capture_output=True, text=True, env=env, timeout=10,
