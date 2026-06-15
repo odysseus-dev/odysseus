@@ -30,7 +30,7 @@ class _Session:
 
 
 def test_allowed_models_legacy_empty_list_remains_unrestricted(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     _enforce_chat_privileges(
         _Request({"allowed_models": [], "max_messages_per_day": 0}),
@@ -39,7 +39,7 @@ def test_allowed_models_legacy_empty_list_remains_unrestricted(monkeypatch):
 
 
 def test_allowed_models_explicit_empty_restricted_list_blocks_all_models(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     with pytest.raises(HTTPException) as exc:
         _enforce_chat_privileges(
@@ -56,7 +56,7 @@ def test_allowed_models_explicit_empty_restricted_list_blocks_all_models(monkeyp
 
 
 def test_allowed_models_nonempty_list_still_restricts_without_new_flag(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     _enforce_chat_privileges(
         _Request({"allowed_models": ["provider/model-a"], "max_messages_per_day": 0}),
@@ -70,7 +70,7 @@ def test_allowed_models_nonempty_list_still_restricts_without_new_flag(monkeypat
 
 
 def test_no_restriction_allows_any_model(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     privs = {"allowed_models": [], "block_all_models": False, "max_messages_per_day": 0}
     _enforce_chat_privileges(_Request(privs), _Session("provider/model-a"))
@@ -78,7 +78,7 @@ def test_no_restriction_allows_any_model(monkeypatch):
 
 
 def test_specific_allowlist_blocks_models_outside_it(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     privs = {
         "allowed_models": ["gpt-4"],
@@ -92,7 +92,7 @@ def test_specific_allowlist_blocks_models_outside_it(monkeypatch):
 
 
 def test_block_all_models_blocks_regardless_of_allowed_models_contents(monkeypatch):
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "alice")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "alice")
 
     # Even if allowed_models contains entries, block_all_models wins.
     privs = {
@@ -111,7 +111,7 @@ def test_block_all_models_blocks_regardless_of_allowed_models_contents(monkeypat
 def test_admin_user_is_never_blocked(monkeypatch):
     from core.auth import ADMIN_PRIVILEGES
 
-    monkeypatch.setattr("routes.chat_helpers.get_current_user", lambda request: "admin")
+    monkeypatch.setattr("routes.chat_helpers.effective_user", lambda request: "admin")
 
     class _AdminAuthManager:
         def get_privileges(self, username):
