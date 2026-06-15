@@ -198,6 +198,8 @@ def setup_webhook_routes(
         "opencode-go": "https://opencode.ai/zen/go/v1",
         "fireworks": "https://api.fireworks.ai/inference/v1",
         "venice": "https://api.venice.ai/api/v1",
+        "kimi-code": "https://api.kimi.com/coding/v1",
+        "kimicode": "https://api.kimi.com/coding/v1",
     }
 
     # Model prefix → provider mapping for auto-detection
@@ -210,6 +212,8 @@ def setup_webhook_routes(
         "mistral": "mistral",
         "llama": "groq",
         "mixtral": "groq",
+        "kimi-for-coding": "kimi-code",
+        "kimi": "kimi-code",
     }
 
     def _resolve_base_url(model: Optional[str], provider: Optional[str]) -> Optional[str]:

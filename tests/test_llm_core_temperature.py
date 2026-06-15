@@ -14,7 +14,7 @@ from src import llm_core
 @pytest.mark.parametrize(
     "model",
     ["o1", "o1-mini", "o3", "o3-mini", "o4-mini", "gpt-5", "gpt-5-mini",
-     "openrouter/openai/o3-mini", "OpenAI/GPT-5"],
+     "openrouter/openai/o3-mini", "OpenAI/GPT-5", "kimi-for-coding"],
 )
 def test_reasoning_models_restrict_temperature(model):
     assert llm_core._restricts_temperature(model) is True
@@ -60,6 +60,12 @@ def test_reasoning_model_payload_omits_temperature(monkeypatch):
     assert "temperature" not in payload
     # Reasoning models also use max_completion_tokens, which must survive.
     assert payload["max_completion_tokens"] == 5
+
+
+def test_kimi_for_coding_payload_omits_temperature(monkeypatch):
+    payload = _capture_openai_payload(monkeypatch, "kimi-for-coding", 0.1)
+    assert "temperature" not in payload
+    assert payload["max_tokens"] == 5
 
 
 def test_normal_model_payload_keeps_temperature(monkeypatch):

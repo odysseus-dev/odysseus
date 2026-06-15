@@ -597,7 +597,8 @@ export function _buildServeCmd(f, modelName, backend) {
   } else if (backend === 'diffusers') {
     const gpuStr = f.gpus?.trim();
     if (gpuStr) cmd += `CUDA_VISIBLE_DEVICES=${gpuStr} `;
-    cmd += `python3 scripts/diffusion_server.py --model ${modelName} --port ${f.port || '8100'}`;
+    const diffusersPy = _isWindows() ? 'python' : _py3Bin;
+    cmd += `${diffusersPy} scripts/diffusion_server.py --model ${modelName} --port ${f.port || '8100'}`;
     if (f.diff_dtype && f.diff_dtype !== 'bfloat16') cmd += ` --dtype ${f.diff_dtype}`;
     if (f.diff_device_map && f.diff_device_map !== 'balanced') cmd += ` --device-map ${f.diff_device_map}`;
     if (f.diff_steps) cmd += ` --steps ${f.diff_steps}`;
@@ -718,7 +719,7 @@ async function _fetchDependencies() {
     const data = await resp.json();
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
-    const _winUnsupported = new Set(['diffusers', 'hf_transfer', 'vllm', 'rembg', 'gfpgan']);
+    const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
 
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;

@@ -45,10 +45,14 @@ def _save_settings(settings):
 def _get_carddav_config():
     import os
     settings = _load_settings()
+    password = settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", ""))
+    if password and "carddav_password" in settings:
+        from src.secret_storage import decrypt
+        password = decrypt(password)
     return {
         "url": settings.get("carddav_url", os.environ.get("CARDDAV_URL", "")),
         "username": settings.get("carddav_username", os.environ.get("CARDDAV_USERNAME", "")),
-        "password": settings.get("carddav_password", os.environ.get("CARDDAV_PASSWORD", "")),
+        "password": password,
     }
 
 
@@ -785,7 +789,11 @@ def setup_contacts_routes():
                     except ValueError as e:
                         raise HTTPException(400, str(e))
                 else:
-                    settings[key] = data[key]
+                    value = data[key]
+                    if key == "carddav_password" and value:
+                        from src.secret_storage import encrypt
+                        value = encrypt(value)
+                    settings[key] = value
         _save_settings(settings)
         # Force re-fetch
         _contact_cache["fetched_at"] = None
