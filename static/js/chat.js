@@ -1386,7 +1386,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 typewriterInto(roundHolder.querySelector('.body'), errMsg);
                 break;
               }
-              if (json.delta || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
+              if (json.delta || json.type === 'tool_start' || json.type === 'tool_output' || json.type === 'tool_progress' || json.type === 'agent_step' || json.type === 'agent_process' || json.type === 'agent_final' || json.type === 'doc_stream_open' || json.type === 'doc_stream_delta' || json.type === 'research_progress') {
                 clearResponseTimeout();
                 clearProcessingProbe();
               }
@@ -1648,6 +1648,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   // Feed streaming TTS with accumulated text
                   if (streamingTTS) window.aiTTSManager.streamingUpdate(roundText);
                 }
+              } else if (json.type === 'agent_process') {
+                if (_isBg) continue;
+                if (!holder._agentProcessTexts) holder._agentProcessTexts = [];
+                holder._agentProcessTexts.push(json.text || '');
+              } else if (json.type === 'agent_final') {
+                if (_isBg) continue;
+                holder._agentFinalText = json.text || '';
               } else if (json.type === 'research_progress') {
                 if (_isBg) continue; // Skip DOM updates in background
                 _researchingStreamIds.add(streamSessionId);
@@ -2747,6 +2754,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         let footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
+        if (metrics && holder._agentFinalText && !metrics.agent_final_response) {
+          metrics.agent_final_response = holder._agentFinalText;
+        }
+        if (metrics && holder._agentProcessTexts?.length && !Array.isArray(metrics.round_texts)) {
+          metrics.round_texts = holder._agentFinalText
+            ? holder._agentProcessTexts.concat([holder._agentFinalText])
+            : holder._agentProcessTexts.slice();
+        }
         if (metrics?.tool_events?.length && chatRenderer.collapseAgentProcessAfterStream) {
           footerTarget = chatRenderer.collapseAgentProcessAfterStream(holder, footerTarget, metrics, modelName) || footerTarget;
         }

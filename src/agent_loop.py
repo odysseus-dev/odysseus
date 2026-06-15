@@ -1778,6 +1778,8 @@ async def stream_agent_loop(
       - data: {"delta": "text"}                             (text chunks)
       - data: {"type": "tool_start", "tool": "...", ...}    (before execution)
       - data: {"type": "tool_output", "tool": "...", ...}   (after execution)
+      - data: {"type": "agent_process", "round": N, ...}    (round text before tools)
+      - data: {"type": "agent_final", "round": N, ...}      (final no-tool answer)
       - data: {"type": "agent_step", "round": N}            (next round)
       - data: {"type": "metrics", "data": {...}}            (final metrics)
       - data: [DONE]                                        (end)
@@ -2480,6 +2482,9 @@ async def stream_agent_loop(
         # on reload (#3222 follow-up).
         cleaned_round = strip_tool_blocks(round_response, skip_fenced=(_is_api_model and not used_native)).strip()
         round_texts.append(cleaned_round)
+        if cleaned_round:
+            _round_event_type = "agent_process" if tool_blocks else "agent_final"
+            yield f'data: {json.dumps({"type": _round_event_type, "round": round_num, "text": cleaned_round})}\n\n'
 
         if not tool_blocks:
             # ── Completion verifier (mechanism 3a) ────────────────────

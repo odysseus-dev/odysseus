@@ -68,3 +68,32 @@ def test_no_rounds_exhausted_on_normal_finish(monkeypatch):
     # A plain answer (no tool block) -> done-break on round 1 -> no event.
     events = _run_loop(monkeypatch, "All done, here is your answer.", max_rounds=2)
     assert not any(e.get("type") == "rounds_exhausted" for e in events), events
+
+
+def test_emits_explicit_process_and_final_round_events(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        text = "I will inspect.\n```bash\necho hi\n```" if calls == 1 else "Done."
+        yield f'data: {json.dumps({"delta": text})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1", "m",
+        [{"role": "user", "content": "inspect then answer"}],
+        max_rounds=2,
+        relevant_tools={"bash"},
+    )
+    events = _types(_collect(gen))
+
+    process_events = [e for e in events if e.get("type") == "agent_process"]
+    final_events = [e for e in events if e.get("type") == "agent_final"]
+    assert process_events and process_events[0]["round"] == 1
+    assert process_events[0]["text"] == "I will inspect."
+    assert final_events and final_events[-1]["round"] == 2
+    assert final_events[-1]["text"] == "Done."

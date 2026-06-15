@@ -24,6 +24,9 @@ def test_live_agent_completion_collapses_process_after_done():
     assert "let footerTarget =" in source
     assert "metrics?.tool_events?.length" in source
     assert "chatRenderer.collapseAgentProcessAfterStream" in source
+    assert "json.type === 'agent_process'" in source
+    assert "json.type === 'agent_final'" in source
+    assert "holder._agentFinalText" in source
     assert "const _actionText = (metrics?.tool_events?.length" in source
     assert "chatRenderer.getAgentFinalResponse(accumulated, metrics)" in source
     renderer = _read("static/js/chatRenderer.js")
