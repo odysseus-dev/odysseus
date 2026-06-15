@@ -262,6 +262,10 @@ _DOMAIN_RULES = {
 - Use `manage_settings` for preferences and tool enable/disable.
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+    "integrations": """\
+## Integration/API rules
+- To query or control a configured service integration (Home Assistant, Miniflux, Gitea, Linkding, Jellyfin, or any other registered service), use `api_call` with the integration name, HTTP method, path, and optional JSON body.
+- Do not use shell, curl, or `app_api` to reach a user's connected integration when `api_call` is available.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -274,6 +278,7 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "integrations": {"api_call"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -791,6 +796,15 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    # API-integration intent — calling a configured service via the api_call
+    # tool. Without this the #3794 repro ("Use the api_call tool to call Home
+    # Assistant GET /api/states") matched no domain, classified as low-signal,
+    # and the tool never reached the schema filter. Detect it explicitly so the
+    # "integrations" domain seeds api_call deterministically (see
+    # _DOMAIN_TOOL_MAP), independent of embedding retrieval.
+    if has(r"\bapi[ _]call\b", r"\bintegrations?\b",
+           r"\b(?:home ?assistant|miniflux|gitea|linkding|jellyfin)\b"):
+        domains.add("integrations")
 
     low_signal = not continuation and not domains
     return {

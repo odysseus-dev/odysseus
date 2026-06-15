@@ -398,6 +398,14 @@ class ToolIndex:
                    "my settings", "change setting", "change a setting", "set setting",
                    "preference", "preferences", "configure"}):
             {"manage_settings", "ui_control"},
+        # API-integration intent → the api_call tool. Mirrors the agent-loop
+        # "integrations" domain so api_call still surfaces on the retrieval and
+        # keyword-fallback paths (not just the deterministic domain seed) when a
+        # user names a connected service.
+        frozenset({"api_call", "api call", "integration", "integrations",
+                   "home assistant", "homeassistant", "miniflux", "gitea",
+                   "linkding", "jellyfin"}):
+            {"api_call"},
         # Managing EXISTING research in the Library — open/read/find/delete.
         frozenset({"my research", "the research", "research on", "open research",
                    "read research", "find research", "delete research",
