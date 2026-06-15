@@ -8,6 +8,11 @@ from services.hwfit.models import (
 
 GPU_BANDWIDTH = {
     "5090": 1792, "5080": 960, "5070 ti": 896, "5070": 672, "5060 ti": 448, "5060": 256,
+    # Laptop GPU variants have materially lower bandwidth than their desktop counterparts
+    # (GDDR6 instead of GDDR6X, narrower bus, lower TGP). These keys must appear before
+    # the plain desktop keys so length-sorted substring matching resolves
+    # "RTX 4090 Laptop GPU" to this entry instead of the generic "4090" desktop entry.
+    "4090 laptop": 576,
     "4090": 1008, "4080 super": 736, "4080": 717, "4070 ti super": 672, "4070 ti": 504, "4070 super": 504, "4070": 504, "4060 ti": 288, "4060": 272,
     "3090 ti": 1008, "3090": 936, "3080 ti": 912, "3080": 760, "3070 ti": 608, "3070": 448, "3060 ti": 448, "3060": 360,
     "2080 ti": 616, "2080 super": 496, "2080": 448, "2070 super": 448, "2070": 448, "2060 super": 448, "2060": 336,
