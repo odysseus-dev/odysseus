@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
 from core.constants import internal_api_base
+from core.middleware import INTERNAL_TOOL_USER
 from src.auth_helpers import get_current_user
 from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
@@ -427,7 +428,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         # In-process tool-loopback marker — AuthMiddleware validated
         # the internal token + loopback client before stamping this,
         # so treat as admin-equivalent.
-        if user == "internal-tool":
+        if user == INTERNAL_TOOL_USER:
             return True
         try:
             from core.auth import AuthManager

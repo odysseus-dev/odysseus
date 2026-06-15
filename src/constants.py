@@ -73,6 +73,16 @@ MAX_DIFF_LINES = 400            # cap for edit_file unified-diff display
 WEB_FETCH_SOFT_MAX_BYTES = 2_000_000    # default download budget (2 MB)
 WEB_FETCH_HARD_MAX_BYTES = 20_000_000   # absolute ceiling, even with override (20 MB)
 
+# User-Agent for outbound web-scraping requests (web_fetch / web_search).
+# Pinned to a current, common desktop configuration so sites serve their
+# normal HTML rather than a degraded/legacy page. Override via env var to
+# bump the version without touching the code.
+WEB_FETCH_USER_AGENT = os.getenv(
+    "ODYSSEUS_WEB_FETCH_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+)
+
 # API Configuration
 MAX_CONTEXT_MESSAGES = 90
 REQUEST_TIMEOUT = 20

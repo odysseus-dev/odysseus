@@ -48,6 +48,7 @@ ADMIN_PRIVILEGES["allowed_models_restricted"] = False
 ADMIN_PRIVILEGES["block_all_models"] = False
 
 from src.constants import AUTH_FILE
+from core.middleware import INTERNAL_TOOL_USER
 DEFAULT_AUTH_PATH = AUTH_FILE
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
@@ -65,7 +66,7 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 # of those names would be denied an assistant and inconsistently owner-scoped.
 # Refuse to create or rename into any of them so the sentinels can't be
 # impersonated. (Keep this in sync with that synthetic-owner set.)
-RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
+RESERVED_USERNAMES = frozenset({INTERNAL_TOOL_USER, "api", "demo", "system"})
 
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:

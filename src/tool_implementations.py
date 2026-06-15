@@ -3798,6 +3798,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": "name is required", "exit_code": 1}
 
     contacts = {}  # email -> {name, source}
+    phone_contacts = []  # [{name, phones, source}] for contacts with no email
 
     # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
     # server-side httpx GET to /api/contacts/search carries no session
@@ -3812,10 +3813,20 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
             match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
             if not match:
                 continue
+            added_email = False
             for email in (c.get("emails") or []):
                 email = (email or "").strip().lower()
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+                    added_email = True
+            if not added_email:
+                phones = [p for p in (c.get("phones") or []) if p and p.strip()]
+                if phones:
+                    phone_contacts.append({
+                        "name": c.get("name") or name,
+                        "phones": phones,
+                        "source": "contacts",
+                    })
     except Exception:
         pass
 
@@ -3831,12 +3842,15 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
         except Exception:
             pass
 
-    if not contacts:
+    if not contacts and not phone_contacts:
         return {"output": f"No contacts found matching '{name}'.", "exit_code": 0}
 
     lines = [f"Contacts matching '{name}':"]
     for email, info in contacts.items():
         lines.append(f"- {info['name']} <{email}> ({info['source']})")
+    for pc in phone_contacts:
+        phones_str = ", ".join(pc["phones"])
+        lines.append(f"- {pc['name']} [phone: {phones_str}] ({pc['source']}, no email)")
     return {"output": "\n".join(lines), "exit_code": 0}
 
 
