@@ -1674,7 +1674,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     || _envState.servers.find(s => s.host === _host) || {};
   const _serverMetaKey = _targetKey || (_hsrv && _serverKey ? _serverKey(_hsrv) : '') || (_host || 'local');
   const _serverMetaName = targetMeta?.serverName || _hsrv.name || (_host ? _host : 'Local');
-  const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');
+  const _hplatform = _host ? (_hsrv.platform || '') : (_envState.hostPlatform || '');
   const _replaceTaskId = fields?._replaceTaskId || '';
   if (_replaceTaskId) {
     try {
@@ -1689,7 +1689,6 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       }
     } catch {}
   }
-
   // Replace any serve already targeting this same host:port — you can't run two
   // servers on one port, so re-serving (or retrying) should stop & remove the
   // old one instead of leaving a dead duplicate behind. (The retry buttons

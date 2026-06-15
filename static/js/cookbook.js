@@ -2624,14 +2624,14 @@ function _renderRecipes() {
     const isLocal = !s.host || s.host.toLowerCase() === 'local';
     if (isLocal) {
       s.host = '';
-      s.platform = _envState.hostPlatform || _envState.platform || '';
+      s.platform = _envState.hostPlatform || '';
       if (_localSeen) return false;
       _localSeen = true;
     }
     return true;
   });
   if (!_localSeen) {
-    _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub', platform: _envState.hostPlatform || _envState.platform || '' });
+    _es.servers.unshift({ host: '', env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub', platform: _envState.hostPlatform || '' });
   }
   if (_es.remoteHost && !_es.servers.some(s => s.host === _es.remoteHost)) {
     _es.servers.push({ host: _es.remoteHost, env: _es.env || 'none', envPath: _es.envPath || '', modelDir: '~/.cache/huggingface/hub' });

@@ -96,11 +96,25 @@ def test_local_windows_platform_comes_from_backend_host_state():
     assert "hostOrTask === 'local'" in text
     assert "if (hostOrTask === 'local') return _envState.hostPlatform || '';" in text
     assert "return _envState.hostPlatform || _envState.platform || ''" not in text
+    assert "s.platform = _envState.hostPlatform || '';" in text
+    assert "platform: _envState.hostPlatform || ''" in text
+    assert "s.platform = _envState.hostPlatform || _envState.platform || '';" not in text
+    assert "platform: _envState.hostPlatform || _envState.platform || ''" not in text
     assert 'return "windows" if IS_WINDOWS else ""' in routes
     assert 'env["hostPlatform"] = _client_host_platform()' in routes
     assert "return _state_for_client({})" in routes
     assert 'env.pop("hostPlatform", None)' in routes
     assert "delete env.hostPlatform;" in running
+
+
+def test_local_serve_payload_ignores_stale_env_platform():
+    serve = SERVE_SRC.read_text(encoding="utf-8")
+    running = (SRC.parent / "cookbookRunning.js").read_text(encoding="utf-8")
+
+    assert "platform: host ? (server?.platform || '') : (_envState.hostPlatform || '')," in serve
+    assert "platform: server?.platform || _envState.platform || ''" not in serve
+    assert "const _hplatform = _host ? (_hsrv.platform || '') : (_envState.hostPlatform || '');" in running
+    assert "const _hplatform = _host ? (_hsrv.platform || '') : (_envState.platform || '');" not in running
 
 
 def test_local_windows_llamacpp_prefers_native_llama_server():
@@ -120,3 +134,36 @@ def test_local_windows_llama_server_skips_source_bootstrap():
 
     assert 'local_windows_llama_cmd = local_windows and ("llama_cpp" in req.cmd or "llama-server" in req.cmd)' in routes
     assert 'if ("llama_cpp" in req.cmd or "llama-server" in req.cmd) and not local_windows_llama_cmd:' in routes
+
+
+def test_local_windows_llama_server_path_includes_user_wrapper_and_cuda_builds():
+    routes = (ROOT / "routes/cookbook_routes.py").read_text(encoding="utf-8")
+
+    assert 'if local_windows:' in routes
+    assert (
+        'export PATH="$HOME/bin:$HOME/llama.cpp/build-cuda/bin/Release:'
+        '$HOME/llama.cpp/build/bin/Release:$HOME/llama.cpp/build/bin/Debug:'
+        '$HOME/llama.cpp/build/bin:$PATH"'
+    ) in routes
+
+
+def test_serve_panel_keeps_row_markup_and_launch_cmd_assignment_executable():
+    text = SERVE_SRC.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+    assert '// Row 1: Engine + Server + Env      panelHtml +=' not in text
+    assert "px';        panel._cmd = cmd;" not in text
+    assert '// Row 1: Engine + Server + Env\n      panelHtml += `<div class="hwfit-serve-row">`;' in text
+    assert "px';\n        panel._cmd = cmd;" in text
+
+
+def test_llamacpp_vision_uses_scanned_projector_instead_of_runtime_find():
+    text = SERVE_SRC.read_text(encoding="utf-8")
+
+    assert "function _projectorGgufFiles(model)" in text
+    assert "const selectedProjector = _projectorGgufFiles(m)[0];" in text
+    assert "f._mmproj_path = selectedProjector ? _selectedGgufExpr(m, repo, selectedProjector.rel_path) : '';" in text
+    assert "const missingVisionProjector = backend === 'llamacpp' && !!f.vision && !f._mmproj_path;" in text
+    assert "hwfit-serve-vision-warn" in text
+    assert "!/(?:^|\\s)(?:--mmproj|--clip_model_path)\\b/.test(launchCmd)" in text
+    assert "no mmproj projector is in the launch command" in text
+    assert "find ${_vsearchdir} -iname 'mmproj*.gguf'" not in text

@@ -1487,6 +1487,10 @@ def setup_cookbook_routes() -> APIRouter:
             # shell resolves the bundled python3/hf, mirroring the download flow.
             if not remote:
                 runner_lines.append(_local_tooling_path_export(sys.executable))
+                if local_windows:
+                    # Detached Git Bash runs do not always inherit recently edited
+                    # user PATH entries from the already-running Odysseus process.
+                    runner_lines.append('export PATH="$HOME/bin:$HOME/llama.cpp/build-cuda/bin/Release:$HOME/llama.cpp/build/bin/Release:$HOME/llama.cpp/build/bin/Debug:$HOME/llama.cpp/build/bin:$PATH"')
             runner_lines.append("export FLASHINFER_DISABLE_VERSION_CHECK=1")
             if req.hf_token:
                 runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")

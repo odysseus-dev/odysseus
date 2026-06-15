@@ -527,7 +527,7 @@ function _selectedServeTarget(panel) {
     env: server?.env || '',
     port: host ? (server?.port || _getPort(host) || '') : '',
     venv,
-    platform: server?.platform || _envState.platform || '',
+    platform: host ? (server?.platform || '') : (_envState.hostPlatform || ''),
     label,
   };
 }
@@ -656,6 +656,12 @@ function _selectedGgufSizeGb(model, relPath) {
   const bytes = Number(file?.size_bytes || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return 0;
   return bytes / (1024 ** 3);
+}
+
+function _projectorGgufFiles(model) {
+  return _ggufFilesForModel(model)
+    .filter(f => (f.role || '') === 'projector' || /(^|\/)mmproj[^/]*\.gguf$/i.test(f.rel_path || f.name || ''))
+    .sort((a, b) => String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
 }
 
 function _ggufFileLabel(file) {
@@ -1198,6 +1204,7 @@ function _rerenderCachedModels() {
         panelHtml += `<div class="hwfit-serve-warn" style="margin:0 0 8px;padding:6px 10px;border-radius:5px;font-size:11px;background:color-mix(in srgb, var(--color-warning, #f0ad4e) 14%, transparent);border:1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 40%, transparent);color:var(--color-warning, #f0ad4e);display:flex;gap:6px;align-items:flex-start;line-height:1.4;"><span aria-hidden="true">⚠</span><span>${_warnText}</span></div>`;
       }
       panelHtml += `<div class="hwfit-serve-preset-row">${_slotsHtml}</div>`;
+      panelHtml += `<div class="hwfit-serve-vision-warn" style="display:none;margin:0 0 8px;padding:6px 10px;border-radius:5px;font-size:11px;background:color-mix(in srgb, var(--color-warning, #f0ad4e) 14%, transparent);border:1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 40%, transparent);color:var(--color-warning, #f0ad4e);gap:6px;align-items:flex-start;line-height:1.4;"><span aria-hidden="true">⚠</span><span>Vision is enabled, but no mmproj GGUF projector was found in the cached model scan. Download an mmproj-*.gguf for this model, then refresh the cached model list before launching.</span></div>`;
       // Row 1: Engine + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
       const backendOpts = _backendChoices.map(([v,l]) => `<option value="${v}"${defaultBackend===v?' selected':''}>${l}</option>`).join('');
@@ -1543,11 +1550,11 @@ function _rerenderCachedModels() {
             : m.is_local_dir && m.path
             ? `$({ find ${_ldir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${_ldir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`
             : `$({ find ${dir} -name '*-00001-of-*.gguf' 2>/dev/null | sort; find ${dir} -name '*.gguf' 2>/dev/null | sort; } | head -1)`;
-          // Vision: auto-find the mmproj (CLIP/projector) file in the same dir.
-          // Resolved at runtime so the toggle just works if an mmproj-*.gguf is
-          // present (downloaded alongside the model). Empty if none → cmd omits it.
-          const _vsearchdir = (m.is_local_dir && m.path) ? _ldir : dir;
-          f._mmproj_path = `$(find ${_vsearchdir} -iname 'mmproj*.gguf' 2>/dev/null | sort | head -1)`;
+          // Vision: use the scanned projector (CLIP/mmproj) file when present.
+          // Keeping this as a printf path avoids generating a command substitution
+          // that the backend serve-command validator must reject as unsafe.
+          const selectedProjector = _projectorGgufFiles(m)[0];
+          f._mmproj_path = selectedProjector ? _selectedGgufExpr(m, repo, selectedProjector.rel_path) : '';
         }
         if (f.reasoning_parser) {
           const _rpEl2 = panel.querySelector('[data-field="reasoning_parser"]');
@@ -1563,6 +1570,10 @@ function _rerenderCachedModels() {
         }
         let cmd = _buildServeCmd(f, serveModel, backend);
         if (f.extra && f.extra.trim()) cmd += ' ' + f.extra.trim();
+        const missingVisionProjector = backend === 'llamacpp' && !!f.vision && !f._mmproj_path;
+        panel._visionMissingProjector = missingVisionProjector;
+        const _visionWarn = panel.querySelector('.hwfit-serve-vision-warn');
+        if (_visionWarn) _visionWarn.style.display = missingVisionProjector ? 'flex' : 'none';
         const _ce2 = panel.querySelector('.hwfit-serve-cmd'); _ce2.value = _formatServeCmdPreview(cmd); _ce2.style.height = 'auto'; _ce2.style.height = _ce2.scrollHeight + 'px';
         panel._cmd = cmd;
         panel._host = f.host || '';
@@ -2938,12 +2949,16 @@ function _rerenderCachedModels() {
         });
         serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
         const launchTarget = _selectedServeTarget(panel);
+        if (serveState.backend === 'llamacpp' && serveState.vision && !/(?:^|\s)(?:--mmproj|--clip_model_path)\b/.test(launchCmd)) {
+          _restoreLaunchBtn();
+          uiModule.showToast('Vision is checked, but no mmproj projector is in the launch command. Refresh cached models after downloading mmproj, or add --mmproj manually.', 8000);
+          return;
+        }
         if (serveState.backend === 'diffusers' && _remoteWindowsDiffusersUnsupported(launchTarget)) {
           _restoreLaunchBtn();
           uiModule.showToast('Diffusers serving is not supported on remote Windows servers yet. Use local Windows or a Linux server.', 9000);
           return;
         }
-
         // Pre-launch: check our own task list for a serve already running
         // on this host. Offer to stop+launch as the default action — the
         // SSH-based port probe below is more thorough but it can miss
