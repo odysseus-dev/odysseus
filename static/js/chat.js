@@ -745,9 +745,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const dismissBtn = document.createElement('button');
         dismissBtn.textContent = '\u00d7';
         dismissBtn.className = 'import-prompt-dismiss';
+        dismissBtn.setAttribute('aria-label', 'Dismiss');
+        dismissBtn.title = 'Dismiss';
         dismissBtn.addEventListener('click', () => banner.remove());
         banner.appendChild(dismissBtn);
-        const chatBar = document.getElementById('chat-bar');
+        const chatBar = document.querySelector('.chat-input-bar');
         if (chatBar) chatBar.parentNode.insertBefore(banner, chatBar);
         // Auto-dismiss after 15 seconds
         setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
@@ -805,15 +807,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         } else {
           fd.append('use_web', 'true');
         }
+      } else if (isAgentMode) {
+        fd.append('allow_web_search', 'false');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
         // Research always runs in chat mode — override agent if set
         fd.set('mode', 'chat');
       }
-      if (el('bash-toggle').checked) {
-        fd.append('allow_bash', 'true');
-      }
+      fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');
@@ -821,6 +823,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const incognitoChk = el('incognito-toggle');
       if (incognitoChk && incognitoChk.checked) {
         fd.append('incognito', 'true');
+      }
+      const _ws = (Storage.KEYS && Storage.get(Storage.KEYS.WORKSPACE, '')) || '';
+      if (_ws) {
+        fd.append('workspace', _ws);
       }
       if (presetsModule.getSelectedPreset()) {
         fd.append('preset_id', presetsModule.getSelectedPreset());
@@ -1085,7 +1091,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let _lastToolName = '';
       const _searchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:4px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
       const _toolLabels = {
-        'web_search': _searchIcon + 'Searching',
+        'web_search': 'Searching',
         'bash': 'Running',
         'python': 'Running',
         'create_document': 'Writing',
@@ -1104,6 +1110,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         'deep_research': 'Researching',
         'list_models': 'Browsing',
         'ui_control': 'Adjusting',
+      };
+      const _toolIcons = {
+        'web_search': _searchIcon,
       };
       function _thinkingLabel() {
         if (!_lastToolName) {
@@ -1560,9 +1569,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                       .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
                     _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    // Keep thinking box scrolled to bottom
+                    // Keep thinking box scrolled to bottom, but let user scroll up
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
-                    if (thinkBox) thinkBox.scrollTop = thinkBox.scrollHeight;
+                    if (thinkBox) {
+                      var nearBottom = thinkBox.scrollHeight - thinkBox.clientHeight - thinkBox.scrollTop < 80;
+                      if (nearBottom) thinkBox.scrollTop = thinkBox.scrollHeight;
+                    }
                   }
                   uiModule.scrollHistory();
                   continue;
@@ -1781,6 +1793,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
                 }
+              } else if (json.type === 'workspace_rejected') {
+                // Server refused to bind the posted workspace (deleted folder,
+                // file path, sensitive dir, filesystem root). Clear the stored
+                // value so the pill stops claiming a confinement that is not in
+                // effect, and tell the user.
+                const _wsPath = (json.data && json.data.path) || '';
+                import('./workspace.js').then((m) => {
+                  const ws = m.default || m;
+                  if (ws && ws.setWorkspace) ws.setWorkspace('');
+                });
+                uiModule.showToast(
+                  `Workspace ${_wsPath || '(unknown)'} is no longer usable; running without confinement`,
+                  6000
+                );
+                continue;
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback
                 var _fbData = json.data || {};
@@ -2052,10 +2079,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 }
                 threadWrap.classList.add('streaming');
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
+                const toolIcon = _toolIcons[json.tool.toLowerCase()] || '\u25B6';
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
                 const cmdHtml = cmd ? `<pre class="agent-thread-cmd">${esc(cmd)}</pre>` : '';
-                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">\u25B6</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
+                node.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${toolIcon}</span><span class="agent-thread-tool">${esc(toolLabel)}</span><span class="agent-thread-wave">▁▂▃</span></div><div class="agent-thread-content">${cmdHtml}</div>`;
                 // Expand/collapse via delegated click handler (init at module bottom).
                 threadWrap.appendChild(node);
                 currentToolBubble = node;
@@ -3847,7 +3875,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // Also submit on Enter (without shift)
     editor.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         e.preventDefault();
         saveBtn.click();
       }
@@ -3855,9 +3885,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   }
 
   /**
-   * Resend a user message — truncates history to that point and resubmits.
+   * Resend a user message. Normal resend appends a fresh copy at the end of
+   * the current thread; regenerate flows can opt into replacing from here.
    */
-  export async function resendUserMessage(userMsgElement) {
+  export async function resendUserMessage(userMsgElement, opts = {}) {
+    const replaceFromHere = Boolean(opts && opts.replaceFromHere);
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const msgIndex = allMsgs.indexOf(userMsgElement);
@@ -3903,25 +3935,28 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const sessionId = sessionModule.getCurrentSessionId();
     if (!sessionId) return;
 
-    // Truncate backend to keep everything before this user message
-    const keepCount = msgIndex;
     try {
-      await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount })
-      });
+      if (replaceFromHere) {
+        // Regenerate flows intentionally trim history to this point before
+        // resubmitting. The plain "Resend message" action must not do this.
+        const keepCount = msgIndex;
+        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keep_count: keepCount })
+        });
 
-      // Drop the AI replies after the user message but KEEP the user bubble
-      // itself (so its photo stays visible). Then suppress the new user
-      // bubble that send would otherwise add — same pattern as regenerate.
-      let sibling = userMsgElement.nextSibling;
-      while (sibling) {
-        const next = sibling.nextSibling;
-        sibling.remove();
-        sibling = next;
+        // Drop the AI replies after the user message but KEEP the user bubble
+        // itself (so its photo stays visible). Then suppress the new user
+        // bubble that send would otherwise add — same pattern as regenerate.
+        let sibling = userMsgElement.nextSibling;
+        while (sibling) {
+          const next = sibling.nextSibling;
+          sibling.remove();
+          sibling = next;
+        }
+        _hideUserBubble = true;
       }
-      _hideUserBubble = true;
       _pendingRegenAttachments = _ids;
 
       // Resubmit
@@ -4455,6 +4490,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    * Delete an AI message and its preceding user message from the conversation.
    */
   export async function deleteMessage(msgElement) {
+    if (uiModule && uiModule.styledConfirm) {
+      const ok = await uiModule.styledConfirm('Delete this message?', {
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+
     const box = document.getElementById('chat-history');
     const allMsgs = Array.from(box.querySelectorAll('.msg'));
     const clickedIndex = allMsgs.indexOf(msgElement);

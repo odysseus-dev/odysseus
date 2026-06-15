@@ -47,6 +47,7 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 # Core imports
 from core.constants import (
@@ -55,7 +56,7 @@ from core.constants import (
 )
 from core.database import SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
-from core.auth import AuthManager
+from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
     LLMServiceError, WebSearchError,
@@ -68,10 +69,37 @@ from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_imag
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-)
+import logging.handlers
+from core.constants import DATA_DIR
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Clear existing handlers to avoid duplicates
+for _h in list(_root_logger.handlers):
+    _root_logger.removeHandler(_h)
+
+_console_h = logging.StreamHandler()
+_console_h.setFormatter(_formatter)
+_root_logger.addHandler(_console_h)
+
+try:
+    _log_dir = os.path.join(DATA_DIR, "logs")
+    os.makedirs(_log_dir, exist_ok=True)
+    _log_file = os.path.join(_log_dir, "app.log")
+
+    # RotatingFileHandler is not multi-process safe (e.g. if uvicorn is run with --workers N).
+    # Odysseus is single-process by convention, so this is acceptable, but be aware that
+    # concurrent log rotation issues can arise if multiple workers are configured.
+    _file_h = logging.handlers.RotatingFileHandler(
+        _log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    _file_h.setFormatter(_formatter)
+    _root_logger.addHandler(_file_h)
+except Exception as e:
+    _root_logger.warning(f"Failed to initialize file logging handler (falling back to console-only): {e}")
+
 logger = logging.getLogger(__name__)
 
 # ========= APP =========
@@ -104,6 +132,16 @@ app.add_middleware(
     ],
 )
 
+# ========= RESPONSE COMPRESSION (gzip) =========
+# The frontend's text assets (style.css, index.html, the JS bundles) shipped
+# uncompressed on every cold load. gzip cuts CSS/JS/HTML by ~75-85% on the wire
+# with no behavioural change. Starlette's GZipMiddleware excludes
+# `text/event-stream` by default, so the SSE streams (chat, shell, research,
+# model-probe — all served with media_type="text/event-stream") are never
+# compressed or buffered; only complete bodies over minimum_size are. The
+# security-header middleware composes cleanly on top.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+
 # ========= SECURITY HEADERS MIDDLEWARE =========
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -129,6 +167,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/api/memory/audit",    # retains own 120s LLM inactivity timeout
 )
 
 
@@ -217,8 +256,16 @@ if AUTH_ENABLED:
         try:
             rows = db.query(ApiToken).filter(ApiToken.is_active == True).all()
             for r in rows:
+                owner_key = normalize_known_username(auth_manager.users, getattr(r, "owner", None))
+                if not owner_key:
+                    logger.warning(
+                        "Ignoring active API token '%s' for unknown auth user '%s'",
+                        getattr(r, "id", ""),
+                        getattr(r, "owner", None),
+                    )
+                    continue
                 scopes = [s.strip() for s in (getattr(r, "scopes", "") or "chat").split(",") if s.strip()]
-                new_map[r.token_prefix].append((r.id, r.token_hash, getattr(r, "owner", None), scopes))
+                new_map[r.token_prefix].append((r.id, r.token_hash, owner_key, scopes))
         finally:
             db.close()
         _token_cache.clear()
@@ -472,15 +519,20 @@ components = initialize_managers(BASE_DIR, rag_manager)
 session_manager   = components["session_manager"]
 from src.assistant_log import set_session_manager as _set_asst_sm
 _set_asst_sm(session_manager)
+# Set the global session manager singleton (used by core.models.Session.add_message)
+from core.models import set_session_manager_instance
+set_session_manager_instance(session_manager)
 app.state.session_manager = session_manager
 memory_manager    = components["memory_manager"]
 memory_vector     = components.get("memory_vector")
 upload_handler    = components["upload_handler"]
+app.state.upload_handler = upload_handler
 personal_docs_mgr = components["personal_docs_manager"]
 api_key_manager   = components["api_key_manager"]
 preset_manager    = components["preset_manager"]
 chat_processor    = components["chat_processor"]
 research_handler  = components["research_handler"]
+app.state.research_handler = research_handler
 chat_handler      = components["chat_handler"]
 model_discovery   = components["model_discovery"]
 skills_manager    = components["skills_manager"]
@@ -574,7 +626,7 @@ app.include_router(setup_preset_routes(preset_manager))
 
 # Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
+app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler, memory_vector))
 
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
@@ -651,6 +703,9 @@ app.include_router(setup_shell_routes())
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())
+
+from routes.workspace_routes import setup_workspace_routes
+app.include_router(setup_workspace_routes())
 
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
@@ -945,16 +1000,21 @@ async def _startup_event():
     async def _warmup_endpoints():
         try:
             import httpx
-            endpoints = model_discovery.get_endpoints() if model_discovery else []
-            for ep in endpoints[:5]:
-                url = ep.get("url", "").replace("/chat/completions", "/models")
-                if url:
-                    try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
-                            await client.get(url)
-                        logger.info(f"Warmup ping OK: {url}")
-                    except Exception as e:
-                        logger.debug(f"Warmup ping failed for endpoint: {e}")
+            # model_discovery has no get_endpoints(); that call raised
+            # AttributeError every run and silently disabled warmup/keepalive.
+            # Resolve the /models probe URLs via the real discovery API, off the
+            # event loop since discovery does a blocking port scan.
+            urls = (
+                await asyncio.to_thread(model_discovery.warmup_ping_urls)
+                if model_discovery else []
+            )
+            for url in urls:
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        await client.get(url)
+                    logger.info(f"Warmup ping OK: {url}")
+                except Exception as e:
+                    logger.debug(f"Warmup ping failed for endpoint: {e}")
         except Exception as e:
             logger.debug(f"Warmup ping skipped: {e}")
 

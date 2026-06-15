@@ -19,6 +19,7 @@ from src.upload_limits import (
     GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
 )
 from src.constants import GENERATED_IMAGES_DIR
+from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
@@ -106,6 +107,32 @@ def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
             if fallback is None:
                 fallback = ep
     return fallback
+
+
+async def _fetch_result_image_b64(url: str) -> Optional[str]:
+    """Fetch an image URL returned in an upstream response body, base64-encoded
+    (or None on a non-200).
+
+    The URL comes from the diffusion/OpenAI server's response, not from our own
+    config, so a malicious or compromised endpoint could otherwise steer this
+    fetch at an internal or cloud-metadata address. Validate it the same way the
+    client-supplied endpoint is validated before the first request.
+    """
+    import base64
+    import httpx
+    from src.url_safety import check_outbound_url
+
+    ok, reason = check_outbound_url(
+        url,
+        block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+    )
+    if not ok:
+        raise HTTPException(502, f"Upstream returned an unsafe image URL: {reason}")
+    async with httpx.AsyncClient(timeout=60) as c2:
+        ir = await c2.get(url)
+        if ir.status_code == 200:
+            return base64.b64encode(ir.content).decode()
+    return None
 
 
 def setup_gallery_routes() -> APIRouter:
@@ -476,8 +503,7 @@ def setup_gallery_routes() -> APIRouter:
                 .outerjoin(DbSession, GalleryImage.session_id == DbSession.id)
                 .filter(GalleryImage.is_active == True)
             )
-            if user is not None:
-                q = q.filter(GalleryImage.owner == user)
+            q = _owner_filter(q, user)
 
             # Search filter (prompt + tags + ai_tags)
             if search:
@@ -579,28 +605,26 @@ def setup_gallery_routes() -> APIRouter:
         db = SessionLocal()
         try:
             q = db.query(GalleryAlbum)
-            if user:
-                q = q.filter(GalleryAlbum.owner == user)
+            q = _owner_filter(q, user, GalleryAlbum)
             albums = q.order_by(GalleryAlbum.created_at.desc()).all()
             result = []
             for a in albums:
                 _count_q = db.query(GalleryImage).filter(
                     GalleryImage.album_id == a.id, GalleryImage.is_active == True
                 )
-                if user:
-                    _count_q = _count_q.filter(GalleryImage.owner == user)
+                _count_q = _owner_filter(_count_q, user)
                 count = _count_q.count()
                 cover_url = None
                 if a.cover_id:
-                    cover = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id).first()
+                    cover_q = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id)
+                    cover = _owner_filter(cover_q, user).first()
                     if cover:
                         cover_url = f"/api/generated-image/{cover.filename}"
                 elif count > 0:
                     _cover_q = db.query(GalleryImage).filter(
                         GalleryImage.album_id == a.id, GalleryImage.is_active == True
                     )
-                    if user:
-                        _cover_q = _cover_q.filter(GalleryImage.owner == user)
+                    _cover_q = _owner_filter(_cover_q, user)
                     first = _cover_q.order_by(GalleryImage.created_at.desc()).first()
                     if first:
                         cover_url = f"/api/generated-image/{first.filename}"
@@ -643,10 +667,9 @@ def setup_gallery_routes() -> APIRouter:
             base = db.query(GalleryImage).filter(GalleryImage.is_active == True)
             size_q = db.query(func.sum(GalleryImage.file_size)).filter(GalleryImage.is_active == True)
             album_q = db.query(GalleryAlbum)
-            if user:
-                base = base.filter(GalleryImage.owner == user)
-                size_q = size_q.filter(GalleryImage.owner == user)
-                album_q = album_q.filter(GalleryAlbum.owner == user)
+            base = _owner_filter(base, user)
+            size_q = _owner_filter(size_q, user)
+            album_q = _owner_filter(album_q, user, GalleryAlbum)
             total = base.count()
             total_size = size_q.scalar() or 0
             fav_count = base.filter(GalleryImage.favorite == True).count()
@@ -674,8 +697,7 @@ def setup_gallery_routes() -> APIRouter:
                 GalleryImage.is_active == True,
                 (GalleryImage.ai_tags == None) | (GalleryImage.ai_tags == ""),
             )
-            if user:
-                q = q.filter(GalleryImage.owner == user)
+            q = _owner_filter(q, user)
             if album_id:
                 q = q.filter(GalleryImage.album_id == album_id)
             untagged = q.count()
@@ -909,14 +931,22 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(404, "Image not found")
 
             img_filename = img.filename
-            # Remove the file from disk
-            img_path = _gallery_image_path(img_filename)
-            if img_path.exists():
-                img_path.unlink()
-
-            # Soft-delete the record
+            # Soft-delete the record first; the DB is the source of truth.
             img.is_active = False
             db.commit()
+
+            # Only after the soft-delete commit succeeds do we remove the file.
+            # If the file were deleted first and the commit then failed/rolled
+            # back, the still-active record would point at a missing file.
+            # Best-effort so a missing or locked file can't 500 a delete that
+            # already succeeded logically. Uses the path-confined resolver so a
+            # malformed stored filename can't escape generated_images.
+            try:
+                img_path = _gallery_image_path(img_filename)
+                if img_path.exists():
+                    img_path.unlink()
+            except Exception as e:
+                logger.warning(f"Could not remove gallery image file for {img_filename}: {e}")
 
             # Strip stale chat-history references so the image bubble
             # (and its prompt caption) doesn't come back after a server
@@ -1147,10 +1177,7 @@ def setup_gallery_routes() -> APIRouter:
                         if item.get("b64_json"):
                             raw_b64 = item["b64_json"]
                         elif item.get("url"):
-                            async with httpx.AsyncClient(timeout=60) as c2:
-                                img_r = await c2.get(item["url"])
-                                if img_r.status_code == 200:
-                                    raw_b64 = base64.b64encode(img_r.content).decode()
+                            raw_b64 = await _fetch_result_image_b64(item["url"])
                     if not raw_b64:
                         raise HTTPException(502, "OpenAI returned no image")
 
@@ -1211,7 +1238,7 @@ def setup_gallery_routes() -> APIRouter:
         original and regenerates `strength` fraction. With strength ~0.4
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
-        import httpx, base64 as _b64
+        import httpx
         user = require_privilege(request, "can_generate_images")
         body = await request.json()
 
@@ -1387,10 +1414,9 @@ def setup_gallery_routes() -> APIRouter:
                             if item.get("b64_json"):
                                 return {"image": item["b64_json"]}
                             if item.get("url"):
-                                async with httpx.AsyncClient(timeout=60) as c2:
-                                    ir = await c2.get(item["url"])
-                                    if ir.status_code == 200:
-                                        return {"image": _b64.b64encode(ir.content).decode()}
+                                img_b64 = await _fetch_result_image_b64(item["url"])
+                                if img_b64:
+                                    return {"image": img_b64}
                     last_err = f"{path}: server returned no image"
                 except httpx.ConnectError as e:
                     raise HTTPException(502, f"Can't reach diffusion server at {base}: {e}")
@@ -1450,6 +1476,7 @@ def setup_gallery_routes() -> APIRouter:
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
+            patch_realesrgan_torchvision_compat()
             from realesrgan import RealESRGANer
         except ImportError:
             return {"error": "realesrgan not installed. Install it from Cookbook → Dependencies (search 'realesrgan')."}
@@ -1499,6 +1526,7 @@ def setup_gallery_routes() -> APIRouter:
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
+            patch_realesrgan_torchvision_compat()
             from basicsr.archs.rrdbnet_arch import RRDBNet
             from realesrgan import RealESRGANer
         except ImportError:

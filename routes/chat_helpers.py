@@ -177,9 +177,17 @@ async def auto_name_session(session_manager, sess):
             return
 
         owner = getattr(sess, "owner", None)
-        t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers, owner=owner,
-        )
+        t_url, t_model, t_headers = resolve_task_endpoint(owner=owner)
+        if not t_model:
+            # If no task/utility model is configured at all, fall back to
+            # the session's own model so auto-naming still works even on
+            # minimal setups.
+            from src.endpoint_resolver import resolve_endpoint
+            _fallback = resolve_endpoint("default", owner=owner)
+            if _fallback and _fallback[1]:
+                t_url, t_model, t_headers = _fallback
+            else:
+                t_url, t_model, t_headers = sess.endpoint_url, sess.model, sess.headers
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
             return
@@ -526,6 +534,29 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
     return None
 
 
+def _session_is_research_spinoff(sess) -> bool:
+    """True if this session was created via research "Discuss" spin-off.
+
+    Detected by the primer system message the spin-off endpoint seeds into
+    history (metadata ``research_spinoff_from``). Such sessions are grounded
+    on the seeded report, so global memory + personal-doc RAG injection is
+    suppressed for them (the report is the sole knowledge base). Handles both
+    ChatMessage objects and plain dicts.
+    """
+    for m in getattr(sess, "history", []) or []:
+        role = getattr(m, "role", None)
+        if role is None and isinstance(m, dict):
+            role = m.get("role")
+        if role != "system":
+            continue
+        md = getattr(m, "metadata", None)
+        if md is None and isinstance(m, dict):
+            md = m.get("metadata")
+        if (md or {}).get("research_spinoff_from"):
+            return True
+    return False
+
+
 async def build_chat_context(
     sess,
     request,
@@ -591,9 +622,17 @@ async def build_chat_context(
         mem_enabled, user, incognito, no_memory, uprefs.get("memory_enabled", "NOT_SET"),
     )
 
+    # Research-spinoff ("Discuss") sessions are grounded on the seeded report:
+    # the primer system message IS the knowledge base. Injecting global memory
+    # or personal-doc RAG on every turn pulls in keyword-matched but off-topic
+    # facts ("wrong data") and competes with the report, so suppress both here.
+    is_research_spinoff = _session_is_research_spinoff(sess)
+    if is_research_spinoff:
+        mem_enabled = False
+
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito or not allow_tool_preprocessing:
+    if incognito or not allow_tool_preprocessing or is_research_spinoff:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
@@ -616,7 +655,7 @@ async def build_chat_context(
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None:
+    if use_rag is not None or is_research_spinoff:
         _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 
@@ -643,6 +682,26 @@ async def build_chat_context(
 
     # Build messages
     messages = preface + sess.get_context_messages()
+
+    # Current date/time — injected as a standalone *user*-role context message
+    # placed immediately before the latest user turn, NOT folded into the
+    # system prompt. Its text changes every minute, and local OpenAI-compatible
+    # backends (llama.cpp / LM Studio) key their KV-cache prefix off the
+    # system message byte-for-byte; mixing ever-changing timestamp text into
+    # it would invalidate the cached prefix on every request (issue #2927).
+    # Placing it at the tail also keeps it out of the stable
+    # preface+history prefix, so that prefix stays byte-identical turn over
+    # turn (modulo the genuinely new history entries) and the cache survives.
+    if not agent_mode:
+        try:
+            from src.user_time import current_datetime_context_message
+            _dt_msg = current_datetime_context_message()
+            if messages and messages[-1].get("role") == "user":
+                messages.insert(len(messages) - 1, _dt_msg)
+            else:
+                messages.append(_dt_msg)
+        except Exception:
+            logger.debug("Failed to add current date/time context", exc_info=True)
 
     # Auto-compact
     messages, context_length, was_compacted = await maybe_compact(
@@ -940,6 +999,54 @@ def save_assistant_response(
     return None
 
 
+def _is_session_stream_active(session_id: str) -> bool:
+    """Best-effort check for "is a chat completion currently streaming for
+    this session?" — used to keep background extraction from overlapping a
+    main completion and competing for the local backend's processing slots
+    (issue #2927). Lazily imports the route module's live registry to avoid
+    a circular import (chat_routes imports this module at load time)."""
+    try:
+        from routes import chat_routes as _cr
+        return session_id in getattr(_cr, "_active_streams", {})
+    except Exception:
+        return False
+
+
+async def _run_extraction_jobs_sequentially(session_id: str, jobs: list, max_wait_s: float = 120.0):
+    """Run queued background-extraction coroutines one at a time, only once
+    no chat completion is actively streaming for this session.
+
+    As diagnosed in issue #2927, firing memory/skill extraction concurrently
+    with the main chat completion (or with each other) makes them compete for
+    the local backend's limited processing slots, evicting the main
+    conversation's cached KV-cache checkpoint and forcing a full prompt
+    re-evaluation on the next turn. Waiting for the stream to go idle and then
+    running the jobs strictly in sequence keeps at most one "side" request in
+    flight against the backend at any time, and never alongside the user's
+    own conversation.
+    """
+    # Wait for the triggering turn's own stream to finish winding down (it
+    # almost always already has by the time this task gets scheduled — this
+    # is a small safety margin, not the primary mechanism).
+    waited = 0.0
+    poll = 0.25
+    while _is_session_stream_active(session_id) and waited < max_wait_s:
+        await asyncio.sleep(poll)
+        waited += poll
+
+    for name, job in jobs:
+        # Re-check before each job: a fast follow-up message from the user
+        # may have started a new stream for this session while we waited.
+        waited = 0.0
+        while _is_session_stream_active(session_id) and waited < max_wait_s:
+            await asyncio.sleep(poll)
+            waited += poll
+        try:
+            await job
+        except Exception:
+            logger.warning("[bg-extract] %s extraction job failed for session %s", name, session_id, exc_info=True)
+
+
 def run_post_response_tasks(
     sess,
     session_manager,
@@ -962,7 +1069,22 @@ def run_post_response_tasks(
     extract_skills: bool = True,
     allow_background_extraction: bool = True,
 ):
-    """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction."""
+    """Fire background tasks after a completed response: memory extraction, webhooks, auto-name, skill extraction.
+
+    Memory/skill extraction are queued to run *sequentially*, after the main
+    completion stream for this session has fully wound down — never
+    concurrently with it or with each other. As diagnosed in issue #2927,
+    firing these "side" LLM calls in parallel with the main chat completion
+    makes them compete for the local backend's limited processing slots
+    (llama.cpp defaults to 4), evicting the main conversation's cached
+    checkpoint and forcing a full prompt re-evaluation on the next turn. By
+    the time this function runs the main response is already saved, but the
+    extraction calls themselves are still async — queuing them through
+    ``_queue_background_extraction`` keeps them from overlapping the *next*
+    turn's request too.
+    """
+    _extraction_jobs: list = []
+
     # Memory extraction — only every 4th message pair to avoid excess LLM calls
     _msg_count = len(sess.history) if hasattr(sess, 'history') else 0
     _should_extract = (_msg_count >= 4) and (_msg_count % 4 == 0)
@@ -972,10 +1094,10 @@ def run_post_response_tasks(
         t_url, t_model, t_headers = resolve_task_endpoint(
             sess.endpoint_url, sess.model, sess.headers, owner=owner,
         )
-        asyncio.create_task(extract_and_store(
+        _extraction_jobs.append(("memory", extract_and_store(
             sess, memory_manager, memory_vector,
             t_url, t_model, t_headers,
-        ))
+        )))
 
     # Skill extraction from complex agent runs. Only when the user actually
     # chose agent mode — not a chat we auto-escalated for a notes/calendar
@@ -1011,12 +1133,15 @@ def run_post_response_tasks(
                 sess.endpoint_url, sess.model, sess.headers, owner=owner,
             )
             logger.debug("[skill-extract] dispatching extractor (model=%s)", s_model)
-            asyncio.create_task(maybe_extract_skill(
+            _extraction_jobs.append(("skill", maybe_extract_skill(
                 sess, skills_manager,
                 s_url, s_model, s_headers,
                 agent_rounds, agent_tool_calls,
                 owner=owner,
-            ))
+            )))
+
+    if _extraction_jobs:
+        asyncio.create_task(_run_extraction_jobs_sequentially(session_id, _extraction_jobs))
 
     # Token accumulation
     if last_metrics:

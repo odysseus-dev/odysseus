@@ -188,6 +188,12 @@ _MISFENCED_WEB_TOOL_NAMES = {
     "fetch_url": "web_fetch",
 }
 
+_RAW_WEB_JSON_TOOL_RE = re.compile(
+    r"\b(?:web_search|websearch|google_search|google_search_retrieval|google_search_grounding)\b",
+    re.IGNORECASE,
+)
+_RAW_WEB_JSON_ALLOWED_KEYS = {"query", "queries", "time_filter", "freshness", "max_pages"}
+
 
 # ---------------------------------------------------------------------------
 # Parsing functions
@@ -278,6 +284,73 @@ def _parse_misfenced_web_lookup(content: str) -> Optional[ToolBlock]:
     if not url:
         return None
     return ToolBlock("web_fetch", url)
+
+
+def _coerce_raw_web_query(value) -> Optional[str]:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+    return None
+
+
+def _raw_web_json_to_tool_block(payload) -> Optional[ToolBlock]:
+    if not isinstance(payload, dict):
+        return None
+    if set(payload) - _RAW_WEB_JSON_ALLOWED_KEYS:
+        return None
+
+    query = _coerce_raw_web_query(payload.get("query"))
+    if not query:
+        query = _coerce_raw_web_query(payload.get("queries"))
+    if not query:
+        return None
+
+    content = {"query": query}
+    for key in ("time_filter", "freshness"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip().lower() in ("day", "week", "month", "year"):
+            content[key] = value.strip().lower()
+
+    max_pages = payload.get("max_pages")
+    if isinstance(max_pages, int) and 1 <= max_pages <= 10:
+        content["max_pages"] = max_pages
+
+    if len(content) == 1:
+        return ToolBlock("web_search", query)
+    return ToolBlock("web_search", json.dumps(content))
+
+
+def _parse_raw_web_json_lookup(text: str) -> Optional[tuple[ToolBlock, tuple[int, int]]]:
+    """Recover local text-model web_search calls emitted as prose + bare JSON.
+
+    Some non-native tool models leak the intended call as:
+
+        Need to do web_search for ...
+        {"query": "...", "time_filter": "week"}
+
+    Keep this narrower than fenced/tool markup: it only runs when a known web
+    tool name appears shortly before a JSON object shaped like web_search args.
+    """
+    if not isinstance(text, str):
+        return None
+
+    decoder = json.JSONDecoder()
+    for mention in _RAW_WEB_JSON_TOOL_RE.finditer(text):
+        search_start = mention.end()
+        search_end = min(len(text), search_start + 1200)
+        for brace in re.finditer(r"\{", text[search_start:search_end]):
+            start = search_start + brace.start()
+            try:
+                parsed, end = decoder.raw_decode(text[start:])
+            except json.JSONDecodeError:
+                continue
+            block = _raw_web_json_to_tool_block(parsed)
+            if block:
+                return block, (start, start + end)
+    return None
 
 def _parse_tool_call_block(raw: str) -> Optional[ToolBlock]:
     """Parse a [TOOL_CALL] block into a ToolBlock.
@@ -436,6 +509,8 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
     3. XML-style <tool_call>/<invoke> blocks
     4. <tool_code> blocks (MiniMax-M2.5 style)
     5. DeepSeek DSML markup (normalized to <invoke> first)
+    6. Non-native local model fallback: prose mentioning web_search followed by
+       bare JSON args, e.g. {"query":"...", "time_filter":"week"}
 
     `skip_fenced`: when True, Pattern 1 (fenced ```bash/```python/```json code
     blocks) is not matched at all. Native function-calling models (GPT/Claude/
@@ -509,6 +584,12 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             if block:
                 blocks.append(block)
 
+    # Pattern 6: local text-model web_search call leaked as prose + bare JSON.
+    if not blocks and not skip_fenced:
+        raw_web_json = _parse_raw_web_json_lookup(text)
+        if raw_web_json:
+            blocks.append(raw_web_json[0])
+
     return blocks
 
 
@@ -532,6 +613,11 @@ def strip_tool_blocks(text: str, skip_fenced: bool = False) -> str:
     cleaned = _TOOL_CALL_RE.sub('', cleaned)
     cleaned = _XML_TOOL_CALL_RE.sub('', cleaned)
     cleaned = _TOOL_CODE_RE.sub('', cleaned)
+    if not skip_fenced:
+        raw_web_json = _parse_raw_web_json_lookup(cleaned)
+        if raw_web_json:
+            _, (start, end) = raw_web_json
+            cleaned = cleaned[:start] + cleaned[end:]
     # Strip bare <invoke> blocks not wrapped in <tool_call>
     cleaned = re.sub(r'<invoke\s+name=["\'].*?</invoke>', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)

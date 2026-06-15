@@ -18,6 +18,30 @@ from src.tool_utils import _truncate, get_mcp_manager, set_mcp_manager
 
 logger = logging.getLogger(__name__)
 
+from .subprocess_tools import BashTool, PythonTool
+from .web_tools import WebSearchTool, WebFetchTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
+from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+
+TOOL_HANDLERS = {
+    "bash": BashTool().execute,
+    "python": PythonTool().execute,
+    "web_search": WebSearchTool().execute,
+    "web_fetch": WebFetchTool().execute,
+    "read_file": ReadFileTool().execute,
+    "write_file": WriteFileTool().execute,
+    "edit_file": EditFileTool().execute,
+    "ls": LsTool().execute,
+    "glob": GlobTool().execute,
+    "grep": GrepTool().execute,
+    "create_document": CreateDocumentTool().execute,
+    "update_document": UpdateDocumentTool().execute,
+    "edit_document": EditDocumentTool().execute,
+    "suggest_document": SuggestDocumentTool().execute,
+    "manage_documents": ManageDocumentTool().execute,
+    "get_workspace": GetWorkspaceTool().execute,
+}
+
 # ---------------------------------------------------------------------------
 # Constants (re-exported for backward compatibility — single source of truth
 # is src.constants; always prefer importing from there for new code)
@@ -28,7 +52,7 @@ PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-             "grep", "glob", "ls",
+             "grep", "glob", "ls", "get_workspace",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",
@@ -92,15 +116,14 @@ from src.tool_execution import (  # noqa: E402, F401
     format_tool_result,
 )
 
+# Document functions
+from .document_tools import (
+    set_active_document, 
+    set_active_model
+)
+
 # Implementations
 from src.tool_implementations import (  # noqa: E402, F401
-    set_active_document,
-    set_active_model,
-    get_active_document,
-    do_create_document,
-    do_update_document,
-    do_edit_document,
-    do_suggest_document,
     do_search_chats,
     do_manage_skills,
     do_manage_tasks,
@@ -108,7 +131,6 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_mcp,
     do_manage_webhooks,
     do_manage_tokens,
-    do_manage_documents,
     do_manage_settings,
     do_api_call,
 )

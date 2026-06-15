@@ -3,6 +3,7 @@ Authentication module — multi-user password hashing, session tokens, config pe
 Config stored in data/auth.json. Uses bcrypt directly.
 """
 
+import enum
 import json
 import os
 import secrets
@@ -67,12 +68,29 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
 
 
+def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:
+    """Return a normalized username only when it exists in the auth user map."""
+    key = str(username or "").strip().lower()
+    if not key or key not in users:
+        return None
+    return key
+
+
 def _hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def _verify_password(password: str, hashed: str) -> bool:
     return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+
+
+class SetAdminResult(enum.Enum):
+    """Outcome of AuthManager.set_admin, so callers can map each case to a
+    precise response instead of guessing from a bare bool."""
+    OK = "ok"
+    USER_NOT_FOUND = "user_not_found"
+    NOT_AUTHORIZED = "not_authorized"   # requester is not an admin
+    LAST_ADMIN = "last_admin"           # would remove the last remaining admin
 
 
 class AuthManager:
@@ -96,6 +114,7 @@ class AuthManager:
         self._load()
         self._load_sessions()
         self._migrate_single_user()
+        self._drop_reserved_loaded_users()
         self._migrate_legacy_admin_role()
 
     def _load(self):
@@ -148,7 +167,13 @@ class AuthManager:
     def _migrate_single_user(self):
         """Migrate old single-user format to multi-user format."""
         if "password_hash" in self._config and "users" not in self._config:
-            old_user = self._config.get("username", "admin")
+            old_user = str(self._config.get("username", "admin") or "admin").strip().lower()
+            if old_user in RESERVED_USERNAMES:
+                logger.warning(
+                    "Migrating legacy single-user reserved username '%s' to 'admin'",
+                    old_user,
+                )
+                old_user = "admin"
             old_hash = self._config["password_hash"]
             self._config = {
                 "users": {
@@ -161,6 +186,30 @@ class AuthManager:
             }
             self._save()
             logger.info(f"Migrated single-user auth to multi-user (admin: {old_user})")
+
+    def _drop_reserved_loaded_users(self):
+        """Fail closed for legacy/manual auth rows that collide with sentinels."""
+        users = self._config.get("users")
+        if not isinstance(users, dict):
+            return
+        normalized = {}
+        removed = []
+        for username, data in users.items():
+            key = str(username or "").strip().lower()
+            if not key:
+                continue
+            if key in RESERVED_USERNAMES:
+                removed.append(key)
+                continue
+            normalized[key] = data
+        if removed or normalized != users:
+            self._config["users"] = normalized
+            self._save()
+        if removed:
+            logger.warning(
+                "Removed reserved username(s) from auth config: %s",
+                ", ".join(sorted(set(removed))),
+            )
 
     def _migrate_legacy_admin_role(self):
         """Normalize setup.py's old role='admin' marker to is_admin=True."""
@@ -244,6 +293,22 @@ class AuthManager:
                 return False
             if not self.users.get(requesting_user, {}).get("is_admin"):
                 return False
+            # Revoke API bearer tokens before removing the auth row. The bearer
+            # path authenticates from ApiToken rows and does not require the
+            # owner to still exist, so a successful delete must not leave active
+            # rows behind. If the token store is unavailable, fail closed and
+            # keep the user/session state intact so the admin can retry.
+            try:
+                from core.database import get_db_session, ApiToken
+                with get_db_session() as db:
+                    removed_tokens = db.query(ApiToken).filter(ApiToken.owner == username).delete()
+                if removed_tokens:
+                    logger.info(
+                        f"Revoked {removed_tokens} API token(s) owned by deleted user '{username}'"
+                    )
+            except Exception:
+                logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
+                return False
             del self._config["users"][username]
             self._save()
         # Purge all sessions belonging to this user. validate_token doesn't
@@ -258,18 +323,6 @@ class AuthManager:
                 revoked += 1
         if revoked:
             self._save_sessions()
-        # Also revoke API bearer tokens owned by this user. The bearer auth
-        # path authenticates straight against ApiToken rows and never
-        # re-checks that the owner still exists, so leaving the rows behind
-        # would let a deleted user keep full API access indefinitely.
-        try:
-            from core.database import get_db_session, ApiToken
-            with get_db_session() as db:
-                removed = db.query(ApiToken).filter(ApiToken.owner == username).delete()
-            if removed:
-                logger.info(f"Revoked {removed} API token(s) owned by deleted user '{username}'")
-        except Exception:
-            logger.warning(f"Failed to revoke API tokens for deleted user '{username}'")
         logger.info(f"Deleted user '{username}' (by {requesting_user}); revoked {revoked} active session(s)")
         return True
 
@@ -343,6 +396,69 @@ class AuthManager:
             self._save()
         logger.info(f"Updated privileges for '{username}': {current}")
         return True
+
+    def set_admin(self, username: str, is_admin: bool,
+                  requesting_user: str) -> SetAdminResult:
+        """Promote/demote an existing user to/from admin. Admin only.
+
+        Refuses to remove the last remaining admin so the instance can never
+        be locked out of admin access; self-demotion is allowed as long as
+        another admin remains. Admin status is re-checked live on every
+        request, so unlike delete/rename no session or token revocation is
+        needed — a demoted admin simply fails the next is_admin() gate.
+
+        Promotion stashes the user's current privilege map and demotion
+        restores it, so a temporary admin stint can't silently broaden a
+        user's non-admin access; users without a stash (created as admin,
+        or promoted before stashing existed) demote to DEFAULT_PRIVILEGES.
+
+        Counting admins and flipping the flag happen in one critical section
+        so two concurrent demotions can't race the admin count to zero.
+        """
+        username = (username or "").strip().lower()
+        requesting_user = (requesting_user or "").strip().lower()
+        is_admin = bool(is_admin)
+        with self._config_lock:
+            target = self._config.get("users", {}).get(username)
+            if target is None:
+                return SetAdminResult.USER_NOT_FOUND
+            if not self.users.get(requesting_user, {}).get("is_admin"):
+                return SetAdminResult.NOT_AUTHORIZED
+            currently_admin = bool(target.get("is_admin"))
+            if currently_admin == is_admin:
+                return SetAdminResult.OK  # no-op; leave privileges untouched
+            if currently_admin and not is_admin:
+                admin_count = sum(1 for d in self.users.values() if d.get("is_admin"))
+                if admin_count <= 1:
+                    return SetAdminResult.LAST_ADMIN
+            # Write order matters for lock-free readers: get_privileges()
+            # reads without _config_lock and trusts is_admin, so the admin
+            # flag must be flipped while the stored map is safe to expose —
+            # before writing admin privileges on promote, after restoring
+            # the pre-admin map on demote.
+            if is_admin:
+                target["is_admin"] = True
+                # Stash the pre-admin map so a later demotion can restore it.
+                # While is_admin is set the stored map is inert: get_privileges
+                # short-circuits to ADMIN_PRIVILEGES and set_privileges refuses
+                # admins, so only set_admin ever touches the stash.
+                target["privileges_before_admin"] = dict(
+                    target.get("privileges") or DEFAULT_PRIVILEGES
+                )
+                target["privileges"] = dict(ADMIN_PRIVILEGES)
+            else:
+                # Restore the stashed pre-admin map. Fall back to defaults for
+                # users created as admins (their stored map is ADMIN_PRIVILEGES,
+                # which must not leak past demotion — e.g. can_use_bash) and
+                # for admins promoted before the stash existed.
+                target["privileges"] = dict(
+                    target.pop("privileges_before_admin", None)
+                    or DEFAULT_PRIVILEGES
+                )
+                target["is_admin"] = False
+            self._save()
+        logger.info("Set is_admin=%s for '%s' (by '%s')", is_admin, username, requesting_user)
+        return SetAdminResult.OK
 
     def change_password(self, username: str, current_password: str, new_password: str) -> bool:
         username = username.strip().lower()

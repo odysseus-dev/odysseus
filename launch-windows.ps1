@@ -30,14 +30,26 @@ function Fail($msg) {
     exit 1
 }
 
+function Test-WindowsBashStub($path) {
+    if (-not $path) { return $false }
+    $lowered = $path.ToLowerInvariant()
+    foreach ($stub in @("system32\bash.exe", "sysnative\bash.exe", "windowsapps\bash.exe")) {
+        if ($lowered.Contains($stub)) { return $true }
+    }
+    return $false
+}
+
 function Find-GitBash {
     $cmd = Get-Command bash -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    if ($cmd -and -not (Test-WindowsBashStub $cmd.Source)) { return $cmd.Source }
 
     $roots = @()
     foreach ($name in @("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LocalAppData")) {
         $base = [Environment]::GetEnvironmentVariable($name)
-        if ($base) { $roots += (Join-Path $base "Git") }
+        if ($base) {
+            $roots += (Join-Path $base "Git")
+            if ($name -eq "LocalAppData") { $roots += (Join-Path $base "Programs\Git") }
+        }
     }
     $roots += @("C:\Program Files\Git", "C:\Program Files (x86)\Git")
 
@@ -129,7 +141,20 @@ if (-not (Find-GitBash)) {
     Write-Host "      https://git-scm.com/download/win" -ForegroundColor Yellow
 }
 
-# 6. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
+# 6. Point CUDA_PATH at a real CUDA toolkit so GPU llama-cpp-python can import.
+$cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+if (Test-Path $cudaBase) {
+    $cudaBest = Get-ChildItem $cudaBase -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "bin") } |
+        Sort-Object { try { [version]($_.Name -replace "^v", "") } catch { [version]"0.0" } } -Descending |
+        Select-Object -First 1
+    if ($cudaBest) {
+        $env:CUDA_PATH = $cudaBest.FullName
+        Write-Host ("Using CUDA_PATH = " + $cudaBest.FullName) -ForegroundColor Cyan
+    }
+}
+
+# 7. Start the server (use `python -m uvicorn` - bare `uvicorn` may not be on PATH)
 Write-Step ("Starting Odysseus at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""

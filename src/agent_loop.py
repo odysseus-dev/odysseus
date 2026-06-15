@@ -22,7 +22,7 @@ from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
-from src.tool_utils import get_mcp_manager
+from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -263,6 +263,11 @@ _DOMAIN_RULES = {
 - Use `manage_settings` for preferences and tool enable/disable.
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+    "contacts": """\
+## Contacts rules
+- Use `resolve_contact` to look up a contact's email or phone number by name. Searches the CardDAV address book and sent email history.
+- Use `manage_contact` to list, add, update, or delete contacts in the address book.
+- Do NOT use `manage_memory` for contact lookups — contact details live in the address book, not memory.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -273,8 +278,9 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "contacts": {"resolve_contact", "manage_contact"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -310,6 +316,7 @@ NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats re
 <python code>
 ```
 Execute Python code. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). Same sandbox limits as bash — no TTY, no GUI, no `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
+Prefer a dedicated tool whenever one fits the job (reading, searching, or writing files); use python only for computation/processing no dedicated tool covers - not for reading or writing files.
 Do NOT use Python/requests for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.""",
 
     "web_search": """\
@@ -347,6 +354,11 @@ Write content to a file. First line is the path, rest is the content.""",
 {"path": "<file path>", "old_string": "<exact text to replace>", "new_string": "<replacement>", "replace_all": false}
 ```
 Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.""",
+
+    "get_workspace": """\
+```get_workspace
+```
+Return the absolute path of the active workspace folder. File tools are CONFINED to it (paths can be RELATIVE to it); the shell starts there (cwd) but is NOT sandboxed. Call this first when the user says "the project"/"the code"/"this folder" without a path, instead of asking them. No arguments.""",
 
     "create_document": """\
 ```create_document
@@ -595,7 +607,7 @@ _API_HOSTS = frozenset([
     "api.deepseek.com", "deepseek.com",
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
-    "ollama.com", "api.venice.ai",
+    "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
@@ -782,6 +794,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("documents")
     if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
         domains.add("web")
+    if has(
+        r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
+        r"\b(sprawd[zź]|znajd[zź])\b.*\b(internet|internecie|online|web)\b",
+        r"\b(aktualn\w*|bieżąc\w*|biezac\w*|dzisiaj|teraz)\b.*\b(pogod\w*|temperatur\w*)\b",
+    ):
+        domains.add("web")
     if has(r"\b(research|deep dive|investigate|look into)\b"):
         domains.add("web")
     if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
@@ -792,6 +810,8 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
+        domains.add("contacts")
 
     low_signal = not continuation and not domains
     return {
@@ -891,9 +911,20 @@ def _build_system_prompt(
 
     # Current date/time for every agent request. This is user-local when the
     # browser provided timezone headers, with a server-local fallback.
+    #
+    # IMPORTANT: this is intentionally NOT prepended into agent_prompt (the
+    # system message) anymore. Its text changes every minute, and local
+    # OpenAI-compatible backends (llama.cpp / LM Studio) key their KV-cache
+    # prefix off the system message byte-for-byte — mixing ever-changing
+    # timestamp text into the (already large, tool-laden) agent system prompt
+    # would invalidate the cached prefix on every single request, forcing a
+    # full prompt re-evaluation each turn (issue #2927). It's built here as a
+    # standalone *user*-role message and inserted near the end of the array,
+    # right alongside _doc_message / _skills_message, below.
+    _datetime_message = None
     try:
-        from src.user_time import current_datetime_prompt
-        agent_prompt = current_datetime_prompt() + agent_prompt
+        from src.user_time import current_datetime_context_message
+        _datetime_message = current_datetime_context_message()
     except Exception:
         pass
 
@@ -1230,6 +1261,9 @@ def _build_system_prompt(
         last_user_idx += 1  # the document message is now at last_user_idx
     if _skills_message:
         merged.insert(last_user_idx, _skills_message)
+        last_user_idx += 1
+    if _datetime_message:
+        merged.insert(last_user_idx, _datetime_message)
 
     return merged, mcp_schemas
 
@@ -1713,6 +1747,7 @@ async def stream_agent_loop(
     plan_mode: bool = False,
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
+    workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1781,8 +1816,21 @@ async def stream_agent_loop(
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
         from src.tool_index import ALWAYS_AVAILABLE
-        _relevant_tools = set(ALWAYS_AVAILABLE)
-        logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
+        if workspace:
+            # An active workspace IS the file-work signal: a vague "look at the
+            # project" means explore this folder. Surface only the READ-ONLY file
+            # tools (intersection with the plan-mode read-only allowlist) so the
+            # agent can investigate; write/shell tools stay out until the request
+            # actually calls for them (RAG retrieval adds those on a real ask).
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+            from src.tool_security import PLAN_MODE_READONLY_TOOLS
+            _relevant_tools |= (_DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS)
+            logger.info("[tool-rag] Low-signal but workspace active; including read-only file tools")
+        else:
+            # Don't short-circuit: fall through to RAG retrieval below.
+            # Non-English queries are flagged low_signal by the English-only
+            # intent classifier, but fastembed retrieval works across languages.
+            logger.info("[tool-rag] Low-signal query; will run RAG retrieval")
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
@@ -1857,6 +1905,44 @@ async def stream_agent_loop(
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
+    # The skill index injected by _build_system_prompt tells the model to
+    # call `manage_skills action=view`, and Jaccard-matched skills are pasted
+    # into the prompt as procedures to follow — but neither path goes through
+    # tool selection, so the model can be handed a procedure naming tools
+    # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
+    # in lockstep: manage_skills is callable whenever any skill is indexed,
+    # and a matched skill's declared requires_toolsets ride along with it.
+    if not guide_only and _relevant_tools is not None:
+        try:
+            from services.memory.skills import SkillsManager
+            from src.constants import DATA_DIR
+            _skills_on = True
+            try:
+                from routes.prefs_routes import _load_for_user as _load_prefs
+                _skills_on = (_load_prefs(owner) or {}).get("skills_enabled", True)
+            except Exception:
+                pass
+            _sm = SkillsManager(DATA_DIR)
+            _owner_skills = _sm.load(owner=owner) if _skills_on else []
+            if _owner_skills:
+                _relevant_tools.add("manage_skills")
+                if _retrieval_query:
+                    # Validate against every known executable tool, not just
+                    # TOOL_SECTIONS — code-nav tools (grep/glob/ls) ship as
+                    # schemas without a prompt-prose section.
+                    from src.tool_policy import known_tool_names
+                    _known = known_tool_names()
+                    for _sk in _sm.get_relevant_skills(
+                        _retrieval_query, skills=_owner_skills,
+                        threshold=0.25, max_items=3,
+                    ):
+                        _relevant_tools.update(
+                            t for t in (_sk.get("requires_toolsets") or [])
+                            if t in _known
+                        )
+        except Exception as _e:
+            logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
@@ -1907,6 +1993,10 @@ async def stream_agent_loop(
     # and can override this list for users who know their setup.
     _model_no_tools = any(kw in _model_lc for kw in (
         "deepseek-r1",
+        # Open-weight GPT-OSS models are commonly served through llama.cpp /
+        # llama-cpp-python. Their names contain "gpt-o", but they do not use
+        # OpenAI's native tool-call channel unless the endpoint opts in.
+        "gpt-oss",
     ))
     # Native Ollama endpoints (/api/chat) handle tool schemas differently from
     # the OpenAI-compat path. Models like gemma4, qwen3.5, ministral respond to
@@ -1974,30 +2064,34 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
-        from src.settings import is_setting_overridden
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
+        from src.model_context import budget_context_for_model
 
-        soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
+        soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            # Honour the configurable ceiling for the auto-derived budget path.
-            # No-op when the user has an explicit `agent_input_token_budget`
-            # (that branch ignores hard_max). Falls back to DEFAULT_HARD_MAX
-            # on missing/malformed values so misconfig can't zero the budget.
+            # Ceiling for the auto-derived budget (no effect on an explicit budget;
+            # see #1230). Falls back to DEFAULT_HARD_MAX on missing/malformed values
+            # so misconfig can't zero the budget.
             try:
                 hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
             except (TypeError, ValueError):
                 hard_max = DEFAULT_HARD_MAX
             if hard_max <= 0:
                 hard_max = DEFAULT_HARD_MAX
-            # Scale the default budget to the model's context window so long-context
-            # models aren't silently capped at 6000; an explicit user setting is
-            # still honoured (clamped to the window). (#1170)
+            # Default value = auto sentinel (scale to the window); any other value =
+            # explicit cap. Value-based, not presence-based, because the save path
+            # materializes defaults so a persisted default must still read as auto (#4121).
+            budget_is_explicit = _budget_is_explicit(soft_budget)
+            # Scale only off a window we actually discovered, bound to the value it
+            # proves (else 0) — not the passed-in context_length, which can be stale
+            # or unset for some callers (#4122 review).
+            ctx_for_budget = budget_context_for_model(endpoint_url, model, fallback=context_length)
             effective_budget = compute_input_token_budget(
                 soft_budget,
-                context_length,
-                is_setting_overridden("agent_input_token_budget"),
+                ctx_for_budget,
+                budget_is_explicit,
                 hard_max=hard_max,
             )
             trimmed_messages = trim_for_context(
@@ -2072,11 +2166,12 @@ async def stream_agent_loop(
     # tool, so we don't nudge on harmless transitional text like "let me
     # know what you think".
     _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
+        r"i should|we should|i must|we must|going to|let's)\s+"
         r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
         r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test)"
+        r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
@@ -2117,9 +2212,17 @@ async def stream_agent_loop(
         elif _is_api_model:
             # Filter schemas by RAG-selected tools (if available)
             if _relevant_tools:
+                # _build_base_prompt unions _ADMIN_TOOLS into the prompt
+                # sections when admin intent fires — the schema list must
+                # offer the same names, or the model reads prose describing
+                # tools it cannot call and substitutes the nearest schema
+                # it does have (e.g. manage_memory for manage_skills).
+                _schema_names = set(_relevant_tools)
+                if _needs_admin:
+                    _schema_names |= _ADMIN_TOOLS
                 base_schemas = [
                     s for s in FUNCTION_TOOL_SCHEMAS
-                    if s.get("function", {}).get("name") in _relevant_tools
+                    if s.get("function", {}).get("name") in _schema_names
                 ]
                 _mcp_filtered = [
                     s for s in mcp_schemas
@@ -2165,6 +2268,7 @@ async def stream_agent_loop(
             prompt_type=prompt_type if round_num == 1 else None,
             tools=all_tool_schemas if all_tool_schemas else None,
             timeout=agent_stream_timeout,
+            session_id=session_id,
         ):
             if time.time() > _round_deadline:
                 logger.warning(f"[agent] round {round_num} stream exceeded wall-clock deadline; cutting off")
@@ -2636,6 +2740,7 @@ async def stream_agent_loop(
                             tool_policy=tool_policy,
                             owner=owner,
                             progress_cb=_push_progress,
+                            workspace=workspace,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.
@@ -2652,6 +2757,46 @@ async def stream_agent_loop(
                         f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
                     )
                 desc, result = await _tool_task
+
+            # A skill the model just loaded can prescribe tools that weren't
+            # RAG-selected this turn (declared via requires_toolsets in its
+            # frontmatter). Union them into the selection so the NEXT round's
+            # schema list includes them — otherwise the model reads "use
+            # grep" from the skill it fetched but has no grep schema to call.
+            if (
+                block.tool_type == "manage_skills"
+                and _relevant_tools is not None
+                and not result.get("error")
+            ):
+                _ms_args = {}
+                _ms_raw = (block.content or "").strip()
+                if _ms_raw.startswith("{"):
+                    try:
+                        _ms_args = json.loads(_ms_raw)
+                    except json.JSONDecodeError:
+                        _ms_args = {}
+                _ms_name = str(_ms_args.get("name", "") or "").strip()
+                if _ms_name and _ms_args.get("action") in ("view", "view_ref"):
+                    try:
+                        from services.memory.skills import SkillsManager as _SkM
+                        from src.constants import DATA_DIR as _DD
+                        from src.tool_policy import known_tool_names as _ktn
+                        _known = _ktn()
+                        for _sk in _SkM(_DD).load(owner=owner):
+                            if _sk.get("name") == _ms_name:
+                                _new = {
+                                    t for t in (_sk.get("requires_toolsets") or [])
+                                    if t in _known and t not in _relevant_tools
+                                }
+                                if _new:
+                                    _relevant_tools.update(_new)
+                                    logger.info(
+                                        "[tool-rag] skill '%s' unlocked tools for next round: %s",
+                                        _ms_name, sorted(_new),
+                                    )
+                                break
+                    except Exception as _e:
+                        logger.debug(f"skill requires_toolsets unlock skipped: {_e}")
 
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
@@ -2743,18 +2888,20 @@ async def stream_agent_loop(
                 # On a bash/python timeout the result carries error + (often
                 # empty) stdout/stderr; fall back to the error so the "timed
                 # out" reason reaches the UI instead of a blank result.
-                output_text = (result["stdout"] or result["stderr"] or result.get("error", ""))[:2000]
+                raw = result["stdout"] or result["stderr"] or result.get("error", "")
+                output_text = _truncate(raw)
             elif "output" in result:
                 # bash / python canonical result: {"output": ..., "exit_code": ...}
-                output_text = (result["output"] or "")[:2000]
+                raw = result["output"] or ""
+                output_text = _truncate(raw)
             elif "response" in result:
                 # AI interaction tools (chat_with_model, send_to_session)
                 label = result.get("model", result.get("session_name", "AI"))
-                output_text = f"{label}: {result['response']}"[:4000]
+                output_text = _truncate(f"{label}: {result['response']}")
             elif "content" in result:
-                output_text = result["content"][:2000]
+                output_text = _truncate(result["content"])
             elif "results" in result:
-                output_text = result["results"][:4000]
+                output_text = _truncate(result["results"])
             elif "session_id" in result and "name" in result:
                 output_text = f"Session created: {result['name']} (id: {result['session_id']})"
             elif "success" in result:
@@ -2764,7 +2911,7 @@ async def stream_agent_loop(
                     else f"Error: {result.get('error', '')}"
                 )
             elif "error" in result:
-                output_text = result["error"][:2000]
+                output_text = _truncate(result["error"])
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}

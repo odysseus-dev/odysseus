@@ -321,6 +321,15 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|Please ensure sgl_kernel is properly installed/i,
+    message: 'SGLang native dependencies are missing on this server.',
+    fixes: [
+      { label: 'Copy OS package command', action: () => _copyText('sudo apt-get install -y libnuma-dev python3.12-dev build-essential') },
+      { label: 'Copy kernel upgrade', action: () => _copyText('python3 -m pip install --upgrade sglang-kernel') },
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
+    ],
+  },
+  {
     pattern: /sglang.*command not found|No module named sglang|SGLang is not installed/i,
     message: 'SGLang is not installed or not in PATH.',
     fixes: [
@@ -406,7 +415,7 @@ export const ERROR_PATTERNS = [
       { label: 'Repair kernel package', action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
-        _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages kernels<0.15`);
+        _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages "kernels<0.15"`);
       }},
       { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
     ],
