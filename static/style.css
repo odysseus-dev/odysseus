@@ -5005,7 +5005,8 @@ body.bg-pattern-sparkles {
       #research-overlay,
       #theme-modal,
       #settings-modal,
-      #email-lib-modal {
+      #email-lib-modal,
+      #note-preview-modal {
         left: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px));
         width: calc(100% - (var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)));
         box-sizing: border-box;
@@ -30688,7 +30689,7 @@ body.notes-mobile-mode .note-card-corner-copy,
 body.notes-mobile-mode .note-card-corner-trash,
 body.notes-mobile-mode .note-card-corner-unarchive,
 body.notes-mobile-mode .note-card-corner-done,
-body.notes-mobile-mode .note-card-edit-corner,
+body.notes-mobile-mode .note-card-edit-corner { right: 6px; }
 body.notes-mobile-mode .note-card-done,
 body.notes-mobile-mode .note-card-actions,
 body.notes-mobile-mode .note-cl-quickadd,
@@ -30742,7 +30743,8 @@ body.notes-mobile-mode .note-card:active {
    shimmer across every tile so it's obvious you're in rearrange mode
    (the Google Keep "active edit" cue). Also disable scroll inside the
    panel so the drag works smoothly. */
-body.notes-drag-mode .notes-pane-body {
+body.notes-drag-mode .notes-pane-body,
+body.notes-drag-mode .notes-pane-cards {
   overflow: hidden;
   touch-action: none;
 }
@@ -31412,9 +31414,29 @@ body.notes-drag-mode .note-card-pin svg {
   width: auto !important;
   padding: 0 8px !important;
 }
+/* The body is split into a pinned top (labels + quick-add) and a scrollable
+   card region. The body itself no longer scrolls — .notes-pane-cards is the
+   scroller — so the quick-add bar stays in reach while the notes scroll. */
 .notes-pane-body {
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.notes-pane-top {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 0;
+}
+.notes-pane-cards {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px;
   display: flex;
   flex-direction: column;
@@ -31496,11 +31518,9 @@ body.notes-drag-mode .note-card-pin svg {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border: 1px solid var(--border);
   border-radius: 8px;
-  /* Extra right padding so the corner buttons (pin / edit / copy / done)
-     never collide with the title, and a min-height so an empty/short
-     note is still tall enough to fit that row of corner controls. */
+  /* min-height so an empty/short note is still tall enough to fit the row of
+     corner controls. */
   padding: 10px 14px;
-  padding-right: 30px;
   min-height: 64px;
   cursor: default;
   transition: background 0.15s;
@@ -31608,6 +31628,12 @@ body.notes-drag-mode .note-card-pin svg {
 }
 .note-card-select { left: -8px; }
 .note-card-pin    { right: -8px; }
+/* Mobile: the card grid clips overflow (overflow-x:hidden), so a pin/select
+   sticking out at -8px gets cut off / hidden under the panel chrome. Pull them
+   inside the card. The pin sits top-left (the right corner holds the action
+   buttons); select mode hides the pin, so they never collide there. */
+body.notes-mobile-mode .note-card-pin { top: 4px; left: 4px; right: auto; }
+body.notes-mobile-mode .note-card-select { top: 4px; left: 4px; }
 /* Pencil + checkmark glyphs both have empty space along the top of their
    24×24 viewBox, so flex-centering leaves them sitting visually high.
    Nudge the inner SVG down a touch to compensate. */
@@ -31762,6 +31788,226 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 /* Edit + Done are now side-by-side at top-right by default — title-only
    fallback no longer needed. */
 .note-card-selectmode .note-card-done { display: none !important; }
+
+
+/* Note preview modal — uses the standard .modal pattern (no backdrop,
+   app stays usable) with minimize-to-dock and full drag support. */
+#note-preview-modal .note-preview-modal-content {
+  width: min(600px, 92vw);
+  max-height: 82vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  /* Ring reflecting the note's chosen color (set via --note-ring in JS;
+     transparent = no color picked). Outline follows the rounded corners and
+     doesn't shift layout. */
+  outline: 3px solid var(--note-ring, transparent);
+  outline-offset: 2px;
+  transition: outline-color 0.2s ease;
+}
+/* Mobile: the preview is the only editor, so give it a near-fullscreen sheet
+   instead of a small floating window. */
+@media (max-width: 768px) {
+  /* Fullscreen sheet: drop the bottom-sheet safe-area gap so it reaches the
+     bottom edge — the inset is moved onto the footer below instead. */
+  #note-preview-modal {
+    padding-bottom: 0;
+  }
+  #note-preview-modal .note-preview-modal-content {
+    /* True fullscreen sheet. `align-self: stretch` fills the modal's available
+       height. The generic mobile `.modal-content` sets `max-height: 85vh
+       !important` (which was capping us → ~15vh bottom gap), so override it with
+       !important here. width:100vw + no radius = edge-to-edge. */
+    width: 100vw;
+    align-self: stretch;
+    max-height: none !important;
+    border-radius: 0;
+  }
+  /* Keep the footer actions clear of the home indicator now that the modal's
+     own bottom padding is gone. */
+  #note-preview-modal .note-preview-actions {
+    padding-bottom: calc(9px + env(safe-area-inset-bottom, 0px));
+  }
+  /* iOS Safari auto-zooms when a focused text field is < 16px. Bump every
+     editable surface in the notes UI to 16px on mobile so focusing one (the
+     preview body, title, a tag/reminder/search input) never triggers a zoom —
+     without disabling pinch-zoom in the viewport meta (an accessibility win). */
+  #note-preview-modal .note-preview-body,
+  #note-preview-modal .note-preview-title,
+  .note-tag-input,
+  .note-reminder-date-input,
+  .note-reminder-repeat-select,
+  .notes-pane .memory-search-input {
+    font-size: 16px;
+  }
+}
+#note-preview-modal .modal-header {
+  padding: 10px 14px 2px;
+  flex-shrink: 0;
+}
+#note-preview-modal .note-preview-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  margin: 0;
+}
+#note-preview-modal .note-preview-body-wrap {
+  overflow-y: auto;
+  padding: 0px 16px 18px;
+  flex: 1;
+}
+.note-preview-body.md-body {
+  font-size: 0.9rem;
+  line-height: 1.65;
+  word-break: break-word;
+}
+.note-preview-empty {
+  opacity: 0.4;
+  font-style: italic;
+  margin: 0;
+}
+.note-preview-empty-body { cursor: text; }
+
+/* ── Markdown task lists ( - [ ] / - [x] ) → interactive checkboxes ──
+   Shared by the note card body, the preview window, and anywhere mdToHtml
+   output is shown. */
+.md-tasklist {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.md-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+  padding: 2px 3px;
+  border-radius: 5px;
+  transition: background 0.12s;
+}
+.md-task:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.md-task:hover .md-task-box { border-color: var(--green, #98c379); }
+/* View-only shared notes ([data-readonly] body/card): tasks render but don't
+   toggle — no pointer affordance, no hover highlight. */
+[data-readonly] .md-task { cursor: default; }
+[data-readonly] .md-task:hover { background: transparent; }
+[data-readonly] .md-task:hover .md-task-box { border-color: var(--border); }
+[data-readonly] .md-task-box { opacity: 0.75; }
+.md-task-box {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: 1.5px solid var(--border);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--green, #98c379);
+  background: transparent;
+  transition: border-color 0.12s, background 0.12s;
+}
+.md-task[data-done="1"] .md-task-box {
+  background: color-mix(in srgb, var(--green, #98c379) 20%, transparent);
+  border-color: var(--green, #98c379);
+}
+.md-task-text { flex: 1; min-width: 0; }
+.md-task[data-done="1"] .md-task-text {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+/* Touch devices: the checkbox is the only toggle target in the preview editor
+   (tapping the text edits it), and 18px is a hard thumb target. Extend the box's
+   hit area — via a transparent ::before — past the visual circle without
+   changing the layout (the click handler matches `.md-task-box`, and the pseudo-
+   element counts as part of it). */
+@media (pointer: coarse) {
+  .md-task-box { position: relative; }
+  .md-task-box::before {
+    content: '';
+    position: absolute;
+    inset: -7px -8px -7px -14px;
+  }
+}
+
+/* ── Preview window as editor ── */
+.note-preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
+  margin-bottom: 10px;
+}
+.note-preview-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  padding: 4px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.note-preview-tool:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
+.note-preview-tool-hint { font-size: 0.72rem; opacity: 0.45; }
+/* Reused document-library formatting bar inside the preview window. Negate the
+   body-wrap padding so it spans full width, and keep it pinned while the note
+   body scrolls. */
+.note-preview-md-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 -16px 12px;
+  border-radius: 10px 10px 0 0;
+}
+/* Directly-editable rich body (contenteditable). */
+.note-preview-body {
+  cursor: text;
+  min-height: 140px;
+  outline: none;
+  font-size: 0.9rem;
+  line-height: 1.65;
+  word-break: break-word;
+}
+.note-preview-body:empty::before,
+.note-preview-body[data-empty]::before {
+  content: attr(data-placeholder);
+  opacity: 0.4;
+  pointer-events: none;
+}
+.note-preview-body .md-task-box { cursor: pointer; user-select: none; }
+.note-preview-body .md-task-text { outline: none; }
+/* Creation / last-edit footer inside the preview window. */
+.note-preview-body-wrap .note-card-meta {
+  margin-top: 14px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  white-space: normal;
+  text-align: center;
+}
+input.note-preview-title {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 2px 0;
+}
+input.note-preview-title::placeholder { opacity: 0.4; }
 
 /* Copy corner — bottom-right of the card. Same opaque-fill pattern as
    trash/unarchive so the underlying text/image never bleeds through. */
@@ -31971,6 +32217,17 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 /* Bottom action row — hidden everywhere. The archive/delete actions and the
    color picker now live inside the edit form (click the pencil corner). */
 .note-card-actions { display: none; }
+/* Small creation / last-edit footer at the bottom of each card. */
+.note-card-meta {
+  margin-top: 4px;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--fg) 42%, transparent);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .note-agent-menu {
   background: var(--panel, var(--bg));
   border: 1px solid var(--border);
@@ -32120,47 +32377,32 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--fg) 3%, var(--panel));
   animation: none;
 }
-.notes-quick-input {
+/* The "New note" button is the primary affordance — it fills the quick-add
+   bar and opens an empty note straight in the editor. */
+.notes-quick-new {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   background: transparent;
   border: none;
   outline: none;
-  color: var(--fg);
-  caret-color: var(--accent, var(--red));
+  cursor: pointer;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
   font-family: inherit;
   font-size: 12px;
-  padding: 6px 0;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 2px;
+  border-radius: 4px;
+  transition: color 0.15s;
 }
-.notes-quick-input::placeholder {
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
-}
-/* Blinking text caret hint before the placeholder so empty + unfocused
-   reads as a live input. Sits on the wrapper because <input> elements
-   can't carry ::before. The pseudo-element is ALWAYS rendered (so its
-   width is reserved and the placeholder doesn't jump left when the
-   hint hides); only the colour/animation toggle, not the layout. */
-.notes-quick-add::before {
-  content: '|';
+.notes-quick-new svg {
   color: var(--accent, var(--red));
-  margin-right: 6px;
-  font-weight: 500;
-  font-size: 13px;
-  animation: notes-quick-caret 1s steps(2, jump-none) infinite;
-  pointer-events: none;
+  flex-shrink: 0;
 }
-/* Hide visually (keep space) on hover, focus, or once the input has any
-   text — prevents the layout shift the user reported when the hint
-   collapsed and the placeholder slid left. */
-.notes-quick-add:hover::before,
-.notes-quick-add:focus-within::before,
-.notes-quick-add:not(:has(.notes-quick-input:placeholder-shown))::before {
-  visibility: hidden;
-  animation: none;
-}
-@keyframes notes-quick-caret {
-  0%, 49%  { opacity: 1; }
-  50%, 100%{ opacity: 0; }
-}
+.notes-quick-add:hover .notes-quick-new,
+.notes-quick-new:focus-visible { color: var(--fg); }
 .notes-quick-icon {
   background: none;
   border: none;
@@ -32250,10 +32492,10 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
     width: 17px;
     height: 17px;
   }
-  /* Match the input + photo button heights to the bigger toggle so the
-     row reads as one consistent bar. */
-  .notes-quick-input {
-    height: 36px;
+  /* Match the button + photo heights to the bigger toggle so the row reads
+     as one consistent bar. */
+  .notes-quick-new {
+    min-height: 36px;
     font-size: 15px;
   }
   .notes-quick-icon {
@@ -32492,6 +32734,169 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   box-sizing: border-box;
 }
 .note-reminder-date-input:focus { border-color: var(--accent); }
+/* Preview reminder popover: give the custom date/time + repeat + set controls
+   the same side padding as the menu items (they're direct children, not inside
+   a .note-reminder-menu-picker wrapper). */
+.note-preview-reminder-menu .note-reminder-date-input,
+.note-preview-reminder-menu .note-reminder-repeat-select {
+  width: calc(100% - 28px);
+  margin: 4px 14px;
+}
+.note-reminder-repeat-select {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  outline: none;
+  box-sizing: border-box;
+}
+.note-reminder-repeat-select:focus { border-color: var(--accent); }
+.note-reminder-menu-set {
+  display: block;
+  width: calc(100% - 28px);
+  margin: 4px 14px 6px;
+  padding: 7px 8px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.note-reminder-menu-set:hover { filter: brightness(1.08); }
+.note-reminder-clear { color: color-mix(in srgb, var(--red, #e0607e) 85%, var(--fg)); }
+
+/* Reminder button in the preview header (between title and close). */
+.note-preview-remind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.note-preview-remind:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.note-preview-remind.has-reminder {
+  color: var(--accent, var(--red));
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.note-preview-remind-label:empty { display: none; }
+
+/* Embedded images are tappable (resize/remove menu) in the preview editor. */
+.note-preview-body .md-img { cursor: pointer; }
+.note-preview-body .md-img:hover { outline: 2px solid color-mix(in srgb, var(--accent, var(--red)) 45%, transparent); outline-offset: 1px; }
+.note-img-menu .note-img-sizes { display: flex; gap: 6px; padding: 4px 14px 8px; }
+.note-img-menu .note-img-sizes button {
+  flex: 1; padding: 6px 0; background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border); border-radius: 5px; color: var(--fg);
+  font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.note-img-menu .note-img-sizes button.active { border-color: var(--accent, var(--red)); color: var(--accent, var(--red)); }
+.note-img-remove { color: color-mix(in srgb, var(--red, #e0607e) 85%, var(--fg)); }
+
+/* Preview footer actions: color dots, add-tag, archive, delete. */
+.note-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.note-preview-actions:empty { display: none; }
+.note-preview-actions-spacer { flex: 1; }
+.note-preview-colors { display: flex; align-items: center; gap: 5px; }
+.note-preview-color-dot {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--fg) 22%, transparent);
+  cursor: pointer; transition: transform 0.1s;
+}
+.note-preview-color-dot:hover { transform: scale(1.18); }
+.note-preview-color-dot.active {
+  border-color: var(--fg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--fg) 18%, transparent);
+}
+.note-preview-act {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  background: none; border: none; border-radius: 7px;
+  color: color-mix(in srgb, var(--fg) 58%, transparent); cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.note-preview-act:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
+.note-preview-act-danger:hover {
+  background: color-mix(in srgb, var(--red, #e0607e) 14%, transparent);
+  color: var(--red, #e0607e);
+}
+
+/* In-page tag editor popover. */
+.note-tag-menu { min-width: 230px; max-width: 300px; padding: 8px 0 4px; }
+/* Padded body so the chips, input and suggestions all sit inside the popover. */
+.note-tag-body { padding: 4px 12px 10px; }
+.note-tag-chips {
+  display: flex; flex-wrap: wrap; gap: 5px;
+}
+.note-tag-chips:not(:empty) { margin-bottom: 4px; }
+.note-tag-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 600;
+  padding: 2px 4px 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+  color: var(--accent, var(--red));
+  border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 30%, var(--border));
+}
+.note-tag-rm {
+  background: none; border: none; cursor: pointer;
+  color: inherit; opacity: 0.6; font-size: 14px; line-height: 1;
+  padding: 0 2px; border-radius: 50%;
+}
+.note-tag-rm:hover { opacity: 1; }
+.note-tag-empty { font-size: 11px; opacity: 0.5; }
+.note-tag-input {
+  display: block; width: 100%; box-sizing: border-box; margin-top: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 1px solid var(--border); border-radius: 5px;
+  color: var(--fg); font: inherit; font-size: 12px;
+  padding: 6px 8px; outline: none;
+}
+.note-tag-input:focus { border-color: var(--accent, var(--red)); }
+/* Existing-tag suggestions. */
+.note-tag-suggest-label {
+  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+  opacity: 0.45; margin: 10px 0 5px;
+}
+.note-tag-suggest { display: flex; flex-wrap: wrap; gap: 5px; }
+.note-tag-suggest-chip {
+  font: inherit; font-size: 11px;
+  padding: 2px 9px; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  border: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 70%, transparent);
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.note-tag-suggest-chip:hover {
+  background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));
+  color: var(--accent, var(--red));
+}
+
 .note-reminder-menu-confirm {
   font-weight: 600;
   color: var(--accent);
@@ -32663,7 +33068,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
   border-radius: 999px;
-  padding: 2px 6px;
+  padding: 0 6px;
   font: inherit;
   font-size: 9px;
   font-weight: 600;
@@ -32734,7 +33139,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 
 /* Grid view: true CSS Grid plus JS-computed row spans, so cards masonry-pack
    vertically without the jumpy rebalancing of CSS columns. */
-.notes-pane.notes-view-grid .notes-pane-body {
+.notes-pane.notes-view-grid .notes-pane-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   grid-auto-rows: 4px;
@@ -32755,8 +33160,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   flex-direction: column;
   gap: 4px;
 }
-.notes-pane.notes-view-grid .note-form,
-.notes-pane.notes-view-grid .notes-quick-add {
+.notes-pane.notes-view-grid .note-form {
   grid-column: 1 / -1;
   margin-bottom: 0;
   grid-row-end: span 16;
@@ -32786,7 +33190,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
    `column-span: all` interaction with sticky positioning broke clicks on
    the quick-add bar (Firefox mobile). */
 @media (max-width: 768px) {
-  .notes-pane.notes-view-grid .notes-pane-body {
+  .notes-pane.notes-view-grid .notes-pane-cards {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     grid-auto-rows: 4px;
@@ -32799,16 +33203,10 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
     transform: translateY(-12px);
     /* grid-row-end set inline by JS (_applyMasonry) */
   }
-  /* Full-width quick-add + edit form. Quick-add stays sticky at top so
-     the user can always reach it; it's NOT inside the masonry pack. */
-  .notes-pane.notes-view-grid .notes-labels-bar,
-  .notes-pane.notes-view-grid .notes-quick-add,
+  /* The new-note / edit form spans the full grid width. (Labels + quick-add
+     no longer live in the grid — they're in the pinned .notes-pane-top.) */
   .notes-pane.notes-view-grid .note-form {
     grid-column: 1 / -1;
-  }
-  .notes-pane.notes-view-grid .notes-labels-bar { grid-row: span 16; }
-  .notes-pane.notes-view-grid .notes-quick-add { grid-row: span 12; }
-  .notes-pane.notes-view-grid .note-form {
     width: 100%;
     max-width: none;
     margin-left: 0;
@@ -32821,15 +33219,6 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   }
   .notes-pane.notes-view-grid .note-form.note-form-new {
     transform: translateY(-28px);
-  }
-  .notes-pane.notes-view-grid .notes-labels-bar {
-    padding-top: 0;
-    margin-top: -6px;
-    margin-bottom: 0;
-  }
-  .notes-pane.notes-view-grid .notes-quick-add {
-    margin-top: -32px;
-    margin-bottom: 4px;
   }
   /* Pinned-section break: first unpinned card jumps to column 1. */
   .notes-pane.notes-view-grid .note-card-pinned + .note-card:not(.note-card-pinned) {
@@ -32939,10 +33328,15 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-card-goal {
   border-left: 3px solid color-mix(in srgb, var(--accent-warm) 80%, transparent);
 }
+/* Row holding the reminder tag and/or the goal pill, so the pill sits next to
+   the reminder (and stays in that spot even when there's no reminder). */
+.note-card-tagrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .note-goal-pill {
-  position: absolute;
-  top: 6px;
-  left: 8px;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -32955,16 +33349,11 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   line-height: 1;
-  z-index: 2;
 }
-.note-card-goal .note-card-header {
-  /* Goal cards reserve space for the pill so the title doesn't collide. */
-  padding-left: 56px;
-}
-/* In select mode the left-side checkbox takes the pill's spot — drop it
-   so the row stays legible. */
+/* The Goal pill now sits in the bottom-right corner, so the header no longer
+   reserves left padding for it. */
+/* In select mode the left-side checkbox takes priority — hide the pill. */
 .note-card-selectmode.note-card-goal .note-goal-pill { display: none; }
-.note-card-selectmode.note-card-goal .note-card-header { padding-left: 0; }
 /* Description blurb above the checklist on goal cards */
 .note-goal-desc {
   font-size: 12px;
@@ -33216,16 +33605,46 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 
 .note-content-preview {
   font-size: 12px;
-  opacity: 0.6;
-  line-height: 1.4;
-  /* Roomy preview: up to ~14 lines. Content is also sliced to 600 chars
-     client-side, so cards still stay reasonable in the list. */
-  max-height: 240px;
+  opacity: 0.75;
+  line-height: 1.45;
+  /* Roomy preview; the card body scrolls/clips via max-height. */
+  max-height: 320px;
   overflow: hidden;
   cursor: pointer;
-  white-space: pre-wrap;
   word-break: break-word;
 }
+/* The card body is now rendered markdown (mdToHtml). Tame block spacing and
+   heading sizes so a note with headings/checklists stays compact in the grid. */
+.note-content-preview.md-body > :first-child { margin-top: 0; }
+.note-content-preview.md-body > :last-child { margin-bottom: 0; }
+
+/* Inline images embedded in note markdown (![](url)). Constrained on cards,
+   roomier in the preview editor. */
+.md-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  display: block;
+  margin: 6px 0;
+}
+.note-content-preview .md-img { max-height: 240px; object-fit: cover; }
+.note-preview-body .md-img { max-height: 60vh; cursor: default; }
+.note-content-preview.md-body p { margin: 0.3em 0; }
+.note-content-preview.md-body h1,
+.note-content-preview.md-body h2,
+.note-content-preview.md-body h3,
+.note-content-preview.md-body h4,
+.note-content-preview.md-body h5,
+.note-content-preview.md-body h6 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0.4em 0 0.2em;
+  opacity: 0.95;
+}
+.note-content-preview.md-body ul,
+.note-content-preview.md-body ol { margin: 0.3em 0; padding-left: 1.2em; }
+.note-content-preview.md-body .md-tasklist { padding-left: 0; }
+.note-content-preview.md-body pre { white-space: pre-wrap; }
 
 .note-pin-btn {
   background: none;
@@ -33304,11 +33723,11 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
      still receives events regardless. */
   pointer-events: none;
 }
-.notes-pane-body.drag-active .note-card:not(.dragging) {
+.notes-pane-cards.drag-active .note-card:not(.dragging) {
   transition: transform 0.22s cubic-bezier(0.34, 1.2, 0.64, 1), border-color 0.15s, opacity 0.15s;
   opacity: 0.78;
 }
-.notes-pane-body.drag-active .note-card:not(.dragging):hover {
+.notes-pane-cards.drag-active .note-card:not(.dragging):hover {
   border-color: color-mix(in srgb, var(--accent, var(--red)) 50%, var(--border));
   opacity: 1;
 }
