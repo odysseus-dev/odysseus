@@ -7,6 +7,7 @@ import logging
 import hashlib
 import threading
 import re
+import os
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT
@@ -22,6 +23,24 @@ class LLMConfig:
     MAX_RETRIES = 3
     RETRY_DELAY = 0.5
     STREAM_TIMEOUT = 300
+    # TCP+TLS connect budget for a SINGLE attempt. The old hard-coded 3.0s
+    # assumed LAN/Tailscale peers ('SYN in <100ms'); it is too tight for public
+    # cloud endpoints (offshore APIs take ~0.5-1.5s cold, with jitter), so a
+    # brief blip on the first connect of an idle chat surfaced as a 503 on the
+    # streaming path (which, unlike llm_call, does not retry the connect). A
+    # genuinely dead upstream stays bounded by the dead-host cooldown. Override
+    # with env LLM_CONNECT_TIMEOUT (seconds).
+    CONNECT_TIMEOUT = float(os.getenv('LLM_CONNECT_TIMEOUT', '10') or '10')
+
+
+def _call_timeout(read_timeout) -> httpx.Timeout:
+    """Per-request timeout for non-streaming LLM calls (connect from config)."""
+    return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=10.0, pool=5.0)
+
+
+def _stream_timeout(read_timeout) -> httpx.Timeout:
+    """Per-request timeout for streaming LLM calls (connect from config)."""
+    return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=30.0, pool=5.0)
 
 
 # Cache for LLM responses
@@ -264,7 +283,8 @@ def _is_ollama_native_url(url: str) -> bool:
     """Return True for native Ollama API URLs, including Ollama Cloud."""
     try:
         parsed = urlparse(url or "")
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse URL for Ollama detection", exc_info=e)
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
@@ -423,6 +443,146 @@ def _host_match(url: str, *domains: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
+# Kimi Code subscription keys (api.kimi.com/coding/v1) require a whitelisted
+# coding-agent User-Agent; otherwise the API returns 403 access_terminated_error.
+# Tried in order; first success is cached per base URL for later requests.
+KIMI_CODE_USER_AGENTS: tuple[str, ...] = (
+    "claude-code/0.1.0",
+    "claude-code/1.0.0",
+    "KimiCLI/1.0",
+    "Kilo-Code/1.0",
+    "Roo-Code/1.0",
+    "Cursor/1.0",
+)
+KIMI_CODE_USER_AGENT = KIMI_CODE_USER_AGENTS[0]
+_kimi_code_ua_cache: dict[str, str] = {}
+
+
+def _is_kimi_code_url(url: str) -> bool:
+    if not url or not _host_match(url, "kimi.com"):
+        return False
+    try:
+        return "/coding" in (urlparse(url).path or "")
+    except Exception:
+        return False
+
+
+def _kimi_code_base_key(url: str) -> str:
+    """Normalize a Kimi Code chat/models URL to its OpenAI base (.../coding/v1)."""
+    parsed = urlparse(url)
+    path = (parsed.path or "").rstrip("/")
+    for suffix in ("/chat/completions", "/models", "/completions"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+    path = path.rstrip("/") or "/coding/v1"
+    return f"{parsed.scheme}://{parsed.netloc}{path}"
+
+
+def _is_kimi_code_access_denied(status: int, body: bytes | str) -> bool:
+    if status != 403:
+        return False
+    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else (body or "")
+    lower = text.lower()
+    return (
+        "access_terminated_error" in lower
+        or "coding agents" in lower
+        or "only available for coding" in lower
+    )
+
+
+def _kimi_code_ua_candidates(url: str) -> list[str]:
+    if not _is_kimi_code_url(url):
+        return []
+    base_key = _kimi_code_base_key(url)
+    cached = _kimi_code_ua_cache.get(base_key)
+    if cached:
+        return [cached] + [ua for ua in KIMI_CODE_USER_AGENTS if ua != cached]
+    return list(KIMI_CODE_USER_AGENTS)
+
+
+def _remember_kimi_code_user_agent(url: str, user_agent: str) -> None:
+    _kimi_code_ua_cache[_kimi_code_base_key(url)] = user_agent
+
+
+def apply_kimi_code_headers(headers: Optional[Dict], url: str) -> Dict[str, str]:
+    """Pick a Kimi Code User-Agent (cached probe when possible)."""
+    h = dict(headers or {})
+    if not _is_kimi_code_url(url):
+        return h
+    base_key = _kimi_code_base_key(url)
+    cached = _kimi_code_ua_cache.get(base_key)
+    if cached:
+        h["User-Agent"] = cached
+        return h
+    models_url = base_key.rstrip("/") + "/models"
+    from src.tls_overrides import llm_verify
+    for ua in KIMI_CODE_USER_AGENTS:
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        try:
+            r = httpx.get(models_url, headers=trial, timeout=8, verify=llm_verify())
+        except Exception:
+            continue
+        if _is_kimi_code_access_denied(r.status_code, r.content):
+            logger.debug("Kimi Code rejected User-Agent %s (403), trying next", ua)
+            continue
+        if r.status_code < 400:
+            _remember_kimi_code_user_agent(url, ua)
+            h["User-Agent"] = ua
+            return h
+        break
+    h.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
+    return h
+
+
+def httpx_get_kimi_aware(url: str, headers: Optional[Dict], **kwargs):
+    h = apply_kimi_code_headers(headers, url)
+    if not _is_kimi_code_url(url):
+        return httpx.get(url, headers=h, **kwargs)
+    last = None
+    for ua in _kimi_code_ua_candidates(url):
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        last = httpx.get(url, headers=trial, **kwargs)
+        if not _is_kimi_code_access_denied(last.status_code, last.content):
+            if last.status_code < 400:
+                _remember_kimi_code_user_agent(url, ua)
+            return last
+    return last
+
+
+def httpx_post_kimi_aware(url: str, headers: Optional[Dict], **kwargs):
+    h = apply_kimi_code_headers(headers, url)
+    if not _is_kimi_code_url(url):
+        return httpx.post(url, headers=h, **kwargs)
+    last = None
+    for ua in _kimi_code_ua_candidates(url):
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        last = httpx.post(url, headers=trial, **kwargs)
+        if not _is_kimi_code_access_denied(last.status_code, last.content):
+            if last.status_code < 400:
+                _remember_kimi_code_user_agent(url, ua)
+            return last
+    return last
+
+
+async def httpx_post_kimi_aware_async(client, url: str, headers: Optional[Dict], **kwargs):
+    h = apply_kimi_code_headers(headers, url)
+    if not _is_kimi_code_url(url):
+        return await client.post(url, headers=h, **kwargs)
+    last = None
+    for ua in _kimi_code_ua_candidates(url):
+        trial = dict(h)
+        trial["User-Agent"] = ua
+        last = await client.post(url, headers=trial, **kwargs)
+        if not _is_kimi_code_access_denied(last.status_code, last.content):
+            if last.status_code < 400:
+                _remember_kimi_code_user_agent(url, ua)
+            return last
+    return last
+
+
 def _detect_provider(url: str) -> str:
     """Detect the API provider from a configured endpoint URL.
 
@@ -446,6 +606,8 @@ def _detect_provider(url: str) -> str:
         return "groq"
     if _host_match(url, "nvidia.com"):
         return "nvidia"
+    if _host_match(url, "moonshot.ai") or _host_match(url, "moonshot.cn"):
+        return "moonshot"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url):
         return "chatgpt-subscription"
@@ -457,15 +619,25 @@ def _detect_provider(url: str) -> str:
 
 def _is_self_hosted_openai_compatible(url: str) -> bool:
     """True for custom/local OpenAI-compatible servers (llama.cpp, LM Studio,
-    vLLM, text-generation-webui, etc.) as opposed to api.openai.com itself.
+    vLLM, text-generation-webui, etc.) as opposed to cloud APIs.
 
     Used to gate llama.cpp-server-specific payload extras (``session_id``,
-    ``cache_prompt``) — sending unrecognized top-level fields to OpenAI's
-    actual API returns a 400 ("Unrecognized request argument"), but
-    self-hosted servers generally ignore unknown fields and many (notably
-    llama.cpp's server) use them for KV-cache slot affinity (issue #2927).
+    ``cache_prompt``) used for KV-cache slot affinity (issue #2927). Strict
+    cloud providers reject unrecognized top-level fields (api.openai.com
+    returns 400, Mistral returns 422 "extra_forbidden", issue #3793), and any
+    unknown OpenAI-compatible host used to be treated as self-hosted, so those
+    fields leaked to every strict provider added as a custom endpoint.
+
+    A server only counts as self-hosted when it also resolves as local:
+    loopback/private/tailscale host, or the endpoint explicitly configured
+    with kind "local". A self-hosted server exposed via a public hostname
+    loses the affinity hint unless its endpoint kind is set to "local" -
+    a lost perf hint, versus a hard 4xx on every request the other way.
     """
-    return _detect_provider(url) == "openai" and not _host_match(url, "openai.com")
+    if _detect_provider(url) != "openai" or _host_match(url, "openai.com"):
+        return False
+    from src.model_context import is_local_endpoint
+    return is_local_endpoint(url)
 
 
 def _apply_local_cache_affinity(payload: Dict, url: str, session_id: Optional[str]) -> None:
@@ -532,6 +704,12 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "googleapis.com"): return "Google"
     if _host_match(url, "together.xyz", "together.ai"): return "Together"
     if _host_match(url, "fireworks.ai"): return "Fireworks"
+    if _host_match(url, "kimi.com"):
+        try:
+            if "/coding" in (urlparse(url).path or ""):
+                return "Kimi Code"
+        except Exception:
+            pass
     if _is_ollama_native_url(url): return "Ollama"
     try:
         host = (urlparse(url).hostname or "").lower()
@@ -672,7 +850,7 @@ def _uses_max_completion_tokens(model: str) -> bool:
 # perfectly good model as failing. For these models we omit the field and let
 # the API use its required default. (gpt-4.5 is intentionally excluded — it is
 # not a reasoning model and accepts temperature normally.)
-_FIXED_TEMPERATURE_MODELS = ("o1", "o3", "o4", "gpt-5")
+_FIXED_TEMPERATURE_MODELS = ("o1", "o3", "o4", "gpt-5", "kimi-for-coding")
 
 def _restricts_temperature(model: str) -> bool:
     """Check if a model rejects any non-default temperature."""
@@ -680,6 +858,49 @@ def _restricts_temperature(model: str) -> bool:
         return False
     m = model.lower()
     return any(m.startswith(p) or f"/{p}" in m for p in _FIXED_TEMPERATURE_MODELS)
+
+
+# The official Moonshot API fixes temperature at 1.0 in thinking mode and 0.6
+# when thinking is explicitly disabled for Kimi K2.5/K2.6. Any other explicit
+# value returns HTTP 400. Odysseus does not currently send the `thinking` mode
+# control, so omit temperature and let Moonshot use its default thinking mode.
+# Keep the gate provider-specific: self-hosted Kimi deployments may accept
+# custom sampling values, and older Moonshot models have different defaults.
+def _moonshot_rejects_custom_temperature(provider: str, model: str) -> bool:
+    """Check if the official Moonshot API fixes temperature for this model."""
+    if provider != "moonshot" or not isinstance(model, str):
+        return False
+    model_id = model.lower().rsplit("/", 1)[-1]
+    return bool(re.match(r"^kimi-k2\.(?:5|6)(?:$|[-_:])", model_id))
+
+
+def _omit_temperature(provider: str, model: str) -> bool:
+    """Check if a request should use the provider's default temperature."""
+    return _restricts_temperature(model) or _moonshot_rejects_custom_temperature(
+        provider, model
+    )
+
+
+# Anthropic removed the sampling parameters (temperature, top_p, top_k) starting
+# with Claude Opus 4.7. On Opus 4.7 and later, sending `temperature` at all —
+# even 0.0 — returns HTTP 400. Earlier Claude models (Opus 4.6 and below, every
+# Sonnet/Haiku) still accept temperature in [0.0, 1.0], so the omission must be
+# version-gated rather than applied to all `claude-*` models.
+def _anthropic_rejects_temperature(model: str) -> bool:
+    """Check if a native-Anthropic model rejects the temperature field (Opus 4.7+)."""
+    if not isinstance(model, str) or not model:
+        return False
+    # `(?<![a-z])` anchors "opus" to a word boundary so a substring match like
+    # `oct-opus`/`octopus-4-8` can't be read as Opus (it would otherwise strip
+    # temperature). Cap the minor at 1-2 digits and forbid a trailing digit so a
+    # dated id like `claude-opus-4-20250514` (Opus 4.0) parses as major-only (no
+    # minor match, kept) instead of reading the date `20250514` as a giant minor
+    # that would falsely test >= 4.7. Dated 4.7+ snapshots (`claude-opus-4-7-
+    # 20260201`) keep their explicit minor and are still matched.
+    match = re.search(r"(?<![a-z])opus[-_]?(\d+)[-_.](\d{1,2})(?!\d)", model.lower())
+    if not match:
+        return False
+    return (int(match.group(1)), int(match.group(2))) >= (4, 7)
 
 # Models that support structured thinking — may output </think> without opening tag
 _THINKING_MODEL_PATTERNS = ("qwen3", "qwq", "deepseek-r1", "deepseek-reasoner", "minimax", "m2-reap", "gemma")
@@ -784,8 +1005,11 @@ def _build_anthropic_payload(model, messages, temperature, max_tokens, stream=Fa
         "model": model,
         "messages": chat_messages,
         "max_tokens": max_tokens if max_tokens and max_tokens > 0 else 4096,
-        "temperature": temperature,
     }
+    # Opus 4.7+ removed the sampling parameters — sending `temperature` (even 0.0)
+    # returns HTTP 400. Omit it for those models; older Claude models still take it.
+    if not _anthropic_rejects_temperature(model):
+        payload["temperature"] = temperature
     if system_parts:
         system_text = "\n\n".join(system_parts)
         # Send `system` as a structured text block so we can attach a prompt-cache
@@ -1104,7 +1328,7 @@ def list_model_ids(
             from src.endpoint_resolver import build_models_url
 
             models_url = build_models_url(base_chat_url)
-        r = httpx.get(models_url, headers=h, timeout=timeout)
+        r = httpx_get_kimi_aware(models_url, h, timeout=timeout)
         r.raise_for_status()
         data = r.json()
         model_ids = [m.get("id") for m in (data.get("data") or []) if m.get("id")]
@@ -1122,8 +1346,8 @@ def list_model_ids(
                 r = httpx.get(root + "/api/tags", timeout=timeout)
                 r.raise_for_status()
                 return [m.get("name") or m.get("model") for m in (r.json().get("models") or []) if m.get("name") or m.get("model")]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to fetch model list from configured endpoint", exc_info=e)
         return []
 
 def normalize_model_id(
@@ -1205,14 +1429,14 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             "messages": messages_copy,
             "temperature": temperature,
         }
-        if _restricts_temperature(model):
+        if _omit_temperature(provider, model):
             payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
             payload[tok_key] = max_tokens
     try:
         note_model_activity(target_url, model)
-        r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
+        r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
     except Exception as e:
         raise HTTPException(502, f"POST {target_url} failed: {e}")
     if not r.is_success:
@@ -1399,7 +1623,7 @@ async def llm_call_async(
             "messages": messages_copy,
             "temperature": temperature,
         }
-        if _restricts_temperature(model):
+        if _omit_temperature(provider, model):
             payload.pop("temperature", None)
         if max_tokens and max_tokens > 0:
             tok_key = "max_completion_tokens" if _uses_max_completion_tokens(model) else "max_tokens"
@@ -1412,7 +1636,7 @@ async def llm_call_async(
     if _is_host_dead(target_url):
         raise HTTPException(503, f"Upstream {_host_key(target_url)} marked unreachable (cooldown active)")
 
-    call_timeout = httpx.Timeout(connect=3.0, read=float(timeout), write=10.0, pool=5.0)
+    call_timeout = _call_timeout(timeout)
     attempt = 0
     while attempt < max_retries:
         attempt += 1
@@ -1420,7 +1644,7 @@ async def llm_call_async(
         try:
             note_model_activity(target_url, model)
             client = _get_http_client()
-            r = await client.post(target_url, headers=h, json=payload, timeout=call_timeout)
+            r = await httpx_post_kimi_aware_async(client, target_url, h, json=payload, timeout=call_timeout)
             duration = time.time() - start
             if not r.is_success:
                 friendly = _format_upstream_error(r.status_code, r.text, target_url)
@@ -1516,7 +1740,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             "temperature": temperature,
             "stream": True,
         }
-        if _restricts_temperature(model):
+        if _omit_temperature(provider, model):
             payload.pop("temperature", None)
         if provider not in {"openrouter", "groq"}:
             payload["stream_options"] = {"include_usage": True}
@@ -1536,9 +1760,12 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
 
-    # Short connect timeout: a reachable peer answers SYN in <100ms even on
-    # Tailscale. 3s is plenty; 30s let one dead upstream wedge the UI.
-    stream_timeout = httpx.Timeout(connect=3.0, read=float(timeout), write=30.0, pool=5.0)
+    # Connect budget from LLMConfig.CONNECT_TIMEOUT (env LLM_CONNECT_TIMEOUT).
+    # The dead-host cooldown still bounds a genuinely unreachable upstream, so a
+    # wider connect budget only affects first contact and stops a brief cold
+    # connect blip (offshore/public endpoints) surfacing as a 503 on this stream
+    # path, which -- unlike llm_call -- does not retry the connect.
+    stream_timeout = _stream_timeout(timeout)
 
     if _is_host_dead(target_url):
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
@@ -1814,6 +2041,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             events.append(_stream_delta_event(part))
         return events
 
+    h = apply_kimi_code_headers(h, target_url)
     try:
         client = _get_http_client()
         async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:

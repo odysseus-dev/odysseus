@@ -20,6 +20,7 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "grep",
     "glob",
     "ls",
+    "get_workspace",
     "search_chats",
     "manage_memory",
     "manage_skills",
@@ -66,6 +67,7 @@ PLAN_MODE_READONLY_TOOLS = {
     "grep",
     "glob",
     "ls",
+    "get_workspace",
     "web_search",
     "web_fetch",
     "search_chats",
@@ -175,13 +177,16 @@ def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
     defense-in-depth for callers that bypass it (e.g. trusted loopback).
     """
     try:
+        from src.auth_helpers import _auth_disabled
+
+        if _auth_disabled():
+            return True
+
         from core.auth import AuthManager
 
         auth = AuthManager()
         if not auth.is_configured:
-            from src.auth_helpers import _auth_disabled
-
-            return _auth_disabled()
+            return False
         return bool(owner and auth.is_admin(owner))
     except Exception as exc:
         logger.warning("Unable to evaluate owner admin status: %s", exc)

@@ -1,0 +1,52 @@
+# Container security: Dockerfile lint
+#
+# Purpose: the Docker image is how most people run Odysseus, so it is part of
+# the attack surface. hadolint lints the Dockerfile for mistakes and insecure
+# patterns (running as root longer than needed, unpinned base image, bad apt
+# usage). Blocking.
+#
+# The image vulnerability scan (Trivy, advisory) lives in its own file,
+# container-trivy.yml. Keeping it separate lets that advisory scan be
+# path-filtered and held to a read-only token on pull requests without
+# weakening this blocking gate, which must always report so a required check
+# never hangs.
+#
+# Note: a separate open PR (#120) proposes a local `scripts/scan_image.py`.
+# This job is complementary -- it is a CI gate, not a script a contributor has
+# to remember to run.
+
+name: Container scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: container-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hadolint:
+    name: hadolint (Dockerfile lint)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5  # v3.3.0
+        with:
+          dockerfile: Dockerfile
+          # DL3008: pinning apt package versions is impractical on a -slim base
+          # image. Debian purges old package versions from its repos, so a
+          # pinned version breaks future rebuilds. The base image itself is
+          # what should be pinned (tracked by Dependabot's docker ecosystem).
+          ignore: DL3008
