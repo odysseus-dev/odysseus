@@ -43,3 +43,17 @@ def test_non_apple_gpu_with_cores_does_not_match():
     """
     assert _lookup_apple_bandwidth({"gpu_name": "NVIDIA GeForce RTX 4090", "gpu_cores": 128}) is None
     assert _lookup_apple_bandwidth({"gpu_name": "AMD Radeon RX 9070 XT", "gpu_cores": 64}) is None
+
+
+def test_apple_string_input_resolves_conservative_tier():
+    """Bare-string callers must still get Apple bandwidth. #2564 moved the
+    Apple tiers out of the generic GPU table into the dict-only Apple helper,
+    so _lookup_bandwidth("Apple M3 Max") (no gpu_cores) regressed to None;
+    string inputs now route through the Apple helper and get the conservative
+    (lowest) tier for the model."""
+    assert _lookup_bandwidth("Apple M3 Max") == 300
+    assert _lookup_bandwidth("Apple M4 Max") == 410
+    assert _lookup_bandwidth("Apple M5 Max") == 460
+    # Non-Apple strings still fall through to the generic table.
+    assert _lookup_bandwidth("NVIDIA GeForce RTX 4090") == 1008
+    assert _lookup_bandwidth("Totally Unknown GPU") is None

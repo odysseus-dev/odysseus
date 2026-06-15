@@ -109,10 +109,15 @@ def _lookup_bandwidth(system):
     if not isinstance(gpu_name, str) or not gpu_name:
         return None
 
-    if isinstance(system, dict):
-        bw = _lookup_apple_bandwidth(system)
-        if bw is not None:
-            return bw
+    # Apple tiers live only in the Apple-specific table now (#2564), so route
+    # BOTH dict and bare-string callers through it. A bare string carries no
+    # gpu_cores, so the helper falls back to the conservative (lowest) tier for
+    # that model -- before #2564 the generic table answered string lookups, and
+    # dropping that made _lookup_bandwidth("Apple M3 Max") return None.
+    apple_input = system if isinstance(system, dict) else {"gpu_name": gpu_name}
+    bw = _lookup_apple_bandwidth(apple_input)
+    if bw is not None:
+        return bw
 
     gn = gpu_name.lower()
     for key in _BW_KEYS_SORTED:
