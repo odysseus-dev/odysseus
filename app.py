@@ -122,6 +122,7 @@ REQUEST_HARD_TIMEOUT = float(os.getenv("REQUEST_HARD_TIMEOUT", "45"))
 _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/chat",            # streaming
     "/api/shell/stream",    # SSE
+    "/api/shell/exec",      # admin shell; route owns its subprocess timeout + disconnect cleanup
     "/api/research",        # multi-minute jobs
     "/api/model/download",  # tmux setup may run pip installs
     "/api/model/probe",     # SSE; iterates models with up to 8s timeout each

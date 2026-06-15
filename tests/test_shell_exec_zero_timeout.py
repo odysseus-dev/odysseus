@@ -11,6 +11,8 @@ orphan the subprocess.
 import asyncio
 import time
 
+import pytest
+
 from routes.shell_routes import _exec_shell
 
 
@@ -52,3 +54,36 @@ def test_zero_timeout_connected_client_runs_to_completion():
     result = asyncio.run(_exec_shell("echo ok", timeout=0, request=req))
     assert result["exit_code"] == 0, result
     assert "ok" in result["stdout"]
+
+
+def test_external_cancellation_propagates():
+    # A still-connected client never trips the disconnect poll, so the only way
+    # out of a no-timeout command is external cancellation (request-timeout
+    # middleware / shutdown). That must propagate as CancelledError — not be
+    # swallowed into a normal shell result — after the subprocess is torn down,
+    # and it must return promptly rather than stalling in cleanup.
+    async def scenario():
+        req = _FakeRequest(disconnected=False)
+        task = asyncio.ensure_future(_exec_shell("sleep 30", timeout=0, request=req))
+        await asyncio.sleep(0.3)  # let the subprocess spawn and enter the poll loop
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return "cancelled"
+        return "masked"
+
+    result = asyncio.run(asyncio.wait_for(scenario(), timeout=8))
+    assert result == "cancelled", "external cancellation must propagate, not be masked"
+
+
+def test_shell_exec_exempt_from_request_hard_timeout():
+    # A no-timeout buffered exec must not be cut off by the app-wide hard timeout
+    # (the route now owns its subprocess timeout + disconnect cleanup), mirroring
+    # the already-exempt /api/shell/stream. Skips locally when app deps are
+    # absent; runs in CI where the full app imports.
+    app_mod = pytest.importorskip("app")
+    prefixes = app_mod._TIMEOUT_EXEMPT_PREFIXES
+    assert any(
+        "/api/shell/exec".startswith(p) for p in prefixes
+    ), "/api/shell/exec must be exempt from REQUEST_HARD_TIMEOUT"
