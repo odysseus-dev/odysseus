@@ -71,7 +71,7 @@ RUN _cuda_opt="${ODYSSEUS_LLAMA_CPP_CUDA^^}" \
 
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=/usr/local/cuda/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64
 
 WORKDIR /app
 

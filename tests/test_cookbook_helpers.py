@@ -619,8 +619,8 @@ def test_llama_cpp_linux_bootstrap_prefers_rocm_before_cuda():
     _append_llama_cpp_linux_accel_build_lines(runner_lines)
     script = "\n".join(runner_lines)
 
-    assert "mkdir -p ~/bin" in script
-    assert script.index("mkdir -p ~/bin") < script.index("cd ~/llama.cpp && rm -rf build")
+    assert 'mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR"' in script
+    assert script.index('mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR"') < script.index('cd "$ODYSSEUS_LLAMA_CPP_DIR" && rm -rf build')
     assert 'command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_HIP=ON' in script
     assert 'cmake -B build -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=ON' in script
@@ -696,10 +696,10 @@ def test_llama_cpp_rebuild_cmd_clears_cached_build_paths():
 
     # Must remove both the cached symlink and the build dir the serve bootstrap
     # links/creates, so the next serve recompiles from source.
-    assert 'rm -f "$HOME/bin/llama-server"' in cmd
-    assert 'rm -rf "$HOME/llama.cpp/build"' in cmd
-    # Recreates ~/bin so a never-served host does not error on a missing dir.
-    assert 'mkdir -p "$HOME/bin"' in cmd
+    assert 'rm -f "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server" "$HOME/bin/llama-server"' in cmd
+    assert 'rm -rf "$ODYSSEUS_LLAMA_CPP_DIR/build" "$HOME/llama.cpp/build"' in cmd
+    # Recreates the configured bin dir so a never-served host does not error on a missing dir.
+    assert 'mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR"' in cmd
     # Diagnosis-only on the destructive side: it must not install or fetch.
     assert 'pip install' not in cmd
     assert 'git clone' not in cmd
@@ -730,7 +730,7 @@ def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert (tmp_path / "bin").is_dir()
+    assert (tmp_path / ".local" / "bin").is_dir()
     assert "Cleared the cached llama.cpp build" in result.stdout
 
 
