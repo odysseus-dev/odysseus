@@ -750,6 +750,80 @@ export async function _hwfitFetch(fresh = false) {
   }
 }
 
+// Renders a non-blocking hardware visibility warning when Cookbook is using
+// container-visible hardware that may not match the user's actual host machine.
+function _renderHwVisibilityWarning(sys) {
+  const row = document.getElementById('hwfit-hw-row');
+  if (!row) return;
+
+  let box = document.getElementById('hwfit-hw-visibility-warning');
+
+  // Manual hardware is an explicit user override, so avoid showing stale
+  // container-detection warnings once the user has chosen a simulated profile.
+  const warning = sys?.manual_hardware ? null : sys?.hardware_visibility_warning;
+
+  if (!warning) {
+    if (box) box.remove();
+    return;
+  }
+
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'hwfit-hw-visibility-warning';
+    box.className = 'hwfit-loading hwfit-hw-visibility-warning';
+    row.insertAdjacentElement('afterend', box);
+  }
+
+  box.innerHTML = `
+    <div class="hwfit-hw-visibility-warning-title">${esc(warning.title || 'Hardware visibility note')}</div>
+    <div class="hwfit-hw-visibility-warning-body">${esc(warning.message || '')}</div>
+    <div class="hwfit-hw-visibility-warning-actions">
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="manual">Edit manual hardware</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="rescan">Rescan</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="copy">Copy diagnostics</button>
+    </div>
+  `;
+
+  box.querySelector('[data-hw-action="manual"]')?.addEventListener('click', () => {
+    const panel = document.getElementById('hwfit-manual-panel');
+    if (panel) panel.classList.remove('hidden');
+    document.getElementById('hwfit-hw-manual-btn')?.scrollIntoView?.({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  });
+
+  box.querySelector('[data-hw-action="rescan"]')?.addEventListener('click', () => {
+    _resetGpuToggleState();
+    _hwfitCache = null;
+    _hwfitFetch(true);
+  });
+
+  box.querySelector('[data-hw-action="copy"]')?.addEventListener('click', () => {
+    // Keep diagnostics copy/paste friendly for GitHub issues and Docker support.
+    const text = [
+      'Odysseus Cookbook hardware diagnostics',
+      `probe_scope=${sys?.probe_scope || ''}`,
+      `containerized=${sys?.containerized === true}`,
+      `backend=${sys?.backend || ''}`,
+      `has_gpu=${sys?.has_gpu === true}`,
+      `gpu_name=${sys?.gpu_name || ''}`,
+      `gpu_count=${sys?.gpu_count || 0}`,
+      `gpu_vram_gb=${sys?.gpu_vram_gb || ''}`,
+      `ram=${sys?.available_ram_gb || '?'} / ${sys?.total_ram_gb || '?'} GB`,
+      `cpu_cores=${sys?.cpu_cores || ''}`,
+      `cpu_name=${sys?.cpu_name || ''}`,
+      '',
+      'Useful checks:',
+      'docker compose exec odysseus nvidia-smi -L',
+      'docker compose exec odysseus cat /proc/meminfo | head',
+      'docker compose exec odysseus python -c "from services.hwfit.hardware import detect_system; import json; print(json.dumps(detect_system(fresh=True), indent=2))"',
+    ].join('\n');
+
+    _copyText(text);
+  });
+}
+
 export function _hwfitRenderHw(el, sys) {
   if (!el || !sys) return;
   // Cache system info globally so other modules can read VRAM without refetching
@@ -838,6 +912,7 @@ export function _hwfitRenderHw(el, sys) {
     + chip('cores', cores)
     + chip('backend', esc(sys.backend || ''))
     + manualChip;
+  _renderHwVisibilityWarning(sys);
   // Body click → toggle "off" (dimmed, still visible). Membership of
   // _dismissedHwChips is what the ranker reads, so both add+remove
   // here also flips the model list. The manual chip is excluded —

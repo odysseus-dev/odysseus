@@ -159,9 +159,17 @@ async def auto_name_session(session_manager, sess):
             return
 
         owner = getattr(sess, "owner", None)
-        t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers, owner=owner,
-        )
+        t_url, t_model, t_headers = resolve_task_endpoint(owner=owner)
+        if not t_model:
+            # If no task/utility model is configured at all, fall back to
+            # the session's own model so auto-naming still works even on
+            # minimal setups.
+            from src.endpoint_resolver import resolve_endpoint
+            _fallback = resolve_endpoint("default", owner=owner)
+            if _fallback and _fallback[1]:
+                t_url, t_model, t_headers = _fallback
+            else:
+                t_url, t_model, t_headers = sess.endpoint_url, sess.model, sess.headers
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
             return

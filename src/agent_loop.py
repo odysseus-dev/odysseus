@@ -262,6 +262,11 @@ _DOMAIN_RULES = {
 - Use `manage_settings` for preferences and tool enable/disable.
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+    "contacts": """\
+## Contacts rules
+- Use `resolve_contact` to look up a contact's email or phone number by name. Searches the CardDAV address book and sent email history.
+- Use `manage_contact` to list, add, update, or delete contacts in the address book.
+- Do NOT use `manage_memory` for contact lookups — contact details live in the address book, not memory.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -274,6 +279,7 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "contacts": {"resolve_contact", "manage_contact"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -600,7 +606,7 @@ _API_HOSTS = frozenset([
     "api.deepseek.com", "deepseek.com",
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
-    "ollama.com", "api.venice.ai",
+    "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
@@ -787,6 +793,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("documents")
     if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
         domains.add("web")
+    if has(
+        r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
+        r"\b(sprawd[zź]|znajd[zź])\b.*\b(internet|internecie|online|web)\b",
+        r"\b(aktualn\w*|bieżąc\w*|biezac\w*|dzisiaj|teraz)\b.*\b(pogod\w*|temperatur\w*)\b",
+    ):
+        domains.add("web")
     if has(r"\b(research|deep dive|investigate|look into)\b"):
         domains.add("web")
     if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
@@ -797,6 +809,8 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
+        domains.add("contacts")
 
     low_signal = not continuation and not domains
     return {
@@ -1801,18 +1815,21 @@ async def stream_agent_loop(
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
         from src.tool_index import ALWAYS_AVAILABLE
-        _relevant_tools = set(ALWAYS_AVAILABLE)
         if workspace:
             # An active workspace IS the file-work signal: a vague "look at the
             # project" means explore this folder. Surface only the READ-ONLY file
             # tools (intersection with the plan-mode read-only allowlist) so the
             # agent can investigate; write/shell tools stay out until the request
             # actually calls for them (RAG retrieval adds those on a real ask).
+            _relevant_tools = set(ALWAYS_AVAILABLE)
             from src.tool_security import PLAN_MODE_READONLY_TOOLS
             _relevant_tools |= (_DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS)
             logger.info("[tool-rag] Low-signal but workspace active; including read-only file tools")
         else:
-            logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
+            # Don't short-circuit: fall through to RAG retrieval below.
+            # Non-English queries are flagged low_signal by the English-only
+            # intent classifier, but fastembed retrieval works across languages.
+            logger.info("[tool-rag] Low-signal query; will run RAG retrieval")
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
@@ -1937,6 +1954,10 @@ async def stream_agent_loop(
     # and can override this list for users who know their setup.
     _model_no_tools = any(kw in _model_lc for kw in (
         "deepseek-r1",
+        # Open-weight GPT-OSS models are commonly served through llama.cpp /
+        # llama-cpp-python. Their names contain "gpt-o", but they do not use
+        # OpenAI's native tool-call channel unless the endpoint opts in.
+        "gpt-oss",
     ))
     # Native Ollama endpoints (/api/chat) handle tool schemas differently from
     # the OpenAI-compat path. Models like gemma4, qwen3.5, ministral respond to
@@ -1998,30 +2019,34 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
-        from src.settings import is_setting_overridden
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
+        from src.model_context import budget_context_for_model
 
-        soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
+        soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            # Honour the configurable ceiling for the auto-derived budget path.
-            # No-op when the user has an explicit `agent_input_token_budget`
-            # (that branch ignores hard_max). Falls back to DEFAULT_HARD_MAX
-            # on missing/malformed values so misconfig can't zero the budget.
+            # Ceiling for the auto-derived budget (no effect on an explicit budget;
+            # see #1230). Falls back to DEFAULT_HARD_MAX on missing/malformed values
+            # so misconfig can't zero the budget.
             try:
                 hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
             except (TypeError, ValueError):
                 hard_max = DEFAULT_HARD_MAX
             if hard_max <= 0:
                 hard_max = DEFAULT_HARD_MAX
-            # Scale the default budget to the model's context window so long-context
-            # models aren't silently capped at 6000; an explicit user setting is
-            # still honoured (clamped to the window). (#1170)
+            # Default value = auto sentinel (scale to the window); any other value =
+            # explicit cap. Value-based, not presence-based, because the save path
+            # materializes defaults so a persisted default must still read as auto (#4121).
+            budget_is_explicit = _budget_is_explicit(soft_budget)
+            # Scale only off a window we actually discovered, bound to the value it
+            # proves (else 0) — not the passed-in context_length, which can be stale
+            # or unset for some callers (#4122 review).
+            ctx_for_budget = budget_context_for_model(endpoint_url, model, fallback=context_length)
             effective_budget = compute_input_token_budget(
                 soft_budget,
-                context_length,
-                is_setting_overridden("agent_input_token_budget"),
+                ctx_for_budget,
+                budget_is_explicit,
                 hard_max=hard_max,
             )
             trimmed_messages = trim_for_context(
@@ -2096,11 +2121,12 @@ async def stream_agent_loop(
     # tool, so we don't nudge on harmless transitional text like "let me
     # know what you think".
     _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
+        r"i should|we should|i must|we must|going to|let's)\s+"
         r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
         r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test)"
+        r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
