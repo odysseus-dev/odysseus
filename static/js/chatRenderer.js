@@ -1702,6 +1702,8 @@ export function displayMetrics(messageElement, metrics) {
   const isReal = metrics.usage_source === 'real';
   const ctxPct = metrics.context_percent;
   const model = metrics.model || 'Unknown';
+  const isAgent = metrics.agent_mode === true;
+  const breakdown = metrics.context_breakdown || null;
   const cost = _billableCost(model, inputTokens, outputTokens);
 
   // Nothing useful to show — bail out (only if ALL metrics are missing)
@@ -1838,29 +1840,32 @@ export function displayMetrics(messageElement, metrics) {
       const usedTokens = inputTokens || 0;
       const totalCtx = ctxLen || 0;
       const modelShort = model.split('/').pop();
-      const fmtNum = n => n ? n.toLocaleString() : '?';
+      const fmtNum = n => (n || n === 0) ? n.toLocaleString() : '?';
+      const expandIcon = `<svg class="ctx-expand-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>`;
+      const collapseIcon = `<svg class="ctx-expand-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="17" y1="7" x2="7" y2="17"/><polyline points="17 17 7 17 7 7"/></svg>`;
 
       const popup = document.createElement('div');
       popup.className = 'ctx-detail-popup';
-      popup.innerHTML = `
-        <div style="font-weight:600;margin-bottom:8px;color:var(--fg);">Context Window</div>
-        <div class="ctx-bar-wrap">
-          <div class="ctx-bar-fill" style="width:${Math.min(ctxPct, 100)}%;background:${ctxColor};"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-top:4px;opacity:0.6;">
-          <span>${fmtNum(usedTokens)} used</span>
-          <span>${fmtNum(totalCtx)} total</span>
-        </div>
-        <div style="margin-top:8px;font-size:0.8rem;">
-          <div><span class="ctx-label">Model</span> ${modelShort}</div>
-          <div><span class="ctx-label">Usage</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span></div>
-          <div><span class="ctx-label">Window</span> ${fmtNum(totalCtx)} tokens</div>
-        </div>
-        ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="Summarize older messages to free up context">Compact context</button>` : ''}
-      `;
+      let expanded = false;
 
-      const compactBtn = popup.querySelector('.ctx-compact-btn');
-      if (compactBtn) {
+      const positionPopup = () => {
+        const rect = ctxRing.getBoundingClientRect();
+        popup.style.visibility = 'hidden';
+        if (!popup.parentElement) document.body.appendChild(popup);
+        const pr = popup.getBoundingClientRect();
+        popup.style.left = Math.max(8, rect.right - pr.width) + 'px';
+        const spaceAbove = rect.top;
+        if (spaceAbove >= pr.height + 8) {
+          popup.style.top = (rect.top - pr.height - 8) + 'px';
+        } else {
+          popup.style.top = (rect.bottom + 8) + 'px';
+        }
+        popup.style.visibility = '';
+      };
+
+      const attachCompactHandler = () => {
+        const compactBtn = popup.querySelector('.ctx-compact-btn');
+        if (!compactBtn) return;
         compactBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const sid = window.sessionModule && window.sessionModule.getCurrentSessionId();
@@ -1927,21 +1932,90 @@ export function displayMetrics(messageElement, metrics) {
             compactBody.innerHTML = '<span style="color:var(--red);">Compaction failed: ' + err.message + '</span>';
           }
         });
-      }
+      };
 
-      const rect = ctxRing.getBoundingClientRect();
-      popup.style.visibility = 'hidden';
-      document.body.appendChild(popup);
-      const pr = popup.getBoundingClientRect();
-      // Position above the ring, right-aligned
-      popup.style.left = Math.max(8, rect.right - pr.width) + 'px';
-      const spaceAbove = rect.top;
-      if (spaceAbove >= pr.height + 8) {
-        popup.style.top = (rect.top - pr.height - 8) + 'px';
+      const buildSimplePopup = () => {
+        popup.classList.remove('ctx-detail-popup--expanded');
+        const expandBtn = isAgent && breakdown
+          ? `<button class="ctx-expand-btn" aria-label="View context breakdown" title="View context breakdown">${expandIcon}</button>`
+          : '';
+        popup.innerHTML = `
+          <div class="ctx-popup-header">
+            <span>Context Window</span>
+            ${expandBtn}
+          </div>
+          <div class="ctx-bar-wrap">
+            <div class="ctx-bar-fill" style="width:${Math.min(ctxPct, 100)}%;background:${ctxColor};"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:0.75rem;margin-top:4px;opacity:0.6;">
+            <span>${fmtNum(usedTokens)} used</span>
+            <span>${fmtNum(totalCtx)} total</span>
+          </div>
+          <div style="margin-top:8px;font-size:0.8rem;">
+            <div><span class="ctx-label">Model</span> ${modelShort}</div>
+            <div><span class="ctx-label">Usage</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span></div>
+            <div><span class="ctx-label">Window</span> ${fmtNum(totalCtx)} tokens</div>
+          </div>
+          ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="Summarize older messages to free up context">Compact context</button>` : ''}
+        `;
+        const expandBtnEl = popup.querySelector('.ctx-expand-btn');
+        if (expandBtnEl) {
+          expandBtnEl.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            expanded = true;
+            buildDetailedPopup();
+            positionPopup();
+          });
+        }
+      };
+
+      const buildDetailedPopup = () => {
+        popup.classList.add('ctx-detail-popup--expanded');
+        const cats = (breakdown && breakdown.categories) || [];
+        const total = (breakdown && breakdown.total_tokens) || usedTokens || 0;
+        const segments = cats.map(c => {
+          const pct = total > 0 ? (c.tokens / total) * 100 : 0;
+          return `<div class="ctx-segment" style="width:${pct}%;--cat-color:var(--ctx-cat-${c.id});" title="${c.label}: ${fmtNum(c.tokens)} tokens"></div>`;
+        }).join('');
+        const rows = cats.map(c => `
+          <div class="ctx-cat-row">
+            <span class="ctx-cat-swatch" style="--cat-color:var(--ctx-cat-${c.id});"></span>
+            <span class="ctx-cat-label">${c.label}</span>
+            <span class="ctx-cat-tokens">${fmtNum(c.tokens)}</span>
+          </div>
+        `).join('');
+        popup.innerHTML = `
+          <div class="ctx-popup-header">
+            <span>Context Usage</span>
+            <button class="ctx-expand-btn ctx-collapse-btn" aria-label="Collapse context breakdown" title="Collapse">${collapseIcon}</button>
+          </div>
+          <div class="ctx-usage-subheader">
+            <span>${ctxPct}% Full</span>
+            <span>~${fmtNum(total)} / ${fmtNum(totalCtx)} tokens</span>
+          </div>
+          <div class="ctx-segmented-bar">${segments}</div>
+          <div class="ctx-cat-list">${rows}</div>
+          ${breakdown && breakdown.estimated ? '<div class="ctx-estimated-note">Token counts are estimated</div>' : ''}
+          ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="Summarize older messages to free up context">Compact context</button>` : ''}
+        `;
+        const collapseBtn = popup.querySelector('.ctx-collapse-btn');
+        if (collapseBtn) {
+          collapseBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            expanded = false;
+            buildSimplePopup();
+            positionPopup();
+          });
+        }
+      };
+
+      if (expanded && breakdown) {
+        buildDetailedPopup();
       } else {
-        popup.style.top = (rect.bottom + 8) + 'px';
+        buildSimplePopup();
       }
-      popup.style.visibility = '';
+      attachCompactHandler();
+      positionPopup();
 
       bindMenuDismiss(popup, () => popup.remove(), (ev) => !popup.contains(ev.target) && ev.target !== ctxRing && !ctxRing.contains(ev.target));
     });

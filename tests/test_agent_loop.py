@@ -295,6 +295,32 @@ class TestComputeFinalMetrics:
         assert "tool_events" not in m
         assert "round_texts" not in m
 
+    def test_context_breakdown_included(self):
+        breakdown = {
+            "estimated": True,
+            "total_tokens": 1000,
+            "categories": [{"id": "conversation", "label": "Conversation", "tokens": 1000}],
+        }
+        m = _compute_final_metrics(**self._base_args(
+            context_breakdown=breakdown,
+            agent_mode=True,
+        ))
+        assert m["context_breakdown"] == breakdown
+        assert m["agent_mode"] is True
+
+    def test_context_breakdown_omitted_when_not_agent(self):
+        breakdown = {
+            "estimated": True,
+            "total_tokens": 1000,
+            "categories": [{"id": "conversation", "label": "Conversation", "tokens": 1000}],
+        }
+        m = _compute_final_metrics(**self._base_args(
+            context_breakdown=breakdown,
+            agent_mode=False,
+        ))
+        assert "context_breakdown" not in m
+        assert "agent_mode" not in m
+
 
 # ---------------------------------------------------------------------------
 # _append_tool_results — native tool-call message shaping

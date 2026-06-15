@@ -402,12 +402,19 @@ def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
     return DEFAULT_CONTEXT, False
 
 
-def estimate_tokens(messages: List[Dict]) -> int:
-    """Rough token estimate for a list of messages.
+def estimate_text_tokens(text: str) -> int:
+    """Rough token estimate for a plain text string.
 
     Uses chars * 0.3 which is closer to real BPE tokenizer output
     than the commonly-cited chars/4 (which underestimates by ~20-30%).
-    Also adds ~4 tokens per message for role/formatting overhead, and counts
+    """
+    return int(len(text) * 0.3)
+
+
+def estimate_tokens(messages: List[Dict]) -> int:
+    """Rough token estimate for a list of messages.
+
+    Adds ~4 tokens per message for role/formatting overhead, and counts
     assistant tool_calls (name + arguments) — a tool-only turn carries
     content=None with the real payload in tool_calls, so ignoring them made the
     estimate (and the compaction/trim gates that rely on it) blind to large
@@ -418,11 +425,11 @@ def estimate_tokens(messages: List[Dict]) -> int:
         total += 4  # per-message overhead (role, separators)
         content = msg.get("content", "")
         if isinstance(content, str):
-            total += int(len(content) * 0.3)
+            total += estimate_text_tokens(content)
         elif isinstance(content, list):
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "text":
-                    total += int(len(item.get("text", "")) * 0.3)
+                    total += estimate_text_tokens(item.get("text", ""))
         # Tool calls carry real payload too: a tool-only assistant turn is stored
         # with content=None and the actual args (e.g. a create_document body) in
         # tool_calls[].function.arguments. Ignoring them made large tool arguments
@@ -438,5 +445,5 @@ def estimate_tokens(messages: List[Dict]) -> int:
                 if not isinstance(args, str):
                     args = str(args)  # some shapes store arguments as a dict
                 total += 4  # per tool-call overhead (id, type, wrapper)
-                total += int((len(str(name)) + len(args)) * 0.3)
+                total += estimate_text_tokens(str(name) + args)
     return total

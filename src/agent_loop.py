@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
 from src.model_context import estimate_tokens
+from src.context_usage import compute_context_breakdown
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
@@ -1583,6 +1584,8 @@ def _compute_final_metrics(
     prep_timings: Optional[Dict[str, float]] = None,
     backend_gen_tps: float = 0,
     backend_prefill_tps: float = 0,
+    context_breakdown: Optional[Dict] = None,
+    agent_mode: bool = False,
 ) -> dict:
     """Compute token counts, TPS, and build the final metrics dict."""
     if has_real_usage:
@@ -1635,6 +1638,10 @@ def _compute_final_metrics(
     if tool_events:
         metrics["tool_events"] = tool_events
         metrics["round_texts"] = round_texts
+    if agent_mode:
+        metrics["agent_mode"] = True
+        if context_breakdown:
+            metrics["context_breakdown"] = context_breakdown
     return metrics
 
 
@@ -2202,6 +2209,7 @@ async def stream_agent_loop(
     real_input_tokens = 0   # Accumulated real usage from API
     real_output_tokens = 0
     last_round_input_tokens = 0  # Last round's input tokens (for context % peak)
+    last_tool_schemas: List[Dict] = []  # Last round's tool schemas for breakdown
     has_real_usage = False
     backend_gen_tps = 0      # backend-reported true gen speed (llama.cpp timings)
     backend_prefill_tps = 0  # backend-reported prefill speed
@@ -2315,6 +2323,7 @@ async def stream_agent_loop(
             _last_content = _last_user.lower()
             _wants_mcp = any(kw in _last_content for kw in _MCP_KEYWORDS)
             all_tool_schemas = mcp_schemas if (_wants_mcp and mcp_schemas) else []
+        last_tool_schemas = all_tool_schemas
         agent_stream_timeout = int(get_setting("agent_stream_timeout_seconds", 300) or 300)
 
         _tool_names_sent = [t.get("function", {}).get("name") for t in (all_tool_schemas or []) if t.get("function")]
@@ -3127,6 +3136,13 @@ async def stream_agent_loop(
 
     # --- Final metrics ---
     total_duration = time.time() - total_start
+    context_breakdown = None
+    try:
+        context_breakdown = compute_context_breakdown(
+            messages, tool_schemas=last_tool_schemas, is_agent=True
+        )
+    except Exception as _breakdown_err:
+        logger.warning(f"Context breakdown failed: {_breakdown_err}")
     metrics = _compute_final_metrics(
         messages, full_response, total_duration, time_to_first_token,
         context_length, real_input_tokens, real_output_tokens,
@@ -3135,6 +3151,8 @@ async def stream_agent_loop(
         prep_timings=prep_timings,
         backend_gen_tps=backend_gen_tps,
         backend_prefill_tps=backend_prefill_tps,
+        context_breakdown=context_breakdown,
+        agent_mode=True,
     )
     metrics["requested_model"] = requested_model
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"

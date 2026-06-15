@@ -3348,6 +3348,105 @@ body.bg-pattern-sparkles {
       letter-spacing: 1px;
       font-size: 0.9em;
     }
+    /* Expanded context breakdown popup */
+    .ctx-detail-popup--expanded {
+      min-width: 280px;
+      max-width: 360px;
+    }
+    .ctx-popup-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--fg);
+    }
+    .ctx-expand-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px;
+      background: transparent;
+      border: none;
+      color: var(--color-muted, #888);
+      cursor: pointer;
+      border-radius: 4px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .ctx-expand-btn:hover {
+      color: var(--fg);
+      background: var(--border);
+    }
+    .ctx-expand-icon {
+      display: block;
+    }
+    .ctx-usage-subheader {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      opacity: 0.75;
+      margin-bottom: 8px;
+    }
+    .ctx-segmented-bar {
+      display: flex;
+      width: 100%;
+      height: 8px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    .ctx-segment {
+      height: 100%;
+      background: var(--cat-color, var(--color-muted));
+      min-width: 1px;
+    }
+    .ctx-cat-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-bottom: 8px;
+    }
+    .ctx-cat-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+    }
+    .ctx-cat-swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+      background: var(--cat-color, var(--color-muted));
+    }
+    .ctx-cat-label {
+      flex: 1;
+      color: var(--fg);
+    }
+    .ctx-cat-tokens {
+      color: var(--color-muted, #888);
+      font-variant-numeric: tabular-nums;
+    }
+    .ctx-estimated-note {
+      font-size: 0.7rem;
+      opacity: 0.6;
+      margin-bottom: 8px;
+      font-style: italic;
+    }
+    /* Context breakdown category colors (muted dark-theme palette) */
+    :root {
+      --ctx-cat-system_prompt: #5c7c9a;
+      --ctx-cat-tool_definitions: #8c7a4b;
+      --ctx-cat-rules: #6a5c8a;
+      --ctx-cat-skills: #4a8a6a;
+      --ctx-cat-mcp: #8a5c6a;
+      --ctx-cat-memory: #5a8a8a;
+      --ctx-cat-documents: #7a8a5a;
+      --ctx-cat-web: #4a7a9a;
+      --ctx-cat-summarized_conversation: #8a7a5a;
+      --ctx-cat-conversation: #7a7a7a;
+    }
     /* Memory-used indicator pill */
     .memory-used-pill {
       display: inline-flex;
