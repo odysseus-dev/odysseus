@@ -79,15 +79,16 @@ def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[st
                         cfg.get("smtp_user") or "",
                         cfg.get("from_address") or "",
                     ])
-                except Exception:
+                except Exception as _e:
+                    logger.warning("Failed to resolve email account alias", exc_info=_e)
                     resolved_account_id = None
             row = db.get(_EA, resolved_account_id) if resolved_account_id else None
             if row:
                 aliases.extend([row.owner or "", row.imap_user or "", row.from_address or ""])
         finally:
             db.close()
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("Failed to load email aliases", exc_info=_e)
     out = []
     for a in aliases:
         a = (a or "").strip()

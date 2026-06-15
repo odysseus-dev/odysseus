@@ -904,7 +904,13 @@ def test_web_fetch_guard_blocks_redirect_into_private(monkeypatch):
         url = "http://public.example/start"
         headers = {"location": "http://169.254.169.254/latest/meta-data/"}
 
-    monkeypatch.setattr(httpx, "get", lambda url, **kwargs: _Resp())
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _fake_stream(method, url, **kwargs):
+        yield _Resp()
+
+    monkeypatch.setattr(httpx, "stream", _fake_stream)
 
     with _pytest.raises(httpx.RequestError) as exc:
         content._get_public_url("http://public.example/start", headers={}, timeout=5)

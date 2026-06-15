@@ -2,11 +2,14 @@ import os
 import logging
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from sqlalchemy import event, create_engine, Column, String, Text, Boolean, DateTime, Integer, ForeignKey, JSON, Index, func, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
+
+from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +32,26 @@ class TimestampMixin:
     def updated_at(cls):
         return Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
-# Get database URL from environment, default to SQLite in DATA_DIR
+# Ensure the writable data directory exists before SQLite connects.
 from src.constants import DATA_DIR, AUTH_FILE, MEMORY_FILE, USER_PREFS_FILE, SETTINGS_FILE
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR}/app.db")
+Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+
+
+def _default_database_url() -> str:
+    return f"sqlite:///{Path(DATA_DIR) / 'app.db'}"
+
+
+def _normalize_sqlite_url(url: str) -> str:
+    if not url.startswith("sqlite:///"):
+        return url
+    db_path = url.replace("sqlite:///", "", 1)
+    if db_path == ":memory:" or os.path.isabs(db_path):
+        return url
+    return f"sqlite:///{(Path(get_app_root()) / db_path).resolve().as_posix()}"
+
+
+# Get database URL from environment, default to SQLite in DATA_DIR
+DATABASE_URL = _normalize_sqlite_url(os.getenv("DATABASE_URL", _default_database_url()))
 
 # Create engine
 engine = create_engine(
