@@ -3166,8 +3166,19 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       createBtn.addEventListener('click', async () => {
         // Create a new session, then create a blank document in it
         try {
-          const { data: sData } = await api.post('/api/session', { title: 'Untitled Document' });
-          const sessionId = sData.session_id;
+          let data = null;
+          try {
+            const res = await api.post('/api/session', { title: 'Untitled Document' });
+            data = res.data;
+          } catch (err) {
+            console.error('Failed to create session:', apiErrorMessage(err));
+          }
+
+          // BUG: in session management (POST /api/session) endpoint returns "endpoint_url is required (choose from /api/models)" instead of creating a session
+          // the response also doesn't have a session_id because of the error
+          // the issue now raises when using Axios instead of fetch because it treats failed requests as error
+          
+          const sessionId = data?.session_id;
           await _createDocument(sessionId);
           // Close library and open the new session
           closeLibrary();
