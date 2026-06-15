@@ -8,6 +8,7 @@ import uiModule from './ui.js';
 import sessionModule from './sessions.js';
 import spinnerModule from './spinner.js';
 import markdownModule from './markdown.js';
+import contextRefsModule from './contextRefs.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
 import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -23,6 +24,11 @@ let _switchToDoc;
 let _openPanel;
 let _addDocToTabs;
 let _syncDocIndicator;
+
+function _addToChatFromLibrary(ref) {
+  const sessionId = sessionModule.getCurrentSessionId ? sessionModule.getCurrentSessionId() : null;
+  contextRefsModule.addRefWithPreflight(ref, sessionId);
+}
 
 export function initLibrary(config) {
   API_BASE        = config.apiBase;
@@ -611,6 +617,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const items = [];
         if (doc.session_id) items.push({ label: 'Open', action: () => libraryOpenInSession(doc) });
         items.push({ label: 'Clone', action: () => libraryImportDocument(doc) });
+        items.push({ label: 'Add to chat', action: () => _addToChatFromLibrary({ type: 'document', id: doc.id, title: doc.title }) });
         _showLibDropdown(menuBtn, items, { onSelect: () => {
           libraryEnterSelectMode();
           _librarySelectedIds.add(doc.id);
@@ -697,6 +704,16 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     cloneItem.title = 'Clone to active session';
     cloneItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); libraryImportDocument(doc); });
     dropdown.appendChild(cloneItem);
+
+    // Add to chat
+    const _chatIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    const chatItem = document.createElement('button');
+    chatItem.className = 'dropdown-item-compact';
+    chatItem.style.cssText = 'background:none;border:none;width:100%;';
+    chatItem.innerHTML = _di(_chatIco) + '<span>Add to chat</span>';
+    chatItem.title = 'Attach as context chip';
+    chatItem.addEventListener('click', (e) => { e.stopPropagation(); hideCardDropdown(); _addToChatFromLibrary({ type: 'document', id: doc.id, title: doc.title }); });
+    dropdown.appendChild(chatItem);
 
     // Export
     const _exportIco = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
@@ -1987,6 +2004,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>' +
               'Copy' +
             '</button>';
+        const addToChatHtml = '<button class="doclib-chat-add-btn">' +
+              '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+              'Add to chat' +
+            '</button>';
         const deleteHtml = '<button class="doclib-chat-delete-btn">' +
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>' +
               'Delete' +
@@ -1997,11 +2018,17 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             deleteHtml +
             archiveHtml +
             copyHtml +
+            addToChatHtml +
             '<button class="doclib-chat-open-btn">' +
               '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>' +
               'Open' +
             '</button>' +
           '</div>';
+        const addToChatBtn = preview.querySelector('.doclib-chat-add-btn');
+        if (addToChatBtn) addToChatBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          _addToChatFromLibrary({ type: 'session', id: session.id, title: session.name });
+        });
         const openBtn = preview.querySelector('.doclib-chat-open-btn');
         if (openBtn) openBtn.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -2115,6 +2142,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         if (cb) { cb.addEventListener('click', e => e.stopPropagation()); cb.addEventListener('change', () => { if (cb.checked) _chatsSelected.add(s.id); else _chatsSelected.delete(s.id); _updateChatsCount(); }); }
         card.querySelector('._chat-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
           { label: 'Open', action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
+          { label: 'Add to chat', action: () => _addToChatFromLibrary({ type: 'session', id: s.id, title: s.name }) },
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Archive', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/archive', { method: 'POST', headers: {'Content-Type':'application/json'} }); _renderLibChats(); } },
           { label: 'Delete', action: async () => {
@@ -2381,7 +2409,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         actions.innerHTML =
           '<button class="doclib-chat-delete-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>' +
           '<button class="doclib-chat-restore-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 5 5v0a5 5 0 0 1-5 5H9"/></svg>Restore</button>' +
+          '<button class="doclib-chat-add-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Add to chat</button>' +
           '<button class="doclib-chat-open-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>Open</button>';
+        actions.querySelector('.doclib-chat-add-btn').addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          _addToChatFromLibrary({ type: 'document', id: d.id, title: d.title });
+        });
         actions.querySelector('.doclib-chat-delete-btn').addEventListener('click', async (ev) => {
           ev.stopPropagation();
           if (!await window.styledConfirm('Delete this document?', { confirmText: 'Delete', danger: true })) return;
@@ -2470,6 +2503,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         if (cb) { cb.addEventListener('click', e => e.stopPropagation()); cb.addEventListener('change', () => { if (cb.checked) _arcSelected.add('chats:' + s.id); else _arcSelected.delete('chats:' + s.id); _updateArcCount(); }); }
         card.querySelector('._arc-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
           { label: 'Open', action: () => { if (window.sessionModule) window.sessionModule.selectSession(s.id); } },
+          { label: 'Add to chat', action: () => _addToChatFromLibrary({ type: 'session', id: s.id, title: s.name }) },
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/unarchive', { method: 'POST' }); _renderLibArchive(); } },
           { label: 'Delete', action: async () => {
@@ -2518,6 +2552,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           _toggleArcDocPreview(card, d);
         });
         card.querySelector('._arc-doc-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
+          { label: 'Add to chat', action: () => _addToChatFromLibrary({ type: 'document', id: d.id, title: d.title }) },
           { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/document/' + d.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
           { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this document?', { confirmText: 'Delete', danger: true })) return; await fetch(API_BASE + '/api/document/' + d.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
         ], { onSelect: () => {
@@ -2556,6 +2591,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         });
         card.querySelector('._arc-res-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
           { label: 'Open', action: () => { const a = document.createElement('a'); a.href = '/api/research/report/' + r.id; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); } },
+          { label: 'Add to chat', action: () => _addToChatFromLibrary({ type: 'research', id: r.id, title: r.query || 'Research' }) },
           { label: 'Restore', action: async () => { await fetch('/api/research/' + r.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
           { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this research?', { confirmText: 'Delete', danger: true })) return; await fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
         ], { onSelect: () => {
@@ -2763,6 +2799,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           // Discuss is hidden in the Archive so the footer matches chat
           // (Delete + Restore + Open).
           (item.archived ? '' :
+          '<button class="doclib-chat-add-btn">' +
+            '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+            'Add to chat' +
+          '</button>' +
           '<button class="doclib-chat-discuss-btn">' +
             '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
             'Discuss' +
@@ -2772,6 +2812,11 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
             'Open' +
           '</button>' +
         '</div>';
+      const addToChatBtn = preview.querySelector('.doclib-chat-add-btn');
+      if (addToChatBtn) addToChatBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        _addToChatFromLibrary({ type: 'research', id: item.id, title: item.query || 'Research' });
+      });
       const discussBtn = preview.querySelector('.doclib-chat-discuss-btn');
       if (discussBtn) discussBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -2951,6 +2996,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                 document.body.appendChild(a);
                 a.click();
                 a.remove();
+              } },
+            { label: 'Add to chat', action: () => {
+                const item = _researchItems.find(r => r.id === rid);
+                if (item) _addToChatFromLibrary({ type: 'research', id: rid, title: item.query || 'Research' });
               } },
             { label: _researchArchivedView ? 'Restore' : 'Archive', action: async () => {
                 const toArchived = !_researchArchivedView;

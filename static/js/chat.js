@@ -24,6 +24,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import contextRefsModule from './contextRefs.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -179,6 +180,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    */
   export function init(apiBase) {
     API_BASE = apiBase;
+    contextRefsModule.init(apiBase);
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
     // Initialize email inbox
     emailInbox.init(documentModule);
@@ -189,6 +191,29 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const ta = document.getElementById('message');
       if (ta && mod.initSlashAutocomplete) mod.initSlashAutocomplete(ta);
     }).catch(() => {});
+
+    // Wire the @-mention autocomplete for attaching library context.
+    Promise.all([import('./atAutocomplete.js'), import('./sessions.js')]).then(([mod, sessionsMod]) => {
+      const ta = document.getElementById('message');
+      if (ta && mod.initAtAutocomplete) {
+        mod.initAtAutocomplete(ta, {
+          apiBase,
+          getCurrentSessionId: () => window.streamSessionId || sessionsMod.getCurrentSessionId?.(),
+          getSessions: () => sessionsMod.getSessions?.() || [],
+          onPick: (ref, sessionId) => {
+            if (sessionId) contextRefsModule.addRefWithPreflight(ref, sessionId);
+          },
+        });
+      }
+    }).catch(() => {});
+
+    // Reload sticky context chips when the active session changes.
+    const _origSelectSession = sessionModule.selectSession;
+    sessionModule.selectSession = async function(id, opts) {
+      const result = await _origSelectSession.call(this, id, opts);
+      contextRefsModule.renderContextStrip(id);
+      return result;
+    };
 
     // ArrowUp on empty composer recalls last user message (like many chat apps).
     const _wireArrowUpRecall = (composer) =>
@@ -827,6 +852,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         fd.append('preset_id', presetsModule.getSelectedPreset());
       }
 
+      // Append sticky library context refs
+      const contextRefs = contextRefsModule.getRefs(streamSessionId);
+      if (contextRefs.length) {
+        fd.append('context_refs', JSON.stringify(contextRefs));
+      }
 
       const abortCtrl = new AbortController();
       abortCtrl._reason = '';

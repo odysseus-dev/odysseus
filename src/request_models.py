@@ -12,7 +12,8 @@ class ChatRequest(BaseModel):
     use_research: Optional[bool] = Field(default=False, description="Enable deep research")
     time_filter: Optional[str] = Field(default=None, description="Time filter for search")
     preset_id: Optional[str] = Field(default=None, description="Preset identifier")
-    
+    context_refs: Optional[List[Dict[str, Any]]] = Field(default=[], description="Library context refs attached to this message")
+
     @field_validator('message')
     @classmethod
     def clean_message(cls, v):

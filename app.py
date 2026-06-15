@@ -584,6 +584,10 @@ app.include_router(setup_chat_routes(
 from routes.research_routes import setup_research_routes
 app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
+# Context refs (library context chips)
+from routes.context_refs_routes import setup_context_refs_routes
+app.include_router(setup_context_refs_routes(session_manager))
+
 # History
 from routes.history_routes import setup_history_routes
 app.include_router(setup_history_routes(session_manager))

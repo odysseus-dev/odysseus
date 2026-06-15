@@ -16,6 +16,7 @@ from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
+from src.context_refs import build_context_messages
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
@@ -518,6 +519,7 @@ async def build_chat_context(
     use_enhanced_message: bool = False,
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
+    context_refs: list = None,
 ) -> ChatContext:
     """Build the full context (preface + messages) for an LLM call.
 
@@ -593,6 +595,12 @@ async def build_chat_context(
 
     # Capture used memories immediately
     used_memories = getattr(chat_processor, '_last_used_memories', [])
+
+    # Inject sticky library context refs (documents, research, sessions)
+    if context_refs:
+        user = get_current_user(request)
+        for ref_msg in build_context_messages(context_refs, owner=user):
+            preface.append(ref_msg)
 
     # Inject pre-fetched search context (compare mode)
     if search_context and allow_tool_preprocessing:

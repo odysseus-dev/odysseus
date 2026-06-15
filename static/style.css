@@ -8149,6 +8149,111 @@ button.hamburger {
 }
 .attach-strip:empty { display: none; }
 
+/* Context chips strip (above attachments) */
+.context-strip {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 2px 8px;
+  max-width: 800px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  box-sizing: border-box;
+}
+.context-strip:empty { display: none; }
+
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+}
+.context-chip-icon { font-size: 12px; line-height: 1; }
+.context-chip-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.8;
+  font-weight: 600;
+}
+.context-chip-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+.context-chip-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--accent-primary, var(--red));
+  opacity: 0.7;
+}
+.context-chip-remove:hover { opacity: 1; }
+
+/* @-mention autocomplete popup */
+.at-autocomplete-popup {
+  position: fixed;
+  z-index: 9000;
+  background: var(--panel, var(--bg));
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  font-size: 13px;
+  color: var(--fg, #e6e6e6);
+  overflow-y: auto;
+  padding: 4px 0;
+  display: none;
+}
+.at-ac-cat {
+  padding: 4px 12px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg);
+  opacity: 0.6;
+}
+.at-ac-row {
+  padding: 7px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.at-ac-row:hover {
+  background-color: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+}
+.at-ac-row-sel {
+  background-color: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
+}
+.at-ac-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.at-ac-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 15%, transparent);
+  color: var(--fg);
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+.at-ac-empty {
+  padding: 10px 12px;
+  color: var(--fg);
+  opacity: 0.7;
+}
+
 /* Upload-in-progress feedback: the message bubble shows immediately, so while
    the files are still uploading we put a whirlpool ON each attachment chip and
    dim the chip's content — making it obvious that file is being sent, not stuck. */
