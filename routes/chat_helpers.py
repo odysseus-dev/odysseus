@@ -346,9 +346,9 @@ def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, inco
 def fire_message_event(request, webhook_manager, session_id: str, sess, message: str, compare_mode: bool = False):
     """Fire webhook and event_bus events for a new user message."""
     if webhook_manager and not compare_mode:
-        asyncio.create_task(webhook_manager.fire("chat.message", {
+        webhook_manager.fire_and_forget("chat.message", {
             "session_id": session_id, "model": sess.model, "message": message[:2000],
-        }))
+        })
     from src.event_bus import fire_event
     user = get_current_user(request)
     fire_event("message_sent", user)
@@ -1120,10 +1120,10 @@ def run_post_response_tasks(
 
     # Webhook
     if webhook_manager and not compare_mode:
-        asyncio.create_task(webhook_manager.fire("chat.completed", {
+        webhook_manager.fire_and_forget("chat.completed", {
             "session_id": session_id, "model": sess.model,
             "user_message": message, "response": full_response[:2000],
-        }))
+        })
 
     # Auto-name
     if needs_auto_name(sess.name):
