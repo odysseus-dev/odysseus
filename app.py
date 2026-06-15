@@ -56,7 +56,7 @@ from core.constants import (
 )
 from core.database import SessionLocal, ApiToken
 from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
-from core.auth import AuthManager, normalize_known_username
+from core.auth import AuthManager, INTERNAL_TOOL_USER, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
     LLMServiceError, WebSearchError,
@@ -328,7 +328,7 @@ if AUTH_ENABLED:
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
                     else:
-                        request.state.current_user = "internal-tool"
+                        request.state.current_user = INTERNAL_TOOL_USER
                     request.state.api_token = False
                     return await call_next(request)
             except Exception as _e:

@@ -4,6 +4,8 @@
 import os
 import secrets
 
+from core.auth import INTERNAL_TOOL_USER
+
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
@@ -39,7 +41,7 @@ def require_admin(request: Request):
         hdr = request.headers.get(INTERNAL_TOOL_HEADER)
         if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
             return
-        if getattr(request.state, "current_user", None) == "internal-tool":
+        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
             return
     except Exception:
         pass
