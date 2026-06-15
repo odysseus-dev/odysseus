@@ -576,7 +576,8 @@ async def build_chat_context(
     if not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
-    # Resolve user prefs
+    # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
+    # bearer-token chat requests use the token owner instead of the "api" sentinel.
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
 
