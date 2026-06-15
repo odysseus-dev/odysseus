@@ -41,7 +41,10 @@ function _position(popup, textarea) {
 
 function _render(popup, items, selectedIdx, query) {
   if (!items.length) {
-    popup.innerHTML = `<div class="at-ac-empty">No results for <code>${_esc(query)}</code></div>`;
+    const msg = query
+      ? `No results for <code>${_esc(query)}</code>`
+      : 'Type to search documents, research, and chats';
+    popup.innerHTML = `<div class="at-ac-empty">${msg}</div>`;
     return;
   }
   let html = '';
@@ -159,14 +162,9 @@ export function initAtAutocomplete(textarea, { apiBase, getCurrentSessionId, get
     const parsed = _parseQuery(textarea);
     if (!parsed) { hide(); return; }
     const { atIdx, query } = parsed;
-    if (!query.length) {
-      items = [];
-      _render(popup || _ensurePopup(), items, 0, query);
-      show();
-      return;
-    }
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(async () => {
+
+    const doSearch = async () => {
       const [docs, research, chats] = await Promise.all([
         _searchDocuments(query),
         _searchResearch(query),
@@ -176,7 +174,15 @@ export function initAtAutocomplete(textarea, { apiBase, getCurrentSessionId, get
       selectedIdx = 0;
       if (!visible) show();
       _render(popup, items, selectedIdx, query);
-    }, DEBOUNCE_MS);
+    };
+
+    // Show the full/default catalog immediately on bare '@', debounce only
+    // when the user is actually filtering with additional characters.
+    if (!query.length) {
+      await doSearch();
+    } else {
+      debounce = setTimeout(doSearch, DEBOUNCE_MS);
+    }
   };
 
   const pick = (item) => {
