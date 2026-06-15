@@ -1,6 +1,7 @@
 .gradle/
 build/
 local.properties
+gradle/gradle-daemon-jvm.properties
 
 app/build/
 captures/

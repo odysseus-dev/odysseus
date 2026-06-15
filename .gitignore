@@ -35,6 +35,7 @@ services/data/
 .claude/
 .vscode/
 .idea/
+.gradle/
 *.swp
 *.swo
 *~
@@ -87,6 +88,7 @@ docs/windows-port/
 
 # Local config
 compound.config.json
+local.properties
 *.error.log
 _scratch/
 /odysseus/

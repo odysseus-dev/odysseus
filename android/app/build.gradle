@@ -8,12 +8,12 @@ def odysseusDefaultUrl = providers.gradleProperty("ODYSSEUS_ANDROID_URL")
 
 android {
     namespace = "com.odysseus.simplesignal"
-    compileSdk = 37
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.odysseus.simplesignal"
         minSdk = 26
-        targetSdk = 37
+        targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
 
@@ -22,5 +22,10 @@ android {
 
     buildFeatures {
         buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
     }
 }

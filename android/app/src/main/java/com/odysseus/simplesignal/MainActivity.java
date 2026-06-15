@@ -51,10 +51,8 @@ public class MainActivity extends Activity {
     }
 
     private void configureSystemBars() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            getWindow().setStatusBarColor(Color.rgb(5, 8, 5));
-            getWindow().setNavigationBarColor(Color.rgb(5, 8, 5));
-        }
+        getWindow().setStatusBarColor(Color.rgb(5, 8, 5));
+        getWindow().setNavigationBarColor(Color.rgb(5, 8, 5));
     }
 
     private void buildLayout() {
@@ -95,7 +93,9 @@ public class MainActivity extends Activity {
         ));
 
         TextView help = new TextView(this);
-        help.setText("Start the Odysseus backend, then point this app at its URL. Emulator default: http://10.0.2.2:7000. Physical phone: use your computer's LAN or Tailscale URL.");
+        help.setText("Start the Odysseus backend, then point this app at its URL.\n\n" +
+                "Emulator: http://10.0.2.2:7000\n" +
+                "Physical phone: use your computer's LAN or Tailscale URL.");
         help.setTextColor(Color.rgb(237, 244, 237));
         help.setTextSize(14);
         help.setGravity(Gravity.CENTER);
@@ -112,7 +112,7 @@ public class MainActivity extends Activity {
         urlInput.setHintTextColor(Color.rgb(130, 150, 130));
         urlInput.setText(getConfiguredUrl());
         urlInput.setHint("http://10.0.2.2:7000");
-        urlInput.setInputType(android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        urlInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         urlInput.setImeOptions(EditorInfo.IME_ACTION_GO);
         fallbackView.addView(urlInput, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -134,7 +134,7 @@ public class MainActivity extends Activity {
         actions.addView(retry, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         Button reset = new Button(this);
-        reset.setText("Emulator");
+        reset.setText(BuildConfig.ODYSSEUS_DEFAULT_URL.contains("10.0.2.2") ? "Emulator" : "Default");
         LinearLayout.LayoutParams resetParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
         resetParams.setMargins(dp(8), 0, 0, 0);
         actions.addView(reset, resetParams);
@@ -181,6 +181,11 @@ public class MainActivity extends Activity {
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(false);
         settings.setSupportMultipleWindows(false);
+
+        // Custom User-Agent to help backend/frontend detect the Odysseus Android App
+        String originalAgent = settings.getUserAgentString();
+        settings.setUserAgentString(originalAgent + " OdysseusAndroid/1.0");
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
@@ -323,13 +328,20 @@ public class MainActivity extends Activity {
 
             try {
                 startActivityForResult(intent, FILE_CHOOSER_REQUEST);
+                return true;
             } catch (ActivityNotFoundException ex) {
-                Intent fallback = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                fallback.addCategory(Intent.CATEGORY_OPENABLE);
-                fallback.setType("*/*");
-                startActivityForResult(fallback, FILE_CHOOSER_REQUEST);
+                try {
+                    Intent fallback = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    fallback.addCategory(Intent.CATEGORY_OPENABLE);
+                    fallback.setType("*/*");
+                    startActivityForResult(fallback, FILE_CHOOSER_REQUEST);
+                    return true;
+                } catch (ActivityNotFoundException ex2) {
+                    filePathCallback.onReceiveValue(null);
+                    filePathCallback = null;
+                    return false;
+                }
             }
-            return true;
         }
     }
 }
