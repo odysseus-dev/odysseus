@@ -2,8 +2,9 @@
 """Routes for personal documents management."""
 import os
 import logging
+import shutil
 import uuid
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, Depends
 from src.request_models import DirectoryRequest
 from core.constants import BASE_DIR, PERSONAL_DIR, PERSONAL_UPLOADS_DIR
@@ -18,14 +19,15 @@ UPLOADS_DIR = PERSONAL_UPLOADS_DIR
 logger = logging.getLogger(__name__)
 
 
-def _personal_upload_dir_for_owner(owner: str | None) -> str:
+def _personal_upload_dir_for_owner(owner: str | None, *, create: bool = True) -> str:
     """Return the per-owner upload directory used for direct RAG uploads."""
     owner_segment = secure_filename((owner or "local").strip())[:80] or "local"
     upload_dir = os.path.abspath(os.path.join(UPLOADS_DIR, owner_segment))
     base_abs = os.path.abspath(UPLOADS_DIR)
     if os.path.commonpath([upload_dir, base_abs]) != base_abs:
         raise ValueError("Unsafe upload owner path")
-    os.makedirs(upload_dir, exist_ok=True)
+    if create:
+        os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
 
 
@@ -43,6 +45,87 @@ def _unique_personal_upload_path(upload_dir: str, original_name: str | None) -> 
     if os.path.commonpath([file_path, upload_abs]) != upload_abs:
         raise ValueError("Unsafe upload filename")
     return file_path, filename, safe_name
+
+
+def _unique_existing_target(path: str) -> str:
+    """Return a non-existing sibling path for rename collision handling."""
+    if not os.path.exists(path):
+        return path
+    stem, ext = os.path.splitext(path)
+    while True:
+        candidate = f"{stem}-{uuid.uuid4().hex[:10]}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+
+
+def _remove_empty_tree(path: str) -> None:
+    """Best-effort removal of empty directories under ``path``."""
+    if not os.path.isdir(path):
+        return
+    for root, dirs, _files in os.walk(path, topdown=False):
+        for dirname in dirs:
+            candidate = os.path.join(root, dirname)
+            try:
+                os.rmdir(candidate)
+            except OSError:
+                pass
+    try:
+        os.rmdir(path)
+    except OSError:
+        pass
+
+
+def rename_personal_upload_owner(
+    old_owner: str,
+    new_owner: str,
+    *,
+    personal_docs_manager: Any = None,
+    rag_manager: Any = None,
+) -> Dict[str, Any]:
+    """Move direct personal uploads and rewrite RAG owner metadata on user rename."""
+    old_dir = _personal_upload_dir_for_owner(old_owner, create=False)
+    new_dir = _personal_upload_dir_for_owner(new_owner, create=False)
+    path_map: Dict[str, str] = {}
+    moved_files = 0
+
+    if os.path.isdir(old_dir) and old_dir != new_dir:
+        os.makedirs(new_dir, exist_ok=True)
+        for root, _dirs, files in os.walk(old_dir):
+            rel_root = os.path.relpath(root, old_dir)
+            target_root = new_dir if rel_root == "." else os.path.join(new_dir, rel_root)
+            os.makedirs(target_root, exist_ok=True)
+            for filename in files:
+                source = os.path.abspath(os.path.join(root, filename))
+                target = _unique_existing_target(os.path.abspath(os.path.join(target_root, filename)))
+                shutil.move(source, target)
+                path_map[source] = target
+                moved_files += 1
+        _remove_empty_tree(old_dir)
+
+    if personal_docs_manager is not None:
+        rename_directory = getattr(personal_docs_manager, "rename_directory", None)
+        if callable(rename_directory):
+            rename_directory(old_dir, new_dir, path_map=path_map)
+
+    rag_result = None
+    if rag_manager is not None:
+        rename_owner = getattr(rag_manager, "rename_owner", None)
+        if callable(rename_owner):
+            rag_result = rename_owner(
+                old_owner,
+                new_owner,
+                path_map=path_map,
+                path_prefixes=[(old_dir, new_dir)],
+            )
+
+    return {
+        "old_dir": old_dir,
+        "new_dir": new_dir,
+        "moved_files": moved_files,
+        "path_map": path_map,
+        "rag_result": rag_result,
+    }
+
 
 def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
     """
