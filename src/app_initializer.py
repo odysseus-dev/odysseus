@@ -46,6 +46,22 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
     # Initialize core managers
     memory_manager = MemoryManager(DATA_DIR)
     skills_manager = SkillsManager(DATA_DIR)
+
+    # COLD BOOT SYNC — SkillVectorStore
+    skill_vector = None
+    try:
+        from src.skill_vector import SkillVectorStore
+        embedding_model = getattr(rag_manager, '_model', None) if rag_manager else None
+        skill_vector = SkillVectorStore(DATA_DIR, embedding_model=embedding_model)
+        if skill_vector.healthy and skill_vector.count() == 0:
+            existing = skills_manager.load_all()
+            to_index = [s for s in existing if s.get('status') in ('published', None) or (s.get('status') == 'draft' and s.get('source') == 'teacher-escalation')]
+            if to_index:
+                skill_vector.rebuild(to_index)
+                logger.info(f'SkillVectorStore rebuilt with {len(to_index)} skills')
+    except Exception as e:
+        logger.warning(f'SkillVectorStore DEGRADED: {e}')
+
     session_manager = SessionManager(SESSIONS_FILE)
     set_session_manager(session_manager)  # Enable Session.add_message() persistence
     upload_handler = UploadHandler(base_dir, UPLOAD_DIR)

@@ -57,7 +57,7 @@ async def test_edit_file_blocked_at_execution_for_non_admin(monkeypatch):
 
 # ── Behavior ──────────────────────────────────────────────────────────────
 @pytest.mark.asyncio
-async def test_edit_file_success():
+async def test_edit_file_success(protected_context):
     p = os.path.join("/tmp", "ef_ok.py")
     open(p, "w").write("def f():\n    return 1\n")
     res = await EditFileTool().execute(json.dumps({"path": p, "old_string": "return 1", "new_string": "return 2"}), {})
@@ -68,7 +68,7 @@ async def test_edit_file_success():
 
 
 @pytest.mark.asyncio
-async def test_edit_file_not_found():
+async def test_edit_file_not_found(protected_context):
     p = os.path.join("/tmp", "ef_nf.txt")
     open(p, "w").write("hello\n")
     res = await EditFileTool().execute(json.dumps({"path": p, "old_string": "nope", "new_string": "x"}), {})
@@ -77,7 +77,7 @@ async def test_edit_file_not_found():
 
 
 @pytest.mark.asyncio
-async def test_edit_file_non_unique():
+async def test_edit_file_non_unique(protected_context):
     p = os.path.join("/tmp", "ef_dup.txt")
     open(p, "w").write("x\nx\n")
     res = await EditFileTool().execute(json.dumps({"path": p, "old_string": "x", "new_string": "y"}), {})
@@ -89,6 +89,6 @@ async def test_edit_file_non_unique():
 
 
 @pytest.mark.asyncio
-async def test_edit_file_outside_allowed_roots():
+async def test_edit_file_outside_allowed_roots(protected_context):
     res = await EditFileTool().execute(json.dumps({"path": "/etc/hosts", "old_string": "x", "new_string": "y"}), {})
     assert res["exit_code"] == 1 and ("outside the allowed roots" in res["error"] or "sensitive" in res["error"])
