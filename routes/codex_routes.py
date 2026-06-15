@@ -46,8 +46,12 @@ def _ssh_prefix_for_task(task: dict) -> tuple[str, str]:
     shell metacharacters in ``remoteHost`` is rejected with 400 rather than
     injected.
     """
-    host = validate_remote_host((task.get("remoteHost") or "").strip() or None) or ""
-    ssh_port = validate_ssh_port((task.get("sshPort") or "").strip() or None) or ""
+    raw_host = task.get("remoteHost")
+    raw_port = task.get("sshPort")
+    host_value = str(raw_host).strip() if raw_host is not None else None
+    port_value = str(raw_port).strip() if raw_port is not None else None
+    host = validate_remote_host(host_value or None) or ""
+    ssh_port = validate_ssh_port(port_value or None) or ""
     port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
     return host, port_flag
 
