@@ -33,7 +33,7 @@ def test_event_to_ical_serializes_core_fields_and_rrule():
 
 
 def test_caldav_pull_prune_skips_unsynced_or_pending_local_rows():
-    source = Path("src/caldav_sync.py").read_text()
+    source = Path("src/caldav_sync.py").read_text(encoding="utf-8")
 
     assert 'existing.caldav_sync_pending in {"create", "update"}' in source
     assert "CalendarEvent.remote_href.isnot(None)" in source
@@ -41,7 +41,7 @@ def test_caldav_pull_prune_skips_unsynced_or_pending_local_rows():
 
 
 def test_http_calendar_writes_mark_pending_and_push_after_commit():
-    source = Path("routes/calendar_routes.py").read_text()
+    source = Path("routes/calendar_routes.py").read_text(encoding="utf-8")
 
     assert 'caldav_sync_pending="create" if cal.source == "caldav" else None' in source
     assert 'ev.caldav_sync_pending = "update"' in source
@@ -53,7 +53,7 @@ def test_http_calendar_writes_mark_pending_and_push_after_commit():
 
 
 def test_agent_calendar_writes_share_caldav_push_path():
-    source = Path("src/tool_implementations.py").read_text()
+    source = Path("src/tool_implementations.py").read_text(encoding="utf-8")
 
     assert "_push_caldav_event_after_commit" in source
     assert 'caldav_sync_pending="create" if cal.source == "caldav" else None' in source
@@ -65,7 +65,7 @@ def test_agent_calendar_writes_share_caldav_push_path():
 
 
 def test_database_declares_and_migrates_caldav_remote_metadata():
-    source = Path("core/database.py").read_text()
+    source = Path("core/database.py").read_text(encoding="utf-8")
 
     for needle in [
         "class CalendarDeletedEvent",

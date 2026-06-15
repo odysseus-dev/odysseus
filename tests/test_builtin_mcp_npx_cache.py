@@ -55,6 +55,7 @@ def test_npx_cache_check_detects_scoped_package_in_npx_cache(monkeypatch, tmp_pa
         raise AssertionError("cache hit should not shell out to npx")
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.delenv("npm_config_cache", raising=False)
     monkeypatch.setattr(builtin_mcp.asyncio, "create_subprocess_exec", unexpected_exec)
 
@@ -83,6 +84,7 @@ def test_npx_cache_check_falls_back_when_async_subprocess_is_unsupported(monkeyp
     monkeypatch.setattr(builtin_mcp.asyncio, "create_subprocess_exec", unsupported_exec)
     monkeypatch.setattr(builtin_mcp.subprocess, "run", fake_run)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.delenv("npm_config_cache", raising=False)
 
     assert asyncio.run(
@@ -114,6 +116,7 @@ def test_npx_cache_check_fallback_treats_timeout_as_cache_miss(monkeypatch, tmp_
     monkeypatch.setattr(builtin_mcp.asyncio, "create_subprocess_exec", unsupported_exec)
     monkeypatch.setattr(builtin_mcp.subprocess, "run", fake_run)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.delenv("npm_config_cache", raising=False)
 
     assert asyncio.run(

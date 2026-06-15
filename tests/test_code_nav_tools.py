@@ -3,6 +3,7 @@ import os
 import shutil
 import asyncio
 import tempfile
+import json
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "sqlite:////tmp/test_code_nav.db")
@@ -39,30 +40,30 @@ def repo():
 # ── grep ──────────────────────────────────────────────────────────────────
 
 def test_grep_finds_match(repo):
-    r = _run("grep", f'{{"pattern": "needle", "path": "{repo}"}}')
+    r = _run("grep", json.dumps({"pattern": "needle", "path": repo}))
     assert r["exit_code"] == 0
     assert "a.py:2:" in r["output"]
 
 
 def test_grep_skips_junk_dirs(repo):
-    r = _run("grep", f'{{"pattern": "needle", "path": "{repo}"}}')
+    r = _run("grep", json.dumps({"pattern": "needle", "path": repo}))
     assert "node_modules" not in r["output"]
     assert ".git/config" not in r["output"]
 
 
 def test_grep_ignore_case(repo):
-    r = _run("grep", f'{{"pattern": "needle", "ignore_case": true, "path": "{repo}"}}')
+    r = _run("grep", json.dumps({"pattern": "needle", "ignore_case": True, "path": repo}))
     assert "b.txt:2:" in r["output"]
 
 
 def test_grep_glob_filter(repo):
-    r = _run("grep", f'{{"pattern": "needle", "ignore_case": true, "glob": "*.py", "path": "{repo}"}}')
+    r = _run("grep", json.dumps({"pattern": "needle", "ignore_case": True, "glob": "*.py", "path": repo}))
     assert "a.py" in r["output"]
     assert "b.txt" not in r["output"]
 
 
 def test_grep_no_match(repo):
-    r = _run("grep", f'{{"pattern": "zzzznotfound", "path": "{repo}"}}')
+    r = _run("grep", json.dumps({"pattern": "zzzznotfound", "path": repo}))
     assert r["exit_code"] == 0
     assert "No matches" in r["output"]
 
@@ -81,7 +82,7 @@ def test_grep_path_outside_roots_rejected(repo):
 
 def test_grep_python_fallback_when_no_rg(repo, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda name: None)
-    r = _run("grep", f'{{"pattern": "needle", "path": "{repo}"}}')
+    r = _run("grep", json.dumps({"pattern": "needle", "path": repo}))
     assert r["exit_code"] == 0
     assert "a.py:2:" in r["output"]
     assert "node_modules" not in r["output"]
@@ -91,13 +92,13 @@ def test_grep_python_fallback_when_no_rg(repo, monkeypatch):
 # ── glob ──────────────────────────────────────────────────────────────────
 
 def test_glob_py(repo):
-    r = _run("glob", f'{{"pattern": "*.py", "path": "{repo}"}}')
+    r = _run("glob", json.dumps({"pattern": "*.py", "path": repo}))
     assert r["exit_code"] == 0
     assert "a.py" in r["output"]
 
 
 def test_glob_recursive_skips_junk(repo):
-    r = _run("glob", f'{{"pattern": "**/*.py", "path": "{repo}"}}')
+    r = _run("glob", json.dumps({"pattern": "**/*.py", "path": repo}))
     assert "a.py" in r["output"]
     assert "node_modules" not in r["output"]
 
@@ -110,7 +111,7 @@ def test_glob_requires_pattern(repo):
 # ── ls ────────────────────────────────────────────────────────────────────
 
 def test_ls_lists_entries(repo):
-    r = _run("ls", f'{{"path": "{repo}"}}')
+    r = _run("ls", json.dumps({"path": repo}))
     assert r["exit_code"] == 0
     assert "a.py" in r["output"]
     assert "sub/" in r["output"]
@@ -129,7 +130,7 @@ def test_read_file_offset_limit(repo):
     p = os.path.join(repo, "lines.txt")
     with open(p, "w") as f:
         f.write("\n".join(f"line{i}" for i in range(1, 11)) + "\n")
-    r = _run("read_file", f'{{"path": "{p}", "offset": 3, "limit": 2}}')
+    r = _run("read_file", json.dumps({"path": p, "offset": 3, "limit": 2}))
     assert r["exit_code"] == 0
     assert r["output"] == "line3\nline4\n"
 

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
+from core.platform_compat import find_bash
 
 from routes.cookbook_helpers import (
     _cached_model_scan_script,
@@ -283,8 +284,9 @@ def test_pip_install_fallback_chain_propagates_failure_in_venv():
         "{ ! true "  # venv_check=0 (in venv) → negated to 1 → user skipped
         "&& echo user_attempt; }"
     )
+    bash = find_bash() or "bash"
     result = subprocess.run(
-        ["bash", "-c", script],
+        [bash, "-c", script],
         capture_output=True, text=True, timeout=10,
     )
     assert "user_attempt" not in result.stdout
@@ -301,8 +303,9 @@ def test_pip_install_fallback_chain_tries_user_outside_venv():
         "&& echo user_attempt; }"
         "'"
     )
+    bash = find_bash() or "bash"
     result = subprocess.run(
-        ["bash", "-c", script],
+        [bash, "-c", script],
         capture_output=True, text=True, timeout=10,
     )
     assert "user_attempt" in result.stdout, "Chain should try --user when not in venv and base fails"
@@ -418,11 +421,11 @@ def test_pip_install_attempt_no_bare_pipe_tail():
 def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
-    snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
+    python_cmd = "python" if sys.platform == "win32" else "python3"
+    snippet = _pip_install_attempt(f"{python_cmd} -m pip install __nonexistent_package_12345__")
+    bash = find_bash() or "bash"
     result = subprocess.run(
-        ["bash", "-c", snippet],
+        [bash, "-c", snippet],
         capture_output=True,
         text=True,
         timeout=60,
@@ -432,11 +435,11 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
 
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
-    snippet = _pip_install_attempt("python3 -c 'pass'")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
+    python_cmd = "python" if sys.platform == "win32" else "python3"
+    snippet = _pip_install_attempt(f"{python_cmd} -c 'pass'")
+    bash = find_bash() or "bash"
     result = subprocess.run(
-        ["bash", "-c", snippet],
+        [bash, "-c", snippet],
         capture_output=True,
         text=True,
         timeout=15,
@@ -446,11 +449,11 @@ def test_pip_install_attempt_success_exits_zero():
 
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
-    snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")
-    if sys.platform == "win32":
-        snippet = snippet.replace("$", "\\$")
+    python_cmd = "python" if sys.platform == "win32" else "python3"
+    snippet = _pip_install_attempt(f"{python_cmd} -m pip install __nonexistent_package_12345__")
+    bash = find_bash() or "bash"
     result = subprocess.run(
-        ["bash", "-c", snippet],
+        [bash, "-c", snippet],
         capture_output=True,
         text=True,
         timeout=60,
