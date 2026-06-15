@@ -29,7 +29,7 @@ This ADR does not propose a blanket migration. Following the approach outlined b
 Several JSON stores in Odysseus have no stronger reason for being JSON than historical convention or the assumption that human-readability matters. In practice:
 
 - SQLite supports JSON columns and `json()` functions for semi-structured data. A `SELECT json(value) FROM config` is no harder to inspect than `cat settings.json`.
-- SQLite provides crash safety via WAL journaling for free. JSON stores require custom atomic-write code (`core/atomic_io`, `PresetManager`, locked writers with `.bak` recovery) to approximate the same guarantee.
+- SQLite provides crash safety via WAL journaling for free. JSON stores use a patchwork of write strategies: `core.atomic_io.atomic_write_json` (temp+fsync+replace) for most stores, a custom locked writer with `.bak` recovery for uploads, hand-rolled temp+replace for memory and user prefs, and plain `json.dump`/`write_text` with no crash safety at all for api_keys and vault.
 - Nobody shares Odysseus config files between instances. The "easy to copy a JSON file" argument does not apply.
 - Every JSON store that needs ownership, transactions, or querying must reinvent those features in application code. SQLite provides them natively.
 
@@ -152,7 +152,7 @@ These domains are already in SQLite `app.db` and are well-served by it.
 | Current backend | JSON — `data/api_keys.json` + `data/.key` |
 | Access pattern | Low write (provider key updates), low read; encrypted values preserved across saves |
 | Ownership model | Global |
-| Atomicity | Partial — preserves encrypted values when saving one provider |
+| Atomicity | Plain `json.dump` — no atomic write, no crash safety. Preserves encrypted values when saving one provider. |
 | Backup coverage | Included in backup; secret-bearing |
 | Notes | `data/.key` is a symmetric encryption key — if lost, all encrypted provider keys become unrecoverable. Saving one provider preserves other providers' encrypted values (partial-write safety). |
 
@@ -216,7 +216,7 @@ These domains are already in SQLite `app.db` and are well-served by it.
 | Current backend | JSON — `data/contacts.json` (when CardDAV unconfigured) / CardDAV remote |
 | Access pattern | Low-moderate read/write; admin-only; import/export support |
 | Ownership model | Global admin-only |
-| Atomicity | No formal atomic writes |
+| Atomicity | `atomic_write_json` (shared) |
 | Backup coverage | Included in backup |
 | Notes | |
 
@@ -489,7 +489,7 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/settings.json` (cached, defaults fallback) |
 | Access pattern | Low write (admin changes), high read (every request can check settings); merged over defaults |
 | Ownership model | Global |
-| Atomicity | File-level writes |
+| Atomicity | `atomic_write_json` (shared) |
 | Backup coverage | Included in HTTP export/import and `scripts/odysseus-backup`; secret-bearing |
 | Notes | Settings reference `ModelEndpoint` IDs — no foreign-key enforcement between JSON and SQLite (referential integrity gap). |
 
@@ -504,7 +504,7 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/features.json` (cached, defaults fallback) |
 | Access pattern | Very low write (admin toggles), high read (feature checks); simple boolean map |
 | Ownership model | Global |
-| Atomicity | File-level writes |
+| Atomicity | `atomic_write_json` (shared) |
 | Backup coverage | Included in HTTP export/import |
 | Notes | |
 
@@ -519,7 +519,7 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/user_prefs.json` (`_users` multi-user storage, legacy flat prefs support) |
 | Access pattern | Low write (user changes), moderate read (overlaid on settings per request) |
 | Ownership model | Per-user within `_users` key; whitelist of per-user overridable settings |
-| Atomicity | File-level writes |
+| Atomicity | Own temp+fsync+replace (not shared `atomic_write_json`) |
 | Backup coverage | Included in HTTP export/import |
 | Notes | Any user's pref change rewrites all users' prefs (full-file rewrite). |
 
@@ -579,7 +579,7 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/integrations.json` |
 | Access pattern | Very low write/read; generic API integration templates |
 | Ownership model | Global |
-| Atomicity | File-level writes |
+| Atomicity | `atomic_write_json` (shared) |
 | Backup coverage | Included in backup |
 | Notes | |
 
@@ -594,9 +594,9 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/vault.json` (chmod 0600) |
 | Access pattern | Very low write (config/login/logout), low read; stores `BW_SESSION` |
 | Ownership model | Admin-only |
-| Atomicity | File-level writes with POSIX permissions |
+| Atomicity | Plain `write_text()` — no atomic write, no crash safety |
 | Backup coverage | Included in backup; secret-bearing |
-| Notes | |
+| Notes | No crash safety: a crash during `write_text()` can corrupt `vault.json`. |
 
 **Recommendation:** Migrate to SQLite
 
@@ -609,7 +609,7 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/embedding_endpoint.json` |
 | Access pattern | Very low write, low read; small config |
 | Ownership model | Global |
-| Atomicity | File-level writes |
+| Atomicity | Plain `write_text()` — no atomic write, no crash safety |
 | Backup coverage | Included in backup |
 | Notes | |
 
@@ -673,7 +673,7 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON `data/bg_jobs.json` + file system `data/bg_jobs/*` (wrapper scripts, logs, exit codes) |
 | Access pattern | Moderate write (job start/status/follow-up), moderate read (monitoring); capped result text |
 | Ownership model | Session-scoped with owner context |
-| Atomicity | File-level writes for state; separate files for logs/scripts |
+| Atomicity | `atomic_write_json` (shared) for state; separate files for logs/scripts |
 | Backup coverage | Not critical — ephemeral runtime state |
 | Notes | |
 
@@ -688,7 +688,7 @@ All domains in this group are already in SQLite `app.db`.
 | Current backend | JSON — `data/cookbook_state.json` (shared with CLI) |
 | Access pattern | Low write (serve start/stop), low read (status); server lists, env with encrypted HF tokens |
 | Ownership model | Global — cookbook-created endpoints have null-owner shared rows |
-| Atomicity | File-level writes |
+| Atomicity | `atomic_write_json` (shared) |
 | Backup coverage | Included in backup |
 | Notes | Stale browser state can overwrite server state (full-file-write race). |
 
@@ -792,7 +792,7 @@ All domains in this group are already in SQLite `app.db`.
 
 ### Open Questions
 
-1. **Debate on simple config vs appliction state:** For several config/state stores, this ADR recommends migration to SQLite but the case is weaker than for relational/owner-scoped domains. RaresKeY's feedback: "SQLite can also introduce unnecessary friction in areas where a database is not buying us much. Some local/config/cache/state data may be simpler and safer as files, especially when the access pattern is simple and the ownership/migration story is clear." Maintainers should weigh whether the migration benefits (crash safety, eliminating custom atomic writers, unified backup) justify the effort for these stores, or whether the simple access pattern means files are fine:
+1. **Debate on simple config vs appliction state:** For several config/state stores, this ADR recommends migration to SQLite but the case is weaker than for relational/owner-scoped domains. RaresKeY's feedback: "SQLite can also introduce unnecessary friction in areas where a database is not buying us much. Some local/config/cache/state data may be simpler and safer as files, especially when the access pattern is simple and the ownership/migration story is clear." Maintainers should weigh whether the migration benefits (crash safety, unified backup, eliminating per-store write code) justify the effort for these stores, or whether the simple access pattern means files are fine:
 
    | Domain | This ADR says | SQLite buys | Counter-argument |
    |--------|--------------|-------------|-----------------|
@@ -878,7 +878,7 @@ Several file-backed domains would benefit from SQLite metadata tracking without 
 This pattern provides:
 - Owner-filtered queries without scanning files
 - Transactional consistency between metadata and other owner-scoped domains
-- Elimination of custom atomic-write code (uploads.json, memory.json)
+- Elimination of custom write code (uploads.json has its own locked writer with `.bak` recovery; memory.json has its own temp-and-replace)
 - Standard backup via SQLite backup APIs
 
 ### Migration Risk Assessment
