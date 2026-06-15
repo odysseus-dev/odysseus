@@ -40,6 +40,7 @@ function _hasOtherDockedWindow(side, owner) {
     if (!el || el === owner) return false;
     if (owner && el.contains && el.contains(owner)) return false;
     if (owner && owner.contains && owner.contains(el)) return false;
+    if (!_isActiveDockOwner(el)) return false;
     return true;
   });
 }
@@ -330,6 +331,47 @@ function _resolveDockNodes(target) {
   return { modal: target, content };
 }
 
+function _isActiveDockOwner(owner) {
+  if (!owner || !owner.isConnected) return false;
+  if (owner.classList?.contains('hidden') || owner.classList?.contains('modal-minimized')) return false;
+  if (owner.style?.display === 'none') return false;
+  const nodes = _resolveDockNodes(owner);
+  const content = nodes?.content || owner;
+  if (!content || !content.isConnected) return false;
+  if (content._dockSuspended) return false;
+  if (content.classList?.contains('hidden') || content.classList?.contains('modal-minimized')) return false;
+  if (content.style?.display === 'none') return false;
+  const rect = content.getBoundingClientRect?.();
+  return !!rect && rect.width > 0 && rect.height > 0;
+}
+
+function _activeDockedWindows(side, owner = null) {
+  const cls = _dockClassForSide(side);
+  return Array.from(document.querySelectorAll(`.${cls}`)).filter((el) => {
+    if (!el || el === owner) return false;
+    if (owner && el.contains && el.contains(owner)) return false;
+    if (owner && owner.contains && owner.contains(el)) return false;
+    return _isActiveDockOwner(el);
+  });
+}
+
+function _requestDockReplacement(side, owner) {
+  for (const existing of _activeDockedWindows(side, owner)) {
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus:edge-dock-replace', {
+        detail: { side, modal: existing, replacement: owner },
+      }));
+    } catch (_) {}
+    // If no tool-specific listener minimized/closed it, hide it as a fallback
+    // so one side edge never shows two active panels at once.
+    if (_isActiveDockOwner(existing)) {
+      _onDockedModalGone(existing, _dockClassForSide(side));
+      existing.classList?.add('hidden');
+      if (existing.style) existing.style.display = 'none';
+    }
+  }
+}
+
 // Apply edge dock state to a modal/pane. `side` is 'right' (default) or 'left'.
 export function applyEdgeDock(modal, side = 'right', dockClass) {
   if (!dockClass) dockClass = side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
@@ -364,6 +406,7 @@ function _applyDockInternal(modal, side, dockClass) {
     content.style.left = '';
     content.style.right = '';
   }
+  _requestDockReplacement(side, modal);
   // Snapshot the actual rendered rect + inline styles so un-dock can
   // restore the exact same floating window the user had before. Without
   // this, a window the user had carefully resized would snap back to
@@ -552,7 +595,7 @@ function _onDockedModalGone(modal, dockClass) {
     try { watcher.parentObs && watcher.parentObs.disconnect(); } catch (_) {}
     delete modal._dockCloseWatcher;
   }
-  const _c = modal.querySelector ? modal.querySelector('.modal-content') : null;
+  const _c = _resolveDockNodes(modal)?.content || null;
   _disconnectLeftDockObservers(_c);
   const hadRight = modal.classList.contains('modal-right-docked');
   const hadLeft = modal.classList.contains('modal-left-docked');

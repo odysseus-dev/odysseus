@@ -1440,6 +1440,33 @@ function _autoRegister(id) {
   return _state.get(id);
 }
 
+window.addEventListener('odysseus:edge-dock-replace', (e) => {
+  const modal = e.detail?.modal;
+  if (!modal || modal === e.detail?.replacement) return;
+  const id = modal.id || '';
+
+  if (id === 'notes-pane') {
+    try { suspendDock(modal); } catch (err) { console.warn('suspendDock on notes replace failed', err); }
+    const minBtn = document.getElementById('notes-minimize-btn');
+    if (minBtn) {
+      minBtn.click();
+      return;
+    }
+  }
+
+  if (id) {
+    if (!_state.has(id) && _AUTO_WIRE[id]) _autoRegister(id);
+    if (_state.has(id)) {
+      minimize(id);
+      return;
+    }
+  }
+
+  try { suspendDock(modal); } catch (err) { console.warn('suspendDock on dock replace failed', err); }
+  modal.classList?.add('hidden', 'modal-minimized');
+  if (modal.style) modal.style.display = 'none';
+});
+
 // Watch the document for tool modals being added/shown and inject the `_`
 // button next to the close button. We do NOT pre-register here — only inject
 // the button. Registration happens when the modal is actually minimized,
