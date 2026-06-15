@@ -795,6 +795,11 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (!isAgentMode && documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
         isAgentMode = true;
       }
+      // Auto mode: autonomous agent — force agent mode so the backend runs the
+      // full tool loop to completion (caps lifted, ask_user dropped server-side).
+      const _autoChk = el('auto-toggle');
+      const _autoOn = !!(_autoChk && _autoChk.checked);
+      if (_autoOn) isAgentMode = true;
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
       if (el('web-toggle').checked) {
         if (isAgentMode) {
@@ -811,6 +816,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         fd.set('mode', 'chat');
       }
       fd.append('allow_bash', el('bash-toggle').checked ? 'true' : 'false');
+      // Auto mode flag — skip when research forced chat mode (mutually exclusive).
+      if (_autoOn && !el('research-toggle').checked) {
+        fd.append('auto', 'true');
+      }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {
         fd.append('use_rag', 'false');

@@ -1700,6 +1700,26 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  // Auto mode toggle: autonomous agent. Opt-in power switch — defaults OFF and
+  // is NOT per-mode (a single global flag), unlike the tool toggles above.
+  (function setupAutoToggle() {
+    const btn = el('auto-toggle-btn');
+    const chk = el('auto-toggle');
+    if (!btn || !chk) return;
+    const saved = !!loadToggleState().auto;
+    chk.checked = saved;
+    btn.classList.toggle('active', saved);
+    btn.setAttribute('aria-pressed', String(saved));
+    btn.addEventListener('click', () => {
+      chk.checked = !chk.checked;
+      btn.classList.toggle('active', chk.checked);
+      btn.setAttribute('aria-pressed', String(chk.checked));
+      const st = loadToggleState(); st.auto = chk.checked; saveToggleState(st);
+      if (uiModule?.showToast) {
+        uiModule.showToast('Auto mode ' + (chk.checked ? 'on — autonomous agent' : 'off'), 1800);
+      }
+    });
+  })();
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
