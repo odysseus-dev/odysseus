@@ -3797,7 +3797,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     if not name:
         return {"error": "name is required", "exit_code": 1}
 
-    contacts = {}  # email -> {name, source}
+    contacts = {}  # email_or_phone -> {name, source, phone?}
 
     # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
     # server-side httpx GET to /api/contacts/search carries no session
@@ -3812,10 +3812,18 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
             match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
             if not match:
                 continue
+            has_email = False
             for email in (c.get("emails") or []):
                 email = (email or "").strip().lower()
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+                    has_email = True
+            # Fall back to phone numbers when the contact has no email address
+            if not has_email:
+                for phone in (c.get("phones") or []):
+                    phone = (phone or "").strip()
+                    if phone:
+                        contacts[phone] = {"name": c.get("name") or phone, "source": "contacts", "phone": phone}
     except Exception:
         pass
 
@@ -3835,8 +3843,11 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
         return {"output": f"No contacts found matching '{name}'.", "exit_code": 0}
 
     lines = [f"Contacts matching '{name}':"]
-    for email, info in contacts.items():
-        lines.append(f"- {info['name']} <{email}> ({info['source']})")
+    for key, info in contacts.items():
+        if info.get("phone"):
+            lines.append(f"- {info['name']} — phone: {info['phone']} ({info['source']})")
+        else:
+            lines.append(f"- {info['name']} <{key}> ({info['source']})")
     return {"output": "\n".join(lines), "exit_code": 0}
 
 
