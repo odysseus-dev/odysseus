@@ -5,11 +5,13 @@ logger = logging.getLogger(__name__)
 
 class AskUserTool:
     async def execute(self, content, ctx):
-        # ask_user: the agent poses a multiple-choice question to the user to get a
-        # decision/clarification. This is a pure UI-control marker — no subprocess,
-        # no filesystem. It returns an `ask_user` payload that the agent loop turns
-        # into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
-        # the user's selection (their choice arrives as the next message).
+        """
+        ask_user: the agent poses a multiple-choice question to the user to get a
+        decision/clarification. This is a pure UI-control marker — no subprocess,
+        no filesystem. It returns an `ask_user` payload that the agent loop turns
+        into an `ask_user` SSE event and then ENDS the turn, so the chat waits for
+        the user's selection (their choice arrives as the next message).
+        """
         question, options, multi = "", [], False
         raw = (content or "").strip()
         try:
@@ -55,11 +57,13 @@ class AskUserTool:
 
 class UpdatePlanTool:
     async def execute(self, content, ctx):
-        # update_plan: the agent writes back to the active plan — tick an item done
-        # or revise steps (e.g. when the user asks to change something). Pure UI
-        # marker: returns a `plan_update` payload the agent loop turns into a
-        # `plan_update` SSE event; the frontend replaces the stored plan and refreshes
-        # the docked plan window. Does NOT end the turn.
+        """
+        update_plan: the agent writes back to the active plan — tick an item done
+        or revise steps (e.g. when the user asks to change something). Pure UI
+        marker: returns a `plan_update` payload the agent loop turns into a
+        `plan_update` SSE event; the frontend replaces the stored plan and refreshes
+        the docked plan window. Does NOT end the turn.
+        """
         raw = (content or "").strip()
         plan = ""
         try:
@@ -70,7 +74,6 @@ class UpdatePlanTool:
         if isinstance(parsed, dict) and parsed.get("plan"):
             plan = str(parsed.get("plan", "")).strip()
         else:
-            # Plain-string call (raw checklist) or JSON without a usable `plan`.
             plan = raw
             
         if not plan:
