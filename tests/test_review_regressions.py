@@ -701,6 +701,34 @@ def test_single_user_mode_keeps_full_tool_access_when_auth_disabled(monkeypatch)
     assert blocked_tools_for_owner(None) == set()
 
 
+def test_auth_disabled_configured_mode_keeps_full_tool_access(monkeypatch):
+    """AUTH_ENABLED=false is still intentional single-user mode after setup.
+
+    Once an admin account exists, AuthManager.is_configured becomes true. The
+    tool gate must still honor explicit auth-disabled mode before requiring an
+    owner/admin match, otherwise agent mode hides email/MCP/local tools from the
+    operator.
+    """
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    auth_mod = _install_core_auth_stub(monkeypatch)
+
+    class FakeAuth:
+        is_configured = True
+
+        def is_admin(self, username):
+            return False
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+
+    from src.tool_security import (
+        blocked_tools_for_owner,
+        owner_is_admin_or_single_user,
+    )
+
+    assert owner_is_admin_or_single_user(None) is True
+    assert blocked_tools_for_owner(None) == set()
+
+
 @pytest.mark.asyncio
 async def test_webhook_tool_reuses_private_url_validation():
     class FakeDb:

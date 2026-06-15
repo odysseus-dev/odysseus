@@ -9,13 +9,11 @@ from urllib.parse import urljoin, urlparse, parse_qs
 import httpx
 from bs4 import BeautifulSoup
 
-from src.constants import SEARXNG_INSTANCE
+from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 
 logger = logging.getLogger(__name__)
-
-REQUEST_TIMEOUT = 20
 
 # Provider registry — maps setting value to (label, needs_key, needs_url)
 PROVIDER_INFO = {

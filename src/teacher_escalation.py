@@ -42,7 +42,7 @@ _SOTA_HOSTS = frozenset({
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
     "generativelanguage.googleapis.com", "api.groq.com",
-    "openrouter.ai", "ollama.com", "api.venice.ai",
+    "openrouter.ai", "ollama.com", "api.venice.ai", "api.kimi.com",
 })
 
 
@@ -594,6 +594,8 @@ async def run_teacher_inline(
                         "exit_code": payload.get("exit_code"),
                     })
                 if "delta" in payload and isinstance(payload["delta"], str):
+                    if payload.get("thinking"):
+                        continue
                     captured_text_parts.append(payload["delta"])
                 yield 'data: ' + json.dumps(payload) + '\n\n'
                 continue

@@ -47,11 +47,11 @@ def test_is_setting_overridden_reads_raw_saved_file(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Configurable hard_max — completes the reviewer requirement from #1190 that
-# was carried over but not implemented in #1230: the ceiling on the auto-
-# derived path should be a setting, not a hidden constant. Without this,
-# admins on premium APIs with very large windows (1M+ context) can only
-# raise the ceiling by editing src/context_budget.py.
+# Configurable hard_max — the ceiling on the auto-derived path is a setting
+# (`agent_input_token_hard_max`), not a hidden constant. History: a reviewer
+# required it on #1190, the merged #1230 shipped without it, and #1273 added it.
+# This test pins the function-level override (the `hard_max` parameter); without
+# a raisable ceiling, admins on 1M+ context APIs would be stuck at the 200K default.
 # ---------------------------------------------------------------------------
 
 def test_custom_hard_max_overrides_default_in_auto_branch():
