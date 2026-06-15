@@ -71,6 +71,14 @@ def test_file_removed_on_successful_delete(tmp_path, monkeypatch):
     SessionLocal = _seed(tmp_path)
     monkeypatch.setattr(gallery_routes, "get_current_user", lambda r: "alice")
     monkeypatch.setattr(gallery_routes, "SessionLocal", SessionLocal)
+    # _gallery_image_path uses the app's global GENERATED_IMAGES_DIR, not the
+    # test's tmp_path.  Patch it so the route looks inside the temp directory.
+    test_img_dir = tmp_path / "data" / "generated_images"
+    monkeypatch.setattr(
+        gallery_routes,
+        "_gallery_image_path",
+        lambda filename: test_img_dir / filename,
+    )
 
     delete = _delete_endpoint()
     result = asyncio.run(delete(Request(scope={"type": "http"}), "img-1"))
