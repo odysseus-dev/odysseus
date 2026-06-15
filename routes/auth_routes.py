@@ -201,6 +201,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "OIDC users don't have a password — manage credentials through your identity provider")
         if len(body.new_password) < PASSWORD_MIN_LENGTH:
             raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
         current_token = request.cookies.get(SESSION_COOKIE)
@@ -220,6 +222,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "Two-factor authentication is managed by your identity provider for OIDC users")
         if auth_manager.totp_enabled(user):
             raise HTTPException(400, "2FA is already enabled")
         secret = auth_manager.totp_generate_secret(user)
@@ -243,6 +247,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "Two-factor authentication is managed by your identity provider for OIDC users")
         if not auth_manager.totp_confirm_enable(user, body.code):
             raise HTTPException(400, "Invalid code — try again")
         backup = auth_manager.users.get(user, {}).get("totp_backup_codes", [])
@@ -257,6 +263,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
+        if auth_manager.is_oidc_user(user):
+            raise HTTPException(400, "Two-factor authentication is managed by your identity provider for OIDC users")
         if not auth_manager.totp_disable(user, body.password):
             raise HTTPException(400, "Invalid password")
         return {"ok": True}

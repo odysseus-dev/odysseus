@@ -310,3 +310,105 @@ def test_first_user_bootstrap_suppressed_when_admin_groups_configured(
         "First OIDC user should NOT be admin when OIDC_ADMIN_GROUPS is set "
         "and they are not in a group"
     )
+
+
+# ---------------------------------------------------------------------------
+# Route-level OIDC guards — 2FA and change-password
+# ---------------------------------------------------------------------------
+
+class TestOidcRouteGuards:
+    """The auth routes reject local 2FA / password mutations for OIDC users.
+
+    OIDC users authenticate through their identity provider; local password
+    and TOTP controls are not applicable.  The frontend already hides these
+    cards, but the backend must also enforce the policy so a direct API call
+    cannot create a misleading or stuck 2FA state."""
+
+    @pytest.fixture
+    def setup_router(self, tmp_path):
+        """Create an auth router backed by a temp AuthManager with one OIDC user."""
+        from routes.auth_routes import setup_auth_routes
+        mgr = _make_manager(tmp_path)
+        mgr.create_user_oidc("alice", sub="abc", issuer="https://idp.example.com")
+        # Issue a session so the user is "logged in"
+        token = mgr.create_session_trusted("alice")
+        router = setup_auth_routes(mgr)
+        return router, mgr, token
+
+    def _get(self, router, path):
+        for route in router.routes:
+            if getattr(route, "path", "") == path:
+                return route.endpoint
+        raise AssertionError(f"No route for {path}")
+
+    def _fake_req(self, token):
+        """Build a fake request with the session cookie set."""
+        from types import SimpleNamespace
+        req = SimpleNamespace()
+        req.cookies = {"odysseus_session": token}
+        req.client = SimpleNamespace()
+        req.client.host = "127.0.0.1"
+        return req
+
+    def test_change_password_rejected_for_oidc_user(self, setup_router):
+        router, mgr, token = setup_router
+        ep = self._get(router, "/api/auth/change-password")
+        from pydantic import BaseModel
+        class PW(BaseModel):
+            current_password: str = "x"
+            new_password: str = "password123"
+        import asyncio
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ep(PW(), self._fake_req(token)))
+        assert exc.value.status_code == 400
+        assert "OIDC" in exc.value.detail
+
+    def test_2fa_setup_rejected_for_oidc_user(self, setup_router):
+        router, mgr, token = setup_router
+        ep = self._get(router, "/api/auth/2fa/setup")
+        import asyncio
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ep(self._fake_req(token)))
+        assert exc.value.status_code == 400
+        assert "identity provider" in exc.value.detail.lower()
+
+    def test_2fa_confirm_rejected_for_oidc_user(self, setup_router):
+        router, mgr, token = setup_router
+        ep = self._get(router, "/api/auth/2fa/confirm")
+        from pydantic import BaseModel
+        class TOTP(BaseModel):
+            code: str = "123456"
+        import asyncio
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ep(TOTP(), self._fake_req(token)))
+        assert exc.value.status_code == 400
+        assert "identity provider" in exc.value.detail.lower()
+
+    def test_2fa_disable_rejected_for_oidc_user(self, setup_router):
+        router, mgr, token = setup_router
+        ep = self._get(router, "/api/auth/2fa/disable")
+        from pydantic import BaseModel
+        class DisableTOTP(BaseModel):
+            password: str = "x"
+        import asyncio
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ep(DisableTOTP(), self._fake_req(token)))
+        assert exc.value.status_code == 400
+        assert "identity provider" in exc.value.detail.lower()
+
+    def test_password_user_still_can_use_2fa(self, setup_router):
+        """Regression: local password users must still be able to manage 2FA."""
+        router, mgr, token = setup_router
+        # Add a local password user
+        mgr.create_user("bob", "hunter2")
+        bob_token = mgr.create_session_trusted("bob")
+        ep = self._get(router, "/api/auth/2fa/setup")
+        import asyncio
+        # Should NOT raise — bob is a password user
+        result = asyncio.run(ep(self._fake_req(bob_token)))
+        assert "secret" in result
+        assert "uri" in result
