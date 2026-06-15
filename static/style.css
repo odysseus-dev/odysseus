@@ -37109,6 +37109,28 @@ body.theme-frosted .modal {
   transform: translateX(1px);
 }
 
+/* Track that sits over the scrollbar gutter */
+#scroll-marker-track {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  pointer-events: none; /* children will override */
+}
+
+/* Individual track markers */
+#scroll-marker-track .scroll-marker {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 60%, transparent);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 /* Slash command autocomplete popup, anchored to the message composer */
 .slash-autocomplete-popup {
   position: fixed;
