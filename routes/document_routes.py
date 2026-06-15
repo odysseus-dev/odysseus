@@ -388,7 +388,9 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         db = SessionLocal()
         try:
             if not user:
-                raise HTTPException(403, "Authentication required")
+                from src.auth_helpers import _auth_disabled
+                if not _auth_disabled():
+                    raise HTTPException(403, "Authentication required")
             # v2 review HIGH-9: raise 403 explicitly when the caller
             # can't see this session, instead of returning [] which the
             # UI treats identically to "no docs" and silently masks
