@@ -36678,3 +36678,102 @@ body.theme-frosted .modal {
   border-top: 1px solid var(--border);
 }
 .workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
+
+/* Real-time Diagnostics Log Terminal UI Styles */
+.settings-system-logs-svg {
+  vertical-align: -2px;
+  margin-right: 5px;
+  opacity: 0.6;
+}
+.settings-system-logs-toggle-sub {
+  margin-bottom: 12px;
+}
+.settings-system-logs-col {
+  gap: 10px;
+}
+.settings-system-logs-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.settings-system-logs-search {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  flex: 1;
+  min-width: 140px;
+}
+.settings-system-logs-select {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 90px;
+}
+#log-refresh-btn {
+  height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+.settings-system-logs-refresh-svg {
+  pointer-events: none;
+}
+.settings-system-logs-autopoll-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  user-select: none;
+  margin-left: auto;
+}
+#log-console-container {
+  background: #13151a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: Consolas, 'Fira Code', Monaco, 'Courier New', monospace;
+  font-size: 11px;
+  height: 280px;
+  max-height: 280px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #d1d4e0;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+}
+.settings-system-logs-placeholder {
+  color: var(--color-text-dim, #7f8c8d);
+  font-style: italic;
+  font-family: inherit;
+}
+.log-line {
+  margin-bottom: 3px;
+  line-height: 1.4;
+  font-size: 11px;
+  font-family: inherit;
+}
+.log-line-info {
+  color: var(--green, #50fa7b);
+}
+.log-line-warning {
+  color: var(--warn, #f0ad4e);
+}
+.log-line-error {
+  color: var(--red, #e06c75);
+}
+.log-line-debug {
+  color: var(--color-muted, #888);
+}
+.log-line-default {
+  color: var(--fg, #9cdef2);
+}

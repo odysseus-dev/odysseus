@@ -474,6 +474,9 @@ docs/      landing page (index.html) + preview clips
 All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
 `memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
 
+To back up or restore everything in `data/`, see the
+[Backup & Restore guide](docs/backup-restore.md).
+
 ## Star History
 
 <a href="https://www.star-history.com/?repos=pewdiepie-archdaemon%2Fodysseus&type=date&legend=top-left">

@@ -468,7 +468,13 @@ def test_local_tooling_path_export_converts_windows_paths_for_bash():
 
 def test_user_shell_path_bootstrap_falls_back_to_python_on_windows_bash():
     script = "\n".join(_user_shell_path_bootstrap())
-    assert 'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }' in script
+    # A missing python3 OR a Microsoft Store App Execution Alias stub under
+    # WindowsApps must shim python3 -> python so the venv interpreter is used.
+    assert '_odys_py3="$(command -v python3 2>/dev/null || true)"' in script
+    assert (
+        'case "$_odys_py3" in ""|*[Ww]indows[Aa]pps*) python3() { python "$@"; } ;; esac'
+        in script
+    )
     assert 'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }' in script
 
 
