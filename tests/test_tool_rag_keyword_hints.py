@@ -48,6 +48,19 @@ def test_explicit_web_search_query_gets_web_tools_without_retrieval():
     assert "web_search" in tools and "web_fetch" in tools
 
 
+def test_plot_query_gets_plot_chart_without_retrieval():
+    """Chart requests must surface the safe renderer deterministically.
+
+    This keeps local/fenced-tool models from falling back to Python snippets
+    when embedding retrieval misses the plot tool.
+    """
+    ti = _index_without_embeddings()
+    tools = ti.get_tools_for_query("plot y=x^2 from -5 to 5")
+    assert "plot_chart" in tools
+    assert "python" not in tools
+    assert "bash" not in tools
+
+
 def test_genuine_email_query_still_gets_email_tools():
     """Removing 'tell' must not break real email intent — the actual email
     keywords still force-include the toolset."""

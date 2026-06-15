@@ -69,6 +69,7 @@ _AGENT_RULES = """\
 ## Rules
 - Only use tools when needed. Don't search for things you already know.
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`. Do NOT use `bash`, `python`, `curl`, `requests`, or scraping code for web lookup unless web tools are disabled or already failed.
+- For plot/graph/chart/visualize requests, use `plot_chart`. Do NOT answer with Python/matplotlib code.
 - These exact tags execute automatically. For showing code examples, use ```shell, ```sh, ```py, etc. instead.
 - Multiple tool blocks per response OK. 60s timeout per tool, 10K char output limit.
 - Code/content >15 lines → ```create_document (NOT in chat). Short snippets OK in chat.
@@ -116,6 +117,7 @@ _API_AGENT_RULES = """\
 - Only call tools when they materially help answer the request.
 - You MUST use tools to take action — do not describe what you would do. Act, don't narrate.
 - For web lookup/search/latest/current requests, call `web_search` or `web_fetch`. Do NOT use shell, Python, curl, requests, or scraping code for web lookup unless web tools are unavailable or already failed.
+- For plot/graph/chart/visualize requests, call `plot_chart`. Do NOT answer with Python/matplotlib code and do NOT claim you lack chart access when `plot_chart` is available.
 - Keep answers concise unless the user asks for depth.
 - For long code or content, use document tools instead of pasting large blocks into chat.
 - Editing an existing document: ALWAYS use `edit_document` with find/replace. Only use `update_document` for genuine full rewrites (>50% changed) — do NOT echo the entire file back for small edits.
@@ -218,6 +220,13 @@ _DOMAIN_RULES = {
 - For web lookup/search/latest/current requests, use `web_search` or `web_fetch`.
 - Do not use shell, Python, curl, requests, or scraping code for web lookup unless web tools are unavailable or already failed.
 - "Research X" means `trigger_research`, not a one-off `web_search`, unless the user explicitly asks for a quick lookup.""",
+    "plot": """\
+## Chart/plot rules
+- For any request to plot, graph, chart, or visualize data, use `plot_chart`.
+- Chart support comes from the `plot_chart` tool, not from the Skills catalog. Do not say a chart type is unavailable because no matching skill exists.
+- Do not use `python`, `bash`, matplotlib code, or code snippets to make charts in chat.
+- If the user gives a function, sample reasonable x/y arrays yourself and pass them to `plot_chart`.
+- If the chart data is missing or ambiguous, make a small reasonable example only when the user asks for an example; otherwise ask for the data.""",
     "documents": """\
 ## Document rules
 - For long code/content (>15 lines), use `create_document` instead of pasting into chat.
@@ -282,6 +291,7 @@ _DOMAIN_TOOL_MAP = {
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
+    "plot": {"plot_chart"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
     "integrations": {"api_call"},
@@ -321,7 +331,14 @@ NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats re
 ```
 Execute Python code. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). Same sandbox limits as bash — no TTY, no GUI, no `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
 Prefer a dedicated tool whenever one fits the job (reading, searching, or writing files); use python only for computation/processing no dedicated tool covers - not for reading or writing files.
+For charts/graphs/plots, do NOT use Python or matplotlib code; use `plot_chart`.
 Do NOT use Python/requests for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.""",
+
+    "plot_chart": """\
+```plot_chart
+{"chart_type":"line","title":"Squares","x":[1,2,3,4],"y":[1,4,9,16],"x_label":"x","y_label":"y"}
+```
+Create an interactive Chart.js chart artifact and display it inline in chat. Use this for ANY request to plot, graph, chart, or visualize data. Args are JSON only, never Python code. `chart_type` can be `line`, `scatter`, `bar`, `area`, `histogram`, or `pie`; all of those types are available through this one tool even if no separate skill exists. For multi-series charts use `series:[{"name":"A","y":[...]},{"name":"B","y":[...]}]`; shared `x` labels are allowed. The frontend renders the chart from the active Odysseus theme and offers PNG export.""",
 
     "web_search": """\
 ```web_search
@@ -802,6 +819,8 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("documents")
     if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
         domains.add("web")
+    if has(r"\b(plot|graph|chart|visuali[sz]e)\b"):
+        domains.add("plot")
     if has(
         r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
         r"\b(sprawd[zź]|znajd[zź])\b.*\b(internet|internecie|online|web)\b",
@@ -843,6 +862,15 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         "domains": domains,
         "retrieval_query": retrieval_query,
     }
+
+
+def _is_plot_request(messages: List[Dict], last_user: Optional[str] = None) -> bool:
+    """True when the current user turn should use the dedicated chart tool."""
+    try:
+        text = last_user if last_user is not None else _extract_last_user_message(messages)
+        return "plot" in (_classify_agent_request(messages, text).get("domains") or set())
+    except Exception:
+        return False
 
 
 def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
@@ -954,6 +982,10 @@ def _build_system_prompt(
         _datetime_message = current_datetime_context_message()
     except Exception as e:
         logger.warning("Failed to build datetime context message", exc_info=e)
+
+    _skip_skills_for_plot = _is_plot_request(messages)
+    if _skip_skills_for_plot:
+        _skill_index_block = ""
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -1207,7 +1239,7 @@ def _build_system_prompt(
     # few. If the teacher wrote a procedure for "open my X chat" last
     # time the student failed, this is where the student finds it
     # before deciding which tool to call.
-    if not suppress_local_context:
+    if not suppress_local_context and not _skip_skills_for_plot:
         try:
             last_user = _extract_last_user_message(messages)
             # Respect the user's skills-enabled toggle (mirrors memory_enabled).
@@ -1984,9 +2016,19 @@ async def stream_agent_loop(
     # tool names. It prevents obvious requests like "last 5 emails" from
     # collapsing to only ask_user/manage_memory when vector retrieval misses or
     # times out.
+    _plot_domain_requested = "plot" in (_intent.get("domains") or set())
+
     if not guide_only and _relevant_tools is not None:
         for _domain in (_intent.get("domains") or set()):
             _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
+        if _plot_domain_requested:
+            _relevant_tools.add("plot_chart")
+            # Chart rendering is a safe declarative tool path. Keeping general
+            # execution tools out of clear chart requests prevents models from
+            # falling back to Python/matplotlib snippets that chat cannot render.
+            _relevant_tools.discard("python")
+            _relevant_tools.discard("bash")
+            _relevant_tools.discard("manage_skills")
         if "cookbook" in (_intent.get("domains") or set()):
             _relevant_tools.update({
                 "list_served_models",
@@ -2015,7 +2057,7 @@ async def stream_agent_loop(
     # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
     # in lockstep: manage_skills is callable whenever any skill is indexed,
     # and a matched skill's declared requires_toolsets ride along with it.
-    if not guide_only and _relevant_tools is not None:
+    if not guide_only and _relevant_tools is not None and not _plot_domain_requested:
         try:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
@@ -2045,6 +2087,9 @@ async def stream_agent_loop(
                         )
         except Exception as _e:
             logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
+    if _plot_domain_requested and _relevant_tools is not None:
+        _relevant_tools.discard("manage_skills")
 
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
@@ -2804,6 +2849,17 @@ async def stream_agent_loop(
             is_doc_tool = block.tool_type in ("create_document", "update_document", "edit_document", "suggest_document")
             if is_doc_tool:
                 cmd_display = block.content.split("\n")[0].strip()[:80]
+            elif block.tool_type == "plot_chart":
+                try:
+                    _plot_args = json.loads(block.content or "{}")
+                except Exception:
+                    _plot_args = {}
+                if isinstance(_plot_args, dict):
+                    _plot_type = str(_plot_args.get("chart_type") or _plot_args.get("type") or "chart").strip()
+                    _plot_title = str(_plot_args.get("title") or "").strip()
+                    cmd_display = f"{_plot_type}: {_plot_title}".strip(": ")[:120]
+                else:
+                    cmd_display = "plot_chart"
             else:
                 cmd_display = block.content.strip()
 
@@ -3030,10 +3086,12 @@ async def stream_agent_loop(
                 ):
                     if k in result:
                         tool_output_data[k] = result[k]
-            # Forward image data from generate_image tool
-            for k in ("image_url", "image_prompt", "image_model", "image_size", "image_quality"):
+            # Forward image data from image-producing tools.
+            for k in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
                 if k in result:
                     tool_output_data[k] = result[k]
+            if "chart_spec" in result:
+                tool_output_data["chart_spec"] = result["chart_spec"]
             # Forward screenshots from browser tools (base64 images)
             if result.get("images"):
                 img = result["images"][0]
@@ -3090,9 +3148,11 @@ async def stream_agent_loop(
                 "exit_code": result.get("exit_code"),
             }
             if result.get("image_url"):
-                for ik in ("image_url", "image_prompt", "image_model", "image_size", "image_quality"):
+                for ik in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
                     if result.get(ik):
                         tool_event[ik] = result[ik]
+            if result.get("chart_spec"):
+                tool_event["chart_spec"] = result["chart_spec"]
             if result.get("doc_id"):
                 tool_event["doc_id"] = result["doc_id"]
                 tool_event["doc_title"] = result.get("title", "")

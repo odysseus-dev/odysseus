@@ -2720,6 +2720,13 @@ def _scan_running_model_processes() -> List[Dict[str, Any]]:
     return out
 
 
+async def do_plot_chart(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Render a safe, declarative chart spec to a generated-image PNG."""
+    from src.chart_tool import do_plot_chart as _do_plot_chart
+
+    return await _do_plot_chart(content, session_id=session_id, owner=owner)
+
+
 async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
     """Download a HuggingFace model via the cookbook API."""
     import httpx

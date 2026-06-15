@@ -44,6 +44,15 @@ def test_email_and_ui_actions_promote_to_agent():
     assert message_needs_tools("turn off web search")
 
 
+def test_plot_requests_promote_to_agent():
+    assert message_needs_tools("plot y=x^2 from -5 to 5")
+    assert message_needs_tools("Can you draw a graph of these values?")
+    assert message_needs_tools("Can you create a graph of these values?")
+    assert message_needs_tools("make me a chart of sales by month")
+    assert message_needs_tools("visualize this data as a bar chart")
+    assert classify_tool_intent("plot revenue by month").category == "plot"
+
+
 def test_research_action_promotes_to_agent():
     assert message_needs_tools("research cost effective local models")
     assert message_needs_tools("can you look into GPU hosting options")
@@ -68,4 +77,5 @@ def test_explanatory_calendar_questions_stay_plain_chat():
 def test_router_reports_non_calendar_categories():
     assert classify_tool_intent("reply to that email").category == "email"
     assert classify_tool_intent("open my calendar").category == "ui"
+    assert classify_tool_intent("plot revenue by month").category == "plot"
     assert classify_tool_intent("research cost effective local models").category == "research"

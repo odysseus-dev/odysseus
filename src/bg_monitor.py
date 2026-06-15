@@ -62,13 +62,17 @@ async def _drain_agent(sess, messages):
             round_num = d.get("round", round_num)
         elif d.get("type") == "tool_output":
             # Mirror the live chat's tool_event shape (chat_routes / chatRenderer).
-            tool_events.append({
+            ev = {
                 "round": round_num,
                 "tool": d.get("tool"),
                 "command": d.get("command"),
                 "output": d.get("output"),
                 "exit_code": d.get("exit_code"),
-            })
+            }
+            for key in ("chart_spec", "image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
+                if d.get(key):
+                    ev[key] = d[key]
+            tool_events.append(ev)
     return full, tool_events
 
 

@@ -52,6 +52,74 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "plot_chart",
+            "description": "Create an interactive Chart.js chart from structured data. Use this for user requests to plot/draw charts or graphs. Do NOT pass Python code; pass arrays, labels, title, and chart options.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chart_type": {
+                        "type": "string",
+                        "enum": ["line", "scatter", "bar", "area", "histogram", "pie"],
+                        "description": "The kind of chart to render"
+                    },
+                    "title": {"type": "string", "description": "Chart title"},
+                    "x_label": {"type": "string", "description": "X axis label"},
+                    "y_label": {"type": "string", "description": "Y axis label"},
+                    "x": {
+                        "type": "array",
+                        "description": "Shared x values or category labels for line/scatter/bar/area charts",
+                        "items": {"anyOf": [{"type": "number"}, {"type": "string"}]}
+                    },
+                    "y": {
+                        "type": "array",
+                        "description": "Y values for a single-series line/scatter/bar/area chart",
+                        "items": {"type": "number"}
+                    },
+                    "values": {
+                        "type": "array",
+                        "description": "Values for pie or histogram charts, or single-series y values",
+                        "items": {"type": "number"}
+                    },
+                    "labels": {
+                        "type": "array",
+                        "description": "Labels for pie slices or shared category labels",
+                        "items": {"type": "string"}
+                    },
+                    "series": {
+                        "type": "array",
+                        "description": "Multiple data series. Each series can override x, color, and marker.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "x": {"type": "array", "items": {"anyOf": [{"type": "number"}, {"type": "string"}]}},
+                                "y": {"type": "array", "items": {"type": "number"}},
+                                "values": {"type": "array", "items": {"type": "number"}},
+                                "color": {"type": "string"},
+                                "marker": {"type": "string"}
+                            },
+                            "required": ["y"]
+                        }
+                    },
+                    "bins": {"type": "integer", "description": "Histogram bin count, 1-100"},
+                    "grid": {"type": "boolean", "description": "Show grid lines for axis charts"},
+                    "legend": {"type": "boolean", "description": "Show legend when applicable"},
+                    "size": {
+                        "type": "object",
+                        "description": "Optional chart display size in pixels, clamped by the frontend renderer",
+                        "properties": {
+                            "width": {"type": "number"},
+                            "height": {"type": "number"}
+                        }
+                    }
+                },
+                "required": ["chart_type"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": "Quick single web lookup for a fact or current event mid-task. NOT for 'research X' / 'do research on X' — those are deep-research jobs; use trigger_research instead.",
             "parameters": {

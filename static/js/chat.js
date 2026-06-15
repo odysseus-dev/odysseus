@@ -125,6 +125,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
   // Model/image pricing, _buildImageBubble now in chatRenderer.js
   var _buildImageBubble = chatRenderer.buildImageBubble;
+  var _buildChartBubble = chatRenderer.buildChartBubble;
   var getModelCost = chatRenderer.getModelCost;
   var getImageCost = chatRenderer.getImageCost;
 
@@ -2207,6 +2208,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   currentToolBubble.innerHTML = `<div class="agent-thread-dot"></div><div class="agent-thread-header"><span class="agent-thread-icon">${ok ? '\u2713' : '\u2717'}</span><span class="agent-thread-tool">${esc(json.tool)}</span><span class="agent-thread-status">${ok ? 'done' : 'failed'}</span><span class="agent-thread-chevron">\u25B6</span></div><div class="agent-thread-content">${cmdHtml2}${outHtml}${diffHtml}</div>`;
                   // Reset so thinking spinner between tools says "Thinking" not the old tool's label
                   _lastToolName = '';
+                  uiModule.scrollHistory();
+                }
+                // --- Render interactive charts inline ---
+                if (json.chart_spec) {
+                  const chatBox = document.getElementById('chat-history');
+                  chatBox.appendChild(_buildChartBubble(json.chart_spec));
                   uiModule.scrollHistory();
                 }
                 // --- Render generated images inline ---

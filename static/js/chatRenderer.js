@@ -9,6 +9,9 @@ import settingsModule from './settings.js';
 import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
+import { buildChartBubble } from './chartBubble.js';
+
+export { buildChartBubble };
 
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
@@ -2111,6 +2114,9 @@ export function addMessage(role, content, modelName, metadata) {
           lastWrap = threadWrap;
 
           for (const ev of roundTools) {
+            if (ev.chart_spec) {
+              box.appendChild(buildChartBubble(ev.chart_spec));
+            }
             if (ev.image_url) {
               box.appendChild(buildImageBubble(ev.image_url, ev.image_prompt, ev.image_model, ev.image_size, ev.image_quality, ev.image_id));
             }
@@ -2464,6 +2470,7 @@ const chatRenderer = {
   buildSourcesBox,
   buildFindingsBox,
   appendReportButton,
+  buildChartBubble,
   buildImageBubble,
   hideWelcomeScreen,
   showWelcomeScreen,

@@ -90,6 +90,14 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("ui", "open/show panel request", rf"{_PLEASE}(?:open|show|bring\s+up)\s+(?:me\s+)?(?:my\s+|the\s+)?{_PANEL}\b"),
         ("ui", "tool or feature toggle request", r"\b(?:disable|enable|turn\s+(?:on|off))\s+(?:the\s+)?(?:shell|search|web|browser|documents?|memory|skills|images?|calendar|email|mail|research|incognito)\b"),
 
+        # Declarative chart rendering. Promote to agent mode so the model can
+        # call plot_chart instead of emitting Python that the chat UI cannot
+        # execute or display.
+        ("plot", "chart plotting request", rf"{_PLEASE}(?:plot|graph|chart|visuali[sz]e)\b.+"),
+        ("plot", "draw chart request", rf"{_PLEASE}draw\s+(?:a\s+)?(?:chart|graph|plot)\b.+"),
+        ("plot", "create chart request", rf"{_PLEASE}(?:make|create|build|generate|show)\s+(?:me\s+)?(?:a\s+)?(?:chart|graph|plot)\b.+"),
+        ("plot", "assistant chart plotting request", rf"{_ACTION_QUESTION}(?:plot|graph|chart|visuali[sz]e|draw|make|create|build|generate|show)\b.{{0,120}}\b(?:chart|graph|plot|data|values|series|function|curve)\b"),
+
         # Deep research jobs, not quick conceptual mentions of research.
         ("web", "explicit web search request", rf"{_PLEASE}(?:do|run|use|perform|make)\s+(?:a\s+)?(?:web\s+search|search\s+the\s+web)\b.+"),
         ("web", "web lookup imperative request", rf"{_PLEASE}(?:web\s+search|search\s+the\s+web|search\s+online|look\s+up|google)\b.+"),

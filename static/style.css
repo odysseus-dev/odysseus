@@ -5888,6 +5888,58 @@ body.bg-pattern-sparkles {
       font-style: italic;
       text-align: center;
     }
+    .msg.generated-chart-wrap .body {
+      width: min(100%, 760px);
+    }
+    .generated-chart {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 10px;
+    }
+    .generated-chart-canvas-wrap {
+      position: relative;
+      width: 100%;
+      height: 360px;
+      min-height: 220px;
+    }
+    .generated-chart canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    .generated-chart-status {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-muted-alt);
+      font-size: 0.8rem;
+      background: color-mix(in srgb, var(--panel) 86%, transparent);
+      pointer-events: auto;
+      gap: 8px;
+      flex-wrap: wrap;
+      text-align: center;
+    }
+    .generated-chart-retry {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--fg);
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.75rem;
+      padding: 3px 8px;
+    }
+    .generated-chart-retry:hover {
+      border-color: var(--red);
+    }
+    .generated-chart-footer .footer-copy-btn:disabled {
+      opacity: 0.35;
+      cursor: wait;
+    }
 
     /* Setup wizard */
     .setup-wizard { padding: 16px; max-width: 500px; }

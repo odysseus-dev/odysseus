@@ -69,6 +69,7 @@ COLLECTION_NAME = "odysseus_tool_index"
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "bash": "Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing); use bash only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
+    "plot_chart": "Render interactive Chart.js charts from structured data in the browser. Use for plot, graph, chart, visualize data requests. Takes declarative arrays, series, labels, and chart options; never executes model-written Python code. Returns a chart_spec displayed inline in chat with tooltips, active Odysseus theme colors, and PNG export.",
     "web_search": "Quick single web lookup for a fact, current event, latest/current information, or doc mid-task. Use this instead of bash/curl/python/requests for web searches. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
     "read_file": "Read a file from disk and return its contents. View source code, config files, logs. Supports an optional line range (offset/limit) for large files.",
@@ -339,6 +340,10 @@ class ToolIndex:
         r"https?://|www\.|\b(?:visit|open|fetch|check|read)\s+(?:this\s+)?(?:url|link|site|website|page)\b",
         re.I,
     )
+    _PLOT_RE = re.compile(
+        r"\b(?:plot|graph|chart|visuali[sz]e)\b",
+        re.I,
+    )
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
@@ -408,6 +413,10 @@ class ToolIndex:
                    "google", "latest", "current", "news", "weather",
                    "forecast", "stock price", "price of"}):
             {"web_search", "web_fetch"},
+        frozenset({"plot", "graph", "chart", "visualize", "visualise",
+                   "line chart", "bar chart", "scatter plot", "histogram",
+                   "pie chart", "area chart"}):
+            {"plot_chart"},
         frozenset({"research", "reserach", "reasearch", "look into", "investigate",
                    "deep dive", "deep research", "find out about", "study up on",
                    "report on", "do research", "look up everything"}):
@@ -535,6 +544,14 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
+        # Chart requests should always surface the safe declarative renderer.
+        # Keep general execution tools out unless another intent explicitly
+        # requires them; otherwise local models tend to emit matplotlib code
+        # instead of calling the image-producing tool.
+        if self._PLOT_RE.search(query):
+            base.add("plot_chart")
+            base.discard("python")
+            base.discard("bash")
         # Hard steering: when the query is a clear "save info about a specific
         # person" pattern (address paste + name, phone next to a name, etc.),
         # the model has been observed defaulting to manage_memory even with

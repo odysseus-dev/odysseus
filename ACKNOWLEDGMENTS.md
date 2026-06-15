@@ -58,6 +58,7 @@ Vendored in `static/lib/` and served directly:
 | Library | Purpose | License |
 |---|---|---|
 | [highlight.js](https://github.com/highlightjs/highlight.js) v11.9.0 | Code syntax highlighting | BSD-3-Clause |
+| [Chart.js](https://github.com/chartjs/Chart.js) v4.5.1 (`chart.umd.min.js`) | Interactive chart rendering in chat | MIT |
 | [SheetJS / xlsx](https://github.com/SheetJS/sheetjs) (`xlsx.full.min.js`) | Spreadsheet (`.xlsx`) read/write | Apache-2.0 |
 | [docx](https://github.com/dolanmiu/docx) (`docx.umd.min.js`) | Generate `.docx` documents | MIT |
 | [mammoth.js](https://github.com/mwilliamson/mammoth.js) | Convert `.docx` → HTML | BSD-2-Clause |

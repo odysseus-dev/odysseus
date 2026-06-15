@@ -37,6 +37,7 @@ try:
     from src.agent_loop import (
         _detect_admin_intent,
         _classify_agent_request,
+        _is_plot_request,
         _compute_final_metrics,
         _append_tool_results,
         _MCP_KEYWORDS,
@@ -61,6 +62,19 @@ def test_import_stubs_do_not_leak_into_later_tests():
 
 def test_mcp_keyword_gate_matches_literal_mcp_requests():
     assert "mcp" in _MCP_KEYWORDS
+
+
+def test_plot_request_classifies_as_plot_domain():
+    intent = _classify_agent_request([], "plot y=x^2 from -5 to 5")
+
+    assert intent["low_signal"] is False
+    assert "plot" in intent["domains"]
+
+
+def test_pie_chart_request_uses_plot_domain_not_skills():
+    messages = [{"role": "user", "content": "make a pie chart for A=3 and B=7"}]
+
+    assert _is_plot_request(messages) is True
 
 
 def test_polish_internet_search_request_classifies_as_web():
