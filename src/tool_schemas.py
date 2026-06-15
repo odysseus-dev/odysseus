@@ -1022,7 +1022,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_contact",
-            "description": "Create, update, delete, or list the user's CardDAV contacts. Use to save a new contact ('save Jonathan's email jon@x.com'), update an existing one ('change Maria's number'), or remove one. For update/delete you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI.",
+            "description": "Create, update, delete, or list the user's CardDAV contacts. Use to save a new contact, update an existing one (email/phone/address), or remove one. For update/delete you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1033,6 +1033,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "email": {"type": "string", "description": "Single email address (convenience for add, or the primary email for update)."},
                     "emails": {"type": "array", "items": {"type": "string"}, "description": "Full list of email addresses (for update; first is primary)."},
                     "phones": {"type": "array", "items": {"type": "string"}, "description": "Full list of phone numbers (for update)."},
+                    "address": {"type": "string", "description": "Postal/mailing address as a single human-readable string."},
                 },
                 "required": ["action"]
             }

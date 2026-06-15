@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import re
@@ -335,6 +336,37 @@ def _detect_apple_silicon():
     if total_gb <= 0:
         return None
 
+    def _parse_apple_gpu_cores(text):
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            data = None
+        if isinstance(data, dict):
+            for gpu in data.get("SPDisplaysDataType") or []:
+                if not isinstance(gpu, dict):
+                    continue
+                model = str(gpu.get("sppci_model") or gpu.get("_name") or "")
+                if "apple" not in model.lower():
+                    continue
+                cores = gpu.get("sppci_cores")
+                try:
+                    return int(str(cores).strip())
+                except (TypeError, ValueError):
+                    continue
+        m = re.search(r"Total Number of Cores:\s*(\d+)", text)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                return None
+        return None
+
+    gpu_cores = _parse_apple_gpu_cores(_run(["system_profiler", "SPDisplaysDataType", "-json"]))
+    if gpu_cores is None:
+        gpu_cores = _parse_apple_gpu_cores(_run(["system_profiler", "SPDisplaysDataType"]))
+
     # Usable GPU budget. macOS lets Metal use most of unified memory, but the
     # default working-set limit scales with RAM: small machines have to keep
     # more back for the OS + app. These fractions track Apple's
@@ -357,7 +389,7 @@ def _detect_apple_silicon():
         pass
 
     gpu = {"index": 0, "name": brand, "vram_gb": vram_gb}
-    return {
+    info = {
         "gpu_name": brand,
         "gpu_vram_gb": vram_gb,
         "gpu_count": 1,
@@ -369,6 +401,9 @@ def _detect_apple_silicon():
         # separate pool — downstream fit logic uses this to avoid double-budgeting.
         "unified_memory": True,
     }
+    if gpu_cores is not None:
+        info["gpu_cores"] = gpu_cores
+    return info
 
 
 def _read_file(path):
@@ -611,6 +646,93 @@ def _cache_key(host: str, ssh_port: str, platform_name: str):
     )
 
 
+def _is_containerized():
+    """Best-effort check for whether the local Odysseus process is running in a container."""
+    if _remote_host:
+        return False
+
+    if os.path.exists("/.dockerenv"):
+        return True
+
+    try:
+        with open("/proc/1/cgroup", encoding="utf-8", errors="replace") as f:
+            text = f.read().lower()
+        return any(marker in text for marker in ("docker", "containerd", "kubepods"))
+    except Exception:
+        return False
+
+
+def _hardware_visibility_warning(result):
+    """Return a non-blocking UX warning when detected hardware may only be container-visible."""
+    if not isinstance(result, dict):
+        return None
+
+    if result.get("manual_hardware"):
+        return None
+
+    if not result.get("containerized"):
+        return None
+
+    if result.get("gpu_error"):
+        return None
+
+    if not result.get("has_gpu"):
+        return {
+            "code": "container_no_gpu_visible",
+            "severity": "warning",
+            "title": "No GPU visible inside Docker",
+            "message": (
+                "Cookbook is scanning hardware from inside the Odysseus container. "
+                "If your host has a GPU, Docker may not be exposing it to the container, "
+                "so model recommendations may be CPU-only or too conservative."
+            ),
+            "actions": [
+                "manual_hardware",
+                "rescan",
+                "copy_diagnostics",
+            ],
+        }
+
+    total_ram = result.get("total_ram_gb") or 0
+    if total_ram and total_ram <= 8:
+        return {
+            "code": "container_low_ram_visible",
+            "severity": "info",
+            "title": "Container-visible RAM may be lower than host RAM",
+            "message": (
+                "Cookbook is seeing the RAM available inside the container. "
+                "If your host has more memory, validate host RAM separately or use Manual Hardware."
+            ),
+            "actions": [
+                "manual_hardware",
+                "rescan",
+                "copy_diagnostics",
+            ],
+        }
+
+    return None
+
+
+def _attach_probe_context(result, host=""):
+    """Attach probe-scope metadata and optional hardware visibility warning."""
+    if not isinstance(result, dict) or result.get("error"):
+        return result
+
+    is_remote = bool(host)
+    containerized = False if is_remote else _is_containerized()
+
+    result["probe_scope"] = "remote" if is_remote else ("container" if containerized else "native")
+    result["containerized"] = containerized
+
+    warning = _hardware_visibility_warning(result)
+    if warning:
+        result["hardware_visibility_warning"] = warning
+    else:
+        result.pop("hardware_visibility_warning", None)
+
+    return result
+
+
 def detect_system(host="", ssh_port="", platform="", fresh=False):
     """Detect system hardware: RAM, CPU, GPU. Cached per host (hardware rarely
     changes, and probing a remote host over SSH is slow). Pass fresh=True to
@@ -635,6 +757,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     if _remote_platform == "windows" and _remote_host:
         result = _detect_windows()
         if result:
+            result = _attach_probe_context(result, host=host)
             _remote_host = None
             _remote_platform = None
             _cache_by_host[cache_key] = (now, result)
@@ -653,6 +776,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     if not _remote_host and os.name == "nt":
         result = _detect_windows()
         if result:
+            result = _attach_probe_context(result, host=host)
             _cache_by_host[cache_key] = (now, result)
             return result
         # PowerShell probe failed entirely — fall through to the generic path
@@ -683,6 +807,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "gpu_name": gpu_info["gpu_name"],
             "gpu_vram_gb": gpu_info["gpu_vram_gb"],
             "gpu_count": gpu_info["gpu_count"],
+            "gpu_cores": gpu_info.get("gpu_cores"),
             "gpus": gpu_info.get("gpus", []),
             "gpu_groups": gpu_info.get("gpu_groups", []),
             "homogeneous": gpu_info.get("homogeneous", True),
@@ -714,6 +839,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "gpu_error": _last_gpu_error,
         }
 
+    result = _attach_probe_context(result, host=host)
     _remote_host = None
     _remote_platform = None
     _cache_by_host[cache_key] = (now, result)
