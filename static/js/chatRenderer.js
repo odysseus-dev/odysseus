@@ -1997,7 +1997,6 @@ export function displayMetrics(messageElement, metrics) {
           </div>
           <div class="ctx-segmented-bar">${segments}</div>
           <div class="ctx-cat-list">${rows}</div>
-          ${breakdown && breakdown.estimated ? '<div class="ctx-estimated-note">Token counts are estimated</div>' : ''}
           ${ctxPct >= 70 ? `<button class="ctx-compact-btn" title="Summarize older messages to free up context">Compact context</button>` : ''}
         `;
         const collapseBtn = popup.querySelector('.ctx-collapse-btn');
