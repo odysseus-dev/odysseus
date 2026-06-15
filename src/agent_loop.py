@@ -9,6 +9,7 @@ The LLM decides when to use tools by writing fenced code blocks.
 import asyncio
 import collections
 import json
+import os
 import re
 import time
 import logging
@@ -1994,6 +1995,70 @@ def _normalize_stream_document_fences(text: str, target_tool: str = "create_docu
     )
 
 
+async def _llm_classify_domains(query: str, owner: Optional[str] = None) -> Set[str]:
+    """Use the utility model to classify a query into domains.
+
+    Called when ODYSSEUS_DOMAIN_CLASSIFIER=llm or as a fallback when the
+    regex-based classifier found no domains for a non-continuation query.
+    """
+    from src.endpoint_resolver import resolve_endpoint
+    from src.llm_core import llm_call_async
+
+    ep_url, ep_model, headers = resolve_endpoint("utility", owner=owner)
+    if not ep_url or not ep_model:
+        return set()
+
+    valid_domains = sorted(_DOMAIN_TOOL_MAP.keys())
+    prompt = (
+        "Output ONLY a comma-separated list from: "
+        + ", ".join(valid_domains) + ".\n"
+        "If none match, output exactly: none\n"
+        "Do NOT translate, explain, or add any other text.\n\n"
+        f"Message: \"{query[:500]}\"\n"
+        "Categories:"
+    )
+
+    _DOMAIN_HINTS = (
+        "Classify messages into domain categories. "
+        "web = search, weather, news, lookups. "
+        "contacts = phone, address book. "
+        "email = mail, inbox, send. "
+        "documents = writing, editing. "
+        "notes_calendar_tasks = reminders, events, todos. "
+        "cookbook = models, serving, GPU. "
+        "files = directories, code, git, shell. "
+        "ui = panels, settings, theme. "
+        "sessions = chat history. "
+        "settings = configuration. "
+        "Output ONLY the categories or none."
+    )
+
+    try:
+        raw = await llm_call_async(
+            url=ep_url, model=ep_model,
+            messages=[
+                {"role": "system", "content": _DOMAIN_HINTS},
+                {"role": "user", "content": prompt},
+            ],
+            headers=headers, temperature=0.0, max_tokens=200, timeout=10,
+        )
+    except Exception as e:
+        logger.warning(f"[llm-domain] Classification call failed: {e}")
+        return set()
+
+    raw = (raw or "").strip().lower()
+    if raw == "none" or not raw:
+        return set()
+
+    result: Set[str] = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if part in _DOMAIN_TOOL_MAP:
+            result.add(part)
+    logger.info(f"[llm-domain] Classified {query[:80]!r} -> {sorted(result)}")
+    return result
+
+
 def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_chars: int = 600) -> str:
     """Build the tool-retrieval query from the last few USER turns, not just
     the latest one.
@@ -3151,6 +3216,11 @@ async def stream_agent_loop(
         except (TypeError, ValueError):
             temperature = 0.2
     _ody_memory_identity_turn = _looks_like_memory_identity_turn(_last_user)
+
+    # Domain classifier selection: ODYSSEUS_DOMAIN_CLASSIFIER=llm uses the
+    # utility model for language-agnostic classification.  Otherwise the
+    # English regex classifier runs (with optional LLM fallback on miss).
+    _use_llm_classifier = os.getenv("ODYSSEUS_DOMAIN_CLASSIFIER", "") == "llm"
     _intent = _classify_agent_request(messages, _last_user)
     _low_signal_turn = bool(_intent.get("low_signal"))
     _casual_low_signal_turn = _is_casual_low_signal(_last_user)
@@ -3163,6 +3233,33 @@ async def stream_agent_loop(
             "mcp__email__list_emails", "mcp__email__read_email", "mcp__email__scan_email_unsubscribes",
         })
     _prompt_active_document = active_document if _active_document_relevant else None
+    if _use_llm_classifier and not _intent.get("continuation") and _last_user:
+        # Skip regex results entirely — the LLM owns classification.
+        try:
+            _llm_domains = await asyncio.wait_for(
+                _llm_classify_domains(_last_user, owner=owner),
+                timeout=5,
+            )
+        except (asyncio.TimeoutError, Exception):
+            _llm_domains = set()
+        _intent["domains"] = _llm_domains
+        _intent["low_signal"] = not bool(_llm_domains)
+    elif not _intent.get("domains") and not _intent.get("continuation") and _last_user:
+        # Regex found nothing — try LLM as a fallback.
+        try:
+            _llm_domains = await asyncio.wait_for(
+                _llm_classify_domains(_last_user, owner=owner),
+                timeout=5,
+            )
+        except (asyncio.TimeoutError, Exception):
+            _llm_domains = set()
+        if _llm_domains:
+            _intent["domains"] = _llm_domains
+            _intent["low_signal"] = False
+            logger.info(
+                "[agent-intent] LLM fallback added domains: %s",
+                sorted(_llm_domains),
+            )
     _direct_low_signal = (
         _low_signal_turn
         and not _existing_conversation
@@ -3203,7 +3300,7 @@ async def stream_agent_loop(
         "[agent-intent] latest=%r continuation=%s low_signal=%s domains=%s active_doc_relevant=%s retrieval_query=%r",
         _last_user[:120],
         bool(_intent.get("continuation")),
-        _low_signal_turn,
+        bool(_intent.get("low_signal")),
         sorted(_intent.get("domains") or []),
         _active_document_relevant,
         _retrieval_query[:200],
@@ -3214,6 +3311,7 @@ async def stream_agent_loop(
             _last_user[:80],
         )
     _mcp_disabled_map = _load_mcp_disabled_map() if mcp_mgr else {}
+<<<<<<< HEAD
     if _direct_low_signal:
         logger.info("[agent] direct low-signal reply path for latest=%r", _last_user[:80])
         direct_messages = (
@@ -3297,6 +3395,7 @@ async def stream_agent_loop(
         yield "data: [DONE]\n\n"
         return
 
+=======
     if plan_mode and mcp_mgr:
         # Allow read-only MCP tools to investigate, block write/unknown ones:
         # hide them from the schemas AND reject them at runtime by qualified name.
@@ -3308,11 +3407,11 @@ async def stream_agent_loop(
 
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
-    _relevant_tools = relevant_tools
+    _relevant_tools = set() if guide_only else relevant_tools
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
-    if not guide_only and not _relevant_tools and _low_signal_turn:
+    if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
         from src.tool_index import ALWAYS_AVAILABLE
         if workspace:
             # An active workspace IS the file-work signal: a vague "look at the
@@ -3482,7 +3581,7 @@ async def stream_agent_loop(
     # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
     # in lockstep: manage_skills is callable whenever any skill is indexed,
     # and a matched skill's declared requires_toolsets ride along with it.
-    if not guide_only and _relevant_tools is not None and not _low_signal_turn:
+    if not guide_only and _relevant_tools is not None and not bool(_intent.get("low_signal")):
         try:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
@@ -3678,7 +3777,7 @@ async def stream_agent_loop(
         compact=_compact_agent_prompt,
         owner=owner,
         suppress_local_context=guide_only,
-        suppress_skills=_low_signal_turn,
+        suppress_skills=bool(_intent.get("low_signal")),
         active_email=active_email,
         workspace=workspace,
     )
