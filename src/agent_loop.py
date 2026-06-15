@@ -2499,6 +2499,11 @@ async def stream_agent_loop(
     for round_num in range(1, max_rounds + 1):
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
+        # When set, the persisted text for this round (round_texts) is this value
+        # instead of the model's raw prose — used by the force-answer grace
+        # synthesis, whose final answer lands only in full_response, not the
+        # round's streamed prose.
+        _round_text_override = None
         native_tool_calls = []  # populated if model uses function calling
         # Reset doc streaming state per round
         _doc_acc = ""
@@ -2826,12 +2831,18 @@ async def stream_agent_loop(
                 if _synth:
                     yield f'data: {json.dumps({"delta": _synth})}\n\n'
                     full_response += _synth
+                    # The synthesized answer is the real content for this round,
+                    # but it never entered round_response, so persist it as this
+                    # round's text (otherwise it's lost from the reload bubbles
+                    # and the sanitized saved body).
+                    _round_text_override = _synth
                 else:
                     _fb = ("I gathered some search results but couldn't pull a clean "
                            "answer together. Want me to try a more specific question, "
                            "or summarize what I did find?")
                     yield f'data: {json.dumps({"delta": _fb})}\n\n'
                     full_response += _fb
+                    _round_text_override = _fb
 
         # ── Fallback: auto-create document if model dumped large code in chat ──
         # If no create_document tool was used, check for big code blocks in text
@@ -2872,7 +2883,22 @@ async def stream_agent_loop(
         # persisted text either — otherwise it streams once and then disappears
         # on reload (#3222 follow-up).
         cleaned_round = strip_tool_blocks(round_response, skip_fenced=(_is_api_model and not used_native and not guide_only)).strip()
-        round_texts.append(cleaned_round)
+        if _round_text_override is not None:
+            # Force-answer grace synthesis: the synthesized answer is the round's
+            # real text (round_response held only the discarded tool call).
+            round_texts.append(_round_text_override)
+        elif tool_blocks:
+            # This round resolved to an executable tool call, so any prose the
+            # model emitted before it is pre-tool / ungrounded — the grounded
+            # answer only arrives in a later round once the real tool result is
+            # fed back. Persisting that prose makes the agentic reload
+            # reconstruction (chatRenderer.js replays round_texts per round)
+            # show a guessed/fabricated answer in its own bubble next to the
+            # real one (#3992). Quarantine the visible prose, but keep <think>
+            # blocks so the thinking section still renders on reload.
+            round_texts.append("".join(_THINK_RE.findall(cleaned_round)).strip())
+        else:
+            round_texts.append(cleaned_round)
 
         if not tool_blocks:
             # ── Completion verifier (mechanism 3a) ────────────────────
@@ -3237,6 +3263,21 @@ async def stream_agent_loop(
                     yield 'data: ' + json.dumps({"delta": _auq_delta}) + '\n\n'
                 _pending_ask_user_event = _auq
                 _awaiting_user = True
+                # ask_user ENDS the turn, so this round is terminal: its prose is
+                # the assistant's actual message to the user, NOT pre-tool /
+                # ungrounded prose — there is no later grounded round to supersede
+                # it. The #3992 tool-round quarantine above blanked round_texts to
+                # <think>-only, and reload reconstruction (chatRenderer.js) reads
+                # round_texts, so the question vanished on reload. Restore this
+                # round's visible prose and make sure the question itself persists.
+                if round_texts:
+                    _terminal_text = cleaned_round
+                    if _auq_q and _auq_q not in _terminal_text:
+                        _terminal_text = (
+                            (_terminal_text + "\n\n" + _auq_q).strip()
+                            if _terminal_text.strip() else _auq_q
+                        )
+                    round_texts[-1] = _terminal_text
 
             # update_plan: agent wrote back to the plan (ticked a step / revised).
             # Push it to the frontend so the stored plan + docked window update
@@ -3460,6 +3501,24 @@ async def stream_agent_loop(
         backend_prefill_tps=backend_prefill_tps,
     )
     metrics["requested_model"] = requested_model
+    # Sanitized canonical body for the chat route to persist on agentic turns.
+    # The route otherwise saves the raw delta accumulation, which still carries
+    # the quarantined pre-tool prose (#3992) — that body is replayed to the model
+    # and fed to export/webhook/extraction. round_texts already holds the per-
+    # round sanitized text (incl. the terminal ask_user question and the grace-
+    # synthesis answer), so the saved body is their join. Only emitted for
+    # agentic turns; direct chat keeps full_response untouched.
+    #
+    # Emit clean_response even when the join is "" (RaresKeY review finding #5):
+    # a tool turn whose only visible text was ungrounded pre-tool prose sanitizes
+    # to empty. That "" is a real sanitized result, so the route must persist it
+    # (empty), not fall back to the raw pre-tool prose. The consumer distinguishes
+    # "sanitized to empty" ("") from "no sanitized value" (key absent) via
+    # `is not None`, so the presence of the key — not its truthiness — matters.
+    if tool_events:
+        metrics["clean_response"] = "\n\n".join(
+            t for t in round_texts if t and t.strip()
+        )
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
     # Teacher-escalation: inline takeover visible in the chat stream.

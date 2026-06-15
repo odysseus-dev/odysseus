@@ -435,3 +435,43 @@ async def test_build_chat_context_keeps_cookie_user_owner_scope(monkeypatch):
         "preface_owner": "bob",
         "compact_owner": "bob",
     }
+
+
+# ---------------------------------------------------------------------------
+# select_saved_body — PR #4015 review (RaresKeY finding #3): the agentic save
+# path uses the sanitized clean_response, but an inline teacher takeover streams
+# its visible correction AFTER the metrics event, so that text is absent from
+# clean_response. It must still be persisted (it is real, user-visible final
+# assistant output) — otherwise reload/replay/export silently drop the teacher's
+# answer. Pre-tool prose must stay excluded.
+# ---------------------------------------------------------------------------
+from routes.chat_helpers import select_saved_body
+
+
+def test_select_saved_body_appends_post_metrics_teacher_takeover():
+    clean = "The grounded answer is 42."
+    teacher = "\n\n[Teacher] Correction: the real total is 43. USE-THIS."
+    full = "FAKE pre-tool guess: 999.\n\n" + clean + teacher
+    body = select_saved_body(clean, teacher, full)
+    assert "USE-THIS" in body, f"teacher takeover dropped from saved body: {body!r}"
+    assert "FAKE pre-tool guess" not in body, f"pre-tool prose leaked back in: {body!r}"
+
+
+def test_select_saved_body_falls_back_to_full_response_without_clean_body():
+    # Non-agentic / direct chat: no clean_response emitted (None) → keep raw body.
+    assert select_saved_body(None, "", "plain direct answer") == "plain direct answer"
+
+
+def test_select_saved_body_distinguishes_empty_sanitized_from_absent():
+    # RaresKeY finding #5: a tool turn whose visible text was all pre-tool prose
+    # sanitizes to "". That "" is a real sanitized result (nothing grounded to
+    # keep), NOT "no sanitized value" — it must be persisted as empty, never
+    # falling back to the raw pre-tool prose.
+    assert select_saved_body("", "", "RAW-PRETOOL guess", pre_metrics_raw="RAW-PRETOOL guess") == ""
+    # Only a genuinely absent sanitized body (None) falls back to the raw answer.
+    assert select_saved_body(None, "", "plain direct answer", pre_metrics_raw=None) == "plain direct answer"
+    # No-tool student (no clean_response → None) still persists its raw answer.
+    assert select_saved_body(None, "", "RAW", pre_metrics_raw="STUDENT-NOTOOL answer") == "STUDENT-NOTOOL answer"
+    # Empty student + a teacher takeover: keep the teacher segment alone, with no
+    # leading blank line from concatenating onto an empty student.
+    assert select_saved_body("", "", "RAW", teacher_clean="TEACHER-ANSWER", pre_metrics_raw="RAW") == "TEACHER-ANSWER"

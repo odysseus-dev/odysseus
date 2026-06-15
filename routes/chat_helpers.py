@@ -929,6 +929,50 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
     return content, md
 
 
+def select_saved_body(
+    clean_body: str | None,
+    post_metrics_deltas: str,
+    full_response: str,
+    *,
+    teacher_clean: str | None = None,
+    pre_metrics_raw: str | None = None,
+) -> str:
+    """Body to persist for an agentic turn (#3992 / PR #4015 review).
+
+    The saved body is the STUDENT segment followed by the TEACHER segment (when an
+    inline teacher takeover ran). Each segment is sanitized — the quarantined
+    pre-tool prose (#3992) must not appear in either.
+
+    - Student segment: ``clean_body`` (join of round_texts, carried in the agent
+      loop's metrics event) when the student used tools; otherwise its raw answer
+      ``pre_metrics_raw`` (the visible deltas streamed BEFORE the outer metrics
+      event — no tools means no pre-tool prose to strip).
+    - Teacher segment: ``teacher_clean`` (the teacher's OWN sanitized body, set when
+      the teacher ran a tool-backed turn whose nested ``stream_agent_loop`` emits
+      its own metrics + clean_response) when present; otherwise the raw
+      ``post_metrics_deltas`` (a no-tool teacher's visible correction). Preferring
+      ``teacher_clean`` keeps the teacher's fabricated pre-tool guess out of the
+      saved body (#3992 finding #4).
+
+    Non-agentic / no-metrics turns (no student segment) keep the raw accumulation.
+
+    ``clean_body`` distinguishes "sanitized to empty" ("") from "no sanitized
+    value" (None) — see RaresKeY finding #5. A tool turn whose visible text was
+    all ungrounded pre-tool prose sanitizes to "", which must persist as empty
+    rather than fall back to the raw pre-tool prose; only a genuinely absent
+    sanitized body (None, e.g. a non-agentic turn) falls back to ``full_response``.
+    """
+    if clean_body is not None:
+        student = clean_body
+    elif pre_metrics_raw is not None:
+        student = pre_metrics_raw
+    else:
+        return full_response
+    if teacher_clean:
+        return (student + "\n\n" + teacher_clean) if student else teacher_clean
+    return student + post_metrics_deltas
+
+
 def save_assistant_response(
     sess,
     session_manager,

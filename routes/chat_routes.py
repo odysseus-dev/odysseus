@@ -38,6 +38,7 @@ from routes.chat_helpers import (
     save_assistant_response,
     run_post_response_tasks,
     clean_thinking_for_save,
+    select_saved_body,
     _enforce_chat_privileges,
 )
 from src.action_intents import classify_tool_intent as _classify_tool_intent
@@ -1252,6 +1253,26 @@ def setup_chat_routes(
                 _answered_by = None  # set if the selected model failed and a fallback answered
                 _requested_model = sess.model
                 _actual_model = None
+                # Sanitized canonical body from agent_loop's metrics event. On an
+                # agentic turn the raw delta accumulation still carries the
+                # quarantined pre-tool prose (#3992); the saved/replayed/exported
+                # body must use this instead of full_response.
+                _clean_body = None
+                # Visible deltas streamed AFTER the outer metrics event (e.g. an
+                # inline teacher takeover) are not in _clean_body — accumulate them
+                # so the saved body keeps them (#3992 / PR #4015 review).
+                _post_clean_deltas = ""
+                # Set once the OUTER turn's metrics event arrives; gates the
+                # post-metrics delta accumulation and snapshots the student's raw
+                # answer (for a no-tool student, which has no clean_response).
+                _outer_metrics_seen = False
+                _pre_metrics_raw = None
+                # A tool-using teacher takeover runs a nested stream_agent_loop that
+                # emits its OWN metrics + clean_response (forwarded teacher=True).
+                # Capture that sanitized teacher body so the saved body uses it
+                # instead of the raw post-metrics deltas, which carry the teacher's
+                # own pre-tool prose (#3992 finding #4).
+                _teacher_clean = None
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -1300,6 +1321,11 @@ def setup_chat_routes(
                                     # them out of the saved reply (same as chat mode).
                                     if not data.get("thinking"):
                                         full_response += data["delta"]
+                                        # A delta seen after the outer metrics event
+                                        # is post-answer (teacher takeover) — keep it
+                                        # for the saved body.
+                                        if _outer_metrics_seen:
+                                            _post_clean_deltas += data["delta"]
                                         _stream_set(session, partial=full_response)
                                     yield chunk
                                 elif data.get("type") == "web_sources":
@@ -1332,19 +1358,54 @@ def setup_chat_routes(
                                     data["requested_model"] = _requested_model
                                     yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "metrics":
-                                    last_metrics = data.get("data", {})
-                                    _reported_model = last_metrics.get("model")
-                                    last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
-                                    last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
-                                    yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
+                                    _metrics_data = data.get("data", {})
+                                    # Pull the sanitized body out of the metrics
+                                    # payload — it's for persistence only, not the
+                                    # client, and shouldn't bloat the SSE.
+                                    _metrics_clean = _metrics_data.pop("clean_response", None)
+                                    if data.get("teacher"):
+                                        # Nested teacher run's metrics — must NOT
+                                        # clobber the outer turn's sanitized body or
+                                        # metrics. Keep its sanitized answer as the
+                                        # teacher segment (#3992 finding #4); forward
+                                        # untouched (clean_response already popped).
+                                        if _metrics_clean:
+                                            _teacher_clean = _metrics_clean
+                                        yield f'data: {json.dumps(data)}\n\n'
+                                    else:
+                                        last_metrics = _metrics_data
+                                        # Preserve an empty sanitized body ("")
+                                        # as a real value (RaresKeY finding #5) —
+                                        # only a missing key (None) keeps the
+                                        # prior _clean_body.
+                                        if _metrics_clean is not None:
+                                            _clean_body = _metrics_clean
+                                        # Mark the outer-turn boundary and snapshot
+                                        # the student's raw answer so a no-tool
+                                        # student (no clean_response) still has a
+                                        # student segment before any teacher takeover.
+                                        _outer_metrics_seen = True
+                                        _pre_metrics_raw = full_response
+                                        _reported_model = last_metrics.get("model")
+                                        last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
+                                        last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model
+                                        yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
                         elif chunk.startswith("event: "):
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
                             if full_response:
+                                # Persist/replay/export the sanitized body when the
+                                # agent loop emitted one (#3992); fall back to the
+                                # raw accumulation for non-agentic or empty cases.
+                                _save_body = select_saved_body(
+                                    _clean_body, _post_clean_deltas, full_response,
+                                    teacher_clean=_teacher_clean,
+                                    pre_metrics_raw=_pre_metrics_raw,
+                                )
                                 _saved_id = save_assistant_response(
-                                    sess, session_manager, session, full_response, last_metrics,
+                                    sess, session_manager, session, _save_body, last_metrics,
                                     character_name=ctx.preset.character_name,
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
@@ -1354,7 +1415,7 @@ def setup_chat_routes(
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
                                 run_post_response_tasks(
-                                    sess, session_manager, session, message, full_response,
+                                    sess, session_manager, session, message, _save_body,
                                     last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
