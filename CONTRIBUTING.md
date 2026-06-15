@@ -40,7 +40,9 @@ pip install -r requirements.txt
 python -m uvicorn app:app --host 0.0.0.0 --port 7000
 ```
 
-Windows is not actively tested. Docker on Linux or a Linux/macOS manual install is the safer path for now.
+Windows has a community desktop launcher (`docs/windows-launcher.md`) with preflight
+checks; console setup via `launch-windows.ps1` is still the baseline. Docker on Linux
+or a Linux/macOS manual install remains the most actively tested path.
 
 ## Running Checks
 

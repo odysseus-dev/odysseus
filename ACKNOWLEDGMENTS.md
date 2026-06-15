@@ -159,6 +159,16 @@ concerns from earlier are resolved:
 
 ---
 
+## Community contributions
+
+- **Windows desktop launcher** (`launcher/`, `Odysseus.vbs`, `build-windows-launcher.ps1`,
+  `docs/windows-launcher.md`) by **Wykeve ([VoidCat](https://voidcat.org))** -
+  GUI preflight checks, server lifecycle, and browser app mode for native Windows
+  (parity with the macOS `Odysseus.app` launcher pattern). Contact:
+  SorrowCry86@hotmail.com
+
+---
+
 ## Thanks to
 
 Most of Odysseus's code was written *with* AI models, not just by a human.

@@ -263,12 +263,22 @@ do not run on macOS. MLX-only models are not served by Odysseus.
 
 ### Native Windows
 
-**One-command launcher** (creates the venv, installs deps, runs setup, starts the
-server; safe to re-run):
+**Desktop launcher (recommended)** - GUI with preflight checks, server control, and
+browser app mode (parity with macOS `Odysseus.app`). See [docs/windows-launcher.md](docs/windows-launcher.md).
 
 ```powershell
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
+powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1   # first-time setup
+powershell -ExecutionPolicy Bypass -File .\build-windows-launcher.ps1
+```
+
+Then double-click **Odysseus** on your Desktop (or `Odysseus.vbs` in the repo root).
+
+**Console launcher** (creates the venv, installs deps, runs setup, starts the
+server; safe to re-run):
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 ```
 
