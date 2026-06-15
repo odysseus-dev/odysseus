@@ -972,13 +972,25 @@ def test_mcp_oauth_page_escapes_reflected_values():
     src = Path(__file__).resolve().parents[1] / "routes" / "mcp_routes.py"
     text = src.read_text()
     body = text.split("def _oauth_authorize_page(", 1)[1].split("return f", 1)[0]
-    for var in ("auth_url", "server_id", "host"):
+    for var in ("auth_url", "server_id", "host", "redirect_uri"):
         assert f"{var} = html.escape({var}" in body, var
 
 
 def _import_mcp_routes():
     sys.modules.pop("routes.mcp_routes", None)
     return importlib.import_module("routes.mcp_routes")
+
+
+def test_google_mcp_oauth_uses_configured_redirect_base(monkeypatch):
+    monkeypatch.setenv("OAUTH_REDIRECT_BASE_URL", "https://odysseus.example/app/")
+    monkeypatch.delenv("APP_PUBLIC_URL", raising=False)
+    sys.modules.pop("src.mcp_oauth", None)
+    mcp_routes = _import_mcp_routes()
+
+    assert (
+        mcp_routes._mcp_oauth_redirect_uri()
+        == "https://odysseus.example/app/api/mcp/oauth/callback"
+    )
 
 
 def test_mcp_oauth_paths_resolve_under_data_dir(tmp_path, monkeypatch):

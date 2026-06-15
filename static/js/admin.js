@@ -55,6 +55,7 @@ async function loadUsers() {
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;">
+          <button class="admin-btn-sm" data-adm-toggle-admin="${esc(u.username)}" data-make-admin="${u.is_admin ? '0' : '1'}" style="font-size:11px;">${u.is_admin ? 'Revoke admin' : 'Make admin'}</button>
           <button class="admin-btn-sm" data-adm-rename-user="${esc(u.username)}" style="font-size:11px;">Rename</button>
           ${u.is_admin ? '' : `<button class="admin-btn-delete" data-adm-del-user="${esc(u.username)}" style="font-size:11px;">Remove</button>`}
           ${u.is_admin ? '' : '<svg class="admin-user-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3;transition:transform 0.2s,opacity 0.2s;"><polyline points="6 9 12 15 18 9"/></svg>'}
@@ -113,7 +114,7 @@ async function loadUsers() {
         // Toggle panel visibility + rotate chevron + load models
         let _modelsLoaded = false;
         header.addEventListener('click', (e) => {
-          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user]')) return;
+          if (e.target.closest('.admin-btn-delete, [data-adm-rename-user], [data-adm-toggle-admin]')) return;
           privPanel.classList.toggle('hidden');
           const chevron = header.querySelector('.admin-user-chevron');
           if (chevron) {
@@ -196,6 +197,42 @@ async function loadUsers() {
           const res = await fetch('/api/auth/users', { method: 'DELETE', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
           if (res.ok) loadUsers();
           else uiModule.showError('Failed to delete user');
+        });
+      }
+
+      // Promote / demote (admin toggle) — present on every row
+      const adminToggleBtn = row.querySelector('[data-adm-toggle-admin]');
+      if (adminToggleBtn) {
+        adminToggleBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const username = adminToggleBtn.dataset.admToggleAdmin;
+          const makeAdmin = adminToggleBtn.dataset.makeAdmin === '1';
+          const confirmMsg = makeAdmin
+            ? `Grant admin rights to "${username}"? They'll get full access to all settings and users — including the power to demote or remove other admins (you included).`
+            : `Revoke admin rights from "${username}"? They'll lose access to the admin panel.`;
+          if (!await uiModule.styledConfirm(confirmMsg, { confirmText: makeAdmin ? 'Make admin' : 'Revoke admin', danger: !makeAdmin })) return;
+          adminToggleBtn.disabled = true;
+          try {
+            const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/admin`, {
+              method: 'PUT',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ is_admin: makeAdmin }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              uiModule.showError(data.detail || 'Failed to change admin status');
+              adminToggleBtn.disabled = false;
+              return;
+            }
+            // Demoting yourself drops your own admin access — reload into the
+            // normal-user view (mirrors the rename-self reload above).
+            if (data.self) { window.location.reload(); return; }
+            loadUsers();
+          } catch (err) {
+            uiModule.showError('Failed to change admin status');
+            adminToggleBtn.disabled = false;
+          }
         });
       }
 
@@ -2489,11 +2526,205 @@ function initDangerZone() {
 }
 
 /* ═══════════════════════════════════════════
+   TERMINAL LOGS VIEWER
+   ═══════════════════════════════════════════ */
+let logsPollInterval = null;
+let isLogsPolling = false;
+let cachedLogs = [];
+let logsAbortController = null;
+
+function renderLogs(isAutoPoll = false) {
+  const consoleContainer = el('log-console-container');
+  const levelSelect = el('log-level-select');
+  const searchInput = el('log-search-input');
+
+  if (!consoleContainer) return;
+
+  const levelFilter = levelSelect ? levelSelect.value : 'ALL';
+  const searchQuery = searchInput ? searchInput.value.trim().toLowerCase() : '';
+
+  let logs = cachedLogs;
+
+  // Filter by level locally
+  if (levelFilter !== 'ALL') {
+    logs = logs.filter(line => line.includes(` - ${levelFilter} - `));
+  }
+
+  // Filter by search query locally
+  if (searchQuery) {
+    logs = logs.filter(line => line.toLowerCase().includes(searchQuery));
+  }
+
+  if (logs.length === 0) {
+    consoleContainer.innerHTML = '<div class="settings-system-logs-placeholder">No logs found matching current filters.</div>';
+    return;
+  }
+
+  // Preserve scroll position if user is reading previous logs
+  const atBottom = consoleContainer.scrollHeight - consoleContainer.scrollTop - consoleContainer.clientHeight < 40;
+
+  consoleContainer.innerHTML = logs.map(line => {
+    let levelClass = 'log-line-default';
+
+    if (line.includes(' - INFO - ')) {
+      levelClass = 'log-line-info';
+    } else if (line.includes(' - WARNING - ')) {
+      levelClass = 'log-line-warning';
+    } else if (line.includes(' - ERROR - ') || line.includes(' - CRITICAL - ')) {
+      levelClass = 'log-line-error';
+    } else if (line.includes(' - DEBUG - ')) {
+      levelClass = 'log-line-debug';
+    }
+
+    // XSS safe escape
+    const escaped = line
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+    return `<div class="log-line ${levelClass}">${escaped}</div>`;
+  }).join('');
+
+  if (!isAutoPoll || atBottom) {
+    consoleContainer.scrollTop = consoleContainer.scrollHeight;
+  }
+}
+
+async function loadLogs(isAutoPoll = false) {
+  const consoleContainer = el('log-console-container');
+  const limitSelect = el('log-limit-select');
+
+  if (!consoleContainer) return;
+
+  const limit = limitSelect ? limitSelect.value : 200;
+
+  if (logsAbortController) {
+    logsAbortController.abort();
+  }
+  logsAbortController = new AbortController();
+  const { signal } = logsAbortController;
+
+  try {
+    const res = await fetch(`/api/diagnostics/logs?limit=${limit}`, {
+      credentials: 'same-origin',
+      signal
+    });
+
+    if (!res.ok) {
+      if (!isAutoPoll) {
+        consoleContainer.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.color = 'var(--red)';
+        errDiv.style.fontWeight = '600';
+        errDiv.textContent = `Failed to load logs: HTTP ${res.status}`;
+        consoleContainer.appendChild(errDiv);
+      }
+      return;
+    }
+
+    const data = await res.json();
+    if (data.status !== 'success' || !data.logs) {
+      if (!isAutoPoll) {
+        consoleContainer.innerHTML = '';
+        const errDiv = document.createElement('div');
+        errDiv.style.color = 'var(--red)';
+        errDiv.style.fontWeight = '600';
+        errDiv.textContent = 'Failed to parse logs data';
+        consoleContainer.appendChild(errDiv);
+      }
+      return;
+    }
+
+    cachedLogs = data.logs;
+    renderLogs(isAutoPoll);
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return; // Silently ignore deliberate abort
+    }
+    if (!isAutoPoll) {
+      consoleContainer.innerHTML = '';
+      const errDiv = document.createElement('div');
+      errDiv.style.color = 'var(--red)';
+      errDiv.style.fontWeight = '600';
+      errDiv.textContent = `Error retrieving logs: ${err.message}`;
+      consoleContainer.appendChild(errDiv);
+    }
+  } finally {
+    if (logsAbortController?.signal === signal) {
+      logsAbortController = null;
+    }
+  }
+}
+
+function startLogsPolling() {
+  if (isLogsPolling) return;
+  isLogsPolling = true;
+  const toggle = el('log-auto-refresh-toggle');
+  if (toggle) toggle.checked = true;
+
+  logsPollInterval = setInterval(() => {
+    const modal = el('settings-modal');
+    const systemPanel = el('settings-modal')?.querySelector('[data-settings-panel="system"]');
+
+    // Safe self-cleanup if modal or panel is hidden/closed
+    if (!modal || modal.classList.contains('hidden') || !systemPanel || systemPanel.classList.contains('hidden')) {
+      stopLogsPolling();
+      return;
+    }
+
+    loadLogs(true);
+  }, 3000);
+}
+
+function stopLogsPolling() {
+  if (!isLogsPolling) return;
+  isLogsPolling = false;
+  if (logsPollInterval) {
+    clearInterval(logsPollInterval);
+    logsPollInterval = null;
+  }
+  const toggle = el('log-auto-refresh-toggle');
+  if (toggle) toggle.checked = false;
+}
+
+function initLogsView() {
+  const refreshBtn = el('log-refresh-btn');
+  const levelSelect = el('log-level-select');
+  const limitSelect = el('log-limit-select');
+  const searchInput = el('log-search-input');
+  const autoRefreshToggle = el('log-auto-refresh-toggle');
+
+  if (refreshBtn) refreshBtn.addEventListener('click', () => loadLogs(false));
+  if (levelSelect) levelSelect.addEventListener('change', () => renderLogs(false));
+  if (limitSelect) limitSelect.addEventListener('change', () => loadLogs(false));
+  if (searchInput) searchInput.addEventListener('input', () => renderLogs(false));
+
+  if (autoRefreshToggle) {
+    autoRefreshToggle.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        startLogsPolling();
+      } else {
+        stopLogsPolling();
+      }
+    });
+  }
+
+  // Initial fetch on view loading
+  loadLogs(false);
+}
+
+/* ═══════════════════════════════════════════
    INIT & REFRESH
    ═══════════════════════════════════════════ */
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTokenForm, () => settingsModule.initIntegrations()];
+  const inits = [
+    initSignupToggle, initAddUser, initEndpointForm, initMcpForm,
+    initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
+    () => settingsModule.initIntegrations()
+  ];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2507,6 +2738,7 @@ function refreshAll() {
   loadBuiltinTools();
   loadMcpServers();
   loadTokens();
+  loadLogs(false);
 }
 
 /* ═══════════════════════════════════════════
@@ -2523,6 +2755,7 @@ export function open(tab) {
 }
 
 export function close() {
+  stopLogsPolling();
   settingsModule.close();
 }
 

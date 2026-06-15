@@ -362,7 +362,12 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
-        'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        # Windows can expose python3 as a Microsoft Store App Execution Alias
+        # under WindowsApps. Git Bash sees that stub as present, but it exits
+        # before running Python. A Windows venv usually has python.exe, not
+        # python3.exe, so treat a missing or WindowsApps python3 as absent.
+        '_odys_py3="$(command -v python3 2>/dev/null || true)"',
+        'case "$_odys_py3" in ""|*[Ww]indows[Aa]pps*) python3() { python "$@"; } ;; esac',
         'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }',
     ]
 
@@ -573,6 +578,36 @@ _GGUF_PRELUDE_RE = re.compile(
 _OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
 _OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
 _OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+_LLAMA_CPP_PYTHON_GGML_TYPES = {
+    "f32": "0",
+    "f16": "1",
+    "q4_0": "2",
+    "q4_1": "3",
+    "q5_0": "6",
+    "q5_1": "7",
+    "q8_0": "8",
+    "q8_1": "9",
+    "q2_k": "10",
+    "q3_k": "11",
+    "q4_k": "12",
+    "q5_k": "13",
+    "q6_k": "14",
+    "q8_k": "15",
+    "iq2_xxs": "16",
+    "iq2_xs": "17",
+    "iq3_xxs": "18",
+    "iq1_s": "19",
+    "iq4_nl": "20",
+    "iq3_s": "21",
+    "iq2_s": "22",
+    "iq4_xs": "23",
+    "mxfp4": "39",
+    "nvfp4": "40",
+    "q1_0": "41",
+}
+_LLAMA_CPP_PYTHON_TYPE_FLAG_RE = re.compile(
+    r"(?P<flag>--type_[kv])(?P<sep>\s+|=)(?P<quote>['\"]?)(?P<value>[A-Za-z0-9_]+)(?P=quote)"
+)
 
 
 def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -> tuple[str, str]:
@@ -602,6 +637,22 @@ def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -
     if port_num < 1 or port_num > 65535:
         return "127.0.0.1", "11434"
     return f"[{host}]" if bracketed_host else host, port
+
+
+def _normalize_llama_cpp_python_cache_types(cmd: str | None) -> str | None:
+    """Map llama.cpp KV cache type names to llama-cpp-python's integer enum."""
+    if not cmd or "llama_cpp.server" not in cmd:
+        return cmd
+
+    def repl(match: re.Match[str]) -> str:
+        value = match.group("value")
+        mapped = _LLAMA_CPP_PYTHON_GGML_TYPES.get(value.lower())
+        if not mapped:
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{match.group('flag')}{match.group('sep')}{quote}{mapped}{quote}"
+
+    return _LLAMA_CPP_PYTHON_TYPE_FLAG_RE.sub(repl, cmd)
 
 
 def _check_serve_binary(seg: str) -> None:
@@ -742,6 +793,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('    done')
     # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
     # or HIP attempt) doesn't cause the next configure to reuse stale settings.
+    runner_lines.append('    mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR"')
     runner_lines.append('    cd "$ODYSSEUS_LLAMA_CPP_DIR" && rm -rf build')
     runner_lines.append('    _odysseus_force_cuda="$(printf "%s" "${ODYSSEUS_LLAMA_CPP_CUDA:-}" | tr "[:lower:]" "[:upper:]")"')
     runner_lines.append('    _odysseus_cuda_requested=0')
@@ -802,18 +854,18 @@ def _llama_cpp_rebuild_cmd() -> str:
 
     Removes the cached ``llama-server`` symlink and the configured
     ``llama.cpp/build`` directory (``$ODYSSEUS_LLAMA_CPP_DIR`` or
-    ``~/llama.cpp``) so the next llama.cpp serve recompiles from source, picking up a
-    CUDA or HIP toolchain if one is now available. The serve bootstrap only
-    builds when ``llama-server`` is missing from PATH, so without this an
-    existing CPU-only build is reused forever. It deliberately installs and
-    downloads nothing; the rebuild itself happens on the next serve.
+    ``~/.local/llama.cpp``) so the next llama.cpp serve recompiles from source,
+    picking up a CUDA or HIP toolchain if one is now available. The serve
+    bootstrap only builds when ``llama-server`` is missing from PATH, so without
+    this an existing CPU-only build is reused forever. It deliberately installs
+    and downloads nothing; the rebuild itself happens on the next serve.
     """
     return (
-        'ODYSSEUS_LLAMA_CPP_DIR="${ODYSSEUS_LLAMA_CPP_DIR:-$HOME/llama.cpp}"; '
-        'ODYSSEUS_LLAMA_CPP_BIN_DIR="${ODYSSEUS_LLAMA_CPP_BIN_DIR:-$HOME/bin}"; '
+        'ODYSSEUS_LLAMA_CPP_DIR="${ODYSSEUS_LLAMA_CPP_DIR:-$HOME/.local/llama.cpp}" && '
+        'ODYSSEUS_LLAMA_CPP_BIN_DIR="${ODYSSEUS_LLAMA_CPP_BIN_DIR:-$HOME/.local/bin}" && '
         'mkdir -p "$ODYSSEUS_LLAMA_CPP_BIN_DIR" && '
         'rm -f "$ODYSSEUS_LLAMA_CPP_BIN_DIR/llama-server" "$HOME/bin/llama-server" && '
-        'rm -rf "$ODYSSEUS_LLAMA_CPP_DIR/build" && '
+        'rm -rf "$ODYSSEUS_LLAMA_CPP_DIR/build" "$HOME/llama.cpp/build" && '
         'echo "[odysseus] Cleared the cached llama.cpp build. '
         'Re-launch the serve task to rebuild llama-server from source '
         '(CUDA or HIP will be used if a toolchain is now available)."'
@@ -1063,6 +1115,16 @@ def _diagnose_serve_output(text: str) -> dict | None:
             r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
             "vLLM is not installed or not in PATH on this server.",
             [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
+        ),
+        (
+            r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|"
+            r"(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|"
+            r"Please ensure sgl_kernel is properly installed",
+            "SGLang native dependencies are missing on this server.",
+            [
+                {"label": "install OS packages: libnuma-dev python3.12-dev build-essential", "op": "manual"},
+                {"label": "upgrade sglang-kernel after OS packages are installed", "op": "manual"},
+            ],
         ),
         (
             r"sglang.*command not found|No module named sglang|SGLang is not installed",

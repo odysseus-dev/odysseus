@@ -4649,7 +4649,7 @@ body.bg-pattern-sparkles {
       #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
       .email-reader-tab-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
       .email-window-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn {
-        width: 44px !important;
+        width: auto !important;
         height: 44px !important;
         flex: 0 0 auto !important;
         display: inline-flex !important;
@@ -15244,6 +15244,10 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
   overflow-y: auto !important;
   overscroll-behavior: contain;
 }
+.cookbook-group[data-backend-group="Serve"] > .admin-card > .hwfit-cached-list .doclib-card.doclib-card-expanded {
+  flex: 0 0 auto !important;
+  overflow: visible !important;
+}
 /* Drag-and-drop visual hint for the email compose pane. Subtle accent
    outline + tinted overlay so it's obvious files will attach if dropped. */
 .doc-editor-pane.email-dragover {
@@ -15474,6 +15478,9 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
     flex: 0 0 auto !important;
     height: auto !important;
   }
+}
+#cookbook-modal .hwfit-cached-list {
+  flex-shrink: 0;
 }
 .memory-toolbar {
   transition: opacity 0.12s ease, max-height 0.2s ease;
@@ -21241,6 +21248,26 @@ body.gallery-selecting .gallery-dl-btn,
 .hwfit-loading {
   display: flex; align-items: center; justify-content: center;
   color: var(--fg-muted); padding: 16px 0; font-size: 12px;
+}
+.hwfit-hw-visibility-warning {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  margin-top: 8px;
+}
+.hwfit-hw-visibility-warning-title {
+  font-weight: 600;
+}
+.hwfit-hw-visibility-warning-body {
+  opacity: 0.78;
+  line-height: 1.45;
+}
+.hwfit-hw-visibility-warning-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .hwfit-row {
   display: flex; align-items: center; gap: 6px; padding: 5px 8px;
@@ -29147,9 +29174,9 @@ body.doc-find-active mark.doc-find-mark.current {
 
 /* Email reader icon buttons — vertical icon + label stack. */
 .memory-toolbar-btn.reader-icon-btn {
-  width: 48px;
+  width: auto;
   height: 44px;
-  padding: 4px 2px;
+  /* padding: 4px 2px; */
   position: relative;
   top: 1px;
   display: inline-flex;
@@ -36651,3 +36678,102 @@ body.theme-frosted .modal {
   border-top: 1px solid var(--border);
 }
 .workspace-note { margin: 0 0 8px; font-size: 11px; line-height: 1.4; }
+
+/* Real-time Diagnostics Log Terminal UI Styles */
+.settings-system-logs-svg {
+  vertical-align: -2px;
+  margin-right: 5px;
+  opacity: 0.6;
+}
+.settings-system-logs-toggle-sub {
+  margin-bottom: 12px;
+}
+.settings-system-logs-col {
+  gap: 10px;
+}
+.settings-system-logs-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.settings-system-logs-search {
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  flex: 1;
+  min-width: 140px;
+}
+.settings-system-logs-select {
+  padding: 5px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 90px;
+}
+#log-refresh-btn {
+  height: 27px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+}
+.settings-system-logs-refresh-svg {
+  pointer-events: none;
+}
+.settings-system-logs-autopoll-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  user-select: none;
+  margin-left: auto;
+}
+#log-console-container {
+  background: #13151a;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: Consolas, 'Fira Code', Monaco, 'Courier New', monospace;
+  font-size: 11px;
+  height: 280px;
+  max-height: 280px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #d1d4e0;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+}
+.settings-system-logs-placeholder {
+  color: var(--color-text-dim, #7f8c8d);
+  font-style: italic;
+  font-family: inherit;
+}
+.log-line {
+  margin-bottom: 3px;
+  line-height: 1.4;
+  font-size: 11px;
+  font-family: inherit;
+}
+.log-line-info {
+  color: var(--green, #50fa7b);
+}
+.log-line-warning {
+  color: var(--warn, #f0ad4e);
+}
+.log-line-error {
+  color: var(--red, #e06c75);
+}
+.log-line-debug {
+  color: var(--color-muted, #888);
+}
+.log-line-default {
+  color: var(--fg, #9cdef2);
+}
