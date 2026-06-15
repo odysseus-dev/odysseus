@@ -131,6 +131,19 @@ def test_fetch_requests_identity_encoding(monkeypatch, no_cache):
     assert seen["headers"].get("Accept-Encoding") == "identity"
 
 
+def test_rejects_compressed_response_that_ignored_identity(monkeypatch, no_cache):
+    # We request Accept-Encoding: identity, but a server can ignore it and send
+    # gzip anyway. httpx would decode it, so a tiny compressed body could balloon
+    # past the cap in one decoded chunk. Refuse before reading the body.
+    fake = _FakeStream(b"x" * 5000, content_length=40)
+    fake.headers["content-encoding"] = "gzip"
+    _patch_stream(monkeypatch, fake)
+    r = content_mod.fetch_webpage_content("https://example.com/a.txt")
+    assert r["success"] is False
+    assert "Content-Encoding" in r["error"] or "compressed" in r["error"]
+    assert fake.body_reads == 0  # refused before decoding any body
+
+
 def test_oversized_title_does_not_hide_partial_notice(monkeypatch):
     # The partial-content notice is the PR's core contract; an untrusted,
     # oversized page title must not push it past MAX_OUTPUT_CHARS.

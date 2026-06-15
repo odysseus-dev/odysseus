@@ -171,6 +171,20 @@ def _get_public_url(url: str, headers: dict, timeout: int, max_redirects: int = 
                 current = urljoin(str(response.url), location)
                 continue
 
+            # A server can ignore the identity request and still return a
+            # compressed body; httpx.iter_bytes would then decode it, and a tiny
+            # gzip can balloon into one decoded chunk far past the cap before we
+            # slice. Refuse a compressed Content-Encoding so the streamed cap
+            # stays a real memory bound (Content-Length is the compressed wire
+            # length here, so the preflight and size metadata are unreliable too).
+            enc = (response.headers.get("content-encoding") or "").strip().lower()
+            if enc and enc != "identity":
+                raise httpx.RequestError(
+                    f"Refusing compressed response (Content-Encoding: {enc}) after "
+                    "requesting identity: cannot bound decoded body size",
+                    request=httpx.Request("GET", current),
+                )
+
             declared = None
             raw_len = response.headers.get("content-length")
             if raw_len and raw_len.isdigit():
