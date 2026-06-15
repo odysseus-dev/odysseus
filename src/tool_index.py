@@ -42,6 +42,12 @@ ALWAYS_AVAILABLE = frozenset({
     "ask_user",
     # Write back to the active plan (tick steps done / revise) during execution.
     "update_plan",
+    # Core execution/IO/web tools — pinned so low-signal follow-ups don't strip
+    # their invocation format from the prompt. Visibility only; execution stays
+    # gated by disabled_tools + tool_policy.
+    "bash", "python",
+    "web_search", "web_fetch",
+    "read_file", "write_file", "edit_file",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
