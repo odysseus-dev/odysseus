@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 from core.platform_compat import IS_WINDOWS, which_tool
+from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ _BUILTIN_NPX_SERVERS = {
         "name": "Built-in: Browser",
         "command": "npx",
         "args": ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"],
-    },
+    }
 }
 
 # Global flag to disable MCP if there are compatibility issues
@@ -94,7 +95,7 @@ async def register_builtin_servers(mcp_manager):
         logger.info("Built-in MCP servers disabled via ODYSSEUS_DISABLE_MCP")
         return
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base_dir = get_app_root()
     python = sys.executable
 
     async def _connect_python_server(server_id: str, script_path: str, name: str):

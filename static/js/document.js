@@ -87,7 +87,8 @@ import * as Modals from './modalManager.js';
   }
 
   function _accountCanSend(account) {
-    return !!(account && account.smtp_host && account.smtp_user && account.has_smtp_password);
+    if (!account || !account.smtp_host || !account.smtp_user) return false;
+    return !!(account.has_smtp_password || account.oauth_provider);
   }
 
   async function _resolveComposeSendAccountId() {

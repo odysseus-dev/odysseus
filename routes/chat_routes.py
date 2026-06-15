@@ -126,7 +126,8 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         sess.model = ""
         sess.headers = {}
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to clear orphaned session endpoint", exc_info=e)
         db.rollback()
         return False
     finally:
@@ -144,7 +145,8 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
         return True
     try:
         models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse cached models list, treating as containing model", exc_info=e)
         return True
     if not isinstance(models, list) or not models:
         return True
@@ -236,7 +238,8 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 is_chatgpt_subscription = False
         try:
             cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse cached_models for endpoint %r", getattr(ep, "id", "?"), exc_info=e)
             cached = []
         if not cached:
             visible = []
@@ -646,8 +649,8 @@ def setup_chat_routes(
         elif attachments:
             try:
                 att_ids = [str(x) for x in json.loads(attachments)]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse attachments JSON, ignoring attachments", exc_info=e)
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
         pre_context_tool_policy = build_effective_tool_policy(
