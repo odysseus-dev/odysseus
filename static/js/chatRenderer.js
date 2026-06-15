@@ -2073,6 +2073,24 @@ export function buildAgentProcessPanel(metadata, modelName, options = {}) {
   body.className = 'agent-process-body';
   details.appendChild(body);
 
+  const limits = metadata.agent_limits || null;
+  if (limits && typeof limits === 'object') {
+    const usedRounds = Number.isFinite(Number(limits.rounds_used)) ? Number(limits.rounds_used) : roundTexts.length;
+    const maxRounds = Number.isFinite(Number(limits.max_rounds)) ? Number(limits.max_rounds) : null;
+    const usedTools = Number.isFinite(Number(limits.tool_calls_used)) ? Number(limits.tool_calls_used) : toolEvents.length;
+    const maxTools = Number.isFinite(Number(limits.max_tool_calls)) ? Number(limits.max_tool_calls) : null;
+    const toolLimit = maxTools && maxTools > 0 ? maxTools : 'unlimited';
+    const bits = [];
+    if (maxRounds) bits.push(`${usedRounds}/${maxRounds} rounds`);
+    bits.push(`${usedTools}/${toolLimit} tools`);
+    bits.push(`verifier ${limits.verifier_enabled ? 'on' : 'off'}`);
+    if (limits.workspace_bound) bits.push(`workspace policy ${limits.workspace_shell_writes_blocked ? 'on' : 'active'}`);
+    const meta = document.createElement('div');
+    meta.className = 'agent-process-meta';
+    meta.textContent = `Limits: ${bits.join(' | ')}`;
+    body.appendChild(meta);
+  }
+
   let renderedAny = false;
   for (let r = 0; r < maxRound; r++) {
     const roundNum = r + 1;

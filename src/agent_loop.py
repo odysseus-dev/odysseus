@@ -2992,6 +2992,16 @@ async def stream_agent_loop(
         backend_prefill_tps=backend_prefill_tps,
     )
     metrics["requested_model"] = requested_model
+    metrics["agent_limits"] = {
+        "max_rounds": max_rounds,
+        "max_tool_calls": max_tool_calls,
+        "rounds_used": len(round_texts),
+        "tool_calls_used": total_tool_calls,
+        "verifier_enabled": bool(get_setting("agent_verifier_subagent", False)),
+        "verifier_max_rounds": _VERIFIER_MAX_ROUNDS,
+        "workspace_bound": bool(workspace),
+        "workspace_shell_writes_blocked": bool(workspace),
+    }
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
     # Teacher-escalation: inline takeover visible in the chat stream.

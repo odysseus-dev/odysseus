@@ -30,6 +30,8 @@ def test_live_agent_completion_collapses_process_after_done():
     assert "const _actionText = (metrics?.tool_events?.length" in source
     assert "chatRenderer.getAgentFinalResponse(accumulated, metrics)" in source
     renderer = _read("static/js/chatRenderer.js")
+    assert "metadata.agent_limits" in renderer
+    assert "agent-process-meta" in renderer
     assert "body.innerHTML = sourcesPrefix" in renderer
     assert "body.insertBefore(panel, body.firstChild)" in renderer
     assert "markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalText))" in renderer
@@ -41,5 +43,6 @@ def test_agent_process_has_collapsed_panel_styles():
     assert ".agent-process {" in source
     assert "margin: 0 0 10px;" in source
     assert ".agent-process-summary" in source
+    assert ".agent-process-meta" in source
     assert ".agent-process > summary::before" in source
     assert ".agent-process[open] > .agent-process-summary::after" in source

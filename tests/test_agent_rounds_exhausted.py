@@ -87,7 +87,9 @@ def test_emits_explicit_process_and_final_round_events(monkeypatch):
         "http://x/v1", "m",
         [{"role": "user", "content": "inspect then answer"}],
         max_rounds=2,
+        max_tool_calls=7,
         relevant_tools={"bash"},
+        workspace="/tmp/workspace",
     )
     events = _types(_collect(gen))
 
@@ -97,3 +99,9 @@ def test_emits_explicit_process_and_final_round_events(monkeypatch):
     assert process_events[0]["text"] == "I will inspect."
     assert final_events and final_events[-1]["round"] == 2
     assert final_events[-1]["text"] == "Done."
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert metrics["agent_limits"]["max_rounds"] == 2
+    assert metrics["agent_limits"]["max_tool_calls"] == 7
+    assert metrics["agent_limits"]["rounds_used"] == 2
+    assert metrics["agent_limits"]["tool_calls_used"] == 1
+    assert metrics["agent_limits"]["workspace_bound"] is True

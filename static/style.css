@@ -8772,6 +8772,12 @@ body.hide-thinking .thinking-section { display: none !important; }
   border-top: 1px solid color-mix(in srgb, var(--red) 14%, transparent);
   padding: 8px 10px 10px;
 }
+.agent-process-meta {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin-bottom: 10px;
+}
 .agent-process-round {
   margin: 4px 0 8px;
 }
