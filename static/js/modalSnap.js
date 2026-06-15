@@ -890,6 +890,21 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     if (el.style[prop] !== value) el.style[prop] = value;
   };
   const _hideHandle = (handle) => _setStyle(handle, 'display', 'none');
+  const _requestDockMinimize = (owner, side) => {
+    if (!owner) return false;
+    try {
+      const ev = new CustomEvent('odysseus:edge-dock-minimize', {
+        cancelable: true,
+        detail: { modal: owner, side },
+      });
+      window.dispatchEvent(ev);
+    } catch (_) {}
+    if (!_isActiveDockOwner(owner)) {
+      _settleEdgeDockResizeHandles();
+      return true;
+    }
+    return false;
+  };
 
   for (const side of ['left', 'right']) {
     const handle = handles[side];
@@ -903,7 +918,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     handle.style.pointerEvents = 'auto';
     handle.style.touchAction = 'none';
     handle.style.display = 'none';
-    handle.title = 'Drag to resize docked window';
+    handle.title = 'Drag to resize docked window; click to hide';
     document.body.appendChild(handle);
   }
 
@@ -1036,14 +1051,19 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       handle.setPointerCapture?.(e.pointerId);
       const nodes = _resolveDockNodes(owner);
       const content = nodes?.content;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let moved = false;
       const prevCursor = document.body.style.cursor;
       const prevUserSelect = document.body.style.userSelect;
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
       document.body.classList.add('edge-dock-resizing');
-      _setWidth(owner, side, e.clientX);
       const onMove = (ev) => {
         ev.preventDefault();
+        if (Math.abs(ev.clientX - startX) > 5 || Math.abs(ev.clientY - startY) > 5) {
+          moved = true;
+        }
         _setWidth(owner, side, ev.clientX);
       };
       const onUp = (ev) => {
@@ -1054,6 +1074,14 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         document.body.classList.remove('edge-dock-resizing');
         document.body.style.cursor = prevCursor;
         document.body.style.userSelect = prevUserSelect;
+        const isTap = ev.type === 'pointerup'
+          && !moved
+          && Math.hypot((ev.clientX || startX) - startX, (ev.clientY || startY) - startY) <= 6;
+        if (isTap && _requestDockMinimize(owner, side)) {
+          ev.preventDefault();
+          ev.stopPropagation?.();
+          return;
+        }
         const finalW = side === 'right'
           ? parseFloat(document.documentElement.style.getPropertyValue('--right-dock-w')) || content?.getBoundingClientRect?.().width || 0
           : content?.getBoundingClientRect?.().width || 0;

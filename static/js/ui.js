@@ -784,6 +784,102 @@ export function isTouchInsideModal() {
   return _touchInsideModal;
 }
 
+function _sheetGrabContentFromPointEvent(e) {
+  const content = e.target?.closest?.('.modal-content') || e.target?.closest?.('#theme-popup');
+  if (!content) return null;
+  if (e.target?.closest?.('button, input, select, textarea, a, label, [contenteditable="true"], [contenteditable=""]')) {
+    return null;
+  }
+  const r = content.getBoundingClientRect();
+  if (!r || !r.width || !r.height) return null;
+  const y = e.clientY - r.top;
+  const xFromCenter = Math.abs(e.clientX - (r.left + r.width / 2));
+  const inGrabPillHitZone = y >= 0 && y <= 34 && xFromCenter <= 92;
+  if (!inGrabPillHitZone) return null;
+  const compactSheet = window.innerWidth <= 768
+    || (r.width >= Math.min(window.innerWidth - 24, 760)
+      && r.bottom >= window.innerHeight - 8
+      && r.height >= window.innerHeight * 0.5);
+  return compactSheet ? content : null;
+}
+
+function _minimizeOrHideSheetContent(content) {
+  if (!content) return false;
+  const modal = content.closest('.modal');
+  if (!modal || modal.classList.contains('hidden')) return false;
+  const id = modal.id || '';
+  if (id) {
+    try {
+      if (Modals.minimize(id)) return true;
+    } catch (_) {}
+  }
+  modal.classList.add('hidden');
+  modal.style.display = '';
+  content.classList.remove('sheet-ready', 'modal-closing');
+  content.style.transform = '';
+  content.style.transition = '';
+  content.style.animation = '';
+  try { window.dispatchEvent(new CustomEvent('modal-dismissed', { detail: { id } })); } catch (_) {}
+  return true;
+}
+
+// Compact sheets expose a centered grab pill. Dragging it still starts the
+// swipe gesture; a plain tap/click now hides the sheet instead of doing nothing.
+(function _initSheetGrabClickToHide() {
+  let active = null;
+  let suppressClickUntil = 0;
+
+  document.addEventListener('pointerdown', (e) => {
+    const content = _sheetGrabContentFromPointEvent(e);
+    if (!content) return;
+    active = {
+      content,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+  }, true);
+
+  document.addEventListener('pointermove', (e) => {
+    if (!active || e.pointerId !== active.pointerId) return;
+    if (Math.abs(e.clientX - active.startX) > 6 || Math.abs(e.clientY - active.startY) > 6) {
+      active.moved = true;
+    }
+  }, true);
+
+  const finish = (e) => {
+    if (!active || e.pointerId !== active.pointerId) return;
+    const tap = e.type === 'pointerup'
+      && !active.moved
+      && Math.hypot(e.clientX - active.startX, e.clientY - active.startY) <= 6;
+    const content = active.content;
+    active = null;
+    if (!tap) return;
+    if (_minimizeOrHideSheetContent(content)) {
+      suppressClickUntil = Date.now() + 500;
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  document.addEventListener('pointerup', finish, true);
+  document.addEventListener('pointercancel', finish, true);
+
+  document.addEventListener('click', (e) => {
+    if (Date.now() < suppressClickUntil) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const content = _sheetGrabContentFromPointEvent(e);
+    if (!content) return;
+    if (_minimizeOrHideSheetContent(content)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+})();
+
 // Close floating dropdowns/popups on scroll to prevent them drifting
 function _initScrollDismiss() {
   const chatHistory = document.getElementById('chat-history');
@@ -896,6 +992,7 @@ if ('ontouchstart' in window) {
   let _velocity = 0;
   let _dragging = false;    // true once we've committed to a vertical drag
   let _cancelled = false;   // true if horizontal movement detected
+  let _startedInGrabTapZone = false;
 
   // Close any floating dropdowns/menus that hang off body via position:fixed.
   // Called when a swipe-dismiss gesture starts so the menu doesn't orphan over
@@ -953,6 +1050,11 @@ if ('ontouchstart' in window) {
     _velocity = 0;
     _dragging = false;
     _cancelled = false;
+    _startedInGrabTapZone = _sheetGrabContentFromPointEvent({
+      target: e.target,
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+    }) === content;
   }, { passive: true });
 
   document.addEventListener('touchmove', (e) => {
@@ -967,6 +1069,7 @@ if ('ontouchstart' in window) {
         _swipeTarget.style.transform = '';
         _swipeTarget = null;
         _cancelled = true;
+        _startedInGrabTapZone = false;
         return;
       }
       if (Math.abs(dy) > 8) {
@@ -985,6 +1088,7 @@ if ('ontouchstart' in window) {
           _swipeTarget.style.transform = '';
           _swipeTarget = null;
           _cancelled = true;
+          _startedInGrabTapZone = false;
           return;
         }
         // If swiping up and modal-content itself is scrollable, let native handle it
@@ -992,6 +1096,7 @@ if ('ontouchstart' in window) {
           _swipeTarget.style.transform = '';
           _swipeTarget = null;
           _cancelled = true;
+          _startedInGrabTapZone = false;
           return;
         }
         // If swiping down but content isn't at the top, let native scroll
@@ -999,6 +1104,7 @@ if ('ontouchstart' in window) {
           _swipeTarget.style.transform = '';
           _swipeTarget = null;
           _cancelled = true;
+          _startedInGrabTapZone = false;
           return;
         }
         _dragging = true;
@@ -1034,11 +1140,20 @@ if ('ontouchstart' in window) {
 
   document.addEventListener('touchend', (e) => {
     if (!_swipeTarget || !_dragging) {
+      const el = _swipeTarget;
+      const touch = e.changedTouches?.[0] || null;
+      const endX = touch?.clientX ?? _startX;
+      const endY = touch?.clientY ?? _lastY ?? _startY;
+      const isGrabTap = !!(el && _startedInGrabTapZone && !_cancelled
+        && Math.hypot(endX - _startX, endY - _startY) <= 6);
       _swipeTarget = null;
+      _startedInGrabTapZone = false;
+      if (isGrabTap) _minimizeOrHideSheetContent(el);
       return;
     }
     const el = _swipeTarget;
     _swipeTarget = null;
+    _startedInGrabTapZone = false;
 
     const dy = _lastY - _startY;
     const shouldDismiss = dy > DISMISS_THRESHOLD || (dy > 20 && _velocity > VELOCITY_THRESHOLD);

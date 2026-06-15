@@ -1440,17 +1440,21 @@ function _autoRegister(id) {
   return _state.get(id);
 }
 
-window.addEventListener('odysseus:edge-dock-replace', (e) => {
-  const modal = e.detail?.modal;
-  if (!modal || modal === e.detail?.replacement) return;
+function _minimizeDockedModal(modal, context = 'dock') {
+  if (!modal) return false;
   const id = modal.id || '';
 
   if (id === 'notes-pane') {
-    try { suspendDock(modal); } catch (err) { console.warn('suspendDock on notes replace failed', err); }
+    try { suspendDock(modal); } catch (err) { console.warn(`suspendDock on notes ${context} failed`, err); }
     const minBtn = document.getElementById('notes-minimize-btn');
     if (minBtn) {
       minBtn.click();
-      return;
+      return true;
+    }
+    if (!_state.has('notes-panel') && _AUTO_WIRE['notes-panel']) _autoRegister('notes-panel');
+    if (_state.has('notes-panel')) {
+      minimize('notes-panel');
+      return true;
     }
   }
 
@@ -1458,13 +1462,26 @@ window.addEventListener('odysseus:edge-dock-replace', (e) => {
     if (!_state.has(id) && _AUTO_WIRE[id]) _autoRegister(id);
     if (_state.has(id)) {
       minimize(id);
-      return;
+      return true;
     }
   }
 
-  try { suspendDock(modal); } catch (err) { console.warn('suspendDock on dock replace failed', err); }
+  try { suspendDock(modal); } catch (err) { console.warn(`suspendDock on dock ${context} failed`, err); }
   modal.classList?.add('hidden', 'modal-minimized');
   if (modal.style) modal.style.display = 'none';
+  return true;
+}
+
+window.addEventListener('odysseus:edge-dock-minimize', (e) => {
+  if (_minimizeDockedModal(e.detail?.modal, 'handle minimize')) {
+    e.preventDefault();
+  }
+});
+
+window.addEventListener('odysseus:edge-dock-replace', (e) => {
+  const modal = e.detail?.modal;
+  if (!modal || modal === e.detail?.replacement) return;
+  _minimizeDockedModal(modal, 'replace');
 });
 
 // Watch the document for tool modals being added/shown and inject the `_`
