@@ -407,8 +407,11 @@ function _openVisionEditor(att, userMsgEl) {
 
 // Tool call syntax patterns to strip from displayed text
 const TOOL_CALL_RE = /\[TOOL_CALL\][\s\S]*?\[\/TOOL_CALL\]/gi;
-// Only strip fenced tool-call blocks that look like structured invocations, not regular code examples
-const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document)\s*\n[\s\S]*?```/gi;
+// Only strip fenced tool-call blocks that look like structured invocations, not regular code examples.
+// Email tools are added here so executed email fences (e.g. ```list_emails) settle the same way live as
+// they do on history reload — the backend already strips them via TOOL_TAGS (#3993). bash/python stay
+// out on purpose: those are languages a user may legitimately have asked the model to show.
+const EXEC_FENCE_RE = /```(?:web_search|read_file|write_file|create_document|edit_document|update_document|list_email_accounts|send_email|list_emails|read_email|reply_to_email|bulk_email|archive_email|delete_email|mark_email_read)\s*\n[\s\S]*?```/gi;
 // XML-style tool calls: <minimax:tool_call>, <tool_call>, <function_call>, bare <invoke>
 const XML_TOOL_CALL_RE = /<(?:[\w]+:)?(?:tool_call|function_call)>[\s\S]*?<\/(?:[\w]+:)?(?:tool_call|function_call)>/gi;
 const XML_INVOKE_RE = /<invoke\s+name=['"][^'"]*['"]>[\s\S]*?<\/invoke>/gi;
