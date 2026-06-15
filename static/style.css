@@ -2001,12 +2001,15 @@ body.bg-pattern-sparkles {
       border: 1px solid var(--bubble-border, var(--border));
       border-radius: 18px 18px 0 18px;
       align-self: flex-end;
-      width: 85%;
+      width: fit-content;
       max-width: 85%;
       min-width: 80px;
       word-wrap: break-word;
       overflow-wrap: break-word;
       overflow: hidden;
+    }
+    .msg-user:has(textarea) {
+      width: 85%;
     }
     .msg-ai {
       align-items: flex-start;
