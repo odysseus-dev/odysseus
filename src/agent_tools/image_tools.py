@@ -219,6 +219,12 @@ class GenerateImageTool:
                 elif img.get("url"):
                     # Download external URL and save locally (DALL-E returns temp URLs)
                     try:
+                        # Validate the provider URL before downloading (SSRF protection)
+                        from src.url_safety import check_outbound_url
+                        ok, reason = check_outbound_url(img["url"], block_private=False)
+                        if not ok:
+                            return {"error": f"Image API returned unsafe image URL: {reason}"}
+
                         dl_resp = httpx.get(img["url"], timeout=60)
                         if dl_resp.status_code == 200:
                             img_dir = Path(GENERATED_IMAGES_DIR)

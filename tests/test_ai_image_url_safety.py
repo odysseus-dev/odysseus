@@ -1,4 +1,5 @@
 from src import ai_interaction
+from src.agent_tools.image_tools import GenerateImageTool
 
 
 class _GenerationResponse:
@@ -68,7 +69,7 @@ async def test_generate_image_validates_provider_url_before_download(monkeypatch
     monkeypatch.setattr(url_safety, "check_outbound_url", _check_outbound_url)
     monkeypatch.setattr(httpx, "get", _get)
 
-    result = await ai_interaction.do_generate_image("draw a chair\ndall-e-3")
+    result = await GenerateImageTool().execute("draw a chair\ndall-e-3", ctx={})
 
     assert result["image_url"] == provider_url
     assert events == [
@@ -95,7 +96,7 @@ async def test_generate_image_rejects_unsafe_provider_url_without_download(monke
     monkeypatch.setattr(url_safety, "check_outbound_url", _check_outbound_url)
     monkeypatch.setattr(httpx, "get", _get)
 
-    result = await ai_interaction.do_generate_image("draw a chair\ndall-e-3")
+    result = await GenerateImageTool().execute("draw a chair\ndall-e-3", ctx={})
 
     assert result["error"] == (
         "Image API returned unsafe image URL: "
