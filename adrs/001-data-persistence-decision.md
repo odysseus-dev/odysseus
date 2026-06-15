@@ -495,7 +495,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** Settings contain secrets (API keys, provider credentials) and are already cached in-process, so the "easy to read the JSON file" argument does not reflect actual usage — the app reads from cache, not disk. A `settings` table (or a single-row `config` table with a JSON column) would provide crash-safe writes via WAL journaling instead of relying on file-level atomicity, eliminate the custom defaults-fallback-on-corrupt-file code, and bring secret-bearing state under the same backup/restore path as other SQLite domains. The merge-over-defaults pattern works identically with `COALESCE` or application-level merge from a JSON column. Settings and feature flags could share a single `config` table. See [Open Question 4](#open-questions) for counter-arguments.
+**Rationale:** Settings contain secrets (API keys, provider credentials) and are already cached in-process, so the "easy to read the JSON file" argument does not reflect actual usage — the app reads from cache, not disk. A `settings` table (or a single-row `config` table with a JSON column) would provide crash-safe writes via WAL journaling instead of relying on file-level atomicity, eliminate the custom defaults-fallback-on-corrupt-file code, and bring secret-bearing state under the same backup/restore path as other SQLite domains. The merge-over-defaults pattern works identically with `COALESCE` or application-level merge from a JSON column. Settings and feature flags could share a single `config` table. See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 29. Feature Flags
 
@@ -510,7 +510,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** Feature flags are a simple boolean map with the same defaults-fallback and corrupt-file recovery code as settings. They should migrate alongside settings — a `config` table with a `domain` column (e.g., `settings`, `features`) or a JSON column per domain eliminates a separate store, a separate fallback path, and a separate backup concern. There is no technical reason for this to be a standalone JSON file. See [Open Question 4](#open-questions) for counter-arguments.
+**Rationale:** Feature flags are a simple boolean map with the same defaults-fallback and corrupt-file recovery code as settings. They should migrate alongside settings — a `config` table with a `domain` column (e.g., `settings`, `features`) or a JSON column per domain eliminates a separate store, a separate fallback path, and a separate backup concern. There is no technical reason for this to be a standalone JSON file. See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 30. User Preferences
 
@@ -540,7 +540,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** The `PresetManager` implements custom atomic-write logic and corrupt-store fallback — complexity that exists specifically because JSON files lack crash safety. SQLite provides this natively. `McpServer` is an equally low-traffic global admin store and nobody questioned putting it in SQLite. A `presets` table eliminates the custom atomic writer and corrupt-recovery code while gaining transactional consistency. Presets contain structured data (templates, groups) that would benefit from per-row queries rather than full-file reads. The specs also note an unresolved decision about whether `user_templates` and `group_presets` should be owner-scoped — SQLite would make adding owner columns trivial if that decision goes that way. See [Open Question 4](#open-questions) for counter-arguments.
+**Rationale:** The `PresetManager` implements custom atomic-write logic and corrupt-store fallback — complexity that exists specifically because JSON files lack crash safety. SQLite provides this natively. `McpServer` is an equally low-traffic global admin store and nobody questioned putting it in SQLite. A `presets` table eliminates the custom atomic writer and corrupt-recovery code while gaining transactional consistency. Presets contain structured data (templates, groups) that would benefit from per-row queries rather than full-file reads. The specs also note an unresolved decision about whether `user_templates` and `group_presets` should be owner-scoped — SQLite would make adding owner columns trivial if that decision goes that way. See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 32. Model Endpoints
 
@@ -585,7 +585,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** There is already a dormant `Integration` SQLAlchemy model in `core/database.py` — the codebase is halfway to SQLite for this domain. The current JSON store and the dead model create confusion about which is authoritative. Migrating to the existing (or a revised) `Integration` model resolves this ambiguity, eliminates a standalone JSON file, and brings integration state under the standard SQLite backup path. The store is tiny, so migration effort is minimal. See [Open Question 4](#open-questions) for counter-arguments.
+**Rationale:** There is already a dormant `Integration` SQLAlchemy model in `core/database.py` — the codebase is halfway to SQLite for this domain. The current JSON store and the dead model create confusion about which is authoritative. Migrating to the existing (or a revised) `Integration` model resolves this ambiguity, eliminates a standalone JSON file, and brings integration state under the standard SQLite backup path. The store is tiny, so migration effort is minimal. See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 35. Vault Config
 
@@ -600,7 +600,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** The chmod 0600 argument does not hold up. `app.db` already contains encrypted API keys, bcrypt password hashes, TOTP secrets, and bearer token hashes — it should be chmod 0600 itself. If it is not, that is a security bug to fix, not a reason to keep vault secrets in a separate file. Moving `BW_SESSION` and vault config into `app.db` (using the `EncryptedText` pattern for the session token) consolidates secret-bearing state into one file with one permission boundary. The vault-specific chmod code can be removed, and the vault route's corrupt-or-non-object config fallback becomes a standard SQLite query. See [Open Question 4](#open-questions) for counter-arguments.
+**Rationale:** The chmod 0600 argument does not hold up. `app.db` already contains encrypted API keys, bcrypt password hashes, TOTP secrets, and bearer token hashes — it should be chmod 0600 itself. If it is not, that is a security bug to fix, not a reason to keep vault secrets in a separate file. Moving `BW_SESSION` and vault config into `app.db` (using the `EncryptedText` pattern for the session token) consolidates secret-bearing state into one file with one permission boundary. The vault-specific chmod code can be removed, and the vault route's corrupt-or-non-object config fallback becomes a standard SQLite query. See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 36. Embedding Endpoint Config
 
@@ -615,7 +615,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** A standalone JSON file for a single configuration value is hard to justify when settings and model endpoints are already in SQLite. This config could be a row in the `config` table alongside settings and feature flags, or a column on a relevant model endpoint row. Eliminating the file removes one more store from the backup/migration surface. See [Open Question 4](#open-questions) for counter-arguments.
+**Rationale:** A standalone JSON file for a single configuration value is hard to justify when settings and model endpoints are already in SQLite. This config could be a row in the `config` table alongside settings and feature flags, or a column on a relevant model endpoint row. Eliminating the file removes one more store from the backup/migration surface. See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 37. Provider Auth Sessions
 
@@ -681,7 +681,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Rationale:** Background jobs are inherently file-system-oriented — they produce wrapper scripts, log files, and exit codes. The JSON state file tracks job lifecycle. This pattern is appropriate for process-management state that interacts with the OS. Jobs are ephemeral and do not survive server restart in meaningful state.
 
-### Use-case 41. Cookbook/Model Serve State
+### Use-case 41. Cookbook State File
 
 | Attribute | Value |
 |-----------|-------|
@@ -694,9 +694,24 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** The "shared with CLI" argument is weak — `sqlite3` is available on every platform Odysseus supports, and the CLI already interacts with `app.db` for other operations (e.g., `scripts/odysseus-mcp` reads `McpServer` rows). Cookbook state contains encrypted HF tokens and has anti-wipe guard concerns noted in specs (stale browser state can overwrite server state). SQLite would provide crash-safe writes, eliminate the stale-overwrite risk via row-level updates, and bring secret-bearing state under the same encrypted-column pattern used by `ModelEndpoint`. The specs also note an unresolved ownership decision for cookbook-created endpoints — SQLite makes adding owner columns straightforward. See [Open Question 4](#open-questions) for counter-arguments.
+**Rationale:** The "shared with CLI" argument is weak — `sqlite3` is available on every platform Odysseus supports, and the CLI already interacts with `app.db` for other operations (e.g., `scripts/odysseus-mcp` reads `McpServer` rows). Cookbook state contains encrypted HF tokens and the stale browser overwrite race is a real data integrity issue that row-level SQLite updates would eliminate. The specs also note an unresolved ownership decision for cookbook-created endpoints — SQLite makes adding owner columns straightforward. See [Open Question 1](#open-questions) for counter-arguments.
 
-### Use-case 42. Search Cache and Analytics
+### Use-case 42. Cookbook Download Completeness
+
+| Attribute | Value |
+|-----------|-------|
+| Current backend | Not persisted — derived at runtime by scanning the HF cache for `*.incomplete` blobs |
+| Access pattern | Read on Serve tab render; `has_incomplete` computed live from HF cache scan, not from `cookbook_state.json` |
+| Ownership model | Global |
+| Atomicity | N/A — derived state, not written |
+| Backup coverage | N/A |
+| Notes | The Serve tab shows a model as "downloading" if incomplete blobs exist in the HF cache. This is two sources of truth disagreeing: the state file says "ready" but the cache scan says "still downloading." This is orthogonal to the storage backend for use-case 41. |
+
+**Recommendation:** Needs discussion
+
+**Rationale:** This is not a storage backend problem — it is a reconciliation problem between `cookbook_state.json` (or its SQLite successor) and a live HF cache directory scan. Moving the state file to SQLite (use-case 41) does not fix stalled-download status bugs because the "is this done?" answer comes from the filesystem, not the state store. The fix requires deciding which source is authoritative for download completeness and reconciling them, which is a separate design discussion from persistence backend choice.
+
+### Use-case 43. Search Cache and Analytics
 
 | Attribute | Value |
 |-----------|-------|
@@ -711,7 +726,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Rationale:** Ephemeral search cache. Files are the right storage for cache data that should be discardable.
 
-### Use-case 43. HuggingFace Model Cache
+### Use-case 44. HuggingFace Model Cache
 
 | Attribute | Value |
 |-----------|-------|
@@ -726,7 +741,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Rationale:** Managed by upstream HuggingFace libraries. Odysseus should not own this storage pattern.
 
-### Use-case 44. Reminder Dedupe State
+### Use-case 45. Reminder Dedupe State
 
 | Attribute | Value |
 |-----------|-------|
@@ -741,7 +756,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Rationale:** Reminder dedupe is ephemeral runtime state — a cache of `{note_id: last_ping_timestamp}` that prevents duplicate notifications. Losing it causes at most one duplicate reminder. Per-owner files are appropriate for a cache that is pruned regularly by the scheduler.
 
-### Use-case 45. Calendar Tidy State
+### Use-case 46. Calendar Tidy State
 
 | Attribute | Value |
 |-----------|-------|
@@ -756,7 +771,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Rationale:** A simple watermark file tracking when the last calendar tidy/classify action ran. Losing it causes one redundant tidy pass. No ownership, no queries — a file is appropriate.
 
-### Use-case 46. Memory Document
+### Use-case 47. Memory Document
 
 | Attribute | Value |
 |-----------|-------|
@@ -775,15 +790,65 @@ All domains in this group are already in SQLite `app.db`.
 
 ## Cross-Cutting Concerns
 
-### Ownership Model Inconsistencies
+### Open Questions
 
-The codebase uses four distinct owner states:
+1. **Debate on simple config vs appliction state:** For several config/state stores, this ADR recommends migration to SQLite but the case is weaker than for relational/owner-scoped domains. RaresKeY's feedback: "SQLite can also introduce unnecessary friction in areas where a database is not buying us much. Some local/config/cache/state data may be simpler and safer as files, especially when the access pattern is simple and the ownership/migration story is clear." Maintainers should weigh whether the migration benefits (crash safety, eliminating custom atomic writers, unified backup) justify the effort for these stores, or whether the simple access pattern means files are fine:
+
+   | Domain | This ADR says | SQLite buys | Counter-argument |
+   |--------|--------------|-------------|-----------------|
+   | Settings (`settings.json`) | Migrate | Crash safety, secret-bearing state in one place | Simple config, read from cache, write rarely — works fine as-is |
+   | Feature flags (`features.json`) | Migrate | Consolidate with settings | Boolean map — database adds friction for no real gain |
+   | Presets (`presets.json`) | Migrate | Eliminates custom atomic writer | Atomic writer works, low-traffic, simple structure |
+   | Integration presets (`integrations.json`) | Migrate | Resolves dormant model ambiguity | Tiny store — code cleanup, not a storage problem |
+   | Embedding endpoint (`embedding_endpoint.json`) | Migrate | One fewer file | Single config value — trivially simple as a file |
+   | Cookbook state (`cookbook_state.json`) | Migrate | Row-level updates, encrypted token pattern | Process management state, shared with CLI, low-traffic |
+   | Vault config (`vault.json`) | Migrate | Consolidates secrets into `app.db` | Simple access pattern, security-sensitive, already works |
+
+   The domains where SQLite is clearly solving a real problem (ownership, querying, scaling) are not in dispute: memories, user preferences, upload/skills/research metadata, and scheduled email consolidation.
+
+   However, it is worth noting that almost none of these stores are "config files" in the traditional sense (deployed with the app, edited by an operator in a text editor before startup). They are **runtime application state created and modified through the Odysseus UI**:
+
+   | Domain | Created/modified by | Looks like config? | Actually is |
+   |--------|--------------------|--------------------|-------------|
+   | Settings | Admin, via Settings modal in the UI | Yes — key-value pairs | Runtime application state. Values reference `ModelEndpoint` IDs, search provider names, and contain secrets that are peers to `ModelEndpoint.api_key`. |
+   | Feature flags | Admin, via admin toggles in the UI | Yes — boolean map | Runtime application state. Gates application behavior at request time. |
+   | Presets | Admin, via preset editor in the UI | Partially — templates | Runtime application state. Contains structured data (templates, groups) with potential future owner-scoping. |
+   | Integration presets | Admin, via settings UI | Yes — API templates | Runtime application state. Stores base URLs, headers, auth patterns created through the UI. |
+   | Embedding endpoint | Admin, via embedding admin UI | Yes — single URL | Runtime application state. Set through the UI, not a deployment config file. |
+   | Cookbook state | App + admin, via Cookbook modal | No — server lists, tokens | Runtime process state with encrypted secrets. Modified by both UI actions and serve lifecycle. |
+   | Vault config | Admin, via vault settings UI | Partially — server URL | Runtime application state. `BW_SESSION` is an ephemeral session token from a `bw login` action, not a deployment config. |
+
+   RaresKeY's "local/config data may be simpler as files" framing assumes operator-managed config. In Odysseus, the admin UI is the primary interface — nobody runs `vim data/settings.json` as the normal workflow. If these stores are application state managed through the UI, they fit RaresKeY's own criterion of "durable application records" that belong in SQLite.
+
+2. Ownership normalization: this ADR recommends a single canonical owner representation (see below). What should the canonical no-login / single-user owner value be? Should this be addressed here or in a dedicated ownership ADR?
+3. Should `auth.json` and `sessions.json` migrate to SQLite for crash safety, or does the working lock-guard pattern justify keeping them as JSON? These are the highest-risk migration candidates due to security sensitivity.
+4. Migration ordering: which domains should migrate first? A suggested priority based on impact vs. risk: (a) settings/features/embedding config → `config` table (low risk, eliminates 3 files), (b) presets + integration presets (low risk, eliminates custom atomic writers), (c) memories (medium risk, biggest user-facing improvement), (d) user preferences (low risk, eliminates full-file-rewrite scaling problem), (e) cookbook state (low-medium risk, CLI needs updating), (f) upload/skills/research metadata as SQLite references.
+
+### Ownership Model — The Bigger Problem
+
+Normalizing ownership is arguably worth more than the backend choice itself. Today the same concept — "who owns this data" — is expressed in four different shapes across the codebase:
+
+| Shape | Where used | How it works |
+|-------|-----------|--------------|
+| SQL `owner` column + `owner_filter()` | Sessions, documents, gallery, calendar, tasks, notes, endpoints, API tokens, etc. | `NULL` treated as legacy/shared; `owner_filter()` includes null-owner rows for compatibility |
+| `_users` blob in JSON | `user_prefs.json` | Per-user prefs nested under a `_users` key; entire file rewritten on any user's change |
+| Frontmatter field | `data/skills/{cat}/{name}/SKILL.md` | Owner stored as YAML frontmatter string; rename requires file-level rewrite |
+| Directory/filename encoding | `data/uploads/` (owner-qualified index keys), `data/note_pings_<owner_slug>.json` | Owner embedded in file paths or JSON keys; rename requires rewriting paths/keys |
+
+On top of that, four distinct "no owner" values coexist:
 - SQL `NULL` / JSON missing: legacy/shared/unscoped compatibility data
 - `""` (empty string): `AUTH_ENABLED=false` route helpers
 - `None` (Python): chat/agent paths when auth middleware is disabled
 - `ODYSSEUS_FALLBACK_OWNER` / `owner@localhost`: calendar route normalization
 
-This fragmentation complicates access-control reasoning. The spec notes that "there is no single anonymous/local owner value today." A future ADR should propose a canonical no-login owner value and a migration path for legacy null-owner rows. This is a separate decision from storage backend choices but affects every domain.
+This fragmentation means:
+- **User rename is a cross-store data migration** that touches SQL rows, JSON files, disk files, and frontmatter. If any step fails partially, ownership splits across stores (see use-case 4 note).
+- **Owner-scoping bugs are easy to introduce** because each store implements ownership differently. The use-case notes in this ADR flag six cross-owner data leak points (use-cases 9, 10, 18, 24, 26, and the agent skill index).
+- **New features must learn four patterns** to implement ownership correctly.
+
+Consolidating more domains into SQLite (as this ADR recommends) naturally reduces ownership shapes — SQL `owner` column + `owner_filter()` becomes the dominant pattern. But the "no owner" value fragmentation remains regardless of backend choice and needs its own decision.
+
+**Recommendation:** Adopt a single canonical owner representation. For SQL domains, this means a consistent `owner` column convention (including a canonical value for the no-login case). For any remaining file-backed domains, ownership should be tracked via SQLite reference tables rather than encoded in filenames or frontmatter. User rename should be a single-transaction operation wherever possible — which requires ownership to live in one store, not four.
 
 ### Backup and Restore Coverage
 
@@ -794,7 +859,7 @@ Two backup mechanisms exist with different coverage:
 | `routes/backup_routes.py` (HTTP) | Memories, presets, skills, settings, features, prefs | Calendar, tasks, notes, documents, gallery, sessions, email, MCP, endpoints |
 | `scripts/odysseus-backup` (local) | SQLite backup of `app.db`, key files, JSON stores, skills tree | Some large subtrees behind flags (deep research, mail attachments) |
 
-Consolidating more domains into `app.db` would increase the coverage of the local SQLite backup without needing domain-specific backup logic. If all the "Migrate to SQLite" recommendations in this ADR are implemented, the number of distinct JSON/state stores under `data/` drops significantly — to just 2 (auth.json, sessions.json — both "Needs discussion" due to migration risk, not because JSON is the right backend). Every other durable application state would be in `app.db` and covered by a single `sqlite3 .backup` call. The `app.db` file should be chmod 0600 — it already contains encrypted API keys, bcrypt hashes, and bearer tokens.
+Consolidating more domains into `app.db` would increase the coverage of the local SQLite backup without needing domain-specific backup logic. If all the "Migrate to SQLite" recommendations in this ADR are implemented, the remaining file-backed stores are: `auth.json` and `sessions.json` (Needs discussion), `api_keys.json` (Needs discussion), `contacts.json` (Keep — CardDAV fallback), `bg_jobs.json` (Keep — process management), `note_pings_<owner>.json` (Keep — ephemeral dedupe), and `tidy_calendar_state.json` (Keep — watermark). That is roughly 6-7 JSON/state files, down from 13+. The stores that remain are either security-sensitive migration candidates, ephemeral caches, or fallback stores — not core application state. The `app.db` file should be chmod 0600 — it already contains encrypted API keys, bcrypt hashes, and bearer tokens.
 
 ### Separate SQLite Databases vs. Consolidated app.db
 
@@ -835,41 +900,6 @@ For domains where migration is recommended:
 | Vault Config → SQLite | Low — tiny store, admin-only | Read JSON, insert row; `BW_SESSION` uses `EncryptedText`; remove vault-specific chmod code; ensure `app.db` is chmod 0600 |
 | Scheduled Emails → `app.db` | Low — already SQLite, just moving tables | Move table definitions to `core/database.py`; startup migration copies rows from `scheduled_emails.db` if it exists; helper code in `email_helpers.py` switches to `app.db` session |
 | Email Cache → Remove | None — dead code | Remove `EMAIL_CACHE_DB` constant, `_get_cached_summaries()` function, and `email_ai` table reference from `mcp_servers/email_server.py` |
-
----
-
-## Open Questions
-
-1. Should the project propose a canonical owner value for the no-login / single-user case as part of this discussion, or defer to a separate ADR?
-2. Should `auth.json` and `sessions.json` migrate to SQLite for crash safety, or does the working lock-guard pattern justify keeping them as JSON? These are the highest-risk migration candidates due to security sensitivity.
-3. Migration ordering: which domains should migrate first? A suggested priority based on impact vs. risk: (a) settings/features/embedding config → `config` table (low risk, eliminates 3 files), (b) presets + integration presets (low risk, eliminates custom atomic writers), (c) memories (medium risk, biggest user-facing improvement), (d) user preferences (low risk, eliminates full-file-rewrite scaling problem), (e) cookbook state (low-medium risk, CLI needs updating), (f) upload/skills/research metadata as SQLite references.
-4. For several config/state stores, this ADR recommends migration to SQLite but the case is weaker than for relational/owner-scoped domains. RaresKeY's feedback: "SQLite can also introduce unnecessary friction in areas where a database is not buying us much. Some local/config/cache/state data may be simpler and safer as files, especially when the access pattern is simple and the ownership/migration story is clear." Maintainers should weigh whether the migration benefits (crash safety, eliminating custom atomic writers, unified backup) justify the effort for these stores, or whether the simple access pattern means files are fine:
-
-   | Domain | This ADR says | SQLite buys | Counter-argument |
-   |--------|--------------|-------------|-----------------|
-   | Settings (`settings.json`) | Migrate | Crash safety, secret-bearing state in one place | Simple config, read from cache, write rarely — works fine as-is |
-   | Feature flags (`features.json`) | Migrate | Consolidate with settings | Boolean map — database adds friction for no real gain |
-   | Presets (`presets.json`) | Migrate | Eliminates custom atomic writer | Atomic writer works, low-traffic, simple structure |
-   | Integration presets (`integrations.json`) | Migrate | Resolves dormant model ambiguity | Tiny store — code cleanup, not a storage problem |
-   | Embedding endpoint (`embedding_endpoint.json`) | Migrate | One fewer file | Single config value — trivially simple as a file |
-   | Cookbook state (`cookbook_state.json`) | Migrate | Row-level updates, encrypted token pattern | Process management state, shared with CLI, low-traffic |
-   | Vault config (`vault.json`) | Migrate | Consolidates secrets into `app.db` | Simple access pattern, security-sensitive, already works |
-
-   The domains where SQLite is clearly solving a real problem (ownership, querying, scaling) are not in dispute: memories, user preferences, upload/skills/research metadata, and scheduled email consolidation.
-
-   However, it is worth noting that almost none of these stores are "config files" in the traditional sense (deployed with the app, edited by an operator in a text editor before startup). They are **runtime application state created and modified through the Odysseus UI**:
-
-   | Domain | Created/modified by | Looks like config? | Actually is |
-   |--------|--------------------|--------------------|-------------|
-   | Settings | Admin, via Settings modal in the UI | Yes — key-value pairs | Runtime application state. Values reference `ModelEndpoint` IDs, search provider names, and contain secrets that are peers to `ModelEndpoint.api_key`. |
-   | Feature flags | Admin, via admin toggles in the UI | Yes — boolean map | Runtime application state. Gates application behavior at request time. |
-   | Presets | Admin, via preset editor in the UI | Partially — templates | Runtime application state. Contains structured data (templates, groups) with potential future owner-scoping. |
-   | Integration presets | Admin, via settings UI | Yes — API templates | Runtime application state. Stores base URLs, headers, auth patterns created through the UI. |
-   | Embedding endpoint | Admin, via embedding admin UI | Yes — single URL | Runtime application state. Set through the UI, not a deployment config file. |
-   | Cookbook state | App + admin, via Cookbook modal | No — server lists, tokens | Runtime process state with encrypted secrets. Modified by both UI actions and serve lifecycle. |
-   | Vault config | Admin, via vault settings UI | Partially — server URL | Runtime application state. `BW_SESSION` is an ephemeral session token from a `bw login` action, not a deployment config. |
-
-   RaresKeY's "local/config data may be simpler as files" framing assumes operator-managed config. In Odysseus, the admin UI is the primary interface — nobody runs `vim data/settings.json` as the normal workflow. If these stores are application state managed through the UI, they fit RaresKeY's own criterion of "durable application records" that belong in SQLite.
 
 ## Prior Art
 

@@ -29,7 +29,7 @@ This revised ADR adopts that approach. The binary Option 1 / Option 2 framing is
 
 ## Approach
 
-Rather than choosing between "keep everything" and "rework everything," the per-domain analysis in [001](001-data-persistence-decision.md) evaluates each persistence domain individually across 8 subsystem groups (46 use-cases total). Each domain is assessed on:
+Rather than choosing between "keep everything" and "rework everything," the per-domain analysis in [001](001-data-persistence-decision.md) evaluates each persistence domain individually across 8 subsystem groups (47 use-cases total). Each domain is assessed on:
 
 - Current backend and access pattern
 - Ownership model and query needs
