@@ -131,6 +131,7 @@ def initialize_managers(base_dir: str, rag_manager=None) -> Dict[str, Any]:
         "research_handler": research_handler,
         "chat_handler": chat_handler,
         "model_discovery": model_discovery,
+        "skill_vector": skill_vector,
         "current_presets": preset_manager.presets,
         "PERSONAL_INDEX": personal_docs_manager.index
     }
