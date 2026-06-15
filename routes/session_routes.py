@@ -22,6 +22,22 @@ def _sanitize_export_filename(name: str) -> str:
     return name[:128]
 
 
+# Import guard rails. The payload is the JSON shape produced by
+# GET /session/{sid}/export?fmt=json, but it arrives untrusted (a downloaded,
+# possibly hand-edited file), so every field is validated before use.
+_IMPORT_MAX_MESSAGES = 5000
+_IMPORT_ALLOWED_ROLES = frozenset({"user", "assistant", "system", "tool"})
+_IMPORT_DEFAULT_NAME = "Imported conversation"
+
+
+def _sanitize_import_name(name) -> str:
+    """Clean the conversation name from an import payload."""
+    if not isinstance(name, str):
+        return _IMPORT_DEFAULT_NAME
+    name = name.strip()
+    return name[:200] if name else _IMPORT_DEFAULT_NAME
+
+
 # Blind-compare helper sessions are created with this name prefix. Their real
 # model must never surface in the session list / sidebar — otherwise a blind
 # comparison can be de-anonymized before the user votes (issue #1285).
@@ -842,7 +858,70 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             media_type="text/markdown",
             headers={"Content-Disposition": f"attachment; filename={out_name}"},
         )
-    
+
+    @router.post("/sessions/import")
+    async def import_session(request: Request):
+        """Import a conversation from a previously-exported JSON payload.
+
+        Accepts the shape produced by ``GET /session/{sid}/export?fmt=json``::
+
+            {"name": str, "model": str, "messages": [{"role", "content", ...}]}
+
+        A brand-new session is always minted (fresh id) and stamped with the
+        caller as owner — the file's id/owner are never trusted, so an import
+        can never overwrite or take over another session. The payload is
+        validated field-by-field and rejected with a 400 on any malformed entry
+        rather than silently dropping messages.
+        """
+        user = effective_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, "Import payload is not valid JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Import payload must be a JSON object")
+
+        raw_messages = body.get("messages")
+        if not isinstance(raw_messages, list):
+            raise HTTPException(400, "Import payload must contain a 'messages' array")
+        if len(raw_messages) > _IMPORT_MAX_MESSAGES:
+            raise HTTPException(400, f"Too many messages (max {_IMPORT_MAX_MESSAGES})")
+
+        cleaned = []
+        for idx, m in enumerate(raw_messages):
+            if not isinstance(m, dict):
+                raise HTTPException(400, f"Message {idx} is not an object")
+            role = m.get("role")
+            if role not in _IMPORT_ALLOWED_ROLES:
+                raise HTTPException(400, f"Message {idx} has an invalid role: {role!r}")
+            content = m.get("content")
+            # Plain text is a string; multimodal turns are a list (handled by
+            # the persistence layer). Anything else is malformed.
+            if not isinstance(content, (str, list)):
+                raise HTTPException(400, f"Message {idx} content must be a string or list")
+            meta = m.get("metadata")
+            if not isinstance(meta, dict):
+                meta = None
+            cleaned.append((role, content, meta))
+
+        name = _sanitize_import_name(body.get("name"))
+        model = body.get("model") if isinstance(body.get("model"), str) else ""
+
+        new_id = str(uuid.uuid4())
+        session_manager.create_session(
+            session_id=new_id,
+            name=name,
+            endpoint_url="",
+            model=model,
+            rag=False,
+            owner=user,
+        )
+        for role, content, meta in cleaned:
+            session_manager.add_message(new_id, ChatMessage(role, content, metadata=meta))
+        session_manager.save_sessions()
+
+        return {"id": new_id, "name": name, "count": len(cleaned)}
+
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
         user = effective_user(request)
