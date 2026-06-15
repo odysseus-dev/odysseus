@@ -217,6 +217,21 @@ def _inject_images(report_html: str, images: List[str]) -> Tuple[str, int]:
 
 
 # ---------------------------------------------------------------------------
+# KaTeX math-delimiter regex
+# ---------------------------------------------------------------------------
+# Mirrors the mathBlocks pass in static/js/markdown.js (all four delimiters:
+# \[..\], \(..\), $$..$$, $..$). Kept in one place so the standalone visual
+# report and the chat SPA share one correct implementation. Raw string so the
+# backslashes pass through to the JS regex literal verbatim. Injected into
+# _TEMPLATE via the {math_regex} placeholder.
+_MATH_DELIM_RE = (
+    r"\\\[([\s\S]*?)\\\]"                   # \[ ... \]   display (GPT/Claude style)
+    r"|\\\(([^\n]*?)\\\)"                   # \( ... \)   inline, single line
+    r"|\$\$([\s\S]*?)\$\$"                  # $$ ... $$   display
+    r"|(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)"  # $ ... $     inline (skips $$/currency)
+)
+
+# ---------------------------------------------------------------------------
 # HTML template
 # ---------------------------------------------------------------------------
 
@@ -235,6 +250,7 @@ _TEMPLATE = """\
 <meta name="theme-color" content="#b8543a" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#131214" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>O</text></svg>">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
 <style>
 *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
@@ -1116,6 +1132,48 @@ body::after {{
   }}
 }})();
 
+// Render math expressions with KaTeX
+(function() {{
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js';
+  s.onload = function() {{
+    var content = document.querySelector('.content');
+    if (!content || typeof katex === 'undefined') return;
+    var walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, null, false);
+    var nodes = [];
+    while (walker.nextNode()) {{
+      var p = walker.currentNode.parentElement;
+      if (p && (p.tagName === 'CODE' || p.tagName === 'PRE')) continue;
+      if (/{math_regex}/.test(walker.currentNode.textContent)) {{
+        nodes.push(walker.currentNode);
+      }}
+    }}
+    nodes.forEach(function(node) {{
+      var text = node.textContent;
+      var frag = document.createDocumentFragment();
+      var lastIdx = 0;
+      var re = /{math_regex}/g;
+      var m;
+      while ((m = re.exec(text)) !== null) {{
+        if (m.index > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, m.index)));
+        var math = (m[1] || m[2] || m[3] || m[4] || '').trim();
+        var display = !!(m[1] || m[3]);
+        var span = document.createElement(display ? 'div' : 'span');
+        try {{
+          katex.render(math, span, {{ displayMode: display, throwOnError: false }});
+        }} catch(e) {{
+          span.textContent = m[0];
+        }}
+        frag.appendChild(span);
+        lastIdx = re.lastIndex;
+      }}
+      if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+      if (frag.childNodes.length) node.parentNode.replaceChild(frag, node);
+    }});
+  }};
+  document.head.appendChild(s);
+}})();
+
 // Colorize comparison table cells
 if (document.body.classList.contains('category-comparison')) {{
   const pos = /^(yes|excellent|best|great|strong|fast|high|superior|winner|free|unlimited|native|full|advanced|built[- ]in|✓|✅|⭐)/i;
@@ -1900,6 +1958,7 @@ def generate_visual_report(
         body_class=f"category-{html.escape(str(category))}" if category else "",
         session_id_js=json_dumps_str(session_id or ""),
         spare_images_js=_json_for_script(spare_images),
+        math_regex=_MATH_DELIM_RE,
     )
 
 
