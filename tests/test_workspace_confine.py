@@ -172,7 +172,7 @@ async def test_binding_does_not_leak(ws, admin):
 # must still surface the file tools, otherwise the agent says it has no file
 # access (the bug this guards against).
 
-def _sent_tool_names(monkeypatch, *, workspace):
+def _captured_agent_request(monkeypatch, *, workspace):
     import asyncio
     import src.agent_loop as al
 
@@ -182,10 +182,11 @@ def _sent_tool_names(monkeypatch, *, workspace):
     # Isolate the selection logic from owner gating (tested separately).
     monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
 
-    captured = []
+    captured = {}
 
     async def _fake_stream(_candidates, messages, **kwargs):
-        captured.append(kwargs.get("tools"))
+        captured["tools"] = kwargs.get("tools")
+        captured["messages"] = messages
         yield "data: " + json.dumps({"delta": "ok"}) + "\n\n"
         yield "data: [DONE]\n\n"
 
@@ -200,7 +201,12 @@ def _sent_tool_names(monkeypatch, *, workspace):
         return [c async for c in gen]
 
     asyncio.run(_run())
-    schemas = captured[0] or []
+    return captured
+
+
+def _sent_tool_names(monkeypatch, *, workspace):
+    captured = _captured_agent_request(monkeypatch, workspace=workspace)
+    schemas = captured["tools"] or []
     return {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
 
 
@@ -221,6 +227,22 @@ def test_low_signal_without_workspace_excludes_file_tools(monkeypatch):
     names = _sent_tool_names(monkeypatch, workspace=None)
     assert "read_file" not in names
     assert "get_workspace" not in names
+
+
+def test_workspace_contract_prompt_is_injected(monkeypatch):
+    captured = _captured_agent_request(monkeypatch, workspace="/tmp/project")
+    messages = captured["messages"]
+    contract = next(
+        (m for m in messages if "ACTIVE WORKSPACE CONTRACT" in (m.get("content") or "")),
+        None,
+    )
+    assert contract is not None
+    assert contract["role"] == "system"
+    assert contract.get("_protected") is None  # stripped before provider call
+    assert "/tmp/project" in contract["content"]
+    assert "write_file" in contract["content"]
+    assert "verify the artifact" in contract["content"]
+    assert "Do not say you lack permission" in contract["content"]
 
 
 # ── browse route is admin-gated ─────────────────────────────────────────

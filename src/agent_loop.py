@@ -859,6 +859,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    workspace: Optional[str] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -926,6 +927,25 @@ def _build_system_prompt(
         _datetime_message = current_datetime_context_message()
     except Exception:
         pass
+
+    _workspace_message = None
+    if workspace and not suppress_local_context:
+        _ws = str(workspace).strip()
+        if _ws:
+            _ws_prompt = _ws.replace("`", "\\`")
+            _workspace_message = {
+                "role": "system",
+                "_protected": True,
+                "content": (
+                    "## ACTIVE WORKSPACE CONTRACT\n"
+                    f"An approved workspace is active for this turn: `{_ws_prompt}`.\n"
+                    "- The user may refer to this as the workspace, project, repo, folder, or local files.\n"
+                    "- File tools (`get_workspace`, `ls`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`) are allowed inside this workspace and may use paths relative to it.\n"
+                    "- For file reads/searches/edits, prefer those file tools over shell commands.\n"
+                    "- Do not say you lack permission to read or write the workspace unless a tool result explicitly says the action was blocked or failed.\n"
+                    "- For file create/copy/write/edit requests, verify the artifact with a file tool before claiming success."
+                ),
+            }
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -1255,6 +1275,9 @@ def _build_system_prompt(
         if merged[i].get("role") == "user":
             last_user_idx = i
             break
+    if _workspace_message:
+        merged.insert(last_user_idx, _workspace_message)
+        last_user_idx += 1
     if _doc_message:
         merged.insert(last_user_idx, _doc_message)
         last_user_idx += 1  # the document message is now at last_user_idx
@@ -1987,6 +2010,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         suppress_local_context=guide_only,
+        workspace=workspace,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
