@@ -310,7 +310,10 @@ def setup_codex_routes(
 
     @router.post("/emails/draft-document")
     async def codex_email_draft_document(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
-        owner = _scope_owner_all(request, {"email:draft", "documents:write"})
+        owner = _scope_owner(request, EMAIL_DRAFT_SCOPES)
+        docs_owner = _scope_owner_all(request, DOCS_WRITE_SCOPES)
+        if docs_owner != owner:
+            raise HTTPException(403, "API token owner mismatch")
         if documents_create_endpoint is None:
             raise HTTPException(503, "Documents integration is not available")
         from routes.document_routes import DocumentCreate

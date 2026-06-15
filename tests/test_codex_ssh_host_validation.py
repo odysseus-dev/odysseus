@@ -10,14 +10,14 @@ the validators the rest of the cookbook routes already apply.
 import asyncio
 
 import pytest
-from fastapi import HTTPException
+from fastapi import APIRouter, HTTPException
 from starlette.requests import Request
 
 import routes.codex_routes as codex_routes
 
 
-def _route_endpoint(path: str, method: str):
-    router = codex_routes.setup_codex_routes()
+def _route_endpoint(path: str, method: str, router=None):
+    router = router or codex_routes.setup_codex_routes()
     for route in router.routes:
         if route.path == path and method in route.methods:
             return route.endpoint
@@ -37,6 +37,22 @@ def _launch_request() -> Request:
     request.state.api_token = True
     request.state.api_token_owner = "alice"
     request.state.api_token_scopes = ["cookbook:launch"]
+    return request
+
+
+def _codex_request(scopes) -> Request:
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/codex/emails/draft-document",
+            "headers": [],
+            "state": {},
+        }
+    )
+    request.state.api_token = True
+    request.state.api_token_owner = "alice"
+    request.state.api_token_scopes = list(scopes)
     return request
 
 
@@ -105,3 +121,33 @@ def test_adopt_rejects_ssh_option_host_before_shell(monkeypatch):
 
     assert exc.value.status_code == 400
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_email_draft_document_accepts_send_scope_with_document_write():
+    calls = []
+    document_router = APIRouter()
+
+    @document_router.post("/api/document")
+    async def create_document(request: Request, req):
+        calls.append((request.state.current_user, req.title, req.language, req.content))
+        return {"id": "doc-1", "title": req.title}
+
+    router = codex_routes.setup_codex_routes(document_router=document_router)
+    endpoint = _route_endpoint("/api/codex/emails/draft-document", "POST", router=router)
+
+    result = await endpoint(
+        _codex_request(["email:send", "documents:write"]),
+        {"to": "recipient@example.com", "subject": "Subject", "body": "Body"},
+    )
+
+    assert result["draft_type"] == "document"
+    assert result["send_required_confirmation"] is True
+    assert calls == [
+        (
+            "alice",
+            "Subject",
+            "email",
+            "To: recipient@example.com\nSubject: Subject\n---\nBody\n",
+        )
+    ]

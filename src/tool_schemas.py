@@ -1206,23 +1206,26 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         logger.error(f"Failed to parse function call arguments for {name}: {arguments}")
         return None
 
+    tool_type = _TOOL_NAME_MAP.get(name, name)
+    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
+                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+
     # Some models emit valid JSON that isn't an object (e.g. a bare array
-    # ["ls -la"], string, or number) as the function arguments. Every branch
-    # below assumes a dict and calls args.get(...), so a non-dict would raise
-    # AttributeError and abort the whole agent stream. Coerce to {} instead.
+    # ["ls -la"], string, or number) as function arguments. Most local tools keep
+    # the legacy empty-object coercion for stream robustness, but email MCP tools
+    # must fail closed so a malformed call cannot read the default mailbox.
     if not isinstance(args, dict):
+        if tool_type.startswith("mcp__email__") or name in _BUILTIN_EMAIL_TOOLS:
+            logger.warning(f"Non-object email function call arguments for {name}: {args!r}; rejecting")
+            return None
         logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
         args = {}
-
-    tool_type = _TOOL_NAME_MAP.get(name, name)
 
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
-    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:
