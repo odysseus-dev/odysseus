@@ -5,6 +5,7 @@ from routes.chat_helpers import (
     _enforce_chat_privileges,
     clean_thinking_for_save,
     needs_auto_name,
+    prepare_agent_response_for_save,
     save_assistant_response,
 )
 
@@ -202,6 +203,46 @@ def test_clean_thinking_for_save_extracts_thought_tag():
 
     assert content == "Final answer."
     assert metadata["thinking"] == "internal reasoning"
+
+
+def test_prepare_agent_response_for_save_uses_last_clean_agent_round():
+    full_response = "I will inspect.\n```bash\nls\n```\nEarlier status.\nDone."
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [{"tool": "bash", "desc": "ls"}],
+        "round_texts": ["I will inspect.", "", "Done."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(full_response, metrics)
+
+    assert content == "Done."
+    assert metadata["agent_final_response"] == "Done."
+    assert metadata["agent_saved_final_only"] is True
+    assert metadata["agent_accumulated_response_chars"] == len(full_response)
+    assert metadata["tool_events"] == metrics["tool_events"]
+    assert "agent_final_response" not in metrics
+
+
+def test_prepare_agent_response_for_save_leaves_non_agent_response_unchanged():
+    metrics = {"model": "chat-model", "round_texts": ["Done."]}
+
+    content, metadata = prepare_agent_response_for_save("Plain answer.", metrics)
+
+    assert content == "Plain answer."
+    assert metadata == metrics
+
+
+def test_prepare_agent_response_for_save_falls_back_without_clean_rounds():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [{"tool": "bash", "desc": "ls"}],
+        "round_texts": ["", "   "],
+    }
+
+    content, metadata = prepare_agent_response_for_save("Raw accumulated.", metrics)
+
+    assert content == "Raw accumulated."
+    assert metadata == metrics
 
 
 def test_save_assistant_response_preserves_actual_and_requested_model():

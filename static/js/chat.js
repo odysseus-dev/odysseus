@@ -2746,20 +2746,26 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         }
 
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
-        const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
+        let footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
+        if (metrics?.tool_events?.length && chatRenderer.collapseAgentProcessAfterStream) {
+          footerTarget = chatRenderer.collapseAgentProcessAfterStream(holder, footerTarget, metrics, modelName) || footerTarget;
+        }
         footerTarget.appendChild(createMsgFooter(footerTarget));
         // Add "View Report" link for completed research
         if (_researchingStreamIds.has(streamSessionId)) {
           _appendViewReportLink(footerTarget, streamSessionId);
         }
         // Also store raw on the footer target so copy/TTS work
-        if (footerTarget !== holder) footerTarget.dataset.raw = accumulated;
-        if (addAITTSButton && accumulated && window.aiTTSManager?._provider !== 'disabled' && window.aiTTSManager?.available) {
-          addAITTSButton(footerTarget, accumulated);
+        const _actionText = (metrics?.tool_events?.length && chatRenderer.getAgentFinalResponse)
+          ? (chatRenderer.getAgentFinalResponse(accumulated, metrics) || accumulated)
+          : accumulated;
+        if (footerTarget !== holder) footerTarget.dataset.raw = _actionText;
+        if (addAITTSButton && _actionText && window.aiTTSManager?._provider !== 'disabled' && window.aiTTSManager?.available) {
+          addAITTSButton(footerTarget, _actionText);
         }
         // TTS auto-play: streaming mode flushes remaining text, non-streaming enqueues full message
-        if (accumulated && window.aiTTSManager && window.aiTTSManager.autoPlay) {
-          const ttsBtn = holder.querySelector('.ai-tts-button');
+        if (_actionText && window.aiTTSManager && window.aiTTSManager.autoPlay) {
+          const ttsBtn = footerTarget.querySelector('.ai-tts-button');
           if (ttsBtn) {
             var ICON_PLAY_TTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>';
             var ICON_STOP_TTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>';
@@ -2782,7 +2788,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               }
             } else {
               // Non-streaming fallback (autoPlay toggled mid-stream, etc.)
-              window.aiTTSManager.enqueue(accumulated, ttsBtn, resetFn);
+              window.aiTTSManager.enqueue(_actionText, ttsBtn, resetFn);
             }
           }
         }

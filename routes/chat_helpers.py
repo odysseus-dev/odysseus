@@ -860,6 +860,41 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
     return content, md
 
 
+def prepare_agent_response_for_save(
+    full_response: str,
+    last_metrics: dict | None,
+) -> tuple[str, dict | None]:
+    """Return final display content plus metrics for a completed agent turn.
+
+    Agent mode streams model text from every tool round into ``full_response``.
+    When the loop reports persisted tool metadata, prefer the last non-empty
+    cleaned round as the saved answer and keep the process in metadata for UI
+    reconstruction/expansion.
+    """
+    if not isinstance(last_metrics, dict) or not last_metrics.get("tool_events"):
+        return full_response, last_metrics
+
+    round_texts = last_metrics.get("round_texts")
+    if not isinstance(round_texts, list):
+        return full_response, last_metrics
+
+    final_response = ""
+    for text in reversed(round_texts):
+        if isinstance(text, str) and text.strip():
+            final_response = text.strip()
+            break
+
+    if not final_response:
+        return full_response, last_metrics
+
+    metadata = dict(last_metrics)
+    metadata["agent_final_response"] = final_response
+    if final_response.strip() != (full_response or "").strip():
+        metadata["agent_saved_final_only"] = True
+        metadata["agent_accumulated_response_chars"] = len(full_response or "")
+    return final_response, metadata
+
+
 def save_assistant_response(
     sess,
     session_manager,

@@ -37,6 +37,7 @@ from routes.chat_helpers import (
     save_assistant_response,
     run_post_response_tasks,
     clean_thinking_for_save,
+    prepare_agent_response_for_save,
     _enforce_chat_privileges,
 )
 from src.action_intents import classify_tool_intent as _classify_tool_intent
@@ -1242,8 +1243,13 @@ def setup_chat_routes(
                             yield chunk
                         elif chunk == "data: [DONE]\n\n":
                             if full_response:
+                                final_response, save_metrics = prepare_agent_response_for_save(
+                                    full_response,
+                                    last_metrics,
+                                )
+                                _stream_set(session, partial=final_response)
                                 _saved_id = save_assistant_response(
-                                    sess, session_manager, session, full_response, last_metrics,
+                                    sess, session_manager, session, final_response, save_metrics,
                                     character_name=ctx.preset.character_name,
                                     web_sources=web_sources,
                                     rag_sources=ctx.rag_sources,
@@ -1253,11 +1259,11 @@ def setup_chat_routes(
                                 if _saved_id:
                                     yield f'data: {json.dumps({"type": "message_saved", "id": _saved_id})}\n\n'
                                 run_post_response_tasks(
-                                    sess, session_manager, session, message, full_response,
-                                    last_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
+                                    sess, session_manager, session, message, final_response,
+                                    save_metrics, ctx.uprefs, memory_manager, memory_vector, webhook_manager,
                                     incognito=incognito, compare_mode=compare_mode,
                                     character_name=ctx.preset.character_name,
-                                                            agent_rounds=_agent_rounds,
+                                    agent_rounds=_agent_rounds,
                                     agent_tool_calls=_agent_tool_calls,
                                     skills_manager=skills_manager,
                                     owner=_user,

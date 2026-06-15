@@ -194,6 +194,10 @@ _RAW_WEB_JSON_TOOL_RE = re.compile(
 )
 _RAW_WEB_JSON_ALLOWED_KEYS = {"query", "queries", "time_filter", "freshness", "max_pages"}
 
+# Some tools intentionally take no arguments. Empty fenced blocks are usually a
+# model formatting mistake, but these are real executable calls.
+_ZERO_ARG_FENCED_TOOLS = {"get_workspace"}
+
 
 # ---------------------------------------------------------------------------
 # Parsing functions
@@ -535,6 +539,8 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
             tag = m.group(1).lower()
             content = m.group(2).strip()
             if not content:
+                if tag in _ZERO_ARG_FENCED_TOOLS:
+                    blocks.append(ToolBlock(tag, ""))
                 continue
             # If a code block's content is an <invoke> XML call (some models wrap
             # tool calls in ```python or ```xml fences), parse the invoke instead.

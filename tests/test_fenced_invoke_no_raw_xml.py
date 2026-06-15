@@ -36,6 +36,28 @@ def test_plain_fenced_python_block_still_parses_as_code():
     assert any(b.tool_type == "python" and 'print("hi")' in b.content for b in blocks), blocks
 
 
+def test_empty_get_workspace_fence_parses_zero_arg_call():
+    blocks = parse_tool_blocks('```get_workspace\n```')
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "get_workspace"
+    assert blocks[0].content == ""
+
+
+def test_whitespace_get_workspace_fence_parses_zero_arg_call():
+    blocks = parse_tool_blocks('```get_workspace\n\n```')
+    assert len(blocks) == 1
+    assert blocks[0].tool_type == "get_workspace"
+    assert blocks[0].content == ""
+
+
+def test_empty_fence_without_zero_arg_tool_is_ignored():
+    assert parse_tool_blocks('```bash\n```') == []
+
+
+def test_empty_get_workspace_fence_respects_skip_fenced_gate():
+    assert parse_tool_blocks('```get_workspace\n```', skip_fenced=True) == []
+
+
 def test_simple_web_search_call_inside_python_fence_runs_as_web_search():
     blocks = parse_tool_blocks('```python\nweb_search("latest Python release")\n```')
     assert len(blocks) == 1
