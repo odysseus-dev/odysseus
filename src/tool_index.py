@@ -573,7 +573,19 @@ class ToolIndex:
             {"resolve_contact", "manage_contact"},
         frozenset({"save contact", "add contact", "new contact", "update contact",
                    "edit contact", "delete contact", "remove contact",
-                   "save this person", "add to contacts", "save to contacts"}):
+                   "save this person", "add to contacts", "save to contacts",
+                   # "add <name> to (my) contacts" — words between 'add' and
+                   # 'contacts' break the literal phrase match above, so anchor
+                   # on the tail.
+                   "to my contacts", "to contacts", "to address book",
+                   # "save this for <person>" / "save it for <person>" — the user
+                   # is storing info on a known person without using the literal
+                   # word 'contact'. Catches the address/phone-paste pattern.
+                   "save this for", "save it for", "save for",
+                   "save this one for", "save that for",
+                   # Postal-address-like signals
+                   "postal code", "zip code", "street address",
+                   "mailing address", "their address"}):
             {"manage_contact"},
         # "Ask another model" intent → chat_with_model relays to a
         # different model and returns its answer. ask_teacher escalates
@@ -708,6 +720,53 @@ class ToolIndex:
         # prompts do not drag web schemas into the agent context.
         if self._WEB_RE.search(query):
             base.update({"web_search", "web_fetch"})
+        # Hard steering: when the query is a clear "save info about a specific
+        # person" pattern (address paste + name, phone next to a name, etc.),
+        # the model has been observed defaulting to manage_memory even with
+        # manage_contact in the toolset. Pull memory out for these queries so
+        # the model literally cannot pick it. ALWAYS_AVAILABLE includes
+        # manage_memory by default; we override that here.
+        # The "for/to <word>" check needs to allow lowercase names (users
+        # don't always capitalize) but filter out timing/pronoun stopwords
+        # so "save this for later" / "save for tomorrow" don't trigger.
+        _CONTACT_STOPWORDS_AFTER_FOR = {
+            "later", "tomorrow", "yesterday", "now", "then", "today",
+            "tonight", "me", "us", "you", "him", "her", "them", "myself",
+            "yourself", "next", "this", "that", "the", "a", "an", "future",
+            "real", "use", "uses", "another", "future", "reference",
+        }
+        # Regex catches "save (this|it|the|her|...|<noun>) for <name>" / "to my
+        # contacts" patterns. More forgiving than literal-keyword matching —
+        # 'save this address for Alex' uses one extra word between 'save' and
+        # 'for' that breaks the contiguous 'save this for' phrase.
+        save_for_match = re.search(
+            r"\bsave\b(?:\s+\w+){0,3}\s+(?:for|to)\s+([A-Za-z]+)",
+            ql,
+        )
+        # "to my contacts", "into my contacts", "in my address book", etc.
+        to_contacts = re.search(r"\b(?:to|in|into)\s+(?:my\s+)?(?:contacts|address\s+book)\b", ql)
+        # Possessive: "save (his|her|their) (address|phone|email|number) ..."
+        # — strong contact signal even without "for <name>". Force-include
+        # manage_contact here too since the keyword fallback misses this
+        # construction.
+        possessive_contact = re.search(
+            r"\bsave\b(?:\s+\w+){0,2}\s+(?:his|her|their)\s+(?:address|phone|number|email|contact|details)",
+            ql,
+        )
+        word_after = (
+            save_for_match.group(1).lower() if save_for_match else None
+        )
+        contact_only_signal = (
+            (save_for_match is not None
+             and word_after is not None
+             and word_after not in _CONTACT_STOPWORDS_AFTER_FOR)
+            or to_contacts is not None
+            or possessive_contact is not None
+        )
+        if possessive_contact is not None:
+            base.add("manage_contact")
+        if contact_only_signal and "manage_contact" in base:
+            base.discard("manage_memory")
         return base
 
 

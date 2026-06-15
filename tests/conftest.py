@@ -36,7 +36,6 @@ def _has_module(mod_name: str) -> bool:
     except (ImportError, ValueError):
         return False
 
-
 # Stub optional dependencies only when they are not installed. Do not replace
 # real FastAPI/Starlette/Pydantic modules: route tests import their subpackages.
 for mod_name in [
@@ -93,7 +92,7 @@ def pytest_collection_modifyitems(config, items):
         path = getattr(item, "path", None) or item.fspath
         for marker_name in markers_for_path(path):
             item.add_marker(getattr(pytest.mark, marker_name))
-import pytest
+
 @pytest.fixture
 def protected_context():
     """Ensure security read-only/workspace context isolation between tests.

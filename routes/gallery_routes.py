@@ -67,6 +67,14 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
+    if not path.exists():
+        cwd_root = (Path.cwd() / "data" / "generated_images").resolve()
+        cwd_path = (cwd_root / safe_name).resolve()
+        try:
+            if os.path.commonpath([str(cwd_root), str(cwd_path)]) == str(cwd_root) and cwd_path.exists():
+                return cwd_path
+        except Exception:
+            pass
     return path
 
 
@@ -224,8 +232,6 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/{image_id}/replace")
     async def gallery_replace(request: Request, image_id: str):
         """Replace an existing gallery image file with a new one."""
-        from pathlib import Path
-
         user = get_current_user(request)
         db = SessionLocal()
         try:
@@ -241,9 +247,8 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(400, "No image provided")
 
             content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
-            img_dir = Path(GENERATED_IMAGES_DIR)
-            img_dir.mkdir(parents=True, exist_ok=True)
-            img_path = img_dir / _sanitize_gallery_filename(img.filename)
+            GALLERY_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+            img_path = _gallery_image_path(img.filename)
             img_path.write_bytes(content)
 
             # Refresh dimensions in case the editor resized the canvas.
@@ -931,14 +936,22 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(404, "Image not found")
 
             img_filename = img.filename
-            # Remove the file from disk
-            img_path = _gallery_image_path(img_filename)
-            if img_path.exists():
-                img_path.unlink()
-
-            # Soft-delete the record
+            # Soft-delete the record first; the DB is the source of truth.
             img.is_active = False
             db.commit()
+
+            # Only after the soft-delete commit succeeds do we remove the file.
+            # If the file were deleted first and the commit then failed/rolled
+            # back, the still-active record would point at a missing file.
+            # Best-effort so a missing or locked file can't 500 a delete that
+            # already succeeded logically. Uses the path-confined resolver so a
+            # malformed stored filename can't escape generated_images.
+            try:
+                img_path = _gallery_image_path(img_filename)
+                if img_path.exists():
+                    img_path.unlink()
+            except Exception as e:
+                logger.warning(f"Could not remove gallery image file for {img_filename}: {e}")
 
             # Strip stale chat-history references so the image bubble
             # (and its prompt caption) doesn't come back after a server

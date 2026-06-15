@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from core.database import SessionLocal, ModelEndpoint
-from src.llm_core import _detect_provider, _host_match, _ollama_api_root
+from src.llm_core import _detect_provider, _host_match, _is_kimi_code_url, KIMI_CODE_USER_AGENT, _ollama_api_root
 
 logger = logging.getLogger(__name__)
 
@@ -201,11 +201,15 @@ def build_models_url(base: str) -> Optional[str]:
         return _ollama_api_root(base) + "/tags"
     if provider == "chatgpt-subscription":
         return None
-    # Generic OpenAI-compatible fallback: ensure the path lands on /v1/models
-    # when the user omitted a path entirely. If a non-empty path is already
-    # present (e.g. /openai, /api/openai/v1, /v1), trust the caller — the
-    # /models suffix is appended as-is and the caller's prefix is preserved.
-    if not urlparse(base).path:
+    # Generic OpenAI-compatible fallback: local model servers with no explicit
+    # path conventionally expose `/v1/models` (LM Studio, llama.cpp, vLLM).
+    # For non-local unknown hosts, do not invent `/v1`; append `/models` to the
+    # caller's base so look-alike provider hosts stay generic.
+    parsed = urlparse(base)
+    host = (parsed.hostname or "").lower()
+    is_local = host in {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
+    uses_v1_models_by_default = is_local or host in {"api.deepseek.com"}
+    if not parsed.path and uses_v1_models_by_default:
         base = base + "/v1"
     return base + "/models"
 
@@ -230,6 +234,8 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     if provider == "openrouter":
         headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
+    if _is_kimi_code_url(base):
+        headers.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
     return headers
 
 

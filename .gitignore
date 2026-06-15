@@ -70,6 +70,9 @@ output.txt.txt
 *.tiff
 *.pdf
 
+# …except shipped static assets
+!static/icons/*.png
+
 # …except shipped demo assets in docs/ that the README links to.
 !docs/*.jpg
 !docs/*.jpeg
