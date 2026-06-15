@@ -441,33 +441,54 @@ class McpManager:
         server_id = parts[1]
         tool_name = parts[2]
 
+        # Normalize: model may use server display name instead of UUID server_id
+        if server_id not in self._sessions and server_id not in self._connections:
+            for sid, conn in self._connections.items():
+                if conn.get("name", "") == server_id:
+                    logger.warning(
+                        "MCP server_id '%s' resolved to '%s' via name match",
+                        server_id, sid,
+                    )
+                    server_id = sid
+                    break
+
         session = self._sessions.get(server_id)
         if not session:
+            if not self.is_builtin(server_id):
+                logger.warning("MCP server not connected, attempting reconnect: %s", server_id)
+                reconnected = await self._reconnect_server(server_id)
+                if reconnected:
+                    session = self._sessions.get(server_id)
+                    if session:
+                        try:
+                            return await self._do_call(session, tool_name, arguments)
+                        except Exception as e2:
+                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
+                            return {"error": str(e2), "exit_code": 1}
+                    else:
+                        logger.error("Reconnected but no session for %s", server_id)
+                else:
+                    logger.error("MCP reconnect failed for %s", server_id)
             return {"error": f"MCP server not connected: {server_id}", "exit_code": 1}
 
         try:
             result = await self._do_call(session, tool_name, arguments)
         except Exception as e:
-            # Auto-reconnect for builtin servers whose subprocess may have died
-            if self.is_builtin(server_id):
-                logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
-                reconnected = await self._reconnect_builtin(server_id)
-                if reconnected:
-                    session = self._sessions.get(server_id)
-                    if session:
-                        try:
-                            result = await self._do_call(session, tool_name, arguments)
-                        except Exception as e2:
-                            logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
-                            return {"error": str(e2), "exit_code": 1}
-                    else:
-                        return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
+            logger.warning(f"MCP call failed for {qualified_name}, attempting reconnect: {e}")
+            reconnected = await self._reconnect_server(server_id)
+            if reconnected:
+                session = self._sessions.get(server_id)
+                if session:
+                    try:
+                        result = await self._do_call(session, tool_name, arguments)
+                    except Exception as e2:
+                        logger.error(f"MCP tool call failed after reconnect: {qualified_name}: {e2}")
+                        return {"error": str(e2), "exit_code": 1}
                 else:
-                    logger.error(f"MCP reconnect failed for {server_id}")
-                    return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
+                    return {"error": f"Reconnected but no session for {server_id}", "exit_code": 1}
             else:
-                logger.error(f"MCP tool call failed: {qualified_name}: {e}")
-                return {"error": str(e), "exit_code": 1}
+                logger.error(f"MCP reconnect failed for {server_id}")
+                return {"error": f"MCP server crashed and reconnect failed: {server_id}", "exit_code": 1}
 
         return result
 
@@ -528,6 +549,43 @@ class McpManager:
             return ok
         except Exception as e:
             logger.error(f"Failed to reconnect builtin MCP server {name}: {e}")
+            return False
+
+    async def _reconnect_server(self, server_id: str) -> bool:
+        """Reconnect a crashed MCP server. Handles both builtin and non-builtin servers."""
+        if self.is_builtin(server_id):
+            return await self._reconnect_builtin(server_id)
+
+        from src.database import McpServer, SessionLocal
+
+        db = SessionLocal()
+        try:
+            srv = db.query(McpServer).filter(McpServer.id == server_id).first()
+            if not srv:
+                logger.error("Cannot reconnect %s: not found in database", server_id)
+                return False
+        finally:
+            db.close()
+
+        await self.disconnect_server(server_id)
+
+        try:
+            args = json.loads(srv.args) if srv.args else []
+            env = json.loads(srv.env) if srv.env else {}
+            ok = await self.connect_server(
+                server_id=srv.id,
+                name=srv.name,
+                transport=srv.transport,
+                command=srv.command,
+                args=args,
+                env=env,
+                url=srv.url,
+            )
+            if ok:
+                logger.info("Reconnected MCP server: %s (%s)", srv.name, server_id)
+            return ok
+        except Exception as e:
+            logger.error("Failed to reconnect MCP server %s: %s", server_id, e)
             return False
 
     def get_all_openai_schemas(self, disabled_map: Optional[Dict[str, set]] = None) -> List[Dict]:
