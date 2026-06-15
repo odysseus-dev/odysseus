@@ -1741,7 +1741,9 @@ function _rerenderCachedModels() {
         const on = !!panel._cmdOverride;
         if (_overrideBtn) {
           _overrideBtn.classList.toggle('active', on);
-          _overrideBtn.textContent = on ? 'Custom ✓' : 'Custom';
+          _overrideBtn.innerHTML = on
+            ? 'Custom <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-left:2px;"><polyline points="20 6 9 17 4 12"/></svg>'
+            : 'Custom';
         }
         if (_overrideHint) _overrideHint.style.display = on ? '' : 'none';
         if (_cmdTextarea) {

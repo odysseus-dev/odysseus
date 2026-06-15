@@ -19508,8 +19508,7 @@ body.gallery-selecting .gallery-dl-btn,
   margin-top: 6px;
   margin-bottom: 2px;
 }
-.hwfit-serve-override-toggle,
-.hwfit-serve-override-reset {
+.hwfit-serve-override-toggle {
   padding: 2px 10px !important;
   font-size: 10px !important;
   border-radius: 3px;
@@ -19517,8 +19516,7 @@ body.gallery-selecting .gallery-dl-btn,
   opacity: 0.65;
   transition: opacity 0.12s;
 }
-.hwfit-serve-override-toggle:hover,
-.hwfit-serve-override-reset:hover { opacity: 1; }
+.hwfit-serve-override-toggle:hover { opacity: 1; }
 .hwfit-serve-override-toggle.active {
   opacity: 1;
   background: color-mix(in srgb, var(--accent-primary, var(--red)) 20%, transparent);
