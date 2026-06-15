@@ -88,6 +88,7 @@ def test_skill_vector_degraded(monkeypatch):
     
     with tempfile.TemporaryDirectory() as td:
         sv = SkillVectorStore(td)
+        sv._ensure_initialized()
         # Manually mark as unhealthy
         sv._healthy = False
         # Count and search should gracefully return empty structures

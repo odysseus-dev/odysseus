@@ -4,6 +4,13 @@ skill_vector.py
 ChromaDB-backed vector store for skill entries (semantic search over when_to_use).
 Shares the EmbeddingClient with RAG to save memory.
 Stores pre-computed embeddings (ChromaDB does not manage embedding).
+
+Initialization is lazy: building the embedding lanes (FastEmbed/ChromaDB) is
+deferred until the store is first actually used (any public method, or the
+`healthy` property). This avoids paying the embedding-model load cost when a
+SkillVectorStore is merely constructed but never queried — important during
+app cold-boot and test collection, where many instances may be created
+incidentally.
 """
 
 import logging
@@ -32,7 +39,13 @@ class SkillVectorStore:
         self._collection = None
         self._lanes = []
         self._healthy = False
+        self._initialized = False
 
+    def _ensure_initialized(self):
+        """Build embedding lanes on first use. No-op on subsequent calls."""
+        if self._initialized:
+            return
+        self._initialized = True
         self._initialize()
 
     def _initialize(self):
@@ -58,20 +71,24 @@ class SkillVectorStore:
 
     @property
     def healthy(self) -> bool:
+        self._ensure_initialized()
         return self._healthy
 
     def _embed(self, texts: List[str]) -> List[List[float]]:
+        self._ensure_initialized()
         if not self._lanes:
             return []
         return self._lanes[0].encode(texts)
 
     def count(self) -> int:
         """Return the number of stored vectors."""
+        self._ensure_initialized()
         if not self._healthy:
             return 0
         return lane_count(self._lanes)
 
     def _collections_for_delete(self):
+        self._ensure_initialized()
         collections = []
         seen = set()
 
@@ -103,6 +120,7 @@ class SkillVectorStore:
 
     def add(self, skill_id: str, when_to_use: str):
         """Add a single skill entry to the vector index."""
+        self._ensure_initialized()
         if not self._healthy:
             return
         for lane in self._lanes:
@@ -121,6 +139,7 @@ class SkillVectorStore:
 
     def remove(self, skill_id: str):
         """Remove a skill entry. O(1) — no rebuild needed."""
+        self._ensure_initialized()
         if not self._healthy:
             return
         for collection in self._collections_for_delete():
@@ -136,6 +155,7 @@ class SkillVectorStore:
         ChromaDB cosine distance = 1 - cosine_similarity.
         We convert back: similarity = 1.0 - distance.
         """
+        self._ensure_initialized()
         if not self._healthy or self.count() == 0:
             return []
 
@@ -165,6 +185,7 @@ class SkillVectorStore:
     def rebuild(self, skills: List[Dict]):
         """Rebuild the entire index from a list of skill entries.
         Each entry must have 'name' (used as id) and 'when_to_use' keys."""
+        self._ensure_initialized()
         if not self._healthy:
             return
 
@@ -221,6 +242,7 @@ class SkillVectorStore:
         logger.info(f"SkillVectorStore rebuilt with {len(ids)} entries across {len(self._lanes)} lanes")
 
     def get_stats(self) -> Dict:
+        self._ensure_initialized()
         return {
             "healthy": self.healthy,
             "count": self.count(),
