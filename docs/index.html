@@ -2406,13 +2406,22 @@
       // Fake terminal window buttons — minimize, maximize, close (and reopen).
       (function () {
         var term = document.querySelector('.term');
-        var reopen = document.querySelector('.term-reopen');
         if (!term) return;
+        var reopen = document.querySelector('.term-reopen');
+        var minToggle = term.querySelector('[data-term="min"]');
+        function syncMinToggle() {
+          if (!minToggle) return;
+          var minimized = term.classList.contains('term-min');
+          minToggle.innerHTML = minimized ? '&#9633;' : '&#8211;';
+          minToggle.title = minimized ? 'Maximize' : 'Minimize';
+        }
         term.querySelectorAll('.winbtns [data-term]').forEach(function (b) {
           b.addEventListener('click', function () {
             var act = b.getAttribute('data-term');
-            if (act === 'min') term.classList.toggle('term-min');
-            else if (act === 'close') {
+            if (act === 'min') {
+              term.classList.toggle('term-min');
+              syncMinToggle();
+            } else if (act === 'close') {
               term.classList.add('term-closed');
               if (reopen) reopen.classList.add('show');
             }
@@ -2422,7 +2431,9 @@
           reopen.addEventListener('click', function () {
             term.classList.remove('term-closed', 'term-min');
             reopen.classList.remove('show');
+            syncMinToggle();
           });
+        syncMinToggle();
       })();
 
       // Mobile testimonial carousel: tap or swipe to advance; Polyphemus shakes ~1s.
