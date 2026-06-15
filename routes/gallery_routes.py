@@ -49,7 +49,20 @@ def _sanitize_gallery_filename(filename: str) -> str:
     return safe_name
 
 
-GALLERY_IMAGE_DIR = Path(GENERATED_IMAGES_DIR)
+_DEFAULT_GALLERY_IMAGE_DIR = Path(GENERATED_IMAGES_DIR)
+GALLERY_IMAGE_DIR = _DEFAULT_GALLERY_IMAGE_DIR
+
+
+def _gallery_image_roots() -> list[Path]:
+    roots = [Path(GALLERY_IMAGE_DIR)]
+    cwd_root = Path("data") / "generated_images"
+    try:
+        if Path(GALLERY_IMAGE_DIR).resolve() == _DEFAULT_GALLERY_IMAGE_DIR.resolve():
+            if cwd_root.resolve() != roots[0].resolve():
+                roots.append(cwd_root)
+    except OSError:
+        pass
+    return roots
 
 
 def _gallery_image_path(filename: str) -> Path:
@@ -58,16 +71,21 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     safe_name = _sanitize_gallery_filename(filename)
     original = str(filename or "")
-    root = GALLERY_IMAGE_DIR.resolve()
-    path = (GALLERY_IMAGE_DIR / safe_name).resolve()
-    try:
-        if os.path.commonpath([str(root), str(path)]) != str(root):
-            raise ValueError
-    except Exception:
-        raise HTTPException(400, "Unsafe gallery filename")
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
-    return path
+    candidates: list[Path] = []
+    for image_root in _gallery_image_roots():
+        root = image_root.resolve()
+        path = (image_root / safe_name).resolve()
+        try:
+            if os.path.commonpath([str(root), str(path)]) != str(root):
+                raise ValueError
+        except Exception:
+            raise HTTPException(400, "Unsafe gallery filename")
+        candidates.append(path)
+        if path.exists():
+            return path
+    return candidates[0]
 
 
 def _normalize_image_endpoint_base(url: str) -> str:
