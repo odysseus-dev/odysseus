@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 
 import httpx
+from core.constants import internal_api_base
+from src.constants import COOKBOOK_STATE_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +60,7 @@ async def _delete_endpoint_for_task(task: dict) -> None:
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             r = await client.get(
-                "http://localhost:7000/api/model-endpoints",
+                f"{internal_api_base()}/api/model-endpoints",
                 headers=_internal_headers(),
             )
             if r.status_code >= 400:
@@ -73,7 +75,7 @@ async def _delete_endpoint_for_task(task: dict) -> None:
                 ep = next((e for e in eps if hostport in (e.get("base_url") or "")), None)
             if ep:
                 await client.delete(
-                    f"http://localhost:7000/api/model-endpoints/{ep['id']}",
+                    f"{internal_api_base()}/api/model-endpoints/{ep['id']}",
                     headers=_internal_headers(),
                 )
                 logger.info(
@@ -108,7 +110,7 @@ async def _stop_serve(session_id: str, remote_host: str = "", ssh_port: str = ""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.post(
-                "http://localhost:7000/api/shell/exec",
+                f"{internal_api_base()}/api/shell/exec",
                 json={"command": cmd},
                 headers=_internal_headers(),
             )
@@ -129,12 +131,13 @@ async def _stop_serve(session_id: str, remote_host: str = "", ssh_port: str = ""
 
 
 async def _tick() -> None:
-    state_path = Path("/app/data/cookbook_state.json")
+    state_path = Path(COOKBOOK_STATE_FILE)
     if not state_path.exists():
         return
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.warning("cookbook_serve_lifecycle: state file unreadable (%s), skipping tick", e)
         return
     tasks = state.get("tasks") or []
     now_ms = int(time.time() * 1000)
@@ -176,8 +179,26 @@ async def _tick() -> None:
     if stopped_any:
         try:
             from core.atomic_io import atomic_write_json
-            state["tasks"] = tasks
-            atomic_write_json(state_path, state)
+            # Re-read the state file so concurrent UI writes (task adds,
+            # status flips, config edits) are not silently overwritten.
+            # Apply only our stop mutations to the fresh snapshot.
+            try:
+                fresh = json.loads(state_path.read_text(encoding="utf-8"))
+                fresh_tasks = fresh.get("tasks") or []
+            except Exception:
+                fresh = state
+                fresh_tasks = tasks
+            stopped_sids = {sid for sid, _, _ in to_stop}
+            for ft in fresh_tasks:
+                if not isinstance(ft, dict):
+                    continue
+                ft_sid = ft.get("sessionId") or ft.get("id")
+                if ft_sid in stopped_sids:
+                    ft["status"] = "stopped"
+                    ft["_scheduledStopAtMs"] = None
+                    ft["_lastStatusFlipAt"] = now_ms
+            fresh["tasks"] = fresh_tasks
+            atomic_write_json(state_path, fresh)
         except Exception as e:
             logger.warning(f"cookbook_serve_lifecycle: state write failed: {e}")
 

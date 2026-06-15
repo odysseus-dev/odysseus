@@ -18,6 +18,8 @@ import {
   _lastCacheHost,
   _setLastCacheHost,
   _serverByVal,
+  _serverKey,
+  _currentServerValue,
   _shellQuote,
   _MODELDIR_CHECK_ON,
   _MODELDIR_CHECK_OFF,
@@ -358,6 +360,7 @@ function _scanSig() {
   const tc = document.getElementById('hwfit-gpu-toggles');
   return JSON.stringify({
     h: _envState.remoteHost || '',
+    hk: _currentServerValue(),
     u: document.getElementById('hwfit-usecase')?.value || '',
     s: document.getElementById('hwfit-search')?.value?.trim() || '',
     o: sortEl?.value || 'score',
@@ -413,15 +416,97 @@ function _hwfitShowError(list, host, detail) {
   if (rb) rb.addEventListener('click', () => { _resetGpuToggleState(); _hwfitFetch(true); });
 }
 
-// Client-side "Engine" filter (llama.cpp / vLLM / SGLang). Empty = show all.
-// Uses the same _detectBackend() the serve commands use, so what you filter to
-// is exactly what would be launched. Pure view filter — no refetch needed.
+// Client-side "Engine" filter (llama.cpp / vLLM / SGLang / Ollama). Empty =
+// show all. Uses the same _detectBackend() the serve commands use, so what you
+// filter to is exactly what would be launched. Pure view filter — no refetch
+// needed. Ollama rows are merged into the main list (see _ensureOllamaLib +
+// _ollamaToHwfitRows below) so the filter handles all engines uniformly.
 function _applyEngineFilter(models) {
   const want = document.getElementById('hwfit-engine')?.value || '';
   if (!want || !Array.isArray(models)) return models || [];
   return models.filter(m => {
     try { return _detectBackend(m).backend === want; } catch { return true; }
   });
+}
+
+// Ollama library cache (per-page). Filled lazily on first _hwfitFetch; the raw
+// list is the same shape returned by /api/cookbook/ollama/library, then turned
+// into per-tag hwfit rows so they slot into the main list grid alongside HF
+// scan results.
+let _ollamaLibCache = null;
+async function _ensureOllamaLib() {
+  if (_ollamaLibCache) return _ollamaLibCache;
+  try {
+    const res = await fetch('/api/cookbook/ollama/library');
+    const data = await res.json();
+    _ollamaLibCache = Array.isArray(data?.models) ? data.models : [];
+  } catch { _ollamaLibCache = []; }
+  return _ollamaLibCache;
+}
+
+// Convert an Ollama library entry's sizes into per-tag hwfit rows. Shape
+// matches what _hwfitRenderList expects (fit_level, parameter_count,
+// required_gb, score, …) so the rows render identically to HF results.
+function _olParseSize(s) {
+  // "14b" → 14, "1.5b" → 1.5, "8x7b" → 56 (rough), "135m" → 0.135, "latest" → null
+  if (!s) return null;
+  const low = s.toLowerCase();
+  let m = low.match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)b$/);
+  if (m) return parseFloat(m[1]) * parseFloat(m[2]);
+  m = low.match(/^(\d+(?:\.\d+)?)b$/);
+  if (m) return parseFloat(m[1]);
+  m = low.match(/^(\d+(?:\.\d+)?)m$/);
+  if (m) return parseFloat(m[1]) / 1000;
+  return null;
+}
+function _ollamaToHwfitRows(libModels, vramAvail, ramAvail) {
+  const out = [];
+  if (!Array.isArray(libModels)) return out;
+  for (const m of libModels) {
+    const sizes = (Array.isArray(m.sizes) && m.sizes.length) ? m.sizes : ['latest'];
+    for (const sz of sizes) {
+      const params = _olParseSize(sz);
+      // Ollama default GGUF is ~Q4_K_M. Rough VRAM estimate: 0.6 GB / B.
+      const vramGb = params ? params * 0.6 : 0;
+      let fitLevel = 'no_fit';
+      if (vramGb && vramAvail) {
+        if (vramGb <= vramAvail * 0.6) fitLevel = 'perfect';
+        else if (vramGb <= vramAvail) fitLevel = 'good';
+        else if (ramAvail && vramGb <= ramAvail) fitLevel = 'marginal';
+        else fitLevel = 'too_tight';
+      } else if (vramGb && ramAvail && vramGb <= ramAvail) {
+        fitLevel = 'marginal';
+      }
+      const tag = `${m.name}:${sz}`;
+      const paramsLabel = params
+        ? (params >= 1 ? params.toFixed(params >= 10 ? 0 : 1) + 'B' : (params * 1000).toFixed(0) + 'M')
+        : '?';
+      // A modest score so Ollama rows still sort sensibly in the default
+      // score view — bigger models get a slightly higher base, but they
+      // always come in below well-scored HF results. Sort by Fit or VRAM
+      // to surface them more aggressively.
+      const score = params ? Math.min(30 + params * 0.3, 60) : 25;
+      out.push({
+        name: tag,
+        repo_id: tag,
+        quant: 'Q4_K_M',
+        parameter_count: paramsLabel,
+        params_b: params || 0,
+        required_gb: vramGb,
+        fit_level: fitLevel,
+        score,
+        speed_tps: 0,
+        context: 0,
+        is_gguf: true,
+        backend: 'ollama',
+        _isOllama: true,
+        _olName: m.name,
+        _olSize: sz,
+        _description: m.description || '',
+      });
+    }
+  }
+  return out;
 }
 
 export async function _hwfitFetch(fresh = false) {
@@ -467,11 +552,17 @@ export async function _hwfitFetch(fresh = false) {
     _hwfitCache = null;   // no instant paint — clear until the fetch returns
   }
   // Only fetch cached model IDs when server changes, not on every search/sort
-  if (!_cachedModelIds || _lastCacheHost() !== remoteHost) {
-    _setLastCacheHost(remoteHost);
-    const _cacheSrv = _envState.servers.find(s => s.host === remoteHost);
+  const remoteKey = _currentServerValue();
+  if (!_cachedModelIds || _lastCacheHost() !== remoteKey) {
+    _setLastCacheHost(remoteKey);
+    const _cacheSrv = _serverByVal(_envState.remoteServerKey || remoteHost);
     const _cachePort = _cacheSrv?.port || '';
-    const _cacheParams = new URLSearchParams({ host: remoteHost }); if (_cachePort) _cacheParams.set('ssh_port', _cachePort); if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
+    const _cacheParams = new URLSearchParams();
+    if (remoteHost) {
+      _cacheParams.set('host', remoteHost);
+      if (_cachePort) _cacheParams.set('ssh_port', _cachePort);
+      if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
+    }
     fetch(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' })
       .then(r => r.json())
       .then(d => {
@@ -510,7 +601,7 @@ export async function _hwfitFetch(fresh = false) {
     if (search) params.set('search', search);
     if (remoteHost) {
       params.set('host', remoteHost);
-      const _srv = _envState.servers.find(s => s.host === remoteHost);
+      const _srv = _serverByVal(_envState.remoteServerKey || remoteHost);
       const _hp = _srv?.port || '';
       if (_hp) params.set('ssh_port', _hp);
       if (_srv?.platform) params.set('platform', _srv.platform);
@@ -539,7 +630,18 @@ export async function _hwfitFetch(fresh = false) {
     // A newer scan started while this one was in flight (user switched servers
     // mid-probe) — drop this stale response so it can't clobber the new one.
     if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
-    if (!res.ok) throw new Error(res.statusText);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      let msg = '';
+      try {
+        const payload = JSON.parse(body);
+        msg = payload && (payload.detail || payload.error || payload.message);
+      } catch {
+        msg = body;
+      }
+      msg = typeof msg === 'string' ? msg.trim() : '';
+      throw new Error(`HTTP ${res.status} ${res.statusText}${msg ? `: ${msg}` : ''}`);
+    }
     let data = await res.json();
     if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
     if (!isImageMode && quantPref && !data.error && Array.isArray(data.models) && data.models.length === 0) {
@@ -578,6 +680,23 @@ export async function _hwfitFetch(fresh = false) {
       // with an error on a transient probe failure (stale-while-revalidate).
       if (!_cached) { _hwfitShowError(list, remoteHost, data.error); if (hw) hw.innerHTML = ''; }
       return;
+    }
+    // Merge Ollama library rows into the main list so they appear with the
+    // same Fit/Param/Quant/VRAM/Mode columns as HF results and respond to the
+    // Engine filter. Skipped in image-gen mode (Ollama doesn't serve diffusers).
+    if (!isImageMode) {
+      const _vramAvail = data.system?.gpu_vram_gb || 0;
+      const _ramAvail = data.system?.total_ram_gb || 0;
+      const _lib = await _ensureOllamaLib();
+      const _olRows = _ollamaToHwfitRows(_lib, _vramAvail, _ramAvail);
+      // Search filter on Ollama rows: HF API already filters by search; do the
+      // same client-side over Ollama name + description so the search box
+      // works consistently across both sources.
+      const _s = (search || '').trim().toLowerCase();
+      const _olFiltered = _s
+        ? _olRows.filter(r => r.name.toLowerCase().includes(_s) || (r._description || '').toLowerCase().includes(_s))
+        : _olRows;
+      data.models = (data.models || []).concat(_olFiltered);
     }
     _hwfitCache = data;
     _hwfitRenderHw(hw, data.system);
@@ -629,6 +748,80 @@ export async function _hwfitFetch(fresh = false) {
     // already on screen from the cache.
     if (!_cached) _hwfitShowError(list, remoteHost, e.message);
   }
+}
+
+// Renders a non-blocking hardware visibility warning when Cookbook is using
+// container-visible hardware that may not match the user's actual host machine.
+function _renderHwVisibilityWarning(sys) {
+  const row = document.getElementById('hwfit-hw-row');
+  if (!row) return;
+
+  let box = document.getElementById('hwfit-hw-visibility-warning');
+
+  // Manual hardware is an explicit user override, so avoid showing stale
+  // container-detection warnings once the user has chosen a simulated profile.
+  const warning = sys?.manual_hardware ? null : sys?.hardware_visibility_warning;
+
+  if (!warning) {
+    if (box) box.remove();
+    return;
+  }
+
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'hwfit-hw-visibility-warning';
+    box.className = 'hwfit-loading hwfit-hw-visibility-warning';
+    row.insertAdjacentElement('afterend', box);
+  }
+
+  box.innerHTML = `
+    <div class="hwfit-hw-visibility-warning-title">${esc(warning.title || 'Hardware visibility note')}</div>
+    <div class="hwfit-hw-visibility-warning-body">${esc(warning.message || '')}</div>
+    <div class="hwfit-hw-visibility-warning-actions">
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="manual">Edit manual hardware</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="rescan">Rescan</button>
+      <button type="button" class="hwfit-gpu-btn" data-hw-action="copy">Copy diagnostics</button>
+    </div>
+  `;
+
+  box.querySelector('[data-hw-action="manual"]')?.addEventListener('click', () => {
+    const panel = document.getElementById('hwfit-manual-panel');
+    if (panel) panel.classList.remove('hidden');
+    document.getElementById('hwfit-hw-manual-btn')?.scrollIntoView?.({
+      behavior: 'smooth',
+      block: 'center',
+    });
+  });
+
+  box.querySelector('[data-hw-action="rescan"]')?.addEventListener('click', () => {
+    _resetGpuToggleState();
+    _hwfitCache = null;
+    _hwfitFetch(true);
+  });
+
+  box.querySelector('[data-hw-action="copy"]')?.addEventListener('click', () => {
+    // Keep diagnostics copy/paste friendly for GitHub issues and Docker support.
+    const text = [
+      'Odysseus Cookbook hardware diagnostics',
+      `probe_scope=${sys?.probe_scope || ''}`,
+      `containerized=${sys?.containerized === true}`,
+      `backend=${sys?.backend || ''}`,
+      `has_gpu=${sys?.has_gpu === true}`,
+      `gpu_name=${sys?.gpu_name || ''}`,
+      `gpu_count=${sys?.gpu_count || 0}`,
+      `gpu_vram_gb=${sys?.gpu_vram_gb || ''}`,
+      `ram=${sys?.available_ram_gb || '?'} / ${sys?.total_ram_gb || '?'} GB`,
+      `cpu_cores=${sys?.cpu_cores || ''}`,
+      `cpu_name=${sys?.cpu_name || ''}`,
+      '',
+      'Useful checks:',
+      'docker compose exec odysseus nvidia-smi -L',
+      'docker compose exec odysseus cat /proc/meminfo | head',
+      'docker compose exec odysseus python -c "from services.hwfit.hardware import detect_system; import json; print(json.dumps(detect_system(fresh=True), indent=2))"',
+    ].join('\n');
+
+    _copyText(text);
+  });
 }
 
 export function _hwfitRenderHw(el, sys) {
@@ -719,6 +912,7 @@ export function _hwfitRenderHw(el, sys) {
     + chip('cores', cores)
     + chip('backend', esc(sys.backend || ''))
     + manualChip;
+  _renderHwVisibilityWarning(sys);
   // Body click → toggle "off" (dimmed, still visible). Membership of
   // _dismissedHwChips is what the ranker reads, so both add+remove
   // here also flips the model list. The manual chip is excluded —
@@ -960,14 +1154,36 @@ export function _hwfitRenderList(el, models) {
     html += `</div>`;
   }
   el.innerHTML = html;
-  // Click row → expand inline action panel
+  // Click row → expand inline action panel. Exception: Ollama rows skip the
+  // expand panel (no HF metadata to power it) and just fill the Download
+  // input with the `<name>:<size>` tag — one click → ready to pull.
   el.querySelectorAll('.hwfit-row:not(.hwfit-header)').forEach(row => {
     row.addEventListener('click', () => {
       const name = row.dataset.model;
       if (!name) return;
-      // Find model data from cache
       const modelData = (_hwfitCache?.models || []).find(m => m.name === name);
       if (!modelData) return;
+      if (modelData._isOllama) {
+        // Force-open the Download card if it's been collapsed — otherwise
+        // filling the (hidden) input silently swallows the click.
+        const dlBody = document.getElementById('cookbook-download-card-body');
+        const dlArrow = document.getElementById('cookbook-download-card-arrow');
+        if (dlBody && dlBody.style.display === 'none') {
+          dlBody.style.display = 'block';
+          if (dlArrow) dlArrow.style.transform = 'rotate(90deg)';
+        }
+        const dlInput = document.getElementById('cookbook-dl-repo');
+        if (dlInput) {
+          dlInput.value = modelData.name;
+          dlInput.focus();
+          // Briefly highlight so the user sees what got filled even when the
+          // download card sits far above the (long) hwfit list.
+          dlInput.classList.add('cookbook-dl-flash');
+          setTimeout(() => dlInput.classList.remove('cookbook-dl-flash'), 800);
+          dlInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        return;
+      }
       _expandModelRow(row, modelData);
     });
   });
@@ -1024,11 +1240,13 @@ function _syncHostFromScanDropdown() {
   let host = '';
   if (ss.value === 'local') {
     _envState.remoteHost = '';
+    _envState.remoteServerKey = '';
   } else {
     const s = _serverByVal(ss.value);
     if (s) {
       host = s.host;
       _envState.remoteHost = s.host;
+      _envState.remoteServerKey = _serverKey(s);
       _envState.env = s.env;
       _envState.envPath = s.envPath;
       _envState.platform = s.platform || '';
@@ -1209,7 +1427,7 @@ export function _expandModelRow(row, modelData) {
       // Launch via serve API. Field names must match the backend ServeRequest
       // schema (repo_id + cmd) — sending `command`/`model` failed Pydantic
       // validation (422), which is why Run silently did nothing.
-      const _srv = (_envState.servers || []).find(s => s.host === host);
+      const _srv = _serverByVal(_envState.remoteServerKey || host);
       const payload = {
         repo_id: modelData.name,
         cmd: cmd,
@@ -1291,7 +1509,7 @@ export function _hwfitInit() {
   if (sort) sort.addEventListener('change', () => _hwfitFetch());
   if (qpref) qpref.addEventListener('change', () => _hwfitFetch());
   // Engine filter is a pure client-side view filter over the already-fetched
-  // list, so just re-render from cache instead of re-probing hardware.
+  // list (HF + Ollama merged), so just re-render from cache.
   const engine = document.getElementById('hwfit-engine');
   if (engine) engine.addEventListener('change', () => {
     const list = document.getElementById('hwfit-list');
@@ -1363,12 +1581,10 @@ export function _hwfitInit() {
     clearTimeout(_hwfitDebounce);
     _hwfitDebounce = setTimeout(() => _hwfitFetch(), 400);
   });
-  // HF Token
-  const hfToken = document.getElementById('hwfit-hftoken');
-  if (hfToken) {
-    hfToken.addEventListener('change', () => { _envState.hfToken = hfToken.value.trim(); _persistEnvState(); });
-    hfToken.addEventListener('input', () => { _envState.hfToken = hfToken.value.trim(); });
-  }
+  // HF token save is owned by cookbook.js (_wireTabEvents) — do not wire a
+  // second change/input handler here. The old duplicate ran after cookbook.js
+  // cleared the input on save and overwrote _envState.hfToken with "", so the
+  // debounced state sync never persisted the token to cookbook_state.json.
 
   // Rebuild all server select dropdowns with current servers
   function _rebuildServerSelect() {
@@ -1428,7 +1644,7 @@ export function _hwfitInit() {
     // dropdown still showed odysseus. The user's selection must only change via
     // an explicit dropdown pick. Here we just refresh env/path if we can match
     // the current host; otherwise leave remoteHost untouched.
-    const sel = _envState.servers.find(s => s.host === _envState.remoteHost);
+    const sel = _serverByVal(_envState.remoteServerKey || _envState.remoteHost);
     if (sel) { _envState.env = sel.env; _envState.envPath = sel.envPath; }
     _persistEnvState();
   }
@@ -1604,15 +1820,16 @@ export function _hwfitInit() {
         // (inline — _applyServerSelection lives in cookbook.js and isn't imported here).
         const _dk = _envState.defaultServer;
         if (_dk) {
-          if (_dk === 'local') { _envState.remoteHost = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
-          else { const _s = (_envState.servers || []).find(x => x.host === _dk); if (_s) { _envState.remoteHost = _s.host; _envState.env = _s.env || 'none'; _envState.envPath = _s.envPath || ''; _envState.platform = _s.platform || ''; } }
+          if (_dk === 'local') { _envState.remoteHost = ''; _envState.remoteServerKey = ''; _envState.env = 'none'; _envState.envPath = ''; _envState.platform = ''; }
+          else { const _s = _serverByVal(_dk); if (_s) { _envState.remoteHost = _s.host; _envState.remoteServerKey = _serverKey(_s); _envState.env = _s.env || 'none'; _envState.envPath = _s.envPath || ''; _envState.platform = _s.platform || ''; } }
           _persistEnvState();
           document.querySelectorAll('#hwfit-server-select, #hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
-            if (sel && sel.tagName === 'SELECT') sel.value = _envState.remoteHost || 'local';
+            if (sel && sel.tagName === 'SELECT') sel.value = _currentServerValue();
           });
         }
+        const defaultSrv = _serverByVal(_envState.defaultServer);
         uiModule.showToast(_envState.defaultServer
-          ? 'Default server: ' + (_envState.defaultServer === 'local' ? 'Local' : _envState.defaultServer)
+          ? 'Default server: ' + (_envState.defaultServer === 'local' ? 'Local' : (defaultSrv?.name || defaultSrv?.host || 'selected server'))
           : 'Default server cleared');
       });
     }
@@ -1687,6 +1904,15 @@ export function _hwfitInit() {
       saveBtn.addEventListener('click', () => {
         _syncServers();
         _rebuildServerSelect();
+        // Broadcast for anything outside the settings tab that depends on
+        // the server list (Serve dialog host picker, Running tasks, etc.).
+        // Without this the user had to hard-refresh to see the new entry
+        // in those other places.
+        try {
+          document.dispatchEvent(new CustomEvent('cookbook:servers-changed', {
+            detail: { servers: _envState.servers.slice() },
+          }));
+        } catch (_) {}
         saveBtn.classList.add('saved');
         saveBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;flex-shrink:0;"><polyline points="20 6 9 17 4 12"/></svg>Saved';
       });
@@ -1706,6 +1932,11 @@ export function _hwfitInit() {
       entry.remove();
       _syncServers();
       _rebuildServerSelect();
+      try {
+        document.dispatchEvent(new CustomEvent('cookbook:servers-changed', {
+          detail: { servers: _envState.servers.slice() },
+        }));
+      } catch (_) {}
       _hwfitCache = null;
       _hwfitFetch();
     });
@@ -1866,12 +2097,14 @@ export function _hwfitInit() {
       const val = serverSelect.value;
       if (val === 'local') {
         _envState.remoteHost = '';
+        _envState.remoteServerKey = '';
         _envState.env = 'none';
         _envState.envPath = '';
       } else {
         const s = _serverByVal(val);
         if (s) {
           _envState.remoteHost = s.host;
+          _envState.remoteServerKey = _serverKey(s);
           _envState.env = s.env;
           _envState.envPath = s.envPath;
         }
@@ -1881,10 +2114,9 @@ export function _hwfitInit() {
       // download-input button reads #hwfit-dl-server *directly*, so without this
       // it kept its old value and downloads went to the wrong host even
       // though the scan here correctly switched to the selected server.
-      // Option values are host strings now ('local' for the local box).
       document.querySelectorAll('#hwfit-dl-server, #hwfit-cache-server, #hwfit-deps-server').forEach(sel => {
         if (!sel || sel.tagName !== 'SELECT') return;
-        sel.value = _envState.remoteHost || 'local';
+        sel.value = _currentServerValue();
       });
       _hwfitCache = null;
       // Reset GPU-toggle state (no flicker) so the new server's hardware re-renders.

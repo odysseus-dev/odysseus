@@ -5,11 +5,13 @@ Auto-registration of built-in MCP servers on startup.
 Each server runs as a stdio subprocess managed by McpManager.
 """
 
+import asyncio
+import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
-import asyncio
 
 from core.platform_compat import IS_WINDOWS, which_tool
 
@@ -196,18 +198,29 @@ def _npx_package_from_args(args):
 async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
     """Probe whether an npx package is already in the local cache.
 
-    Runs `npx --no-install <pkg> --version`. --no-install tells npx to
-    fail instead of downloading, so a cache miss returns fast. We treat
-    "exited 0 with non-empty stdout" as proof of a working cached copy.
-    Anything else (non-zero exit, empty stdout, timeout, missing npx,
-    network error) means we should skip the server.
+    First checks the local `_npx` cache for an installed package. If the
+    package is not found there, falls back to `npx --no-install <pkg>
+    --version` so older npm layouts still work without downloading.
     """
+    if _is_package_in_npx_cache(package_spec):
+        return True
+
     try:
         proc = await asyncio.create_subprocess_exec(
             npx_path, "--no-install", package_spec, "--version",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+    except NotImplementedError:
+        try:
+            result = subprocess.run(
+                [npx_path, "--no-install", package_spec, "--version"],
+                capture_output=True,
+                timeout=timeout_s,
+            )
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            return False
+        return result.returncode == 0 and bool(result.stdout.strip())
     except (OSError, ValueError):
         return False
     try:
@@ -220,3 +233,68 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
             pass
         return False
     return proc.returncode == 0 and bool(stdout.strip())
+
+
+def _is_package_in_npx_cache(package_spec):
+    """Return True when npm's `_npx` cache already contains package_spec."""
+    package_name = _npx_package_name(package_spec)
+    if not package_name:
+        return False
+
+    for cache_root in _npm_cache_roots():
+        npx_root = os.path.join(cache_root, "_npx")
+        if _npx_cache_contains_package(npx_root, package_name):
+            return True
+    return False
+
+
+def _npx_package_name(package_spec):
+    """Strip a version/range suffix from an npm package spec."""
+    if not package_spec:
+        return ""
+    if package_spec.startswith("@"):
+        parts = package_spec.split("@", 2)
+        if len(parts) >= 3:
+            return f"@{parts[1]}"
+        return package_spec
+    return package_spec.split("@", 1)[0]
+
+
+def _npm_cache_roots():
+    roots = []
+    configured = os.environ.get("npm_config_cache")
+    if configured:
+        roots.append(os.path.expanduser(configured))
+    roots.append(os.path.join(os.path.expanduser("~"), ".npm"))
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        roots.append(os.path.join(local_app_data, "npm-cache"))
+    return list(dict.fromkeys(roots))
+
+
+def _npx_cache_contains_package(npx_root, package_name):
+    if not os.path.isdir(npx_root):
+        return False
+    package_path = os.path.join("node_modules", *package_name.split("/"), "package.json")
+    try:
+        entries = list(os.scandir(npx_root))
+    except OSError:
+        return False
+    for entry in entries:
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            continue
+        cached_name = _cached_package_name(os.path.join(entry.path, package_path))
+        if is_dir and cached_name == package_name:
+            return True
+    return False
+
+
+def _cached_package_name(package_json_path):
+    try:
+        with open(package_json_path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    return str(data.get("name", "")).strip()

@@ -14,7 +14,7 @@ from src import llm_core
 @pytest.mark.parametrize(
     "model",
     ["o1", "o1-mini", "o3", "o3-mini", "o4-mini", "gpt-5", "gpt-5-mini",
-     "openrouter/openai/o3-mini", "OpenAI/GPT-5"],
+     "openrouter/openai/o3-mini", "OpenAI/GPT-5", "kimi-for-coding"],
 )
 def test_reasoning_models_restrict_temperature(model):
     assert llm_core._restricts_temperature(model) is True
@@ -62,6 +62,12 @@ def test_reasoning_model_payload_omits_temperature(monkeypatch):
     assert payload["max_completion_tokens"] == 5
 
 
+def test_kimi_for_coding_payload_omits_temperature(monkeypatch):
+    payload = _capture_openai_payload(monkeypatch, "kimi-for-coding", 0.1)
+    assert "temperature" not in payload
+    assert payload["max_tokens"] == 5
+
+
 def test_normal_model_payload_keeps_temperature(monkeypatch):
     payload = _capture_openai_payload(monkeypatch, "gpt-4o", 0.2)
     assert payload["temperature"] == 0.2
@@ -73,6 +79,31 @@ def test_normal_model_payload_keeps_temperature_above_one(monkeypatch):
     # is Anthropic-only and must not touch this path.
     payload = _capture_openai_payload(monkeypatch, "gpt-4o", 1.2)
     assert payload["temperature"] == 1.2
+
+
+def test_chatgpt_subscription_payload_omits_max_output_tokens():
+    # ChatGPT Subscription Codex API does not support max_output_tokens —
+    # passing it returns HTTP 400 "Unsupported parameter: max_output_tokens".
+    # The payload should NOT include max_output_tokens regardless of max_tokens.
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-5.1-codex",
+        [{"role": "user", "content": "Say OK"}],
+        temperature=0.2,
+        max_tokens=37,
+    )
+
+    assert "max_output_tokens" not in payload
+
+
+def test_chatgpt_subscription_payload_omits_max_output_tokens_when_zero():
+    payload = llm_core._build_chatgpt_responses_payload(
+        "gpt-5.1-codex",
+        [{"role": "user", "content": "Say OK"}],
+        temperature=0.2,
+        max_tokens=0,
+    )
+
+    assert "max_output_tokens" not in payload
 
 
 def _anthropic_payload(temperature):

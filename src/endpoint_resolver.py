@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Dict
 from urllib.parse import urlparse, urlunparse
 
 from core.database import SessionLocal, ModelEndpoint
-from src.llm_core import _detect_provider, _host_match
+from src.llm_core import _detect_provider, _host_match, _is_kimi_code_url, KIMI_CODE_USER_AGENT, _ollama_api_root
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,25 @@ def _endpoint_enabled_models(ep) -> list:
     """
     hidden = _endpoint_hidden_models(ep)
     return [m for m in _endpoint_cached_models(ep) if m not in hidden]
+
+
+def resolve_endpoint_runtime(ep, owner: Optional[str] = None) -> Tuple[str, Optional[str]]:
+    """Resolve a ModelEndpoint row to its runtime base URL and bearer/API key.
+
+    Static-key providers use ``ModelEndpoint.api_key``. Session-backed providers
+    store refreshable credentials in ProviderAuthSession and must resolve a
+    current access token at call time.
+    """
+    base = normalize_base(getattr(ep, "base_url", "") or "")
+    api_key = getattr(ep, "api_key", None)
+    auth_id = getattr(ep, "provider_auth_id", None)
+    if auth_id:
+        from src.chatgpt_subscription import resolve_runtime_credentials
+
+        creds = resolve_runtime_credentials(auth_id, owner=owner)
+        base = normalize_base(creds.get("base_url") or base)
+        api_key = creds.get("api_key")
+    return base, api_key
 
 
 # Cache for Tailscale hostname → IP resolution
@@ -133,7 +152,7 @@ def resolve_url(url: str) -> str:
 def normalize_base(url: str) -> str:
     """Strip known API path suffixes from a base URL."""
     url = (url or "").strip().rstrip("/")
-    for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages"]:
+    for suffix in ["/models", "/chat/completions", "/completions", "/v1/messages", "/responses"]:
         if url.endswith(suffix):
             url = url[: -len(suffix)].rstrip("/")
     for suffix in ["/chat", "/tags", "/generate"]:
@@ -150,19 +169,6 @@ def _anthropic_api_root(base: str) -> str:
     return base
 
 
-def _ollama_api_root(base: str) -> str:
-    """Return the native Ollama API root, adding /api for ollama.com hosts."""
-    base = (base or "").strip().rstrip("/")
-    parsed = urlparse(base)
-    path = (parsed.path or "").rstrip("/")
-    if path.endswith("/api"):
-        return base
-    if _host_match(base, "ollama.com"):
-        root = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "https://ollama.com"
-        return root.rstrip("/") + "/api"
-    return base
-
-
 def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
     base = resolve_url(base)
@@ -171,17 +177,36 @@ def build_chat_url(base: str) -> str:
         return _anthropic_api_root(base) + "/v1/messages"
     if provider == "ollama":
         return _ollama_api_root(base) + "/chat"
+    if provider == "chatgpt-subscription":
+        return base.rstrip("/") + "/responses"
     return base + "/chat/completions"
 
 
-def build_models_url(base: str) -> str:
-    """Return the provider-specific model-list endpoint URL for a base."""
-    base = resolve_url(base)
+def build_models_url(base: str) -> Optional[str]:
+    """Return the provider-specific model-list endpoint URL for a base.
+
+    For OpenAI-compatible servers (LM Studio, llama.cpp, vLLM,
+    text-generation-webui, etc.) the model list is exposed at ``/v1/models``.
+    When the user-supplied base has no path — e.g. ``http://localhost:1234`` —
+    we still need to land on ``/v1/models`` (issue #25); insert the ``/v1``
+    segment only when the path is empty, leaving any explicit non-empty path
+    untouched (so custom prefixes like ``/openai`` or ``/api/openai/v1`` keep
+    their semantics).
+    """
+    base = normalize_base(resolve_url(base))
     provider = _detect_provider(base)
     if provider == "anthropic":
         return _anthropic_api_root(base) + "/v1/models"
     if provider == "ollama":
         return _ollama_api_root(base) + "/tags"
+    if provider == "chatgpt-subscription":
+        return None
+    # Generic OpenAI-compatible fallback: ensure the path lands on /v1/models
+    # when the user omitted a path entirely. If a non-empty path is already
+    # present (e.g. /openai, /api/openai/v1, /v1), trust the caller — the
+    # /models suffix is appended as-is and the caller's prefix is preserved.
+    if not urlparse(base).path:
+        base = base + "/v1"
     return base + "/models"
 
 
@@ -197,11 +222,16 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     if provider == "copilot":
         from src.copilot import copilot_headers
         return copilot_headers(api_key)
+    if provider == "chatgpt-subscription":
+        from src.chatgpt_subscription import chatgpt_headers
+        return chatgpt_headers(api_key)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if provider == "openrouter":
         headers.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
         headers.setdefault("X-OpenRouter-Title", "Odysseus")
+    if _is_kimi_code_url(base):
+        headers.setdefault("User-Agent", KIMI_CODE_USER_AGENT)
     return headers
 
 
@@ -237,26 +267,22 @@ def resolve_endpoint(
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
 
-    # If the specific endpoint is not configured, but the caller provided a
+    # Fall back to utility model for task/research/auto-naming if not specifically configured.
+    if not ep_id and setting_prefix not in ("utility", "default"):
+        ep_id = _stg("utility_endpoint_id")
+        model = _stg("utility_model")
+
+    # If the endpoint is STILL not configured, but the caller provided a
     # valid fallback (e.g. the active session model), use that immediately.
     # This prevents background tasks from jumping to the global default_model
     # when the user is mid-conversation with a different model.
     if not ep_id and fallback_url and fallback_model:
         return fallback_url, fallback_model, fallback_headers
 
-    # Unset Utility means "same as Default Chat Model".
-    if setting_prefix == "utility" and not ep_id:
+    # Unset Utility (or anything else that didn't have a fallback) means "same as Default Chat Model".
+    if not ep_id:
         ep_id = _stg("default_endpoint_id")
         model = _stg("default_model")
-
-    # Fall back to utility model for task/research/auto-naming if not specifically configured.
-    # If Utility itself is unset, the block above makes that resolve to Default Chat.
-    if not ep_id and setting_prefix != "utility":
-        ep_id = _stg("utility_endpoint_id")
-        model = _stg("utility_model")
-        if not ep_id:
-            ep_id = _stg("default_endpoint_id")
-            model = _stg("default_model")
 
     if not ep_id:
         return fallback_url, fallback_model, fallback_headers
@@ -275,9 +301,13 @@ def resolve_endpoint(
         if not ep:
             return fallback_url, fallback_model, fallback_headers
 
-        base = normalize_base(ep.base_url)
+        try:
+            base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+        except Exception as e:
+            logger.warning("Could not resolve endpoint runtime credentials: %s", e)
+            return fallback_url, fallback_model, fallback_headers
         chat_url = build_chat_url(base)
-        headers = build_headers(ep.api_key, base)
+        headers = build_headers(api_key, base)
 
         # Discard a configured model the user has since disabled on the
         # endpoint (e.g. a stale `default_model` left pointing at a now-hidden
@@ -321,9 +351,13 @@ def resolve_endpoint_by_id(
         ep = q.first()
         if not ep:
             return None
-        base = normalize_base(ep.base_url)
+        try:
+            base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+        except Exception as e:
+            logger.warning("Could not resolve endpoint runtime credentials: %s", e)
+            return None
         chat_url = build_chat_url(base)
-        headers = build_headers(ep.api_key, base)
+        headers = build_headers(api_key, base)
         m = (model or "").strip()
         # Drop a model the user disabled on the endpoint, then pick the first
         # enabled chat model rather than a hidden one.

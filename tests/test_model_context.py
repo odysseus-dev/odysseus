@@ -6,7 +6,7 @@ import types
 import pytest
 
 import src.model_context as model_context
-from src.model_context import _is_local_endpoint, estimate_tokens, _lookup_known
+from src.model_context import is_local_endpoint, estimate_tokens, _lookup_known
 
 
 class _Column:
@@ -56,20 +56,20 @@ def _install_endpoint_db(monkeypatch, rows):
 
 class TestIsLocalEndpoint:
     def test_localhost(self):
-        assert _is_local_endpoint("http://localhost:5000/v1/chat/completions") is True
+        assert is_local_endpoint("http://localhost:5000/v1/chat/completions") is True
 
     def test_loopback_ipv4(self):
-        assert _is_local_endpoint("http://127.0.0.1:8080/v1/chat/completions") is True
+        assert is_local_endpoint("http://127.0.0.1:8080/v1/chat/completions") is True
 
     def test_private_192_168(self):
-        assert _is_local_endpoint("http://192.168.1.1:11434/v1/chat/completions") is True
+        assert is_local_endpoint("http://192.168.1.1:11434/v1/chat/completions") is True
 
     def test_private_10(self):
-        assert _is_local_endpoint("http://10.0.0.5:8000/v1/chat/completions") is True
+        assert is_local_endpoint("http://10.0.0.5:8000/v1/chat/completions") is True
 
     def test_tailscale_100(self):
         # 100.64.0.0/10 is the CGNAT range Tailscale uses.
-        assert _is_local_endpoint("http://100.64.0.1:5000/v1/chat/completions") is True
+        assert is_local_endpoint("http://100.64.0.1:5000/v1/chat/completions") is True
 
     def test_configured_tailscale_proxy_is_remote(self, monkeypatch):
         _install_endpoint_db(monkeypatch, [
@@ -81,19 +81,19 @@ class TestIsLocalEndpoint:
             )
         ])
 
-        assert _is_local_endpoint("http://100.117.136.97:34521/v1/chat/completions") is False
+        assert is_local_endpoint("http://100.117.136.97:34521/v1/chat/completions") is False
 
     def test_openai_is_remote(self):
-        assert _is_local_endpoint("https://api.openai.com/v1/chat/completions") is False
+        assert is_local_endpoint("https://api.openai.com/v1/chat/completions") is False
 
     def test_anthropic_is_remote(self):
-        assert _is_local_endpoint("https://api.anthropic.com/v1/messages") is False
+        assert is_local_endpoint("https://api.anthropic.com/v1/messages") is False
 
     def test_empty_url(self):
-        assert _is_local_endpoint("") is False
+        assert is_local_endpoint("") is False
 
     def test_malformed_url(self):
-        assert _is_local_endpoint("not-a-url") is False
+        assert is_local_endpoint("not-a-url") is False
 
 
 class TestEstimateTokens:
@@ -192,7 +192,7 @@ class TestGetContextLength:
 
         def fake_query(endpoint_url, model):
             calls.append((endpoint_url, model))
-            return 8192 if len(calls) == 1 else 27000
+            return (8192, True) if len(calls) == 1 else (27000, True)
 
         monkeypatch.setattr(model_context, "_query_context_length", fake_query)
 
@@ -211,7 +211,7 @@ class TestGetContextLength:
 
         def fake_query(endpoint_url, model):
             calls.append((endpoint_url, model))
-            return 200000 if len(calls) == 1 else 12345
+            return (200000, True) if len(calls) == 1 else (12345, True)
 
         monkeypatch.setattr(model_context, "_query_context_length", fake_query)
 

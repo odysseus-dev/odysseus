@@ -12,8 +12,14 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user, require_privilege
-from src.upload_limits import read_upload_limited
+from src.auth_helpers import get_current_user, owner_filter, require_privilege
+from src.upload_limits import (
+    read_upload_limited,
+    GALLERY_UPLOAD_MAX_BYTES,
+    GALLERY_TRANSFORM_UPLOAD_MAX_BYTES,
+)
+from src.constants import GENERATED_IMAGES_DIR
+from src.optional_deps import patch_realesrgan_torchvision_compat
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
@@ -21,8 +27,18 @@ from routes.gallery_helpers import (
 
 logger = logging.getLogger(__name__)
 
-GALLERY_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES", str(100 * 1024 * 1024)))
-GALLERY_TRANSFORM_UPLOAD_MAX_BYTES = int(os.getenv("ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
+
+def _current_user_is_admin(request: Request, user: str | None) -> bool:
+    if not user:
+        return False
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    is_admin = getattr(auth_mgr, "is_admin", None)
+    if not callable(is_admin):
+        return False
+    try:
+        return bool(is_admin(user))
+    except Exception:
+        return False
 
 
 def _sanitize_gallery_filename(filename: str) -> str:
@@ -33,7 +49,7 @@ def _sanitize_gallery_filename(filename: str) -> str:
     return safe_name
 
 
-GALLERY_IMAGE_DIR = Path("data/generated_images")
+GALLERY_IMAGE_DIR = Path(GENERATED_IMAGES_DIR)
 
 
 def _gallery_image_path(filename: str) -> Path:
@@ -52,6 +68,72 @@ def _gallery_image_path(filename: str) -> Path:
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
     return path
+
+
+def _normalize_image_endpoint_base(url: str) -> str:
+    base = (url or "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    return base
+
+
+def _visible_image_endpoint_query(db, owner: str | None):
+    from src.auth_helpers import owner_filter
+    q = db.query(ModelEndpoint).filter(
+        ModelEndpoint.model_type == "image",
+        ModelEndpoint.is_enabled == True,  # noqa: E712
+    )
+    return owner_filter(q, ModelEndpoint, owner)
+
+
+def _first_visible_image_endpoint(db, owner: str | None):
+    endpoints = _visible_image_endpoint_query(db, owner).all()
+    if owner:
+        for ep in endpoints:
+            if getattr(ep, "owner", None) == owner:
+                return ep
+    return endpoints[0] if endpoints else None
+
+
+def _visible_image_endpoint_for_base(db, base: str, owner: str | None):
+    target = _normalize_image_endpoint_base(base)
+    if not target:
+        return None
+    fallback = None
+    for ep in _visible_image_endpoint_query(db, owner).all():
+        if _normalize_image_endpoint_base(getattr(ep, "base_url", "")) == target:
+            if owner and getattr(ep, "owner", None) == owner:
+                return ep
+            if fallback is None:
+                fallback = ep
+    return fallback
+
+
+async def _fetch_result_image_b64(url: str) -> Optional[str]:
+    """Fetch an image URL returned in an upstream response body, base64-encoded
+    (or None on a non-200).
+
+    The URL comes from the diffusion/OpenAI server's response, not from our own
+    config, so a malicious or compromised endpoint could otherwise steer this
+    fetch at an internal or cloud-metadata address. Validate it the same way the
+    client-supplied endpoint is validated before the first request.
+    """
+    import base64
+    import httpx
+    from src.url_safety import check_outbound_url
+
+    ok, reason = check_outbound_url(
+        url,
+        block_private=os.getenv("IMAGE_BLOCK_PRIVATE_IPS", "false").lower() == "true",
+    )
+    if not ok:
+        raise HTTPException(502, f"Upstream returned an unsafe image URL: {reason}")
+    async with httpx.AsyncClient(timeout=60) as c2:
+        ir = await c2.get(url)
+        if ir.status_code == 200:
+            return base64.b64encode(ir.content).decode()
+    return None
+
 
 def setup_gallery_routes() -> APIRouter:
     router = APIRouter(tags=["gallery"])
@@ -76,6 +158,9 @@ def setup_gallery_routes() -> APIRouter:
         file_hash = hashlib.sha256(content).hexdigest()
         db = SessionLocal()
         try:
+            if album_id and user is not None:
+                _get_or_404_album(db, album_id, user)
+
             # SECURITY: scope the dup-detect to THIS user — otherwise a
             # caller can probe whether someone else uploaded the same
             # file (the response leaks the existing row's id+filename).
@@ -90,7 +175,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"ok": False, "duplicate": True, "filename": existing.filename,
                         "id": existing.id, "message": "Duplicate photo skipped"}
 
-            img_dir = Path("data/generated_images")
+            img_dir = Path(GENERATED_IMAGES_DIR)
             img_dir.mkdir(parents=True, exist_ok=True)
 
             ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "png"
@@ -156,7 +241,7 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(400, "No image provided")
 
             content = await read_upload_limited(file, GALLERY_UPLOAD_MAX_BYTES, "Gallery replacement")
-            img_dir = Path("data/generated_images")
+            img_dir = Path(GENERATED_IMAGES_DIR)
             img_dir.mkdir(parents=True, exist_ok=True)
             img_path = img_dir / _sanitize_gallery_filename(img.filename)
             img_path.write_bytes(content)
@@ -269,7 +354,7 @@ def setup_gallery_routes() -> APIRouter:
         """AI upscale using img2img with the diffusion server."""
         import base64, httpx
 
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         if not file: raise HTTPException(400, "No image")
@@ -281,7 +366,7 @@ def setup_gallery_routes() -> APIRouter:
         # Find image endpoint
         db = SessionLocal()
         try:
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.model_type == "image", ModelEndpoint.is_enabled == True).first()
+            ep = _first_visible_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -312,7 +397,7 @@ def setup_gallery_routes() -> APIRouter:
         """Style transfer using img2img with the diffusion server."""
         import base64, httpx
 
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         form = await request.form()
         file = form.get("image")
         prompt = form.get("prompt", "")
@@ -324,7 +409,7 @@ def setup_gallery_routes() -> APIRouter:
 
         db = SessionLocal()
         try:
-            ep = db.query(ModelEndpoint).filter(ModelEndpoint.model_type == "image", ModelEndpoint.is_enabled == True).first()
+            ep = _first_visible_image_endpoint(db, user)
         finally:
             db.close()
 
@@ -418,8 +503,7 @@ def setup_gallery_routes() -> APIRouter:
                 .outerjoin(DbSession, GalleryImage.session_id == DbSession.id)
                 .filter(GalleryImage.is_active == True)
             )
-            if user is not None:
-                q = q.filter(GalleryImage.owner == user)
+            q = _owner_filter(q, user)
 
             # Search filter (prompt + tags + ai_tags)
             if search:
@@ -521,28 +605,26 @@ def setup_gallery_routes() -> APIRouter:
         db = SessionLocal()
         try:
             q = db.query(GalleryAlbum)
-            if user:
-                q = q.filter(GalleryAlbum.owner == user)
+            q = _owner_filter(q, user, GalleryAlbum)
             albums = q.order_by(GalleryAlbum.created_at.desc()).all()
             result = []
             for a in albums:
                 _count_q = db.query(GalleryImage).filter(
                     GalleryImage.album_id == a.id, GalleryImage.is_active == True
                 )
-                if user:
-                    _count_q = _count_q.filter(GalleryImage.owner == user)
+                _count_q = _owner_filter(_count_q, user)
                 count = _count_q.count()
                 cover_url = None
                 if a.cover_id:
-                    cover = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id).first()
+                    cover_q = db.query(GalleryImage).filter(GalleryImage.id == a.cover_id)
+                    cover = _owner_filter(cover_q, user).first()
                     if cover:
                         cover_url = f"/api/generated-image/{cover.filename}"
                 elif count > 0:
                     _cover_q = db.query(GalleryImage).filter(
                         GalleryImage.album_id == a.id, GalleryImage.is_active == True
                     )
-                    if user:
-                        _cover_q = _cover_q.filter(GalleryImage.owner == user)
+                    _cover_q = _owner_filter(_cover_q, user)
                     first = _cover_q.order_by(GalleryImage.created_at.desc()).first()
                     if first:
                         cover_url = f"/api/generated-image/{first.filename}"
@@ -585,10 +667,9 @@ def setup_gallery_routes() -> APIRouter:
             base = db.query(GalleryImage).filter(GalleryImage.is_active == True)
             size_q = db.query(func.sum(GalleryImage.file_size)).filter(GalleryImage.is_active == True)
             album_q = db.query(GalleryAlbum)
-            if user:
-                base = base.filter(GalleryImage.owner == user)
-                size_q = size_q.filter(GalleryImage.owner == user)
-                album_q = album_q.filter(GalleryAlbum.owner == user)
+            base = _owner_filter(base, user)
+            size_q = _owner_filter(size_q, user)
+            album_q = _owner_filter(album_q, user, GalleryAlbum)
             total = base.count()
             total_size = size_q.scalar() or 0
             fav_count = base.filter(GalleryImage.favorite == True).count()
@@ -616,8 +697,7 @@ def setup_gallery_routes() -> APIRouter:
                 GalleryImage.is_active == True,
                 (GalleryImage.ai_tags == None) | (GalleryImage.ai_tags == ""),
             )
-            if user:
-                q = q.filter(GalleryImage.owner == user)
+            q = _owner_filter(q, user)
             if album_id:
                 q = q.filter(GalleryImage.album_id == album_id)
             untagged = q.count()
@@ -957,7 +1037,7 @@ def setup_gallery_routes() -> APIRouter:
         the request for /v1/images/edits (multipart, inverted mask). Otherwise
         proxy through to a self-hosted diffusion server's /v1/images/inpaint."""
         import httpx
-        require_privilege(request, "can_generate_images")
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
         # Use endpoint from request body (editor dropdown) or fall back to DB lookup
         base = (body.pop("_endpoint", "") or "").rstrip("/")
@@ -976,14 +1056,11 @@ def setup_gallery_routes() -> APIRouter:
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                ep = _first_visible_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured. Serve a diffusion model via Cookbook first.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
@@ -1000,10 +1077,12 @@ def setup_gallery_routes() -> APIRouter:
             _target = _norm_url(base)
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if _norm_url(ep.base_url) == _target:
-                        api_key = ep.api_key
-                        break
+                ep = _visible_image_endpoint_for_base(db, _target, user)
+                if ep:
+                    base = (ep.base_url or base).rstrip("/")
+                    api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 
@@ -1090,10 +1169,7 @@ def setup_gallery_routes() -> APIRouter:
                         if item.get("b64_json"):
                             raw_b64 = item["b64_json"]
                         elif item.get("url"):
-                            async with httpx.AsyncClient(timeout=60) as c2:
-                                img_r = await c2.get(item["url"])
-                                if img_r.status_code == 200:
-                                    raw_b64 = base64.b64encode(img_r.content).decode()
+                            raw_b64 = await _fetch_result_image_b64(item["url"])
                     if not raw_b64:
                         raise HTTPException(502, "OpenAI returned no image")
 
@@ -1154,8 +1230,8 @@ def setup_gallery_routes() -> APIRouter:
         original and regenerates `strength` fraction. With strength ~0.4
         you get edge blending + lighting unification while keeping the
         composition recognisable."""
-        import httpx, base64 as _b64
-        require_privilege(request, "can_generate_images")
+        import httpx
+        user = require_privilege(request, "can_generate_images")
         body = await request.json()
 
         image_b64 = body.get("image")
@@ -1182,23 +1258,22 @@ def setup_gallery_routes() -> APIRouter:
         if not base:
             db = SessionLocal()
             try:
-                eps = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.is_enabled == True,
-                    ModelEndpoint.model_type == "image",
-                ).all()
-                if not eps:
+                ep = _first_visible_image_endpoint(db, user)
+                if not ep:
                     raise HTTPException(400, "No image generation endpoint configured.")
-                base = eps[0].base_url.rstrip("/")
-                api_key = eps[0].api_key
+                base = ep.base_url.rstrip("/")
+                api_key = ep.api_key
             finally:
                 db.close()
         else:
             db = SessionLocal()
             try:
-                for ep in db.query(ModelEndpoint).all():
-                    if ep.base_url.rstrip("/").removesuffix("/v1").rstrip("/") == base.rstrip("/").removesuffix("/v1").rstrip("/"):
-                        api_key = ep.api_key
-                        break
+                ep = _visible_image_endpoint_for_base(db, base, user)
+                if ep:
+                    base = (ep.base_url or base).rstrip("/")
+                    api_key = ep.api_key
+                elif user and not _current_user_is_admin(request, user):
+                    raise HTTPException(403, "Choose a registered image endpoint")
             finally:
                 db.close()
 
@@ -1331,10 +1406,9 @@ def setup_gallery_routes() -> APIRouter:
                             if item.get("b64_json"):
                                 return {"image": item["b64_json"]}
                             if item.get("url"):
-                                async with httpx.AsyncClient(timeout=60) as c2:
-                                    ir = await c2.get(item["url"])
-                                    if ir.status_code == 200:
-                                        return {"image": _b64.b64encode(ir.content).decode()}
+                                img_b64 = await _fetch_result_image_b64(item["url"])
+                                if img_b64:
+                                    return {"image": img_b64}
                     last_err = f"{path}: server returned no image"
                 except httpx.ConnectError as e:
                     raise HTTPException(502, f"Can't reach diffusion server at {base}: {e}")
@@ -1350,6 +1424,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/image/sharpen")
     async def sharpen_image(request: Request):
         """Apply unsharp-mask sharpening to an image."""
+        require_privilege(request, "can_generate_images")
         body = await request.json()
         image_b64 = body.get("image")
         amount = body.get("amount", 50) / 100.0
@@ -1393,6 +1468,7 @@ def setup_gallery_routes() -> APIRouter:
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
+            patch_realesrgan_torchvision_compat()
             from realesrgan import RealESRGANer
         except ImportError:
             return {"error": "realesrgan not installed. Install it from Cookbook → Dependencies (search 'realesrgan')."}
@@ -1442,6 +1518,7 @@ def setup_gallery_routes() -> APIRouter:
         img_bytes = base64.b64decode(image_b64)
         src = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         try:
+            patch_realesrgan_torchvision_compat()
             from basicsr.archs.rrdbnet_arch import RRDBNet
             from realesrgan import RealESRGANer
         except ImportError:
@@ -1669,9 +1746,10 @@ def setup_gallery_routes() -> APIRouter:
         db = SessionLocal()
         try:
             album = _get_or_404_album(db, album_id, user)
-            db.query(GalleryImage).filter(GalleryImage.album_id == album_id).update(
-                {"album_id": None}, synchronize_session=False
-            )
+            q = db.query(GalleryImage).filter(GalleryImage.album_id == album_id)
+            if user is not None:
+                q = q.filter(GalleryImage.owner == user)
+            q.update({"album_id": None}, synchronize_session=False)
             db.delete(album)
             db.commit()
             return {"ok": True}
@@ -1760,7 +1838,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"error": "Vision is disabled — enable it in Settings → Vision"}
             configured = vl_settings.get("vision_model", "")
             try:
-                chat_url, model_name, headers = _resolve_vl_model(configured)
+                chat_url, model_name, headers = _resolve_vl_model(configured, owner=user)
             except ValueError:
                 return {"error": "No vision model configured — set one in Settings → Vision"}
             if not chat_url:

@@ -8,7 +8,7 @@ and the task scheduler / builtin actions system.
 import json
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,34 @@ _THROWAWAY_NAMES = {
 }
 _THROWAWAY_MAX_MESSAGES = 4
 _FRESH_EMPTY_SESSION_GRACE = timedelta(minutes=10)
+_FRESH_SESSION_GRACE = _FRESH_EMPTY_SESSION_GRACE
+
+
+def _utcnow_naive() -> datetime:
+    """Return naive UTC for existing session DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _as_naive_utc(value):
+    if value is None:
+        return None
+    if getattr(value, "tzinfo", None) is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def is_session_recently_active(row, now=None, grace=_FRESH_SESSION_GRACE) -> bool:
+    """Return True while a new or active session is too fresh to auto-delete."""
+    now = _as_naive_utc(now) or _utcnow_naive()
+    for attr in ("last_message_at", "last_accessed", "updated_at", "created_at"):
+        value = _as_naive_utc(getattr(row, attr, None))
+        if not value:
+            continue
+        if value >= now:
+            return True
+        if now - value <= grace:
+            return True
+    return False
 
 
 async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bool = True) -> str:
@@ -52,14 +80,17 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
             *([DbSession.owner == owner] if owner else []),
         ).all()
 
+        cleanup_now = _utcnow_naive()
         for row in rows:
             if getattr(row, 'is_important', False):
                 continue
-            created_at = row.created_at or row.updated_at or datetime.utcnow()
-            is_fresh = (datetime.utcnow() - created_at) < _FRESH_EMPTY_SESSION_GRACE
+            created_at = _as_naive_utc(row.created_at or row.updated_at) or _utcnow_naive()
+            is_fresh = (_utcnow_naive() - created_at) < _FRESH_EMPTY_SESSION_GRACE
             if (row.name or "").strip() == "Incognito":
                 deleted_throwaway += 1
                 db.delete(row)
+                continue
+            if is_session_recently_active(row, now=cleanup_now):
                 continue
 
             msg_count = db.query(DbMsg.id).filter(
@@ -132,7 +163,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
         if skip_llm:
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions (folder sort skipped)."
 
-        url, model, headers = resolve_task_endpoint()
+        url, model, headers = resolve_task_endpoint(owner=owner or None)
         if not url:
             return f"Cleaned {deleted_empty + deleted_throwaway} sessions. No model endpoint available for sorting."
 
@@ -208,7 +239,7 @@ async def run_auto_sort(owner: str, skip_llm: bool = False, delete_throwaway: bo
                     db_sess = db.query(DbSession).filter(DbSession.id == full_id).first()
                     if db_sess:
                         db_sess.folder = folder_name
-                        db_sess.updated_at = datetime.utcnow()
+                        db_sess.updated_at = _utcnow_naive()
                         updated += 1
         db.commit()
 
