@@ -257,6 +257,10 @@ _DOMAIN_RULES = {
 - Use file tools for real disk files. Use document tools only for editor documents.
 - Prefer `grep`, `glob`, and `ls` over shell equivalents when available.
 - Use `edit_file`/`write_file` for writes; avoid shell redirection/heredocs for editing files.""",
+    "whatsapp": """\n## WhatsApp rules
+- Para enviar ou ler mensagens do WhatsApp use ferramentas whatsapp_*.
+- whatsapp_send_message: envia mensagem. whatsapp_list_chats: lista conversas. whatsapp_read_messages: le historico. whatsapp_search: busca mensagens.""",
+
     "settings": """\
 ## Settings/API rules
 - Use `manage_settings` for preferences and tool enable/disable.
@@ -273,6 +277,7 @@ _DOMAIN_TOOL_MAP = {
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
+    "whatsapp": {"whatsapp_list_chats", "whatsapp_read_messages", "whatsapp_send_message", "whatsapp_search"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
 }
 
@@ -797,6 +802,8 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    if has(r"whatsapp|zap|wpp"):
+        domains.add("whatsapp")
 
     low_signal = not continuation and not domains
     return {
@@ -1926,7 +1933,7 @@ async def stream_agent_loop(
         # via vLLM's `--enable-auto-tool-choice`. Belt-and-suspenders
         # with the per-endpoint flag above.
         "minimax", "kimi", "yi-", "phi-3", "phi-4", "command-r",
-        "glm-4", "internlm", "hermes",
+        "glm-4", "glm-5", "internlm", "hermes",
         # deepseek-v2/v3/chat support tools via the cloud API; deepseek-r1
         # (reasoning model) does not — handled by the blocklist below.
         "deepseek-v", "deepseek-chat",

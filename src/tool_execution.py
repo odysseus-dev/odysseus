@@ -554,6 +554,7 @@ async def _execute_tool_block_impl(
         do_manage_contact,
         do_vault_search, do_vault_get, do_vault_unlock,
         do_app_api,
+        do_whatsapp_tool,
     )
 
     tool = block.tool_type
@@ -812,6 +813,9 @@ async def _execute_tool_block_impl(
     elif tool == "list_cached_models":
         desc = "list_cached_models"
         result = await do_list_cached_models(content, owner=owner)
+    elif tool in ("whatsapp_list_chats", "whatsapp_read_messages", "whatsapp_send_message", "whatsapp_search"):
+        desc = tool
+        result = await do_whatsapp_tool(tool, content, owner=owner)
     elif tool == "app_api":
         desc = "app_api"
         result = await do_app_api(content, owner=owner)

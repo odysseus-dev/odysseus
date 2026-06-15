@@ -2263,6 +2263,62 @@ _APP_API_BLOCKLIST_METHOD_PATH = (
 )
 
 
+
+async def do_whatsapp_tool(tool_name: str, content: str, owner=None) -> dict:
+    """Handle whatsapp_list_chats, whatsapp_read_messages, whatsapp_send_message, whatsapp_search."""
+    import json as _j
+    import sqlite3
+    from pathlib import Path
+    from urllib.parse import quote
+    try:
+        args = _j.loads(content) if content and content.strip() else {}
+    except Exception:
+        args = {}
+
+    async def _api(path, method="GET", body=None):
+        payload = {"path": path, "method": method}
+        if body:
+            payload["body"] = body
+        return await do_app_api(_j.dumps(payload), owner=owner)
+
+    if tool_name == "whatsapp_list_chats":
+        limit = int(args.get("limit", 30))
+        return await _api(f"/api/whatsapp/chats?limit={limit}")
+
+    elif tool_name == "whatsapp_read_messages":
+        jid = str(args.get("jid", ""))
+        if "@" not in jid:
+            jid = jid.strip().replace("+","").replace(" ","").replace("-","") + "@s.whatsapp.net"
+        limit = int(args.get("limit", 40))
+        return await _api(f"/api/whatsapp/messages/{quote(jid, safe='')}?limit={limit}")
+
+    elif tool_name == "whatsapp_send_message":
+        jid = str(args.get("jid", ""))
+        if "@" not in jid:
+            jid = jid.strip().replace("+","").replace(" ","").replace("-","") + "@s.whatsapp.net"
+        msg = args.get("message", "")
+        return await _api("/api/whatsapp/send", "POST", {"jid": jid, "text": msg})
+
+    elif tool_name == "whatsapp_search":
+        query = args.get("query", "")
+        limit = int(args.get("limit", 20))
+        db_path = Path(os.environ.get("ODYSSEUS_DATA_DIR", "data")) / "whatsapp.db"
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT remote_jid, push_name, from_me, content, timestamp FROM wa_messages "
+                "WHERE content LIKE ? AND content NOT LIKE '[%' ORDER BY timestamp DESC LIMIT ?",
+                (f"%{query}%", limit)
+            ).fetchall()
+            conn.close()
+            return {"result": [dict(r) for r in rows], "count": len(rows)}
+        except Exception as e:
+            return {"error": str(e), "exit_code": 1}
+
+    return {"error": f"Unknown whatsapp tool: {tool_name}", "exit_code": 1}
+
+
 async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
     """Generic loopback to allowed internal Odysseus API endpoints. Lets the
     agent reach the full UI-button surface (cookbook, email, notes,

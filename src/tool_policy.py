@@ -84,6 +84,10 @@ _COMMON_TOOL_NAMES = {
     "vault_search",
     "vault_unlock",
     "web_fetch",
+    "whatsapp_list_chats",
+    "whatsapp_read_messages",
+    "whatsapp_search",
+    "whatsapp_send_message",
     "web_search",
     "write_file",
 }

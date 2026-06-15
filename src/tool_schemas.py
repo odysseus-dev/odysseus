@@ -1186,6 +1186,65 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+
+    {
+        "type": "function",
+        "function": {
+            "name": "whatsapp_list_chats",
+            "description": "Lista as conversas do WhatsApp do Edson. Retorna chats recentes com nome do contato, ultima mensagem e horario. Use sempre que o usuario pedir para ver conversas, contatos ou historico do WhatsApp.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {"type": "integer", "description": "Maximo de chats a retornar (padrao 30)"}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "whatsapp_read_messages",
+            "description": "Le as mensagens de uma conversa especifica do WhatsApp. Use quando o usuario quiser ver o historico de uma conversa, analisar mensagens ou buscar contexto de uma conversa.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "jid": {"type": "string", "description": "JID do contato (ex: 5541XXXXXXXX@s.whatsapp.net) ou numero de telefone"},
+                    "limit": {"type": "integer", "description": "Maximo de mensagens (padrao 40)"}
+                },
+                "required": ["jid"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "whatsapp_send_message",
+            "description": "Envia uma mensagem de WhatsApp para um contato em nome do Edson.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "jid": {"type": "string", "description": "JID ou numero de telefone do destinatario"},
+                    "message": {"type": "string", "description": "Texto da mensagem a enviar"}
+                },
+                "required": ["jid", "message"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "whatsapp_search",
+            "description": "Busca mensagens do WhatsApp por palavra-chave em todas as conversas. Use para encontrar mensagens especificas, analisar padroes ou buscar informacoes em conversas passadas.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Texto a buscar nas mensagens"},
+                    "limit": {"type": "integer", "description": "Maximo de resultados (padrao 20)"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
 ]
 
 
@@ -1386,6 +1445,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
     elif tool_type == "ask_teacher":
         content = args.get("model", "auto") + "\n" + args.get("problem", "")
+    elif tool_type in ("whatsapp_list_chats", "whatsapp_read_messages", "whatsapp_send_message", "whatsapp_search"):
+        content = json.dumps(args)
     else:
         content = json.dumps(args)
 

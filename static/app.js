@@ -46,6 +46,8 @@ import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
+import whatsappModule from './js/whatsapp.js';
+
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
@@ -3427,6 +3429,7 @@ function startOdysseusApp() {
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',
+    'rail-whatsapp':  'whatsapp-section-title',
   };
   Object.entries(_railToolMap).forEach(([railId, toolId]) => {
     const railBtn = el(railId);
@@ -3437,6 +3440,10 @@ function startOdysseusApp() {
       });
     }
   });
+
+  // WhatsApp section title opens the modal
+  const _waTitle = el('whatsapp-section-title');
+  if (_waTitle) { _waTitle.addEventListener('click', () => whatsappModule.open()); }
 
   // Rail chats — click to open the completed background session
   const _railChatsBtn = el('rail-chats');

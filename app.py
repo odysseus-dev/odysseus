@@ -180,6 +180,9 @@ if AUTH_ENABLED:
         "/api/auth/settings",
         "/api/auth/integrations/presets",
         "/api/health",
+        "/api/whatsapp/webhook",
+        "/api/whatsapp/status",
+        "/api/whatsapp/models",
         "/api/version",
         "/login",
     }
@@ -758,9 +761,12 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+# WhatsApp (Evolution API)
+from routes.whatsapp_routes import setup_whatsapp_routes
+app.include_router(setup_whatsapp_routes())
+logger.info("WhatsApp routes initialized")
 
 # ========= ROUTES (kept in app.py) =========
-
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     """Read an HTML file and inject the CSP nonce into inline <script> tags."""
     with open(file_path, "r", encoding="utf-8") as f:
@@ -768,7 +774,6 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
     return HTMLResponse(html)
-
 @app.get("/")
 async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
@@ -778,7 +783,6 @@ async def serve_index(request: Request):
     if os.path.exists(root_path):
         return _serve_html_with_nonce(request, root_path)
     raise HTTPException(404, "index.html not found")
-
 @app.get("/notes")
 async def serve_notes(request: Request):
     return await serve_index(request)

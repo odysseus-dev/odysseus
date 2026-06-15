@@ -242,7 +242,7 @@ _PROVIDER_CURATED = {
     ],
     "zai": [
         "glm-5", "glm-5.1", "glm-5v-turbo", "glm-4.7", "glm-4.7-flash",
-        "glm-4.6", "glm-4.6v",
+        "glm-4.6", "glm-4.6v", "glm-4.6v-flash",
         "glm-4.5", "glm-4.5v", "glm-4.5-air", "glm-4.5-flash",
     ],
     "zai-coding": [
@@ -747,9 +747,9 @@ def _probe_endpoint(base_url: str, api_key: str = None, timeout: int = 5) -> Lis
         if not models:
             models = [m.get("name") or m.get("model") for m in (data.get("models") or []) if m.get("name") or m.get("model")]
         if models:
-            # Z.AI coding plan omits some working models from /models;
-            # append curated-only entries for that endpoint only.
-            if _host_match(base, "z.ai") and "/api/coding" in (urlparse(base).path or ""):
+            # For z.ai the /models endpoint omits free models (flash tier);
+            # always merge the curated list so free models appear regardless.
+            if _host_match(base, "z.ai"):
                 _ck = _match_provider_curated(base, None)
                 for _e in _PROVIDER_CURATED.get(_ck, []):
                     if _e not in set(models) and not any(m.startswith(_e) for m in models):

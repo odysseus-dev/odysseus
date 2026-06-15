@@ -133,6 +133,10 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "list_cookbook_servers": "List the cookbook's configured servers (remote GPU boxes + local) and which is the current default. Use this BEFORE download_model/serve_model when the user didn't name a host — to decide where to run, or to ask the user which server when ambiguous. Downloads/serves default to the cookbook's selected server, NOT localhost.",
     "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
     "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
+    "whatsapp_list_chats": "Lista as conversas recentes do WhatsApp do usuario. Retorna chats com nome do contato, ultima mensagem e horario. Use quando o usuario pedir para ver conversas, contatos ou historico do WhatsApp. Palavras-chave: whatsapp, zap, mensagem, chat, conversa, contato.",
+    "whatsapp_read_messages": "Le as mensagens de uma conversa especifica do WhatsApp por JID ou numero de telefone. Use para ver historico de conversa, analisar mensagens ou buscar contexto. Palavras-chave: whatsapp, mensagens, conversa, historico, zap.",
+    "whatsapp_send_message": "Envia uma mensagem de WhatsApp para um contato ou numero de telefone em nome do usuario. Use para responder, enviar texto, mandar zap. Palavras-chave: enviar whatsapp, mandar mensagem, zap para, send whatsapp.",
+    "whatsapp_search": "Busca mensagens do WhatsApp por palavra-chave em todas as conversas. Use para encontrar mensagens especificas, analisar padroes ou buscar informacoes em conversas passadas. Palavras-chave: buscar whatsapp, procurar mensagem, search zap.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
 }
 
@@ -469,6 +473,13 @@ class ToolIndex:
                    "show memory", "show memories", "show skills", "show notes",
                    "show chats", "show sessions", "show documents"}):
             {"ui_control"},
+        # WhatsApp messaging intent
+        frozenset({"whatsapp", "zap", "wpp", "mensagem whatsapp", "mandar zap",
+                   "enviar zap", "send whatsapp", "whatsapp message",
+                   "minhas conversas", "meus chats", "historico whatsapp",
+                   "conversa do whatsapp", "mensagens do zap"}):
+            {"whatsapp_list_chats", "whatsapp_read_messages",
+             "whatsapp_send_message", "whatsapp_search"},
         # Document creation intent
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
