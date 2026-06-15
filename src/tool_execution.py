@@ -434,6 +434,12 @@ def _promote_image_fields(result: Dict) -> None:
 
 
 _BG_MARKERS = {"#!bg", "#bg", "# bg", "#background", "# background", "@background", "# @background"}
+_WORKSPACE_SHELL_MUTATION_CMD_RE = re.compile(
+    r"(^|[;&|]\s*)(cp|copy|copy-item|mv|move|rename|ren|touch|tee)\b|"
+    r"(^|[;&|]\s*)(sed\s+-i|perl\s+-pi|awk\s+-i)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WORKSPACE_SHELL_REDIRECT_RE = re.compile(r"(?<!\d)>{1,2}(?![&|])|<<-?", re.MULTILINE)
 
 
 def _split_bg_marker(content: str):
@@ -447,6 +453,25 @@ def _split_bg_marker(content: str):
         del lines[i]
         return True, "\n".join(lines).strip()
     return False, content
+
+
+def _workspace_shell_write_block_reason(tool: str, content: str) -> Optional[str]:
+    if tool != "bash" or not get_active_workspace():
+        return None
+    _, command = _split_bg_marker(content or "")
+    if not command.strip():
+        return None
+    if not (
+        _WORKSPACE_SHELL_MUTATION_CMD_RE.search(command)
+        or _WORKSPACE_SHELL_REDIRECT_RE.search(command)
+    ):
+        return None
+    return (
+        "Workspace file changes must use `write_file` for creates/full rewrites "
+        "or `edit_file` for targeted edits. Shell is still available for read-only "
+        "diagnostics, but redirection/heredocs/tee/cp/mv/touch/in-place edits are "
+        "blocked while a workspace is active."
+    )
 
 
 async def _direct_fallback(
@@ -617,6 +642,13 @@ async def _execute_tool_block_impl(
             "exit_code": 1,
         }
         logger.warning("Public tool policy blocked owner=%r tool=%s", owner, tool)
+        return desc, result
+
+    shell_write_block_reason = _workspace_shell_write_block_reason(tool, content)
+    if shell_write_block_reason:
+        desc = "bash: BLOCKED"
+        result = {"error": shell_write_block_reason, "exit_code": 1}
+        logger.warning("Workspace shell write blocked owner=%r", owner)
         return desc, result
 
     # ask_user: the agent poses a multiple-choice question to the user to get a

@@ -44,8 +44,11 @@ def ws():
 @pytest.fixture
 def admin(monkeypatch):
     """Pass the public-tool gate so file tools dispatch in tests."""
-    monkeypatch.setattr(
-        "src.tool_execution.owner_is_admin_or_single_user", lambda owner: True
+    monkeypatch.setitem(execute_tool_block.__globals__, "_owner_is_admin", lambda owner: True)
+    monkeypatch.setitem(
+        execute_tool_block.__globals__,
+        "owner_is_admin_or_single_user",
+        lambda owner: True,
     )
 
 
@@ -138,6 +141,52 @@ async def test_grep_and_ls_confined_e2e(ws, admin):
     assert r["exit_code"] == 0 and "doc.txt" in r["output"]
     _, r = await execute_tool_block(_block("ls", outside), owner="a", workspace=ws)
     assert r["exit_code"] == 1 and "outside the workspace" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_workspace_bash_file_mutations_are_blocked(ws, admin):
+    commands = [
+        "printf 'x' > note.txt",
+        "printf 'x' >> note.txt",
+        "cat <<'EOF' > note.txt\nx\nEOF",
+        "printf 'x' | tee note.txt",
+        "cp a.txt b.txt",
+        "touch note.txt",
+        "sed -i 's/x/y/' a.txt",
+    ]
+
+    for command in commands:
+        desc, r = await execute_tool_block(_block("bash", command), owner="a", workspace=ws)
+        assert desc == "bash: BLOCKED"
+        assert r["exit_code"] == 1
+        assert "write_file" in r["error"]
+
+    assert not os.path.exists(os.path.join(ws, "note.txt"))
+    assert not os.path.exists(os.path.join(ws, "b.txt"))
+
+
+@pytest.mark.asyncio
+async def test_workspace_background_bash_file_mutation_is_blocked(ws, admin):
+    desc, r = await execute_tool_block(
+        _block("bash", "#!bg\nprintf 'x' > note.txt"),
+        session_id="s1",
+        owner="a",
+        workspace=ws,
+    )
+
+    assert desc == "bash: BLOCKED"
+    assert r["exit_code"] == 1
+    assert "write_file" in r["error"]
+    assert not os.path.exists(os.path.join(ws, "note.txt"))
+
+
+@pytest.mark.asyncio
+async def test_workspace_bash_read_only_diagnostics_remain_allowed(ws, admin):
+    desc, r = await execute_tool_block(_block("bash", "echo OK 2>/dev/null"), owner="a", workspace=ws)
+
+    assert desc != "bash: BLOCKED"
+    assert r["exit_code"] == 0
+    assert "OK" in r["output"]
 
 
 @pytest.mark.asyncio
