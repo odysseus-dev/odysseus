@@ -40,6 +40,14 @@ def test_tell_in_web_query_does_not_force_email_tools():
     assert "web_search" in tools and "web_fetch" in tools
 
 
+def test_explicit_web_search_query_gets_web_tools_without_retrieval():
+    """Explicit web-search phrasing must surface web tools even if embeddings
+    return nothing."""
+    ti = _index_without_embeddings()
+    tools = ti.get_tools_for_query("use web search and find a recipe for chocolate chip cookies")
+    assert "web_search" in tools and "web_fetch" in tools
+
+
 def test_genuine_email_query_still_gets_email_tools():
     """Removing 'tell' must not break real email intent — the actual email
     keywords still force-include the toolset."""
