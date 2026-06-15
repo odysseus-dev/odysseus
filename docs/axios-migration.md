@@ -99,68 +99,70 @@ Track module-by-module migration from `fetch()` / `API_BASE` to `api` / `apiPath
 - [x] `static/index.html` (inline scripts)
 - [x] `static/js/axios/api.js` — shared HTTP client
 - [x] `static/js/chat.js`
-- [ ] `static/js/admin.js`
-- [ ] `static/js/assistant.js`
-- [ ] `static/js/calendar.js`
-- [ ] `static/js/calendar/reminders.js`
-- [ ] `static/js/censor.js`
-- [ ] `static/js/chatRenderer.js`
-- [ ] `static/js/codeRunner.js`
-- [ ] `static/js/compare/index.js`
-- [ ] `static/js/compare/models.js`
-- [ ] `static/js/compare/panes.js`
-- [ ] `static/js/compare/probe.js`
-- [ ] `static/js/compare/selector.js`
-- [ ] `static/js/compare/state.js`
-- [ ] `static/js/compare/stream.js`
-- [ ] `static/js/compare/vote.js`
-- [ ] `static/js/cookbook-diagnosis.js`
-- [ ] `static/js/cookbook-hwfit.js`
-- [ ] `static/js/cookbook.js`
-- [ ] `static/js/cookbookDownload.js`
-- [ ] `static/js/cookbookRunning.js`
-- [ ] `static/js/cookbookSchedule.js`
-- [ ] `static/js/cookbookServe.js`
-- [ ] `static/js/document.js`
-- [ ] `static/js/documentLibrary.js`
-- [ ] `static/js/editor/ai-inpaint.js`
-- [ ] `static/js/editor/ai-models.js`
-- [ ] `static/js/editor/ai-tool-runner.js`
-- [ ] `static/js/editor/ai-tools-misc.js`
-- [ ] `static/js/editor/wire-import.js`
-- [ ] `static/js/emailInbox.js`
-- [ ] `static/js/emailLibrary.js`
-- [ ] `static/js/fileHandler.js`
-- [ ] `static/js/gallery.js`
-- [ ] `static/js/galleryEditor.js`
-- [ ] `static/js/group.js`
+- [x] `static/js/admin.js`
+- [x] `static/js/assistant.js`
+- [x] `static/js/calendar.js`
+- [x] `static/js/calendar/reminders.js`
+- [x] `static/js/censor.js`
+- [x] `static/js/chatRenderer.js`
+- [x] `static/js/codeRunner.js`
+- [x] `static/js/compare/index.js`
+- [x] `static/js/compare/models.js`
+- [x] `static/js/compare/panes.js`
+- [x] `static/js/compare/probe.js`
+- [x] `static/js/compare/selector.js`
+- [x] `static/js/compare/state.js`
+- [x] `static/js/compare/stream.js`
+- [x] `static/js/compare/vote.js`
+- [x] `static/js/cookbook-diagnosis.js`
+- [x] `static/js/cookbook-hwfit.js`
+- [x] `static/js/cookbook.js`
+- [x] `static/js/cookbookDownload.js`
+- [x] `static/js/cookbookRunning.js`
+- [x] `static/js/cookbookSchedule.js`
+- [x] `static/js/cookbookServe.js`
+- [x] `static/js/document.js`
+- [x] `static/js/documentLibrary.js`
+- [x] `static/js/editor/ai-inpaint.js`
+- [x] `static/js/editor/ai-models.js`
+- [x] `static/js/editor/ai-tool-runner.js`
+- [x] `static/js/editor/ai-tools-misc.js`
+- [x] `static/js/editor/wire-import.js`
+- [x] `static/js/emailInbox.js`
+- [x] `static/js/emailLibrary.js`
+- [x] `static/js/fileHandler.js`
+- [x] `static/js/gallery.js`
+- [x] `static/js/galleryEditor.js`
+- [x] `static/js/group.js`
 - [x] `static/js/init.js`
-- [ ] `static/js/keyboard-shortcuts.js`
-- [ ] `static/js/markdown.js`
-- [ ] `static/js/memory.js`
-- [ ] `static/js/modelPicker.js`
-- [ ] `static/js/models.js`
-- [ ] `static/js/notes.js`
-- [ ] `static/js/presets.js`
-- [ ] `static/js/rag.js`
-- [ ] `static/js/research/jobs.js`
-- [ ] `static/js/research/panel.js`
-- [ ] `static/js/search-chat.js`
-- [ ] `static/js/search.js`
-- [ ] `static/js/sessions.js`
-- [ ] `static/js/settings.js`
-- [ ] `static/js/signature.js`
-- [ ] `static/js/skills.js`
-- [ ] `static/js/slashAutocomplete.js`
-- [ ] `static/js/slashCommands.js`
-- [ ] `static/js/tasks.js`
-- [ ] `static/js/theme.js`
+- [x] `static/js/keyboard-shortcuts.js`
+- [x] `static/js/markdown.js`
+- [x] `static/js/memory.js`
+- [x] `static/js/modelPicker.js`
+- [x] `static/js/models.js`
+- [x] `static/js/notes.js`
+- [x] `static/js/presets.js`
+- [x] `static/js/rag.js`
+- [x] `static/js/research/jobs.js`
+- [x] `static/js/research/panel.js`
+- [x] `static/js/search-chat.js`
+- [x] `static/js/search.js`
+- [x] `static/js/sessions.js`
+- [x] `static/js/settings.js`
+- [x] `static/js/signature.js`
+- [x] `static/js/skills.js`
+- [x] `static/js/slashAutocomplete.js`
+- [x] `static/js/slashCommands.js`
+- [x] `static/js/tasks.js`
+- [x] `static/js/theme.js`
 - [x] `static/js/tts-ai.js`
-- [ ] `static/js/voiceRecorder.js`
-- [ ] `static/js/workspace.js`
+- [x] `static/js/voiceRecorder.js`
+- [x] `static/js/workspace.js`
 - [x] `static/app.js`
 
----
+**All `static/js` modules migrated.** Remaining intentional `fetch()` usage:
+- `static/js/axios/api.js` — `apiFetch()` wrapper for SSE/streaming endpoints
+- `static/sw.js` — service worker cache (unchanged)
 
 ### 5. Environment Configuration
 

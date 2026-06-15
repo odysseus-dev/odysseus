@@ -7,6 +7,8 @@ import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 
+import { api } from './axios/api.js';
+
 var escapeHtml = uiModule.esc;
 
 let memories = [];
@@ -175,9 +177,9 @@ async function syncPrefSlider(elementId, prefKey, labelId, defaultVal) {
   const maxPos = Number(slider.max);
   const fmt = (pos) => (Number(pos) >= maxPos ? 'All' : `≥ ${pos}%`);
   try {
-    const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`);
-    if (res.ok) {
-      const data = await res.json();
+    const res = await api.get(`/api/prefs/${prefKey}`);
+    if (res.data) {
+      const data = res.data;
       let pref = (data.value === undefined || data.value === null) ? defaultVal : Number(data.value);
       // pref 0 (or falsy) = "All" → max slider position; else percent.
       let pos = (!pref || pref <= 0) ? maxPos : Math.round(pref * 100);
@@ -195,12 +197,7 @@ async function syncPrefSlider(elementId, prefKey, labelId, defaultVal) {
       const pos = Number(slider.value);
       const pref = pos >= maxPos ? 0 : pos / 100;
       try {
-        const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: pref })
-        });
-        if (!res.ok) { showError('Failed to save preference'); return; }
+        await api.put(`/api/prefs/${prefKey}`, { value: pref });
         showToast(pref === 0 ? 'Skill confidence: All' : `Skill confidence ≥ ${Math.round(pref * 100)}%`);
       } catch (e) {
         console.error(`Failed to save ${prefKey} pref:`, e);
@@ -223,9 +220,9 @@ async function syncPrefNumber(elementId, prefKey, defaultVal) {
     return v;
   };
   try {
-    const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`);
-    if (res.ok) {
-      const data = await res.json();
+    const res = await api.get(`/api/prefs/${prefKey}`);
+    if (res.data) {
+      const data = res.data;
       input.value = String((data.value === undefined || data.value === null) ? defaultVal : clamp(data.value));
     }
   } catch (e) {
@@ -237,12 +234,7 @@ async function syncPrefNumber(elementId, prefKey, defaultVal) {
       const v = clamp(input.value);
       input.value = String(v);
       try {
-        const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: v })
-        });
-        if (!res.ok) { showError('Failed to save preference'); return; }
+        await api.put(`/api/prefs/${prefKey}`, { value: v });
         showToast(v === 0 ? 'No skills injected' : `Max injected skills: ${v}`);
       } catch (e) {
         console.error(`Failed to save ${prefKey} pref:`, e);
@@ -256,9 +248,9 @@ async function syncPrefToggle(elementId, prefKey, onMsg, offMsg, dimBelow = true
   const toggle = document.getElementById(elementId);
   if (!toggle) return;
   try {
-    const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`);
-    if (res.ok) {
-      const data = await res.json();
+    const res = await api.get(`/api/prefs/${prefKey}`);
+    if (res.data) {
+      const data = res.data;
       toggle.checked = data.value !== false;
     }
   } catch (e) {
@@ -270,18 +262,7 @@ async function syncPrefToggle(elementId, prefKey, onMsg, offMsg, dimBelow = true
     toggle.addEventListener('change', async () => {
       if (dimBelow) syncToggleDim(toggle);
       try {
-        const res = await fetch(`${window.location.origin}/api/prefs/${prefKey}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ value: toggle.checked })
-        });
-        if (!res.ok) {
-          console.error(`PUT ${prefKey} returned ${res.status}`);
-          toggle.checked = !toggle.checked; // revert
-          if (dimBelow) syncToggleDim(toggle);
-          showError('Failed to save preference');
-          return;
-        }
+        await api.put(`/api/prefs/${prefKey}`, { value: toggle.checked });
         showToast(toggle.checked ? onMsg : offMsg);
       } catch (e) {
         console.error(`Failed to save ${prefKey} pref:`, e);
@@ -296,26 +277,24 @@ async function syncPrefToggle(elementId, prefKey, onMsg, offMsg, dimBelow = true
 export async function loadMemories() {
   _ensureNewMemoryCategorySelect();
   try {
-    const response = await fetch(`${window.location.origin}/api/memory`);
-
-    if (!response.ok) {
-      console.error('Memory fetch failed with status:', response.status);
+    try {
+      const response = await api.get('/api/memory');
+      const data = response.data;
+      if (data && data.memory) {
+        memories = data.memory;
+      } else if (Array.isArray(data)) {
+        memories = data;
+      } else {
+        memories = [];
+      }
+    } catch (err) {
+      console.error('Memory fetch failed with status:', err.response?.status);
       memories = [];
       buildCategoryChips();
       renderMemoryList();
       updateMemoryCount();
       syncToggles();
       return;
-    }
-
-    const data = await response.json();
-
-    if (data && data.memory) {
-      memories = data.memory;
-    } else if (Array.isArray(data)) {
-      memories = data;
-    } else {
-      memories = [];
     }
 
     buildCategoryChips();
@@ -397,11 +376,9 @@ async function bulkDelete() {
   const deletedIds = [];
   for (const id of selectedIds) {
     try {
-      const res = await fetch(`${window.location.origin}/api/memory/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        deleted++;
-        deletedIds.push(id);
-      }
+      await api.delete(`/api/memory/${id}`);
+      deleted++;
+      deletedIds.push(id);
     } catch (e) {
       console.error('Failed to delete memory:', id, e);
     }
@@ -437,26 +414,21 @@ export async function tidyMemories() {
   const beforeMap = new Map(memories.map(m => [m.id, { ...m }]));
 
   try {
-    const res = await fetch(`${window.location.origin}/api/memory/audit`, {
-      method: 'POST',
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+    try {
+      const { data } = await api.post('/api/memory/audit');
+      if ((data.removed || 0) === 0) {
+        if (tidySpinner) tidySpinner.destroy();
+        if (tidyBtn) { tidyBtn.disabled = false; tidyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy'; }
+        showToast('Already clean');
+        return;
+      }
+    } catch (err) {
+      console.error(apiErrorMessage(err));
       throw new Error(err.detail || 'Audit failed');
     }
 
-    const data = await res.json();
-    if ((data.removed || 0) === 0) {
-      if (tidySpinner) tidySpinner.destroy();
-      if (tidyBtn) { tidyBtn.disabled = false; tidyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy'; }
-      showToast('Already clean');
-      return;
-    }
-
     // Fetch the new state
-    const freshRes = await fetch(`${window.location.origin}/api/memory`);
-    const freshData = await freshRes.json();
+    const { data: freshData } = await api.get('/api/memory');
     const afterList = freshData.memory || freshData || [];
     const afterMap = new Map(afterList.map(m => [m.id, m]));
 
@@ -959,20 +931,11 @@ async function saveInlineEdit(id, newText, newCategory) {
     const params = new URLSearchParams({ text: newText });
     if (newCategory) params.append('category', newCategory);
 
-    const response = await fetch(`${window.location.origin}/api/memory/${id}`, {
-      method: 'PUT',
-      body: params
-    });
-
-    if (response.ok) {
+    await api.put(`/api/memory/${id}`, params);
       await loadMemories();
       showToast('Memory updated');
-    } else {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || 'Failed to update memory');
-    }
   } catch (error) {
-    console.error('Error updating memory:', error);
+    console.error(apiErrorMessage(error));
     showError('Failed to update memory');
   }
 }
@@ -1012,28 +975,15 @@ export async function addNewMemory() {
   }
 
   try {
-    const response = await fetch(`${window.location.origin}/api/memory/add`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    await api.post(`/api/memory/add`, {
         text: text,
         category: category,
-      })
-    });
-
-    if (response.ok) {
+      });
       input.value = '';
       await loadMemories();
       showToast('Memory added');
-    } else {
-      const errorData = await response.json();
-      console.error('Server error details:', errorData);
-      throw new Error(errorData.detail || 'Failed to add memory');
-    }
   } catch (error) {
-    console.error('Error adding memory:', error);
+    console.error(apiErrorMessage(error));
     showError('Failed to add memory');
   }
 }
@@ -1050,18 +1000,13 @@ export async function editMemory(id) {
 
 async function togglePin(id, pinned) {
   try {
-    const res = await fetch(`${window.location.origin}/api/memory/${id}/pin`, {
-      method: 'POST',
-      body: new URLSearchParams({ pinned: pinned.toString() })
-    });
-    if (res.ok) {
-      const mem = memories.find(m => m.id === id);
-      if (mem) mem.pinned = pinned;
-      renderMemoryList();
-      showToast(pinned ? 'Pinned — always in context' : 'Unpinned — RAG only');
-    }
+    await api.post(`/api/memory/${id}/pin`, { params: { pinned: pinned.toString() } });
+    const mem = memories.find(m => m.id === id);
+    if (mem) { mem.pinned = pinned; }
+    renderMemoryList();
+    showToast(pinned ? 'Pinned — always in context' : 'Unpinned — RAG only');
   } catch (e) {
-    console.error('Failed to toggle pin:', e);
+    console.error(apiErrorMessage(e), 'Failed to update pin');
     showError('Failed to update pin');
   }
 }
@@ -1073,33 +1018,25 @@ export async function deleteMemory(id) {
   if (!await uiModule.styledConfirm(`Delete this memory?\n"${memory.text}"`, { confirmText: 'Delete', danger: true })) return;
 
   try {
-    const response = await fetch(`${window.location.origin}/api/memory/${id}`, {
-      method: 'DELETE'
-    });
-
-    if (response.ok) {
-      await animateMemoryRemoval([id]);
-      await loadMemories();
-      showToast('Memory deleted');
-    } else {
-      throw new Error('Failed to delete');
-    }
+    await api.delete(`/api/memory/${id}`);
+    await animateMemoryRemoval([id]);
+    await loadMemories();
+    showToast('Memory deleted');
   } catch (error) {
     showError('Failed to delete memory');
   }
 }
 
 export async function extractMemory(sessionId) {
-  const res = await fetch(`${window.location.origin}/api/memory/extract`, {
-    method: 'POST',
-    body: new URLSearchParams({ session: sessionId })
-  });
-  if (!res.ok) {
+  let suggestions = [];
+  try {
+    const { data } = await api.post('/api/memory/extract', { params: { session: sessionId } });
+    suggestions = data.suggestions || [];
+  } catch {
+    console.error(apiErrorMessage(error));
     showError('Failed to extract memory suggestions');
     return;
   }
-  const data = await res.json();
-  const suggestions = data.suggestions || [];
 
   const modal = document.getElementById('memory-modal');
   const body = document.getElementById('memory-suggestions-body');
@@ -1141,11 +1078,7 @@ export async function extractMemory(sessionId) {
       btn.className = 'memory-item-btn save';
       btn.textContent = 'save';
       btn.addEventListener('click', async () => {
-        await fetch(`${window.location.origin}/api/memory/add`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: s })
-        });
+        await api.post(`/api/memory/add`, { text: s });
         btn.disabled = true;
         btn.textContent = 'saved';
         showToast('Saved to memory');
@@ -1209,17 +1142,7 @@ async function handleImportFile(file) {
         formData.append('session', sessionId);
     }
 
-    const res = await fetch(`${window.location.origin}/api/memory/import`, {
-      method: 'POST',
-      body: formData
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Import failed');
-    }
-
-    const data = await res.json();
+    const { data } = await api.post(`/api/memory/import`, formData);
     const suggestions = data.suggestions || [];
 
     // Show suggestions using the existing suggestions UI
@@ -1269,11 +1192,7 @@ async function handleImportFile(file) {
         for (const s of reviewItems) {
           if (!s.active || !s.text) continue;
           try {
-            await fetch(`${window.location.origin}/api/memory/add`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: s.text, category: s.category })
-            });
+            await api.post(`/api/memory/add`, { text: s.text, category: s.category });
             saved++;
           } catch (e) { /* skip */ }
         }
@@ -1311,11 +1230,7 @@ async function handleImportFile(file) {
         btn.className = 'memory-item-btn save';
         btn.textContent = 'save';
         btn.addEventListener('click', async () => {
-          await fetch(`${window.location.origin}/api/memory/add`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: item.text, category: item.category })
-          });
+          await api.post(`/api/memory/add`, { text: item.text, category: item.category });
           item.active = false;
           div.remove();
           updateHeaderTitle();

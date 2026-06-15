@@ -1,4 +1,5 @@
 // compare/panes.js — pane lifecycle, actions, layout
+import { api } from '../axios/api.js';
 import state from './state.js';
 import { _persistSelections } from './models.js';
 import { buildVoteBar } from './vote.js';
@@ -122,8 +123,7 @@ async function rerollPane(paneIdx, overrideTimeout) {
       const ac = new AbortController();
       state._abortControllers[paneIdx] = ac;
       const t0 = performance.now();
-      const res = await fetch(`${state.API_BASE}/api/search/query`, { method: 'POST', body: fd, signal: ac.signal });
-      const data = await res.json();
+      const { data } = await api.post('/api/search/query', fd, { signal: ac.signal });
       const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
       aiBody.innerHTML = '';
       if (data.error) {
@@ -390,9 +390,12 @@ async function _createAndAppendPane(m) {
     fd.append('endpoint_id', m.endpointId);
     fd.append('skip_validation', 'true');
   }
-  const res = await fetch(`${state.API_BASE}/api/session`, { method: 'POST', body: fd });
-  if (!res.ok) return;
-  const data = await res.json();
+  let data;
+  try {
+    await api.post('/api/session', fd);
+  } catch {
+    return;
+  }
 
   // Update arrays
   state._selectedModels.push({ model: m.id, endpoint: m.url, endpointId: m.endpointId, name: m.name, endpointName: m.endpointName || '' });
@@ -473,7 +476,7 @@ function _removePane(paneIdx) {
   // Delete the session
   const sid = state._paneSessionIds[paneIdx];
   if (sid) {
-    fetch(`${state.API_BASE}/api/session/${sid}`, { method: 'DELETE' }).catch(() => {});
+    api.delete(`/api/session/${sid}`).catch(() => {});
   }
 
   // Remove from arrays
@@ -582,7 +585,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
       // Delete old session, create new one
       const oldSid = state._paneSessionIds[paneIdx];
       if (oldSid) {
-        fetch(`${state.API_BASE}/api/session/${oldSid}`, { method: 'DELETE' }).catch(() => {});
+        api.delete(`/api/session/${oldSid}`).catch(() => {});
       }
       const fd = new FormData();
       // Blind mode: neutral slot name only — never leak the model (issue #1285).
@@ -594,8 +597,7 @@ function _showModelSwapDropdown(paneIdx, titleBtn) {
         fd.append('skip_validation', 'true');
       }
       try {
-        const res = await fetch(`${state.API_BASE}/api/session`, { method: 'POST', body: fd });
-        const data = await res.json();
+        const { data } = await api.post('/api/session', fd);
         state._paneSessionIds[paneIdx] = data.id;
       } catch (err) {
         console.error('Failed to create session for swapped model:', err);

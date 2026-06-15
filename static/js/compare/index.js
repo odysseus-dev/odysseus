@@ -32,6 +32,7 @@ import { handleVote, buildVoteBar, addFinishBadge, spawnConfetti, _saveVote, reg
 import { showScoreboard } from './scoreboard.js';
 
 // ── External dependency imports ──
+import { api, apiPath } from '../axios/api.js';
 import Storage from '../storage.js';
 import uiModule from '../ui.js';
 import sessionModule from '../sessions.js';
@@ -51,14 +52,13 @@ function _slotChar(i) { return state._parallel ? String.fromCharCode(65 + i) : S
 // ── init ──
 // ────────────────────────────────────────────────────────────────────────────
 
-function init(apiBase) {
-  state.API_BASE = apiBase;
+function init(_apiBase) {
   // Clean up unsaved compare sessions on page close/refresh
   window.addEventListener('beforeunload', () => {
     if (!state._saveOnClose && state._paneSessionIds.length > 0) {
       // sendBeacon uses POST — use the bulk delete endpoint
       navigator.sendBeacon(
-        `${state.API_BASE}/api/sessions/bulk-delete`,
+        apiPath('/api/sessions/bulk-delete'),
         new Blob([JSON.stringify({ ids: state._paneSessionIds })], { type: 'application/json' })
       );
     }
@@ -125,9 +125,7 @@ async function deactivate(teardown) {
     const modelShorts = _modelDisplayNames(state._selectedModels);
     const folderName = 'Compare: ' + modelShorts.join(' vs ');
     await Promise.all(state._paneSessionIds.map(sid =>
-      fetch(`${state.API_BASE}/api/session/${sid}`, {
-        method: 'PATCH', body: new URLSearchParams({ folder: folderName })
-      }).catch(() => {})
+      api.patch(`/api/session/${sid}`, new URLSearchParams({ folder: folderName })).catch(() => {})
     ));
   }
 
@@ -182,7 +180,7 @@ async function deactivate(teardown) {
     if (sessionIdsToDelete.length > 0) {
       // keepalive ensures requests complete even during page navigation
       await Promise.all(sessionIdsToDelete.map(sid =>
-        fetch(`${state.API_BASE}/api/session/${sid}`, { method: 'DELETE', keepalive: true }).catch(() => {})
+        api.delete(`/api/session/${sid}`).catch(() => {})
       ));
     }
     location.href = location.pathname;
@@ -219,9 +217,7 @@ async function _buildCompareUI() {
         fd.append('endpoint_id', m.endpointId);
         fd.append('skip_validation', 'true');
       }
-      const res = await fetch(`${state.API_BASE}/api/session`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error('Failed to create session for ' + modelShorts[i]);
-      const data = await res.json();
+      const { data } = await api.post('/api/session', fd);
       sessionIds.push(data.id);
     }
     state._paneSessionIds = sessionIds;
@@ -664,8 +660,7 @@ async function _executeCompare(message) {
         fd.append('provider', m.model);
         fd.append('count', '10');
         try {
-          const res = await fetch(`${state.API_BASE}/api/search/query`, { method: 'POST', body: fd, signal: state._abortControllers[i].signal });
-          const data = await res.json();
+          const { data } = await api.post('/api/search/query', fd, { signal: state._abortControllers[i].signal });
           return { idx: i, data };
         } catch (err) {
           return { idx: i, data: { results: [], error: err.name === 'AbortError' ? 'Stopped' : err.message } };
@@ -899,9 +894,9 @@ async function _executeCompare(message) {
       try {
         const fd = new FormData();
         fd.append('query', message);
-        const searchRes = await fetch(`${state.API_BASE}/api/search`, { method: 'POST', body: fd });
-        if (searchRes.ok) {
-          const searchData = await searchRes.json();
+        const searchRes = await api.post('/api/search', fd);
+        if (searchRes.status >= 200 && searchRes.status < 300) {
+          const searchData = searchRes.data;
           if (searchData.context) sharedSearchContext = searchData.context;
           if (searchData.sources) sharedSearchSources = searchData.sources;
         }

@@ -11,7 +11,8 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
 
-const API_BASE = window.location.origin;
+import { api, apiFetch, apiPath } from './axios/api.js';
+
 let _open = false;
 let _notes = [];
 let _editingId = null;
@@ -343,11 +344,10 @@ function _pickCustomBgImage() {
       const fd = new FormData();
       fd.append('files', file);
       try {
-        const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
-        const data = await res.json();
+                const { data } = await api.get(`/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
         const fileId = data.files?.[0]?.id;
         if (!fileId) throw new Error('Upload failed');
-        finish(`${API_BASE}/api/upload/${fileId}`);
+        finish(`/api/upload/${fileId}`);
       } catch { finish(null); }
     });
     // Best-effort cleanup if user dismisses the dialog.
@@ -400,10 +400,10 @@ function _undoArchive(note, prevIdx) {
 async function _fetchNotes() {
   _loading = true;
   try {
-    const url = `${API_BASE}/api/notes${_showingArchived ? '?archived=true' : ''}`;
-    const res = await fetch(url, { credentials: 'same-origin' });
-    if (!res.ok) { _notes = []; return; }
-    const data = await res.json();
+    const url = `/api/notes${_showingArchived ? '?archived=true' : ''}`;
+        const dataRes = await api.get(url).catch(() => null);
+    if (!dataRes) { { _notes = []; return; } }
+    const data = dataRes.data;
     _notes = data.notes || data || [];
   } catch (e) {
     console.error('Failed to fetch notes:', e);
@@ -414,32 +414,20 @@ async function _fetchNotes() {
 }
 
 async function _saveNote(note) {
-  const method = note.id ? 'PUT' : 'POST';
-  const url = note.id ? `${API_BASE}/api/notes/${note.id}` : `${API_BASE}/api/notes`;
-  const res = await fetch(url, {
-    method, credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(note),
-  });
-  if (!res.ok) throw new Error('Failed to save note');
-  return await res.json();
+  const url = note.id ? `/api/notes/${note.id}` : `/api/notes`;
+  const { data } = note.id ? await api.put(url, note) : await api.post(url, note);
+  return data;
 }
 
 async function _deleteNoteApi(id) {
   // v2 review — used to swallow 4xx/5xx silently. Throw so callers can
   // distinguish success vs failure and toast accordingly.
-  const r = await fetch(`${API_BASE}/api/notes/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
+  await api.delete(`/api/notes/${id}`);
 }
 
 async function _patchNote(id, patch) {
-  const res = await fetch(`${API_BASE}/api/notes/${id}`, {
-    method: 'PUT', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  });
-  if (!res.ok) throw new Error('Failed to update note');
-  return await res.json();
+  const { data } = await api.put(`/api/notes/${id}`, patch);
+  return data;
 }
 
 // ---- Helpers ----
@@ -961,13 +949,8 @@ function _fireReminder(note) {
   let shown = false;
   const timer = setTimeout(() => { if (!shown) { shown = true; showLocal(rawBody); } }, 1500);
 
-  fetch('/api/notes/fire-reminder', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ note_id: note.id, title, body: rawBody }),
-  })
-    .then(r => r.ok ? r.json() : null)
+  api.post('/api/notes/fire-reminder', { note_id: note.id, title, body: rawBody })
+    .then(r => r.data).catch(() => null)
     .then(data => {
       clearTimeout(timer);
       if (shown) return;
@@ -2575,7 +2558,7 @@ function _bindCardEvents(body) {
         body.classList.remove('drag-active');
         body.querySelectorAll('.drop-before, .drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
         const ids = [...body.querySelectorAll('.note-card')].map(c => c.dataset.noteId);
-        try { await fetch(`${API_BASE}/api/notes/reorder`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) }); }
+        try { await api.post(`/api/notes/reorder`, { ids }); }
         catch {}
       });
     });
@@ -2669,7 +2652,7 @@ function _bindCardEvents(body) {
         document.documentElement.style.touchAction = '';
         if (committed) {
           const ids = [...body.querySelectorAll('.note-card')].map(c => c.dataset.noteId);
-          fetch(`${API_BASE}/api/notes/reorder`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) }).catch(() => {});
+          api.post(`/api/notes/reorder`, { ids }).catch(() => {});
         }
       }
       dragCard = null;
@@ -3387,11 +3370,10 @@ function _buildForm(note = null) {
       const fd = new FormData();
       fd.append('files', file);
       try {
-        const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
-        const data = await res.json();
+                const { data } = await api.get(`/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
         const fileId = data.files?.[0]?.id;
         if (!fileId) throw new Error('Upload failed');
-        currentImageUrl = `${API_BASE}/api/upload/${fileId}`;
+        currentImageUrl = `/api/upload/${fileId}`;
         // Only ever keep the latest attached photo — drop any existing wrap
         // before inserting a fresh one. Picking a second photo replaces the
         // first instead of stacking.
@@ -4239,10 +4221,9 @@ async function _uploadCanvasAsPng(canvas) {
   const fd = new FormData();
   fd.append('files', blob, 'drawing.png');
   try {
-    const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
     const id = data.files?.[0]?.id;
-    return id ? `${API_BASE}/api/upload/${id}` : null;
+    return id ? `/api/upload/${id}` : null;
   } catch { return null; }
 }
 
@@ -4340,7 +4321,7 @@ async function _agentSolveNote(id) {
   const prompt = _noteToAgentPrompt(note);
   if (!prompt) { uiModule.showToast('Nothing to solve — note is empty'); return; }
   try {
-    const dc = await (await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' })).json();
+    const dc = (await api.get(`/api/default-chat`)).data;
     if (!dc.endpoint_url || !dc.model) { uiModule.showError('No default chat model configured'); return; }
 
     // 1. Create the session server-side (no UI switch). skip_validation
@@ -4352,9 +4333,9 @@ async function _agentSolveNote(id) {
     csFd.append('model', dc.model);
     if (dc.endpoint_id) csFd.append('endpoint_id', dc.endpoint_id);
     csFd.append('skip_validation', 'true');
-    const csRes = await fetch(`${API_BASE}/api/session`, { method: 'POST', credentials: 'same-origin', body: csFd });
-    if (!csRes.ok) { uiModule.showError('Could not create agent session'); return; }
-    const sess = await csRes.json();
+        const sessRes = await api.get(`/api/session`, { method: 'POST', credentials: 'same-origin', body: csFd }).catch(() => null);
+    if (!sessRes) { { uiModule.showError('Could not create agent session'); return; } }
+    const sess = sessRes.data;
     const sid = sess.id;
 
     // 2. Link the session to the note right away so the tag appears.
@@ -4370,7 +4351,7 @@ async function _agentSolveNote(id) {
     fd.append('message', prompt);
     fd.append('session', sid);
     fd.append('mode', 'agent');
-    fetch(`${API_BASE}/api/chat_stream`, { method: 'POST', credentials: 'same-origin', body: fd })
+    apiFetch(`/api/chat_stream`, { method: 'POST', body: fd })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
         const reader = res.body.getReader();
@@ -5042,12 +5023,7 @@ async function _commitNoteReorder() {
   const ids = Array.from(grid.querySelectorAll('.note-card')).map(c => c.dataset.noteId).filter(Boolean);
   if (!ids.length) return;
   try {
-    await fetch(`${API_BASE}/api/notes/reorder`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids }),
-    });
+    await api.post(`/api/notes/reorder`, { ids });
     // Update local sort_order so subsequent renders agree with the server.
     ids.forEach((nid, i) => {
       const n = _notes.find(nn => nn.id === nid);
@@ -5062,9 +5038,9 @@ async function _commitNoteReorder() {
 // Background reminder loop — runs whether panel is open or not
 async function _initReminders() {
   try {
-    const res = await fetch(`${API_BASE}/api/notes`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
+    const res = await api.get(`/api/notes`);
+    if (res.data) {
+      const data = res.data;
       _notes = data.notes || data || [];
       _startReminderLoop();
     }

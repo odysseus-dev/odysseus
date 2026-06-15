@@ -1,10 +1,10 @@
+import { api } from './axios/api.js';
 // static/js/presets.js
 
 /**
  * Preset management
  */
 
-let API_BASE = '';
 let selectedPreset = null;
 let presets = {};
 
@@ -77,7 +77,6 @@ let userTemplates = [];
  * Initialize with dependencies
  */
 export function init(apiBase) {
-  API_BASE = apiBase;
   initCharTabs();
   initEnabledToggle();
   initNameDropdown();
@@ -133,12 +132,11 @@ function initExpandButton() {
     btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Expanding...';
 
     try {
-      const res = await fetch(`${API_BASE}/api/presets/expand`, {
+            const { data } = await api.get(`/api/presets/expand`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, prompt: draft, model: currentModel }),
       });
-      const data = await res.json();
       if (data.success && data.prompt && promptInput) {
         promptInput.value = data.prompt;
         promptInput.style.height = 'auto';
@@ -242,7 +240,7 @@ function initNameDropdown() {
       try {
         // Delete saved template if exists
         if (match) {
-          await fetch(`${API_BASE}/api/presets/templates/${match.id}`, { method: 'DELETE' });
+          await api.delete(`/api/presets/templates/${match.id}`);
         }
         // Hide built-in preset
         if (isBuiltin) {
@@ -370,12 +368,8 @@ function initResetButton() {
  */
 async function loadUserTemplates() {
   try {
-    const res = await fetch(`${API_BASE}/api/presets/templates`);
-    if (res.ok) {
-      userTemplates = await res.json();
-    } else {
-      userTemplates = [];
-    }
+    const { data } = await api.get('/api/presets/templates');
+    userTemplates = data;
   } catch (e) {
     userTemplates = [];
   }
@@ -412,15 +406,15 @@ function initPersistentChat() {
         fd.append('model', current.model || '');
         fd.append('skip_validation', 'true');
       }
-      const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error('Failed to create session');
-      const data = await res.json();
+            const dataRes = await api.get(`/api/session`, { method: 'POST', body: fd }).catch(() => null);
+      if (!dataRes) { throw new Error('Failed to create session'); }
+      const data = dataRes.data;
       const sessionId = data.session_id || data.id;
 
       // Favorite it
       const favFd = new FormData();
       favFd.append('important', true);
-      await fetch(`${API_BASE}/api/session/${sessionId}/important`, { method: 'POST', body: favFd });
+      await api.post(`/api/session/${sessionId}/important`, favFd);
 
       // Save session → character mapping so it restores on switch
       const charSessions = loadStoredObject('odysseus-char-sessions');
@@ -471,13 +465,13 @@ function initSaveAsTemplate() {
     };
 
     try {
-      const res = await fetch(`${API_BASE}/api/presets/templates`, {
+            const dataRes = await api.get(`/api/presets/templates`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(template),
-      });
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
-      const data = await res.json();
+      }).catch(() => null);
+      if (!dataRes) { throw new Error(`Server returned ${res.status}`); }
+      const data = dataRes.data;
       if (data.success) {
         await loadUserTemplates();
         btn.textContent = 'Saved!';
@@ -500,8 +494,8 @@ function initSaveAsTemplate() {
  */
 export async function loadPresets(showError) {
   try {
-    const res = await fetch(`${API_BASE}/api/presets`);
-    presets = await res.json();
+    const res = await api.get(`/api/presets`);
+    presets = res.data;
 
     const custom = presets.custom;
     if (custom && custom.enabled === undefined) {
@@ -673,10 +667,7 @@ export function openCustomPresetModal() {
       } else {
         deactivateCharacter();
         try {
-          fetch(`${API_BASE}/api/presets/custom`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...(presets.custom || {}), name: (presets.custom && presets.custom.character_name) || '', enabled: false }),
-          }).catch(() => {});
+          api.post(`/api/presets/custom`, { ...(presets.custom || {}), name: (presets.custom && presets.custom.character_name) || '', enabled: false }).catch(() => {});
         } catch {}
       }
       const m = document.getElementById('custom-preset-modal');
@@ -791,13 +782,11 @@ export async function saveCustomPreset(showToast, showError) {
   };
 
   try {
-    const response = await fetch(`${API_BASE}/api/presets/custom`, {
+        const { data: result } = await api.get(`/api/presets/custom`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config)
     });
-
-    const result = await response.json();
     if (result.success) {
       presets.custom = { ...presets.custom, ...config, character_name: name, enabled: enabled };
 
@@ -831,14 +820,10 @@ export async function saveCustomPreset(showToast, showError) {
       const isBuiltinPreset = PROMPT_TEMPLATES.some(t => t.isPreset && (t.name === name || t.name === _selVal));
       const saveName = isBuiltinPreset ? null : (name || null);
       if (saveName) {
-        fetch(`${API_BASE}/api/presets/templates`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        api.post(`/api/presets/templates`, {
             id: (userTemplates.find(t => t.name === saveName) || {}).id || '',
             name: saveName, system_prompt, temperature: config.temperature, max_tokens: config.max_tokens,
-          }),
-        }).then(r => { if (r.ok) loadUserTemplates(); }).catch(() => {});
+          }).then(() => loadUserTemplates()).catch(() => {});
       }
 
       if (showToast) {
@@ -931,16 +916,11 @@ export function deactivateCharacter() {
  */
 async function _mergeUserMemories(charName) {
   try {
-    const res = await fetch(`${API_BASE}/api/memory`);
-    const data = await res.json();
+        const { data } = await api.get(`/api/memory`);
     const userMems = (data.memory || []).filter(m => !m.character);
     if (!userMems.length) return;
     for (const m of userMems) {
-      await fetch(`${API_BASE}/api/memory/add`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: m.text, category: m.category || 'fact', source: 'user', character: charName }),
-      });
+      await api.post(`/api/memory/add`, { text: m.text, category: m.category || 'fact', source: 'user', character: charName });
     }
   } catch (e) {
     console.error('Failed to merge memories:', e);
@@ -1004,11 +984,7 @@ function _syncCharIndicator() {
           const miniBtn = document.getElementById('overflow-preset-btn');
           if (miniBtn) miniBtn.classList.remove('active');
           // Save disabled state to backend
-          fetch(`${API_BASE}/api/presets/custom`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...presets.custom, name: presets.custom.character_name || '', enabled: false }),
-          }).catch(() => {});
+          api.post(`/api/presets/custom`, { ...presets.custom, name: presets.custom.character_name || '', enabled: false }).catch(() => {});
           return;
         }
         if (typeof openCustomPresetModal === 'function') openCustomPresetModal();

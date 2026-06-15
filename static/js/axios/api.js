@@ -25,8 +25,32 @@ export function apiErrorMessage(err) {
   if (data?.error?.message) return data.error.message;
   if (typeof data?.error === 'string') return data.error;
   if (typeof data?.detail === 'string') return data.detail;
+  if (typeof data?.message === 'string') return data.message;
+  if (typeof data === 'string' && data.trim()) return data.trim();
+  const status = err.response?.status;
+  if (status) return `Request failed (HTTP ${status})`;
   if (err.message) return err.message;
   return 'Connection failed. Please check your internet and try again.';
+}
+
+/** HTTP status + body detail — for diagnostic UIs (remote scans, cache listing). */
+export function apiHttpErrorMessage(err) {
+  if (!err) return 'Request failed';
+  const data = err.response?.data;
+  let detail = '';
+  if (data?.error?.message) detail = data.error.message;
+  else if (typeof data?.error === 'string') detail = data.error;
+  else if (typeof data?.detail === 'string') detail = data.detail;
+  else if (typeof data?.message === 'string') detail = data.message;
+  else if (typeof data === 'string') detail = data;
+  detail = typeof detail === 'string' ? detail.trim() : '';
+
+  const status = err.response?.status;
+  const statusText = err.response?.statusText || '';
+  if (status) {
+    return `HTTP ${status}${statusText ? ` ${statusText}` : ''}${detail ? `: ${detail}` : ''}`;
+  }
+  return detail || apiErrorMessage(err);
 }
 
 function createApiClient() {

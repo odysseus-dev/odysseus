@@ -10,7 +10,8 @@ import { PROMPT_TEMPLATES, getAllPresets } from './presets.js';
 import { sortModelObjects } from './modelSort.js';
 import Storage from './storage.js';
 
-let API_BASE = '';
+import { api, apiFetch } from './axios/api.js';
+
 let _active = false;
 let _models = [];          // [{mid, display, url, endpointId}]
 let _participantSessions = [];  // session IDs for each model
@@ -22,7 +23,6 @@ let _parentSessionId = null;
 const GROUP_STATE_KEY = 'odysseus-group-state';
 
 export function init(apiBase) {
-  API_BASE = apiBase;
   // Initialize Group tab inside Characters modal
   setTimeout(_initGroupTab, 500);
 }
@@ -42,8 +42,8 @@ function _initGroupTab() {
     let items = (window.modelsModule && window.modelsModule.getCachedItems) ? window.modelsModule.getCachedItems() : [];
     if (!items || items.length === 0) {
       try {
-        const res = await fetch(API_BASE + '/api/models', { credentials: 'same-origin' });
-        items = (await res.json()).items || [];
+        const res = await api.get('/api/models');
+        items = res.data.items || [];
       } catch (e) {}
     }
     const result = [];
@@ -176,18 +176,14 @@ function _initGroupTab() {
         })),
       };
       try {
-        const existing = await fetch(API_BASE + '/api/presets/groups', { credentials: 'same-origin' }).then(r => r.json());
+        const existing = await api.get('/api/presets/groups').then(r => r.data);
         const groups = existing.groups || [];
         // Don't duplicate if same participants
         const sig = presetData.participants.map(p => p.modelId + ':' + (p.characterId || '')).sort().join(',');
         const exists = groups.some(g => (g.participants || []).map(p => p.modelId + ':' + (p.characterId || '')).sort().join(',') === sig);
         if (!exists) {
           groups.push(presetData);
-          await fetch(API_BASE + '/api/presets/groups', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groups }),
-          });
+          await api.post('/api/presets/groups', { groups });
         }
       } catch (e) {}
     }
@@ -208,8 +204,7 @@ function _initGroupTab() {
   // Load and render saved group presets
   async function _loadGroupPresets() {
     try {
-      const res = await fetch(API_BASE + '/api/presets/groups', { credentials: 'same-origin' });
-      const data = await res.json();
+            const { data } = await api.get('/api/presets/groups');
       const groups = data.groups || [];
       // Render presets above participant list
       let presetsDiv = document.getElementById('group-presets-list');
@@ -234,11 +229,7 @@ function _initGroupTab() {
         chipX.addEventListener('click', (ev) => {
           ev.stopPropagation();
           groups.splice(idx, 1);
-          fetch(API_BASE + '/api/presets/groups', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groups }),
-          }).then(() => _loadGroupPresets());
+          api.post('/api/presets/groups', { groups }).then(() => _loadGroupPresets());
         });
         chip.appendChild(chipX);
         chip.title = (g.participants || []).map(p => p.characterName || p.modelDisplay || '?').join(', ');
@@ -262,11 +253,7 @@ function _initGroupTab() {
           e.preventDefault();
           if (await window.styledConfirm('Delete preset "' + (g.name || 'Group') + '"?', { confirmText: 'Delete', danger: true })) {
             groups.splice(idx, 1);
-            fetch(API_BASE + '/api/presets/groups', {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ groups }),
-            }).then(() => _loadGroupPresets());
+            api.post('/api/presets/groups', { groups }).then(() => _loadGroupPresets());
           }
         });
         presetsDiv.appendChild(chip);
@@ -303,8 +290,7 @@ async function _getCharacterList() {
   // The endpoint returns a JSON array directly (not {templates:[...]}).
   // All user templates are personas by definition — no isCharacter filter needed.
   try {
-    const r = await fetch(API_BASE + '/api/presets/templates', { credentials: 'same-origin' });
-    const data = await r.json();
+        const { data } = await api.get('/api/presets/templates');
     const templates = Array.isArray(data) ? data : (data.templates || []);
     templates.forEach(t => {
       if (t.id && t.name && !chars.find(c => c.id === t.id)) {
@@ -396,8 +382,7 @@ export async function showModelPicker() {
       // Fallback: fetch from API if cache is empty
       if (!items || items.length === 0) {
         try {
-          const res = await fetch(API_BASE + '/api/models', { credentials: 'same-origin' });
-          const data = await res.json();
+                    const { data } = await api.get('/api/models');
           items = data.items || [];
         } catch (e) { console.warn('[group] Failed to fetch models:', e); }
       }
@@ -545,8 +530,7 @@ export async function startGroup(models, parentSessionId) {
     pfd.append('model', models[0].mid);
     pfd.append('skip_validation', 'true');
     if (models[0].endpointId) pfd.append('endpoint_id', models[0].endpointId);
-    const pres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: pfd, credentials: 'same-origin' });
-    const pdata = await pres.json();
+        const { data: pdata } = await api.get(`/api/session`, { method: 'POST', body: pfd, credentials: 'same-origin' });
     _parentSessionId = pdata.id;
     // Register as group session for sidebar icon
     try {
@@ -568,13 +552,7 @@ export async function startGroup(models, parentSessionId) {
       fd.append('model', m.mid);
       fd.append('skip_validation', 'true');
       if (m.endpointId) fd.append('endpoint_id', m.endpointId);
-      const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd, credentials: 'same-origin' });
-      if (!res.ok) {
-        console.error(`[group] Session creation failed for ${m.display}: HTTP ${res.status}`);
-        _participantSessions.push(null);
-        continue;
-      }
-      const data = await res.json();
+      const { data } = await api.post('/api/session', fd);
       if (!data.id) {
         console.error(`[group] Session creation returned no ID for ${m.display}:`, data);
         _participantSessions.push(null);
@@ -604,11 +582,7 @@ export async function startGroup(models, parentSessionId) {
           _groupEtiquette;
       }
 
-      await fetch(`${API_BASE}/api/session/${data.id}/inject_messages`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: [{ role: 'system', content: sysPrompt }]}),
-      }).catch(() => {});
+      await api.post(`/api/session/${data.id}/inject_messages`, { messages: [{ role: 'system', content: sysPrompt }]}).catch(() => {});
     } catch (e) {
       console.error('[group] Failed to create participant session:', m.display, e);
       _participantSessions.push(null);
@@ -654,11 +628,7 @@ export async function sendMessage(msg) {
 
   // Save user message to parent session for persistence
   if (_parentSessionId) {
-    fetch(`${API_BASE}/api/session/${_parentSessionId}/inject_messages`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{ role: 'user', content: msg }] }),
-    }).catch(() => {});
+    api.post(`/api/session/${_parentSessionId}/inject_messages`, { messages: [{ role: 'user', content: msg }] }).catch(() => {});
   }
 
   if (_mode === 'parallel') {
@@ -736,15 +706,10 @@ async function _sendRoundRobin(msg, box) {
       for (let j = 0; j < _participantSessions.length; j++) {
         if (j === idx || !_participantSessions[j]) continue;
         try {
-          await fetch(`${API_BASE}/api/session/${_participantSessions[j]}/inject_messages`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: [{
+          await api.post(`/api/session/${_participantSessions[j]}/inject_messages`, { messages: [{
               role: 'user',
               content: `[${m._groupName || m.display}]: ${response}`
-            }]}),
-          });
+            }]});
         } catch (e) { console.warn('[group] sync failed:', e); }
       }
     }
@@ -763,15 +728,10 @@ async function _syncAllResponses(holders) {
     for (let j = 0; j < _participantSessions.length; j++) {
       if (j === i || !_participantSessions[j]) continue;
       try {
-        await fetch(`${API_BASE}/api/session/${_participantSessions[j]}/inject_messages`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: [{
+        await api.post(`/api/session/${_participantSessions[j]}/inject_messages`, { messages: [{
             role: 'user',
             content: `[${model._groupName || model.display}]: ${response}`
-          }]}),
-        });
+          }]});
       } catch (e) { /* silent */ }
     }
   }
@@ -793,12 +753,7 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
   const bodyEl = holderEl.querySelector('.body');
 
   try {
-    const res = await fetch(`${API_BASE}/api/chat_stream`, {
-      method: 'POST',
-      body: fd,
-      credentials: 'same-origin',
-      signal: abortCtrl.signal,
-    });
+    const res = await apiFetch(`/api/chat_stream`, { method: 'POST', body: fd });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
 
@@ -903,14 +858,10 @@ async function _streamToHolder(modelIdx, sessionId, msg, holderEl, abortCtrl) {
   // Save response to parent session for persistence
   if (accumulated && _parentSessionId) {
     const gName = _models[modelIdx]._groupName || _models[modelIdx].display;
-    fetch(`${API_BASE}/api/session/${_parentSessionId}/inject_messages`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [{
+    api.post(`/api/session/${_parentSessionId}/inject_messages`, { messages: [{
         role: 'assistant', content: accumulated,
         metadata: { group_model: gName, model: _models[modelIdx].mid }
-      }]}),
-    }).catch(() => {});
+      }]}).catch(() => {});
   }
 }
 

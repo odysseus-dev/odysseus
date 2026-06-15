@@ -82,8 +82,23 @@ const THEME_DEFAULT_FROSTED = {
 };
 
 // ── Custom theme persistence ──
+function _isValidThemeColors(c) {
+  return c && typeof c === 'object' && c.bg && c.fg && c.panel && c.red;
+}
 function _loadCustomThemes() {
-  return Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  const raw = Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  if (!raw || typeof raw !== 'object') return {};
+  const cleaned = {};
+  let changed = false;
+  for (const [name, colors] of Object.entries(raw)) {
+    if (typeof name === 'string' && name && _isValidThemeColors(colors)) {
+      cleaned[name] = colors;
+    } else {
+      changed = true;
+    }
+  }
+  if (changed) _saveCustomThemes(cleaned);
+  return cleaned;
 }
 function _saveCustomThemes(obj) {
   Storage.setJSON(CUSTOM_THEMES_KEY, obj);
@@ -627,7 +642,7 @@ export function initThemeUI() {
   // Render custom theme swatches into separate card
   const userGrid = document.getElementById('themeUserGrid');
   const userCard = document.getElementById('themeUserCard');
-  const customEntries = Object.entries(customThemes);
+  const customEntries = Object.entries(customThemes).filter(([, c]) => _isValidThemeColors(c));
   if (customEntries.length > 0 && userGrid && userCard) {
     userCard.style.display = '';
     userGrid.innerHTML = customEntries.map(([name, c]) => `
@@ -1095,8 +1110,8 @@ export function initThemeUI() {
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
     // Fetch custom fonts from local folder and populate dropdown
-    fetch('/api/fonts/custom', { credentials: 'same-origin' })
-      .then(r => r.json())
+    api.get('/api/fonts/custom')
+      .then(res => res.data)
       .then(data => {
         _customFonts = data.fonts || {};
         const families = Object.keys(_customFonts);
@@ -2054,14 +2069,14 @@ async function _initWithSync() {
   }
   // Also sync custom themes from server
   try {
-    const res = await api.get('/api/prefs/custom-themes', { credentials: 'same-origin' });
-    const customThemes = await res.data;
+    const { data } = await api.get('/api/prefs/custom-themes', { credentials: 'same-origin' });
+    const customThemes = data?.value;
     if (customThemes && typeof customThemes === 'object') {
       const local = _loadCustomThemes();
       // Merge: server themes fill in missing local ones
       let changed = false;
       for (const [name, colors] of Object.entries(customThemes)) {
-        if (!local[name]) { local[name] = colors; changed = true; }
+        if (!local[name] && _isValidThemeColors(colors)) { local[name] = colors; changed = true; }
       }
       if (changed) _saveCustomThemes(local);
     }

@@ -6,11 +6,9 @@
 
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { api } from './axios/api.js';
 
-let API_BASE = '';
-
-export function init(apiBase) {
-  API_BASE = apiBase;
+export function init(_apiBase) {
   _setupUploadZone();
 }
 
@@ -33,8 +31,7 @@ export async function loadPersonalDocs() {
   box.appendChild(wpEl);
 
   try {
-    const res = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
-    const data = await res.json();
+    const { data } = await api.get('/api/personal');
     const files = data.files || [];
 
     box.innerHTML = '';
@@ -90,11 +87,7 @@ export async function loadPersonalDocs() {
 async function _deleteFile(filepath, displayName) {
   if (!await uiModule.styledConfirm(`Remove "${displayName}" from RAG?`, { confirmText: 'Remove', danger: true })) return;
   try {
-    const res = await fetch(`${API_BASE}/api/personal/file?filepath=${encodeURIComponent(filepath)}`, {
-      method: 'DELETE',
-      credentials: 'same-origin'
-    });
-    if (!res.ok) throw new Error(await res.text());
+    await api.delete('/api/personal/file', { params: { filepath } });
     await loadPersonalDocs();
   } catch (e) {
     console.error('Delete failed:', e);
@@ -111,21 +104,13 @@ export async function uploadRagFiles(fileList) {
   const zone = document.getElementById('rag-upload-zone');
   if (zone) zone.textContent = 'Uploading…';
 
-  const fd = new FormData();
+  const formData = new FormData();
   for (const file of fileList) {
-    fd.append('files', file);
+    formData.append('files', file);
   }
 
   try {
-    const res = await fetch(`${API_BASE}/api/personal/upload`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: fd
-    });
-
-    if (!res.ok) throw new Error(await res.text());
-
-    const data = await res.json();
+    const { data } = await api.post('/api/personal/upload', formData);
     if (zone) zone.textContent = 'Drop files here or click to upload';
     await loadPersonalDocs();
     return data;

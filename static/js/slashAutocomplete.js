@@ -3,6 +3,7 @@
 // type. Reads COMMANDS from slashCommands.js — no command logic lives here.
 
 import { COMMANDS, LEGACY_ALIASES } from './slashCommands.js';
+import { api } from './axios/api.js';
 
 const POPUP_ID = 'slash-autocomplete';
 const MAX_VISIBLE = 14;
@@ -83,9 +84,7 @@ function _flatten() {
 
 async function _loadSkillEntries() {
   try {
-    const res = await fetch('/api/skills/slash-catalog', { credentials: 'same-origin' });
-    if (!res.ok) return [];
-    const data = await res.json();
+    const { data } = await api.get('/api/skills/slash-catalog');
     return (Array.isArray(data.skills) ? data.skills : []).map(s => ({
       token: s.token || `/${s.name}`,
       aliases: [],

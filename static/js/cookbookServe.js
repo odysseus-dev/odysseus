@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { api, apiHttpErrorMessage } from './axios/api.js';
 import { providerLogo } from './providers.js';
 import { modelColor } from './chatRenderer.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -138,9 +139,7 @@ async function _fetchServeRuntimePackage(panel, backend) {
     if (target.port) params.set('ssh_port', target.port);
     if (target.venv) params.set('venv', target.venv);
   }
-  const res = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''), { credentials: 'same-origin' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
+  const { data } = await api.get('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''));
   const pkg = (data.packages || []).find(p => p.name === packageName);
   return { pkg, target };
 }
@@ -895,8 +894,7 @@ function _rerenderCachedModels() {
             const _sp = (_es.servers || []).find(s => s.host === host)?.port;
             if (_sp) params.set('ssh_port', _sp);
           }
-          const res = await fetch(`/api/hwfit/profiles?${params}`);
-          const data = await res.json();
+          const { data } = await api.get(`/api/hwfit/profiles?${params}`);
           const ctxMax = Number(data && data.model_ctx_max) || 0;
           if (ctxMax > 0) {
             panel._modelCtxMax = ctxMax;
@@ -920,8 +918,7 @@ function _rerenderCachedModels() {
             const _sp = (_es.servers || []).find(s => s.host === host)?.port;
             if (_sp) params.set('ssh_port', _sp);
           }
-          const res = await fetch('/api/cookbook/gpus' + (params.toString() ? '?' + params : ''));
-          const data = await res.json();
+          const { data } = await api.get('/api/cookbook/gpus' + (params.toString() ? '?' + params : ''));
           const gpus = Array.isArray(data) ? data : (data.gpus || []);
           if (!gpus.length) { el.textContent = 'no GPU detected'; el.style.color = ''; return true; }
           const g = gpus[0];
@@ -1364,15 +1361,17 @@ function _rerenderCachedModels() {
         };
 
         const _doKill = async (pid, sig, hostVal) => {
-          const res = await fetch('/api/cookbook/kill-pid', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pid, signal: sig, host: hostVal || null }),
-          });
           let data;
-          try { data = await res.json(); } catch (_) { data = {}; }
-          if (!res.ok || !data.ok) {
-            const err = data.error || data.detail || res.statusText || 'unknown';
+          try {
+            ({ data } = await api.post('/api/cookbook/kill-pid', { pid, signal: sig, host: hostVal || null }));
+          } catch (err) {
+            data = err.response?.data || {};
+            const errMsg = data.error || data.detail || err.message || 'unknown';
+            uiModule.showToast(`Kill PID ${pid} failed: ${errMsg}`, 6000);
+            return false;
+          }
+          if (!data.ok) {
+            const err = data.error || data.detail || 'unknown';
             uiModule.showToast(`Kill PID ${pid} failed: ${err}`, 6000);
             return false;
           }
@@ -1471,13 +1470,16 @@ function _rerenderCachedModels() {
           const params = new URLSearchParams();
           if (remoteHost) params.set('host', remoteHost);
           const url = '/api/cookbook/gpus' + (params.toString() ? '?' + params.toString() : '');
-          const res = await fetch(url, { credentials: 'same-origin' });
           let data;
-          try { data = await res.json(); } catch (_) { data = {}; }
-          if (!res.ok) {
-            const err = data.detail || data.error || res.statusText || `HTTP ${res.status}`;
-            const hint = res.status === 404 ? ' — server may need a restart to pick up new endpoint' : '';
-            if (!silent) uiModule.showToast('GPU probe failed: ' + err + hint, 8000);
+          try {
+            const res = await api.get(url);
+            data = res.data;
+          } catch (err) {
+            data = err.response?.data || {};
+            const status = err.response?.status;
+            const errMsg = data.detail || data.error || err.message || (status ? `HTTP ${status}` : 'unknown');
+            const hint = status === 404 ? ' — server may need a restart to pick up new endpoint' : '';
+            if (!silent) uiModule.showToast('GPU probe failed: ' + errMsg + hint, 8000);
             return null;
           }
           if (!data.ok) {
@@ -1587,11 +1589,8 @@ function _rerenderCachedModels() {
                 // First pass: SIGTERM
                 const hostVal = panel._gpuProbe.host;
                 const results = await Promise.all(pids.map(p =>
-                  fetch('/api/cookbook/kill-pid', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pid: p.pid, signal: 'TERM', host: hostVal || null }),
-                  }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }))
+                  api.post('/api/cookbook/kill-pid', { pid: p.pid, signal: 'TERM', host: hostVal || null })
+                    .then(r => r.data).catch(e => ({ ok: false, error: e.message }))
                 ));
                 const okCount = results.filter(r => r.ok).length;
                 uiModule.showToast(`SIGTERM → ${okCount}/${pids.length} processes`, 5000);
@@ -1611,11 +1610,8 @@ function _rerenderCachedModels() {
                 }
                 if (!await window.styledConfirm(`${survivors.length} process(es) survived SIGTERM:\n\n${survivors.map(p => p.pid + ' (' + p.name + ')').join(', ')}\n\nForce-kill with SIGKILL?`, { confirmText: 'SIGKILL', danger: true })) return;
                 const killResults = await Promise.all(survivors.map(p =>
-                  fetch('/api/cookbook/kill-pid', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pid: p.pid, signal: 'KILL', host: hostVal || null }),
-                  }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }))
+                  api.post('/api/cookbook/kill-pid', { pid: p.pid, signal: 'KILL', host: hostVal || null })
+                    .then(r => r.data).catch(e => ({ ok: false, error: e.message }))
                 ));
                 const killOk = killResults.filter(r => r.ok).length;
                 uiModule.showToast(`SIGKILL → ${killOk}/${survivors.length} processes`, 5000);
@@ -1776,8 +1772,7 @@ function _rerenderCachedModels() {
               const _sp = (_serverByVal?.(_envState.remoteServerKey || _probeHost) || {}).port;
               if (_sp) _probeParams.set('ssh_port', _sp);
             }
-            const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
-            const _probeData = await _probeRes.json();
+            const { data: _probeData } = await api.get('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''));
             const _probeGpus = Array.isArray(_probeData) ? _probeData : (_probeData.gpus || []);
             if (!_probeGpus.length) {
               const _proceed = await window.styledConfirm(
@@ -1812,12 +1807,7 @@ function _rerenderCachedModels() {
             const _cmd = _portHost
               ? `ss h ${_portHost} <<<"" 2>/dev/null; ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_portHost} ${JSON.stringify(_checkInner)}`
               : _checkInner;
-            const _res = await fetch('/api/shell/exec', {
-              method: 'POST', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ command: _cmd }),
-            });
-            const _data = await _res.json().catch(() => ({}));
+            const { data: _data } = await api.post('/api/shell/exec', { command: _cmd });
             const _stdout = (_data.stdout || '').trim();
             if (_stdout) {
               // Try to surface the process name from `users:(("name",pid=...,...))`.
@@ -2002,12 +1992,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
     itemEl.appendChild(ov);
   }
   try {
-    const res = await fetch('/api/shell/exec', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmd }),
-    });
-    if (!res.ok) { uiModule.showError(`Delete failed (${res.status})`); return; }
+    await api.post('/api/shell/exec', { command: cmd });
     if (itemEl) {
       itemEl.querySelector('.cookbook-delete-overlay')?.remove();
       itemEl.style.transition = 'opacity 0.24s ease, transform 0.24s ease, max-height 0.28s ease, padding 0.28s ease, margin 0.28s ease';
@@ -2026,7 +2011,7 @@ async function _deleteCachedModel(repo, itemEl, skipConfirm = false, model = nul
     // Drop from the in-memory list so a re-render/filter doesn't resurrect it.
     _cachedAllModels = _cachedAllModels.filter(x => x.repo_id !== repo);
   } catch (e) {
-    uiModule.showError('Delete failed: ' + (e && e.message ? e.message : e));
+    uiModule.showError('Delete failed: ' + e.response?.data?.detail || e.message);
   } finally {
     // Tear down the spinner. On success the row is already gone; on error the
     // row survives, so restore it (remove overlay, re-enable interaction).
@@ -2202,20 +2187,7 @@ export async function _fetchCachedModels() {
     if (host) { qp.set('host', host); const _sp4 = _getPort(host); if (_sp4) qp.set('ssh_port', _sp4); const _plat = _getPlatform(host); if (_plat) qp.set('platform', _plat); }
     if (modelDirs.length) qp.set('model_dir', modelDirs.join(','));
     const params = qp.toString() ? `?${qp}` : '';
-    const res = await fetch(`/api/model/cached${params}`);
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      let msg = '';
-      try {
-        const payload = JSON.parse(body);
-        msg = payload && (payload.detail || payload.error || payload.message);
-      } catch {
-        msg = body;
-      }
-      msg = typeof msg === 'string' ? msg.trim() : '';
-      throw new Error(`HTTP ${res.status} ${res.statusText}${msg ? `: ${msg}` : ''}`);
-    }
-    const data = await res.json();
+    const { data } = await api.get(`/api/model/cached${params}`);
     _dlWp.destroy();
 
     // CHANGELOG: 'ready' already excludes partial downloads; 
@@ -2292,7 +2264,7 @@ export async function _fetchCachedModels() {
     _rerenderCachedModels();
   } catch (e) {
     _dlWp.destroy();
-    list.innerHTML = `<div class="hwfit-loading">Failed: ${esc(e.message)}</div>`;
+    list.innerHTML = `<div class="hwfit-loading">Failed: ${esc(apiHttpErrorMessage(e))}</div>`;
   }
 }
 

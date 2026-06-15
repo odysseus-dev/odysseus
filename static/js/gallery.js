@@ -6,8 +6,9 @@ import uiModule from './ui.js';
 import { openEditor, closeEditor, isEditorOpen } from './galleryEditor.js';
 import spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import * as Modals from './modalManager.js';
+import { api, apiFetch, apiPath } from './axios/api.js';
 
-const API_BASE = window.location.origin;
 let _open = false;
 let _galleryResizeHandler = null;
 
@@ -92,8 +93,7 @@ async function _fetchLibrary(append) {
   if (_activeAlbum) params.set('album', _activeAlbum);
   if (_favoritesOnly) params.set('favorites', 'true');
   try {
-    const res = await fetch(`${API_BASE}/api/gallery/library?${params}`, { credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/gallery/library?${params}`);
     if (append) {
       _items = _items.concat(data.items || []);
     } else {
@@ -122,8 +122,7 @@ async function _fetchLibrary(append) {
 
 async function _fetchAlbums() {
   try {
-    const res = await fetch(`${API_BASE}/api/gallery/albums`, { credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/gallery/albums`);
     _albums = data.albums || [];
     _renderAlbums();
   } catch (e) { console.error('Albums fetch error:', e); }
@@ -136,16 +135,7 @@ async function _fetchAlbums() {
 // silent UI lies on permission failures.
 async function _patchImage(id, patch) {
   try {
-    const r = await fetch(`${API_BASE}/api/gallery/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify(patch),
-    });
-    if (!r.ok) {
-      console.warn('Gallery patch returned', r.status);
-      return false;
-    }
+    await api.patch(`/api/gallery/${id}`, patch);
     return true;
   } catch (e) {
     console.error('Gallery patch error:', e);
@@ -155,14 +145,7 @@ async function _patchImage(id, patch) {
 
 async function _deleteImage(id) {
   try {
-    const r = await fetch(`${API_BASE}/api/gallery/${id}`, {
-      method: 'DELETE',
-      credentials: 'same-origin',
-    });
-    if (!r.ok) {
-      console.warn('Gallery delete returned', r.status);
-      return false;
-    }
+    await api.delete(`/api/gallery/${id}`);
     return true;
   } catch (e) {
     console.error('Gallery delete error:', e);
@@ -203,10 +186,9 @@ async function _bulkUpload(filesOrItems, fallbackAlbumId) {
       fd.append('file', it.file);
       if (it.albumId) fd.append('album_id', it.albumId);
       try {
-        const res = await fetch(`${API_BASE}/api/gallery/upload`, {
+                const { data } = await api.get(`/api/gallery/upload`, {
           method: 'POST', body: fd, credentials: 'same-origin',
         });
-        const data = await res.json();
         if (data.duplicate) dupes++;
         else if (!data.ok) errors++;
       } catch (e) { errors++; }
@@ -289,13 +271,12 @@ async function _handleGalleryDrop(e) {
       let album = _albums.find(a => a.name === entry.name);
       if (!album) {
         try {
-          const res = await fetch(`${API_BASE}/api/gallery/albums`, {
+                    const { data } = await api.get(`/api/gallery/albums`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
             body: JSON.stringify({ name: entry.name }),
           });
-          const data = await res.json();
           if (data && data.id) album = { id: data.id, name: data.name || entry.name };
         } catch (err) { console.error('Failed to create album for', entry.name, err); }
       }
@@ -697,17 +678,10 @@ function _wireAlbumsEvents(scope) {
       const album = _albums.find(a => a.id === id);
       const newName = prompt('Rename album:', album?.name || '');
       if (!newName || !newName.trim() || newName.trim() === album?.name) return;
-      const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin', body: JSON.stringify({ name: newName.trim() }),
-      });
-      if (r.ok) {
-        await _fetchAlbums();
-        _renderAlbumsTab();
-        if (uiModule) uiModule.showToast('Album renamed');
-      } else if (uiModule) {
-        uiModule.showError('Rename failed');
-      }
+      await api.put(`/api/gallery/albums/${id}`, { name: newName.trim() });
+      await _fetchAlbums();
+      _renderAlbumsTab();
+      if (uiModule) uiModule.showToast('Album renamed');
     });
     pop.querySelector('[data-action="delete"]')?.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -718,18 +692,12 @@ function _wireAlbumsEvents(scope) {
         { confirmText: 'Delete', danger: true },
       );
       if (!ok) return;
-      const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
-        method: 'DELETE', credentials: 'same-origin',
-      });
-      if (r.ok) {
-        if (_activeAlbum === id) _activeAlbum = null;
-        await _fetchAlbums();
-        _renderAlbumsTab();
-        _renderAlbums();
-        if (uiModule) uiModule.showToast('Album deleted');
-      } else if (uiModule) {
-        uiModule.showError('Delete failed');
-      }
+      await api.delete(`/api/gallery/albums/${id}`);
+      if (_activeAlbum === id) _activeAlbum = null;
+      await _fetchAlbums();
+      _renderAlbumsTab();
+      _renderAlbums();
+      if (uiModule) uiModule.showToast('Album deleted');
     });
   });
 
@@ -738,10 +706,7 @@ function _wireAlbumsEvents(scope) {
       ? await uiModule.styledPrompt('Name your new album.', { title: 'New album', placeholder: 'e.g. Vacation 2026', confirmText: 'Create' })
       : prompt('Album name:'));
     if (!name?.trim()) return;
-    await fetch(`${API_BASE}/api/gallery/albums`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin', body: JSON.stringify({ name: name.trim() }),
-    });
+    await api.post(`/api/gallery/albums`, { name: name.trim() });
     await _fetchAlbums();
     _renderAlbumsTab();
   });
@@ -773,11 +738,7 @@ function _wireAlbumsEvents(scope) {
       // Reuse an existing album with the same name; otherwise create one.
       let album = _albums.find(a => a.name === folderName);
       if (!album) {
-        const r = await fetch(`${API_BASE}/api/gallery/albums`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin', body: JSON.stringify({ name: folderName }),
-        });
-        const data = await r.json().catch(() => ({}));
+        const { data: data } = await api.post(`/api/gallery/albums`, { name: folderName }).catch(() => ({}));
         if (data?.id) {
           album = { id: data.id, name: folderName, count: 0 };
           _albums.push(album);
@@ -805,11 +766,12 @@ async function _bulkDeleteAlbums(ids) {
   if (!ok) return;
   let failed = 0;
   for (const id of ids) {
-    const r = await fetch(`${API_BASE}/api/gallery/albums/${id}`, {
-      method: 'DELETE', credentials: 'same-origin',
-    });
-    if (!r.ok) failed++;
-    else if (_activeAlbum === id) _activeAlbum = null;
+    try {
+      await api.delete(`/api/gallery/albums/${id}`);
+      if (_activeAlbum === id) _activeAlbum = null;
+    } catch {
+      failed++;
+    }
   }
   if (failed) uiModule.showError(`Failed to delete ${failed} of ${ids.length} albums`);
   else if (uiModule) uiModule.showToast(`Deleted ${ids.length} album${ids.length > 1 ? 's' : ''}`);
@@ -871,9 +833,9 @@ async function _renderEditorDrafts() {
   section.hidden = false;
   _draftsShowLoading(section);
   try {
-    const res = await fetch(`${API_BASE}/api/editor-drafts`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const out = await res.json();
+    const res = await api.get(`/api/editor-drafts`);
+    if (res.data) {
+      const out = res.data;
       _draftsCache = Array.isArray(out.drafts) ? out.drafts : [];
     }
   } catch (_) {
@@ -962,9 +924,7 @@ function _draftsPaint() {
       const card = btn.closest('.gallery-editor-draft-card');
       if (card) card.classList.add('gallery-draft-removing');
       try {
-        await fetch(`${API_BASE}/api/editor-drafts/${encodeURIComponent(id)}`, {
-          method: 'DELETE', credentials: 'same-origin',
-        });
+        await api.delete(`/api/editor-drafts/${encodeURIComponent(id)}`);
       } catch (_) { /* swallow — refresh below */ }
       await new Promise(r => setTimeout(r, 240));   // let the animation finish
       _draftsSelected.delete(id);
@@ -1036,9 +996,7 @@ function _draftsWireOnce() {
     if (grid) ids.forEach(id => grid.querySelector(`.gallery-editor-draft-card[data-draft-id="${(window.CSS && CSS.escape) ? CSS.escape(id) : id}"]`)?.classList.add('gallery-draft-removing'));
     await new Promise(r => setTimeout(r, 240));
     await Promise.allSettled(ids.map(id =>
-      fetch(`${API_BASE}/api/editor-drafts/${encodeURIComponent(id)}`, {
-        method: 'DELETE', credentials: 'same-origin',
-      })
+      api.delete(`/api/editor-drafts/${encodeURIComponent(id)}`)
     ));
     _draftsSelected.clear();
     _draftsSelectMode = false;
@@ -1260,7 +1218,7 @@ function _renderGrid() {
       const url = btn.dataset.url;
       const filename = btn.dataset.filename || `image-${btn.dataset.id}.png`;
       try {
-        const res = await fetch(url, { credentials: 'same-origin' });
+        const res = await api.get(url);
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1286,10 +1244,9 @@ function _renderGrid() {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const id = btn.dataset.id;
-      const res = await fetch(`${API_BASE}/api/gallery/${id}/favorite`, {
+            const { data } = await api.get(`/api/gallery/${id}/favorite`, {
         method: 'POST', credentials: 'same-origin',
       });
-      const data = await res.json();
       if (data.ok) {
         btn.classList.toggle('gallery-fav-active', data.favorite);
         const item = _items.find(i => i.id === id);
@@ -1507,10 +1464,9 @@ function _openDetail(img) {
   }
 
   const _toggleDetailFavorite = async () => {
-    const res = await fetch(`${API_BASE}/api/gallery/${img.id}/favorite`, {
+        const { data } = await api.get(`/api/gallery/${img.id}/favorite`, {
       method: 'POST', credentials: 'same-origin',
     });
-    const data = await res.json();
     if (!data.ok) return;
     img.favorite = data.favorite;
     const menuItem = document.getElementById('gallery-fav-detail');
@@ -1551,10 +1507,9 @@ function _openDetail(img) {
     const cleanup = () => { try { spinner?.destroy?.(); } catch {} overlay?.remove(); };
     try {
       const url = clearMode
-        ? `${API_BASE}/api/gallery/clear-ai-tags?image_id=${encodeURIComponent(img.id)}`
-        : `${API_BASE}/api/gallery/${img.id}/ai-tag`;
-      const res = await fetch(url, { method: 'POST', credentials: 'same-origin' });
-      const data = await res.json();
+        ? `/api/gallery/clear-ai-tags?image_id=${encodeURIComponent(img.id)}`
+        : `/api/gallery/${img.id}/ai-tag`;
+            const { data } = await api.get(url, { method: 'POST', credentials: 'same-origin' });
       cleanup();
       if (data.ok) {
         img.ai_tags = clearMode ? '' : data.ai_tags;
@@ -1571,7 +1526,7 @@ function _openDetail(img) {
 
   document.getElementById('gallery-download-btn').addEventListener('click', async () => {
     try {
-      const res = await fetch(img.url, { credentials: 'same-origin' });
+      const res = await api.get(img.url);
       const blob = await res.blob();
       const objUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1702,13 +1657,7 @@ function _openDetail(img) {
       overlay?.remove();
     };
     try {
-      const r = await fetch(`${API_BASE}/api/gallery/${img.id}/rotate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ angle }),
-      });
-      if (!r.ok) { cleanup(); uiModule.showError('Rotate failed'); return; }
+      await api.post(`/api/gallery/${img.id}/rotate`, { angle });
       // Cache-bust the image in the detail view, then wait for the new
       // image to actually load before clearing the spinner so the user
       // doesn't see a flash of the old/blank image.
@@ -1735,18 +1684,9 @@ function _openDetail(img) {
   document.getElementById('gallery-set-cover-btn')?.addEventListener('click', async () => {
     if (!img.album_id) return;
     try {
-      const r = await fetch(`${API_BASE}/api/gallery/albums/${img.album_id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ cover_id: img.id }),
-      });
-      if (r.ok) {
-        uiModule.showToast('Album cover updated');
-        await _fetchAlbums();
-      } else {
-        uiModule.showError('Failed to set cover');
-      }
+      await api.put(`/api/gallery/albums/${img.album_id}`, { cover_id: img.id });
+      uiModule.showToast('Album cover updated');
+      await _fetchAlbums();
     } catch (e) {
       uiModule.showError('Failed to set cover');
     }
@@ -1777,13 +1717,7 @@ function _openDetail(img) {
       const newName = _nameInput.value.trim();
       if (newName === (img.prompt || '')) return;
       try {
-        const r = await fetch(`${API_BASE}/api/gallery/${img.id}/rename`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ name: newName }),
-        });
-        if (!r.ok) throw new Error('Failed');
+        await api.post(`/api/gallery/${img.id}/rename`, { name: newName });
         img.prompt = newName;
         if (uiModule) uiModule.showToast('Renamed');
         window.dispatchEvent(new CustomEvent('gallery-refresh'));
@@ -1880,7 +1814,6 @@ function _makeGalleryDraggable(content) {
 // ---- Open / Close ----
 
 // Re-export the manager for the rail click handler
-import * as Modals from './modalManager.js';
 
 export function openGallery() {
   // If already minimized — restore in place, preserve all state
@@ -2257,10 +2190,8 @@ export function openGallery() {
       if (_activeAlbum) params.set('album_id', _activeAlbum);
       let listRes;
       try {
-        const r = await fetch(`${API_BASE}/api/gallery/ai-tag-batch?${params.toString()}`, {
-          method: 'POST', credentials: 'same-origin',
-        });
-        listRes = await r.json();
+        const r = await api.post(`/api/gallery/ai-tag-batch?${params.toString()}`);
+        listRes = r.data;
       } catch (e) { uiModule.showError('Failed to fetch tag queue'); return; }
       if (!listRes.ok || !Array.isArray(listRes.image_ids) || listRes.image_ids.length === 0) {
         uiModule.showToast(`No untagged photos in ${scope}`);
@@ -2292,10 +2223,9 @@ export function openGallery() {
       for (const id of listRes.image_ids) {
         if (_tagCancelRequested) break;
         try {
-          const r = await fetch(`${API_BASE}/api/gallery/${id}/ai-tag`, {
+                    const { data: d } = await api.get(`/api/gallery/${id}/ai-tag`, {
             method: 'POST', credentials: 'same-origin',
           });
-          const d = await r.json();
           if (!d.ok) failed++;
         } catch (_) { failed++; }
         done++;
@@ -2347,10 +2277,9 @@ export function openGallery() {
       )) return;
       clearAiTagsBtn.disabled = true;
       try {
-        const r = await fetch(`${API_BASE}/api/gallery/clear-ai-tags`, {
+                const { data: d } = await api.get(`/api/gallery/clear-ai-tags`, {
           method: 'POST', credentials: 'same-origin',
         });
-        const d = await r.json();
         if (!d.ok) throw new Error(d.error || 'Clear failed');
         uiModule.showToast(`Cleared AI tags on ${d.cleared} photo${d.cleared === 1 ? '' : 's'}`);
         await _fetchLibrary(false);
@@ -2603,12 +2532,7 @@ export function openGallery() {
     if (ids.length > 5) {
       try {
         if (uiModule) uiModule.showToast(`Zipping ${ids.length} photos…`);
-        const res = await fetch(`${API_BASE}/api/gallery/download-zip`, {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-        });
-        if (!res.ok) throw new Error('zip failed');
+        await api.post(`/api/gallery/download-zip`, { ids });
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -2631,7 +2555,7 @@ export function openGallery() {
       const it = _items.find(i => i.id === id);
       if (!it) continue;
       try {
-        const res = await fetch(it.url, { credentials: 'same-origin' });
+        const res = await api.get(it.url);
         const blob = await res.blob();
         const objUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');

@@ -9,8 +9,7 @@ import { initEmailLibrary, openEmailLibrary, closeEmailLibrary, isOpen as isLibO
 import * as Modals from './modalManager.js';
 import { applyEdgeDock } from './modalSnap.js';
 import { buildReplyAllCc } from './emailLibrary/replyRecipients.js';
-
-const API_BASE = window.location.origin;
+import { api } from './axios/api.js';
 const _acct = () => window.__odysseusActiveEmailAccount
   ? `&account_id=${encodeURIComponent(window.__odysseusActiveEmailAccount)}`
   : '';
@@ -226,12 +225,15 @@ async function _refreshUnreadCount() {
   if (dot && !dot._stickyState) dot.style.display = 'none';
   try {
     // Parallel: unread list + urgency state.
-    const [listRes, urgRes] = await Promise.all([
-      fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=50&filter=unread${_acct()}`),
-      fetch(`${API_BASE}/api/email/urgency-state`, { credentials: 'same-origin' }).catch(() => null),
+    const [data, urgData] = await Promise.all([
+      api.get(`/api/email/list?folder=INBOX&limit=50&filter=unread${_acct()}`)
+        .then(r => r.data)
+        .catch(() => null),
+      api.get('/api/email/urgency-state')
+        .then(r => r.data)
+        .catch(() => null),
     ]);
-    if (!listRes || !listRes.ok) return;
-    const data = await listRes.json();
+    if (!data) return;
     if (!dot) return;
 
     const emails = data.emails || [];
@@ -249,9 +251,9 @@ async function _refreshUnreadCount() {
 
     // Color the dot by urgency tier. Cache the per-uid map so the per-row
     // renderer can reuse it without a second fetch.
-    if (dot.style.display !== 'none' && urgRes && urgRes.ok) {
+    if (dot.style.display !== 'none' && urgData) {
       try {
-        const ud = await urgRes.json();
+        const ud = urgData;
         window._emailUrgencyState = ud;
         const tint = _urgencyColor(ud.max_score || 0);
         if (tint) dot.style.backgroundColor = tint;
@@ -270,8 +272,8 @@ export function markInboxAsSeen() {
   // Called when the user opens the inbox popup — clears the notif dot
   try {
     // Find current max UID so subsequent arrivals trigger the dot
-    fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=1${_acct()}`)
-      .then(r => r.json())
+    api.get(`/api/email/list?folder=INBOX&limit=1${_acct()}`, )
+      .then(r => r.data)
       .then(data => {
         const emails = data.emails || [];
         if (emails.length > 0) {
@@ -303,8 +305,7 @@ export async function loadEmails(append = false) {
 
   try {
     const fromQS = _senderFilter ? `&from=${encodeURIComponent(_senderFilter)}` : '';
-    const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=50&offset=${_offset}${fromQS}${_acct()}&_=${Date.now()}`);
-    const data = await res.json();
+    const { data } = await api.get(`/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=50&offset=${_offset}${fromQS}${_acct()}&_=${Date.now()}`);
     if (data.error) throw new Error(data.error);
 
     if (!append) _emails = [];
@@ -333,8 +334,7 @@ export async function loadEmails(append = false) {
 
 async function loadFolders() {
   try {
-    const res = await fetch(`${API_BASE}/api/email/folders?_=1${_acct()}`);
-    const data = await res.json();
+    const { data } = await api.get(`/api/email/folders?_=1${_acct()}`);
     const select = document.getElementById('email-folder-select');
     if (!select || !data.folders) return;
     _populateFolderSelect(select, data.folders);
@@ -549,9 +549,7 @@ function _createEmailItem(em) {
     unflagBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       try {
-        await fetch(`${API_BASE}/api/email/${em.uid}/unflag-spam`, {
-          method: 'POST', credentials: 'same-origin',
-        });
+        await api.post(`/api/email/${em.uid}/unflag-spam`);
         em.is_spam_verdict = false;
         item.classList.remove('email-item-spam');
         const tag = item.querySelector('.email-tag-spam');
@@ -663,8 +661,7 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
   try {
     let data = preloadedData;
     if (!data) {
-      const res = await fetch(`${API_BASE}/api/email/read/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
-      data = await res.json();
+      await api.get(`/api/email/read/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
     }
     if (data.error) {
       console.error('Failed to read email:', data.error);
@@ -685,22 +682,17 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
             currentModel = sessionModule?.getCurrentModel() || '';
             currentSessionId = sessionModule?.getCurrentSessionId() || '';
           } catch (_) {}
-          const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              to: data.from_address,
-              subject: `Re: ${data.subject}`,
-              original_body: data.body,
-              model: currentModel,
-              session_id: currentSessionId,
-              message_id: data.message_id || '',
-              uid: String(em.uid || ''),
-              folder: _currentFolder,
-              fast: aiReplyMode ? aiReplyMode === 'fast' : _shouldUseFastAiReply(data),
-            }),
+          const { data: result } = await api.post('/api/email/ai-reply', {
+            to: data.from_address,
+            subject: `Re: ${data.subject}`,
+            original_body: data.body,
+            model: currentModel,
+            session_id: currentSessionId,
+            message_id: data.message_id || '',
+            uid: String(em.uid || ''),
+            folder: _currentFolder,
+            fast: aiReplyMode ? aiReplyMode === 'fast' : _shouldUseFastAiReply(data),
           });
-          const result = await res.json();
           if (draftToastTimer) clearTimeout(draftToastTimer);
           if (result.success && result.reply) {
             aiSuggestedBody = _cleanAiReplyText(result.reply);
@@ -850,42 +842,35 @@ async function _openEmail(em, itemEl, preloadedData = null, mode = 'reply') {
             const _fd = new FormData();
             _fd.append('name', `Email: ${(data.subject || '').slice(0, 60)}`);
             _fd.append('skip_validation', 'true');
-            const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
-            if (_sres.ok) {
-              const _sdata = await _sres.json();
-              if (_sdata && _sdata.id) {
-                activeSid = _sdata.id;
-                if (sessionModule?.loadSessions) await sessionModule.loadSessions();
-                if (sessionModule?.selectSession) await sessionModule.selectSession(activeSid);
-              }
+            const { data: _sdata } = await api.post('/api/session', _fd);
+            if (_sdata && _sdata.id) {
+              activeSid = _sdata.id;
+              if (sessionModule?.loadSessions) await sessionModule.loadSessions();
+              if (sessionModule?.selectSession) await sessionModule.selectSession(activeSid);
             }
           } catch (e) { console.error('reply: bare session create failed', e); }
         }
 
-        const docRes = await fetch(`${API_BASE}/api/document`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            // Reuse the user's current chat session if there is one (so the
-            // reply draft lives in the chat they were just in); otherwise
-            // null and the new email-chat (created above) takes over.
+        let doc;
+        try {
+          ({ data: doc } = await api.post('/api/document', {
             session_id: activeSid || null,
             title: data.subject,
             content: content,
             language: 'email',
-          }),
-        });
-        if (!docRes.ok) {
-          const errText = await docRes.text();
-          console.error('[reply-debug] POST /api/document failed', docRes.status, errText);
+          }));
+        } catch (docErr) {
           // uiModule isn't statically imported here — use the dynamic
           // import pattern the rest of this file uses. (Previously this
           // referenced a bare `uiModule`, throwing a ReferenceError that
           // the outer catch swallowed → reply silently did nothing.)
-          import('./ui.js').then(m => m.showError && m.showError('Failed to create reply draft (' + docRes.status + ')')).catch(() => {});
+          import('./ui.js').then(m => m.showError && m.showError('Failed to create reply draft (' + (docErr.response?.status || '') + ')')).catch(() => {});
+          const errText = docErr.response?.data
+            ? (typeof docErr.response.data === 'string' ? docErr.response.data : JSON.stringify(docErr.response.data))
+            : (docErr.message || String(docErr));
+          console.error('[reply-debug] POST /api/document failed', docErr.response?.status, errText);
           return;
         }
-        const doc = await docRes.json();
         if (doc.id) {
           const wasOpen = _docModule.isPanelOpen();
           if (!wasOpen) _docModule.openPanel();
@@ -1054,12 +1039,7 @@ async function _createReplyReminder(em, dueDate) {
     source: 'email',
   };
   try {
-    const res = await fetch(`${API_BASE}/api/notes`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error('Failed');
+    await api.post('/api/notes', payload);
     const { showToast } = await import('./ui.js');
     const fmt = dueDate.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     showToast(`Reminder set for ${fmt}`);
@@ -1075,7 +1055,7 @@ async function _createReplyReminder(em, dueDate) {
 
 async function _archiveEmail(em) {
   try {
-    await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
+    await api.post(`/api/email/archive/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
     _emails = _emails.filter(e => e.uid !== em.uid);
     _renderList();
   } catch (e) {
@@ -1089,7 +1069,7 @@ async function _deleteEmail(em) {
   const ok = await styledConfirm(`Delete "${subject}"?`, { confirmText: 'Delete', cancelText: 'Cancel', danger: true });
   if (!ok) return;
   try {
-    await fetch(`${API_BASE}/api/email/delete/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'DELETE' });
+    await api.delete(`/api/email/delete/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
     _emails = _emails.filter(e => e.uid !== em.uid);
     _renderList();
   } catch (e) {
@@ -1112,10 +1092,10 @@ async function _toggleDone(em, itemEl) {
   }
   try {
     if (newState) {
-      await fetch(`${API_BASE}/api/email/mark-answered/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
-      await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
+      await api.post(`/api/email/mark-answered/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
+      await api.post(`/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
     } else {
-      await fetch(`${API_BASE}/api/email/clear-answered/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`, { method: 'POST' });
+      await api.post(`/api/email/clear-answered/${em.uid}?folder=${encodeURIComponent(_currentFolder)}${_acct()}`);
     }
   } catch (e) {
     console.error('Failed to toggle done:', e);
@@ -1133,8 +1113,7 @@ async function _createEmailChat(emailData) {
       endpointId = current.endpoint_id;
     } else {
       // Fall back to default chat config
-      const dcRes = await fetch(`${API_BASE}/api/default-chat`);
-      const dc = await dcRes.json();
+      const { data: dc } = await api.get('/api/default-chat');
       url = dc.endpoint_url;
       model = dc.model;
       endpointId = dc.endpoint_id;
@@ -1177,17 +1156,14 @@ async function _composeNew() {
         const _fd = new FormData();
         _fd.append('name', 'New Email');
         _fd.append('skip_validation', 'true');
-        const _sres = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
-        if (_sres.ok) {
-          const _sdata = await _sres.json();
-          if (_sdata && _sdata.id) {
-            sid = _sdata.id;
-            // NOTE: intentionally do NOT loadSessions()/selectSession() here.
-            // Re-selecting the (empty) session re-renders the chat and flashes
-            // the welcome splash for a frame before the draft opens — the
-            // "splash flickers like crazy then email opens" bug. The doc only
-            // needs the session_id; the draft opens in the doc panel regardless.
-          }
+        const { data: _sdata } = await api.post('/api/session', _fd);
+        if (_sdata && _sdata.id) {
+          sid = _sdata.id;
+          // NOTE: intentionally do NOT loadSessions()/selectSession() here.
+          // Re-selecting the (empty) session re-renders the chat and flashes
+          // the welcome splash for a frame before the draft opens — the
+          // "splash flickers like crazy then email opens" bug. The doc only
+          // needs the session_id; the draft opens in the doc panel regardless.
         }
       } catch (e) { console.error('compose: bare session create failed', e); }
     }
@@ -1196,22 +1172,19 @@ async function _composeNew() {
       import('./ui.js').then(m => m.showError && m.showError('Could not start a new email (no session).')).catch(() => {});
       return;
     }
-    const res = await fetch(`${API_BASE}/api/document`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    let doc;
+    try {
+      ({ data: doc } = await api.post('/api/document', {
         session_id: sid,
         title: 'New Email',
         content: 'To: \nSubject: \n---\n',
         language: 'email',
-      }),
-    });
-    if (!res.ok) {
-      console.error('compose POST failed', res.status, await res.text().catch(() => ''));
-      import('./ui.js').then(m => m.showError && m.showError('Failed to create new email (' + res.status + ')')).catch(() => {});
+      }));
+    } catch (docErr) {
+      console.error('compose POST failed', docErr.response?.status, docErr.response?.data || docErr.message);
+      import('./ui.js').then(m => m.showError && m.showError('Failed to create new email (' + (docErr.response?.status || '') + ')')).catch(() => {});
       return;
     }
-    const doc = await res.json();
     if (doc.id) {
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       // Use the doc dict from POST directly to avoid the GET 404 race that

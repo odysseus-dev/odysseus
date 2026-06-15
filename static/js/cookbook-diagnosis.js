@@ -3,6 +3,7 @@
 // Error pattern matching and diagnosis UI
 // ============================================
 
+import { apiFetch } from './axios/api.js';
 import {
   _envState,
   _loadTasks,
@@ -739,9 +740,8 @@ export async function _runQuickCmd(panel, cmd) {
   if (diag) { diag.classList.remove('hidden'); diag.textContent = `Running: ${fullCmd}...`; }
 
   try {
-    const res = await fetch('/api/shell/stream', {
+    const res = await apiFetch('/api/shell/stream', {
       method: 'POST',
-      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: fullCmd }),
     });

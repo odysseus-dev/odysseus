@@ -34,6 +34,8 @@
  */
 import { state } from './state.js';
 
+import { api } from '../axios/api.js';
+
 const KNOWN_DEPS = ['realesrgan', 'rembg'];
 
 export function createApplyImageTool({
@@ -78,17 +80,7 @@ export function createApplyImageTool({
       const flatCanvas = flatten();
       const imageB64 = flatCanvas.toDataURL('image/png').split(',')[1];
       const body = { image: imageB64, ...extraPayload };
-      const res = await fetch(endpoint, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        let err = res.statusText;
-        try { const e = await res.json(); err = e.detail || e.error || err; } catch {}
-        throw new Error(err);
-      }
-      const data = await res.json();
+      const { data } = await api.post(endpoint, body);
       if (data.error) throw new Error(data.error);
       if (!data.image) throw new Error('No image returned');
       const img = new Image();

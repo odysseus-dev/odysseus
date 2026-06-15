@@ -12,8 +12,8 @@ import spinnerModule from './spinner.js';
 import { modelColor } from './chatRenderer.js';
 import { providerLogo } from './providers.js';
 import { sortModelIds } from './modelSort.js';
+import { api } from './axios/api.js';
 
-let API_BASE = '';
 let _cachedItems = []; // cached /api/models items for model-switch dropdown
 let _lastFetchTime = 0;
 let _fetchInflight = null;
@@ -23,8 +23,7 @@ const FAVORITES_KEY = 'odysseus-model-favorites';
 const USAGE_KEY = 'odysseus-model-usage';
 const SORT_KEY = 'odysseus-model-sort';
 
-export function init(apiBase) {
-  API_BASE = apiBase;
+export function init(_apiBase) {
 }
 
 // ── Collapse state persistence ──
@@ -184,12 +183,9 @@ export async function refreshModels(force = false) {
         // back — newly-served endpoints don't appear until the cache
         // ages out. (Bug repro: serve a model, picker is empty for ~30s
         // even though the endpoint is in the DB and online.)
-        const _url = `${API_BASE}/api/models` + (force ? '?refresh=true' : '');
-        _fetchInflight = fetch(_url, { credentials: 'same-origin' })
-          .then(async (res) => {
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res.json();
-          })
+        const _url = '/api/models' + (force ? '?refresh=true' : '');
+        _fetchInflight = api.get(_url)
+          .then((res) => res.data)
           .finally(() => { _fetchInflight = null; });
       }
       const data = await _fetchInflight;
@@ -611,8 +607,7 @@ export async function refreshProviders() {
   sel.innerHTML = '<option disabled>Loading providers…</option>';
 
   try {
-    const res = await fetch(`${API_BASE}/api/providers`);
-    const data = await res.json();
+    const { data } = await api.get('/api/providers');
     const openai = (data.providers || []).find(p => p.provider === 'openai');
 
     sel.innerHTML = '';

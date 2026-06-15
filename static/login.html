@@ -254,15 +254,8 @@
           if (!code) { totpInput.focus(); submitBtn.disabled = false; return; }
           const remember = document.getElementById('remember').checked;
           try {
-            const res = await fetch('{{BASE_PATH}}/api/auth/login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'same-origin',
-              body: JSON.stringify({ username, password, remember, totp_code: code })
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || 'Invalid code');
-            if (!data.ok) throw new Error('Login failed');
+            const { data } = await api.post('/api/auth/login', { username, password, remember, totp_code: code }, { credentials: 'same-origin' });
+            if (!data.ok) throw new Error(data.detail || 'Invalid code');
             form._totpMode = false;
             finishLogin();
           } catch (err) {

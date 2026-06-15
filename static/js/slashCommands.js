@@ -22,10 +22,9 @@ import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
 import { PROVIDER_DEVICE_FLOWS, formatDeviceFlowError, runProviderDeviceFlow } from './providerDeviceFlow.js';
+import { api, apiFetch, apiPath } from './axios/api.js';
 
 // ── Module state ──────────────────────────────────────────────────────
-
-let API_BASE = '';
 let setupMode = false;
 let pendingSetupApiKey = '';
 let pendingSetupProvider = null;
@@ -251,9 +250,8 @@ async function _hasConfiguredModels() {
   const modelsBox = document.getElementById('models');
   if (modelsBox && modelsBox.querySelector('.models-row')) return true;
   try {
-    const res = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
-    if (!res.ok) return false;
-    const data = await res.json();
+    const res = await api.get('/api/models');
+    const data = res.data;
     return (data.items || []).some(item =>
       ((item.models || []).length > 0 || (item.models_extra || []).length > 0) && item.url
     );
@@ -280,11 +278,7 @@ function _persistMsg(role, content, metadata) {
   if (!sid || !content) return;
   const payload = { role, content };
   if (metadata) payload.metadata = metadata;
-  fetch(`${API_BASE}/api/session/${sid}/message`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  }).catch(() => {});
+  api.post(`/api/session/${sid}/message`, payload).catch(() => {});
 }
 
 function slashReply(text) {
@@ -324,9 +318,7 @@ async function _loadSkillSlashCatalog(force = false) {
   const now = Date.now();
   if (!force && (now - _skillCatalogCache.at) < 15000) return _skillCatalogCache.items;
   try {
-    const res = await fetch(`${API_BASE}/api/skills/slash-catalog`, { credentials: 'same-origin' });
-    if (!res.ok) throw new Error('catalog unavailable');
-    const data = await res.json();
+    const { data } = await api.get('/api/skills/slash-catalog');
     const items = Array.isArray(data.skills) ? data.skills : [];
     _skillCatalogCache = { at: now, items };
     return items;
@@ -350,18 +342,15 @@ function _submitComposedMessage(text) {
 }
 
 async function _invokeSkillByName(name, requestText, ctx) {
-  const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/invoke`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ request: requestText || '' })
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => null);
-    slashReply(ctx?.esc ? ctx.esc(err?.detail || 'Skill is not available') : 'Skill is not available');
+  let data;
+  try {
+    const res = await api.post(`/api/skills/${encodeURIComponent(name)}/invoke`, { request: requestText || '' });
+    data = res.data;
+  } catch (err) {
+    const detail = err.response?.data?.detail;
+    slashReply(ctx?.esc ? ctx.esc(detail || 'Skill is not available') : 'Skill is not available');
     return true;
   }
-  const data = await res.json();
   if (!data.message || !_submitComposedMessage(data.message)) {
     slashReply('Could not start skill invocation.');
   }
@@ -665,11 +654,15 @@ async function connectDetectedSetupEndpoint(detected) {
     if (!isLocal) fd.append('skip_probe', 'true');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30000);
-    const res = await fetch(`${API_BASE}/api/model-endpoints`, { method: 'POST', body: fd, credentials: 'same-origin', signal: controller.signal });
-    clearTimeout(timer);
-    const data = await res.json();
-
-    if (!res.ok) {
+    let data;
+    try {
+      const res = await api.post('/api/model-endpoints', fd, { signal: controller.signal });
+      data = res.data;
+      clearTimeout(timer);
+    } catch (err) {
+      clearTimeout(timer);
+      console.error(apiErrorMessage(err));
+      data = err.response?.data || {};
       setupSpinner.destroy();
       spinnerDiv.remove();
       setupMode = 'endpoint-provider-first';
@@ -866,15 +859,11 @@ async function handleSetupWizard(mode, input) {
   if (mode === 'features') {
     const name = input.trim().toLowerCase();
     try {
-      const res = await fetch(`${API_BASE}/api/auth/features`, { credentials: 'same-origin' });
-      const features = await res.json();
+      const res = await api.get('/api/auth/features');
+      const features = res.data;
       if (name in features) {
         features[name] = !features[name];
-        await fetch(`${API_BASE}/api/auth/features`, {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(features),
-        });
+        await api.post('/api/auth/features', features);
         await typewriterReply(`${name}: ${features[name] ? 'on' : 'off'}`);
       } else {
         await typewriterReply(`Unknown feature "${name}". Available: ${Object.keys(features).join(', ')}`);
@@ -944,12 +933,11 @@ async function _cmdSessionNew(args, ctx) {
   // No current session — try default chat, then any recent session with a model
   if (!endpointUrl || !model) {
     try {
-      const dcRes = await fetch(`${API_BASE}/api/default-chat`);
-      const dc = await dcRes.json();
-      if (dc.endpoint_url && dc.model) {
-        endpointUrl = dc.endpoint_url;
-        model = dc.model;
-        endpointId = dc.endpoint_id || '';
+      const { data: defaultChat } = await api.get('/api/default-chat');
+      if (defaultChat.endpoint_url && defaultChat.model) {
+        endpointUrl = defaultChat.endpoint_url;
+        model = defaultChat.model;
+        endpointId = defaultChat.endpoint_id || '';
       }
     } catch (e) { /* ignore */ }
   }
@@ -964,9 +952,8 @@ async function _cmdSessionNew(args, ctx) {
   // Last resort — pull first model from /api/models
   if (!endpointUrl || !model) {
     try {
-      const mRes = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
-      const mData = await mRes.json();
-      for (const ep of (mData.items || [])) {
+      const { data: mData } = await api.get('/api/models');
+      for (const ep of (mData?.items || [])) {
         if (ep.models && ep.models.length && ep.url) {
           endpointUrl = ep.url;
           model = ep.models[0];
@@ -987,15 +974,17 @@ async function _cmdSessionNew(args, ctx) {
   fd.append('model', model);
   fd.append('skip_validation', 'true');
   if (endpointId) fd.append('endpoint_id', endpointId);
-  const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  if (res.ok) {
-    const data = await res.json();
+  try {
+    const { data } = await api.post('/api/session', fd);
     await sessionModule.loadSessions();
     await sessionModule.selectSession(data.id);
     _hideWelcomeScreen();
     const shortModel = (model || '').split('/').pop();
     await typewriterReply(`New session — ${shortModel || 'ready'}.`);
-  } else { const err = await res.json().catch(() => null); slashReply('Failed to create session' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+  } catch (err) {
+    const detail = err.response?.data?.detail;
+    slashReply('Failed to create session' + (detail ? ': ' + ctx.esc(detail) : ''));
+  }
   return true;
 }
 
@@ -1012,8 +1001,12 @@ async function _cmdSessionDelete(args, ctx) {
     if (!targets.length) { slashReply('Nothing to delete' + (skipped ? ` (${skipped} starred)` : '')); return true; }
     let deleted = 0, failed = 0;
     for (const s of targets) {
-      const res = await fetch(`${API_BASE}/api/session/${s.id}`, { method: 'DELETE', credentials: 'same-origin' });
-      if (res.ok) deleted++; else failed++;
+      try {
+        await api.delete(`/api/session/${s.id}`);
+        deleted++;
+      } catch {
+        failed++;
+      }
     }
     await sessionModule.loadSessions();
     let msg = `Deleted ${deleted} session${deleted !== 1 ? 's' : ''}`;
@@ -1029,13 +1022,18 @@ async function _cmdSessionDelete(args, ctx) {
   const sessions = sessionModule.getSessions();
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
-  const res = await fetch(`${API_BASE}/api/session/${target}`, { method: 'DELETE', credentials: 'same-origin' });
-  if (res.ok) {
+  try {
+    await api.delete(`/api/session/${target}`);
     await typewriterReply(`Deleted ${label}`);
     await sessionModule.loadSessions();
-  } else if (res.status === 403) {
-    slashReply('Cannot delete a starred session — unstar it first, or use <code>/s rm -rf</code>');
-  } else { const err = await res.json().catch(() => null); slashReply('Delete failed' + (err?.detail ? ': ' + ctx.esc(err.detail) : '')); }
+  } catch (err) {
+    if (err.response?.status === 403) {
+      slashReply('Cannot delete a starred session — unstar it first, or use <code>/s rm -rf</code>');
+    } else {
+      const detail = err.response?.data?.detail;
+      slashReply('Delete failed' + (detail ? ': ' + ctx.esc(detail) : ''));
+    }
+  }
   return true;
 }
 
@@ -1046,9 +1044,13 @@ async function _cmdSessionArchive(args, ctx) {
   const sess = sessions.find(s => s.id === target);
   const label = sess ? `"${ctx.esc(sess.name || target.slice(0,8))}"` : target.slice(0,8);
   if (sess && sess.archived) { await typewriterReply(`${label} is already archived`); return true; }
-  const res = await fetch(`${API_BASE}/api/session/${target}/archive`, { method: 'POST', credentials: 'same-origin' });
-  if (res.ok) { await typewriterReply(`Archived ${label}`); await sessionModule.loadSessions(); }
-  else { slashReply('Archive failed'); }
+  try {
+    await api.post(`/api/session/${target}/archive`);
+    await typewriterReply(`Archived ${label}`);
+    await sessionModule.loadSessions();
+  } catch {
+    slashReply('Archive failed');
+  }
   return true;
 }
 
@@ -1056,22 +1058,26 @@ async function _cmdSessionRename(args, ctx) {
   const newName = args.join(' ');
   if (!newName) { slashReply('Usage: /rename New Name'); return true; }
   const fd = new FormData(); fd.append('name', newName);
-  const res = await fetch(`${API_BASE}/api/session/${ctx.sid}`, { method: 'PATCH', body: fd, credentials: 'same-origin' });
-  if (res.ok) { await typewriterReply(`Renamed to "${ctx.esc(newName)}"`); await sessionModule.loadSessions(); }
-  else { slashReply('Rename failed'); }
+  try {
+    await api.patch(`/api/session/${ctx.sid}`, fd);
+    await typewriterReply(`Renamed to "${ctx.esc(newName)}"`);
+    await sessionModule.loadSessions();
+  } catch {
+    slashReply('Rename failed');
+  }
   return true;
 }
 
 async function _cmdSessionImportant(args, ctx) {
-  const fd = new FormData(); fd.append('important', 'true');
-  await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
+  const formData = new FormData(); formData.append('important', 'true');
+  await api.post(`/api/session/${ctx.sid}/important`, formData);
   await typewriterReply('Session marked as important');
   return true;
 }
 
 async function _cmdSessionUnimportant(args, ctx) {
-  const fd = new FormData(); fd.append('important', 'false');
-  await fetch(`${API_BASE}/api/session/${ctx.sid}/important`, { method: 'POST', body: fd, credentials: 'same-origin' });
+  const formData = new FormData(); formData.append('important', 'false');
+  await api.post(`/api/session/${ctx.sid}/important`, formData);
   await typewriterReply('Session unmarked');
   return true;
 }
@@ -1079,17 +1085,14 @@ async function _cmdSessionUnimportant(args, ctx) {
 async function _cmdSessionFork(args, ctx) {
   if (!ctx.sid) { slashReply('No active session'); return true; }
   const keepCount = parseInt(args[0]) || 0;
-  const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/fork`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keep_count: keepCount })
-  });
-  if (res.ok) {
-    const data = await res.json();
+  try {
+    const { data } = await api.post(`/api/session/${ctx.sid}/fork`, { keep_count: keepCount });
     await sessionModule.loadSessions();
     await sessionModule.selectSession(data.id);
     await typewriterReply(`Forked session (${data.kept || 0} messages)`);
-  } else { slashReply('Fork failed'); }
+  } catch {
+    slashReply('Fork failed');
+  }
   return true;
 }
 
@@ -1097,13 +1100,12 @@ async function _cmdSessionTruncate(args, ctx) {
   if (!ctx.sid) { slashReply('No active session'); return true; }
   const keep = parseInt(args[0]);
   if (!keep || keep < 1) { slashReply('Usage: /truncate N — deletes older messages, keeps the last N'); return true; }
-  const res = await fetch(`${API_BASE}/api/session/${ctx.sid}/truncate`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keep_count: keep })
-  });
-  if (res.ok) { await typewriterReply(`Truncated to ${keep} messages`); }
-  else { slashReply('Truncate failed'); }
+  try {
+    await api.post(`/api/session/${ctx.sid}/truncate`, { keep_count: keep });
+    await typewriterReply(`Truncated to ${keep} messages`);
+  } catch {
+    slashReply('Truncate failed');
+  }
   return true;
 }
 
@@ -1136,9 +1138,8 @@ async function _cmdSessionSwitch(args, ctx) {
 
 async function _cmdSessionSort(args, ctx) {
   slashReply('Auto-sorting sessions...');
-  const res = await fetch(`${API_BASE}/api/sessions/auto-sort`, { method: 'POST', credentials: 'same-origin' });
-  if (res.ok) {
-    const data = await res.json();
+  try {
+    const { data } = await api.post('/api/sessions/auto-sort');
     await sessionModule.loadSessions();
     // Handle skipped status
     if (data.status === 'skipped') {
@@ -1147,7 +1148,9 @@ async function _cmdSessionSort(args, ctx) {
       const del_msg = data.deleted_empty ? ` (${data.deleted_empty} empty deleted)` : '';
       await typewriterReply(`Sorted ${data.updated || 0} sessions into ${data.folders?.length || 0} folders${del_msg}`);
     }
-  } else { slashReply('Auto-sort failed'); }
+  } catch {
+    slashReply('Auto-sort failed');
+  }
   return true;
 }
 
@@ -1188,7 +1191,7 @@ async function _cmdSessionExport(args, ctx) {
   }
   const params = new URLSearchParams({ fmt });
   if (filename) params.set('filename', filename);
-  window.open(`${API_BASE}/api/session/${ctx.sid}/export?${params}`, '_blank');
+  window.open(apiPath(`/api/session/${ctx.sid}/export?${params}`), '_blank');
   slashReply(`Exporting as .${fmt}${filename ? ' → ' + filename : ''}...`);
   return true;
 }
@@ -1496,14 +1499,18 @@ async function _cmdTheme(args, ctx) {
 
 async function _cmdModels(args, ctx) {
   slashReply('Fetching models...');
-  const res = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
-  const data = await res.json();
-  let lines = [];
-  (data.items || []).forEach(ep => {
-    lines.push(`<b>${ctx.esc(ep.endpoint_name || ep.url)}</b>`);
-    (ep.models || []).forEach(m => lines.push(`  ${ctx.esc(m)}`));
-  });
-  slashReply(`<pre>${lines.join('\n') || 'No models found'}</pre>`);
+  try {
+    const res = await api.get('/api/models');
+    const data = res.data;
+    let lines = [];
+    (data.items || []).forEach(ep => {
+      lines.push(`<b>${ctx.esc(ep.endpoint_name || ep.url)}</b>`);
+      (ep.models || []).forEach(m => lines.push(`  ${ctx.esc(m)}`));
+    });
+    slashReply(`<pre>${lines.join('\n') || 'No models found'}</pre>`);
+  } catch {
+    slashReply('<pre>No models found</pre>');
+  }
   return true;
 }
 
@@ -1523,49 +1530,53 @@ async function _cmdModel(args, ctx) {
 }
 
 async function _cmdMcp(args, ctx) {
-  const res = await fetch(`${API_BASE}/api/mcp/servers`, { credentials: 'same-origin' });
-  if (!res.ok) {
+  try {
+    const res = await api.get('/api/mcp/servers');
+    const servers = res.data;
+    if (!Array.isArray(servers) || !servers.length) {
+      slashReply('No MCP servers configured.');
+      return true;
+    }
+    const lines = servers.map(s => {
+      const status = s.status || (s.is_enabled ? 'enabled' : 'disabled');
+      const enabled = Number(s.enabled_tool_count ?? s.tool_count ?? 0);
+      const total = Number(s.tool_count ?? enabled);
+      return `${s.name || s.id || 'MCP server'} - ${status} (${enabled}/${total} tools)`;
+    });
+    slashReply(`<pre>${lines.map(line => ctx.esc(line)).join('\n')}</pre>`);
+  } catch {
     slashReply('MCP status is unavailable for this user.');
-    return true;
   }
-  const servers = await res.json();
-  if (!Array.isArray(servers) || !servers.length) {
-    slashReply('No MCP servers configured.');
-    return true;
-  }
-  const lines = servers.map(s => {
-    const status = s.status || (s.is_enabled ? 'enabled' : 'disabled');
-    const enabled = Number(s.enabled_tool_count ?? s.tool_count ?? 0);
-    const total = Number(s.tool_count ?? enabled);
-    return `${s.name || s.id || 'MCP server'} - ${status} (${enabled}/${total} tools)`;
-  });
-  slashReply(`<pre>${lines.map(line => ctx.esc(line)).join('\n')}</pre>`);
   return true;
 }
 
 // ── Memory ──
 
 async function _cmdMemoryList(args, ctx) {
-  const res = await fetch(`${API_BASE}/api/memory`, { credentials: 'same-origin' });
-  const data = await res.json();
-  const mems = data.memory || [];
-  if (!mems.length) { slashReply('No memories stored'); return true; }
-  const lines = mems.slice(0, 40).map(m => `[${m.category||'fact'}] ${m.id.slice(0,8)} — ${ctx.esc(m.text)}`);
-  if (mems.length > 40) lines.push(`... and ${mems.length - 40} more`);
-  slashReply(`<pre>${lines.join('\n')}</pre>`);
+  try {
+    const { data } = await api.get('/api/memory');
+    const mems = data?.memory || [];
+    if (!mems.length) { slashReply('No memories stored'); return true; }
+    const lines = mems.slice(0, 40).map(m => `[${m.category||'fact'}] ${m.id.slice(0,8)} — ${ctx.esc(m.text)}`);
+    if (mems.length > 40) lines.push(`... and ${mems.length - 40} more`);
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch (err) {
+    console.error(apiErrorMessage(err));
+    slashReply('Failed to list memories');
+  }
   return true;
 }
 
 async function _cmdMemoryAdd(args, ctx) {
   const text = args.join(' ');
   if (!text) { slashReply('Usage: /memory add Your text here'); return true; }
-  const res = await fetch(`${API_BASE}/api/memory/add`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, category: 'fact', source: 'user' })
-  });
-  if (res.ok) await typewriterReply(`Memory added: ${ctx.esc(text)}`);
-  else slashReply('Failed to add memory');
+  try {
+    await api.post('/api/memory/add', { text, category: 'fact', source: 'user' });
+    await typewriterReply(`Memory added: ${ctx.esc(text)}`);
+  } catch (err) {
+    console.error(apiErrorMessage(err));
+    slashReply('Failed to add memory');
+  }
   return true;
 }
 
@@ -1575,20 +1586,23 @@ async function _cmdMemoryDelete(args, ctx) {
   const cleanArg = raw.replace(/\s*-(rf|fr)\b\s*/, '').trim();
 
   if (cleanArg === 'all' || (force && !cleanArg)) {
-    const listRes = await fetch(`${API_BASE}/api/memory`, { credentials: 'same-origin' });
-    const listData = await listRes.json();
-    const mems = listData.memory || [];
-    if (!mems.length) { slashReply('No memories to delete'); return true; }
+    const { data: listData } = await api.get('/api/memory');
+    const memories = listData.memory || [];
+    if (!memories.length) { slashReply('No memories to delete'); return true; }
     if (!force) {
-      slashReply(`This will delete all ${mems.length} memories. Use <code>/m rm -rf</code> to confirm.`);
+      slashReply(`This will delete all ${memories.length} memories. Use <code>/m rm -rf</code> to confirm.`);
       return true;
     }
     let deleted = 0;
-    for (const m of mems) {
-      const res = await fetch(`${API_BASE}/api/memory/${m.id}`, { method: 'DELETE', credentials: 'same-origin' });
-      if (res.ok) deleted++;
+    for (const memory of memories) {
+      try {
+        await api.delete(`/api/memory/${memory.id}`);
+        deleted++;
+      } catch { 
+        console.error(apiErrorMessage(err));
+       }
     }
-    await typewriterReply(`Deleted ${deleted}/${mems.length} memories`);
+    await typewriterReply(`Deleted ${deleted}/${memories.length} memories`);
     return true;
   }
 
@@ -1597,14 +1611,16 @@ async function _cmdMemoryDelete(args, ctx) {
   // Resolve short ID to full UUID and get preview
   let preview = memId.slice(0, 8);
   if (memId.length < 36) {
-    const listRes = await fetch(`${API_BASE}/api/memory`, { credentials: 'same-origin' });
-    const listData = await listRes.json();
-    const match = (listData.memory || []).find(m => m.id.startsWith(memId));
+    const { data: listData } = await api.get('/api/memory');
+    const match = (listData?.memory || []).find(m => m.id.startsWith(memId));
     if (match) { memId = match.id; preview = match.text.slice(0, 50); }
   }
-  const res = await fetch(`${API_BASE}/api/memory/${memId}`, { method: 'DELETE', credentials: 'same-origin' });
-  if (res.ok) await typewriterReply(`Deleted: ${preview}${preview.length >= 50 ? '...' : ''}`);
-  else slashReply('Delete failed — check the ID');
+  try {
+    await api.delete(`/api/memory/${memId}`);
+    await typewriterReply(`Deleted: ${preview}${preview.length >= 50 ? '...' : ''}`);
+  } catch {
+    slashReply('Delete failed — check the ID');
+  }
   return true;
 }
 
@@ -1612,12 +1628,15 @@ async function _cmdMemorySearch(args, ctx) {
   const query = args.join(' ');
   if (!query) { slashReply('Usage: /memory search query'); return true; }
   const fd = new FormData(); fd.append('query', query);
-  const res = await fetch(`${API_BASE}/api/memory/search`, { method: 'POST', body: fd, credentials: 'same-origin' });
-  const data = await res.json();
-  const mems = data.memories || [];
-  if (!mems.length) { await typewriterReply(`No memories matching "${ctx.esc(query)}"`); return true; }
-  const lines = mems.map(m => `[${m.category||'fact'}] ${ctx.esc(m.text)}`);
-  slashReply(`<pre>${lines.join('\n')}</pre>`);
+  try {
+    const { data } = await api.post('/api/memory/search', fd);
+    const memories = data?.memories || [];
+    if (!memories.length) { await typewriterReply(`No memories matching "${ctx.esc(query)}"`); return true; }
+    const lines = memories.map(memory => `[${memory.category||'fact'}] ${ctx.esc(memory.text)}`);
+    slashReply(`<pre>${lines.join('\n')}</pre>`);
+  } catch {
+    await typewriterReply(`No memories matching "${ctx.esc(query)}"`);
+  }
   return true;
 }
 
@@ -1645,30 +1664,29 @@ async function _cmdSkills(args, ctx) {
   if (sub === 'search' || sub === 'find') {
     const query = rest.join(' ').trim();
     if (!query) { slashReply('Usage: /skills search query'); return true; }
-    const res = await fetch(`${API_BASE}/api/skills/search`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query })
-    });
-    if (!res.ok) { slashReply('Skill search failed.'); return true; }
-    const data = await res.json();
-    const skills = Array.isArray(data.skills) ? data.skills : [];
-    if (!skills.length) { slashReply(`No skills found for "${ctx.esc(query)}".`); return true; }
-    const lines = skills.map(s =>
-      ctx.esc(`/${s.name || s.id || ''}`.padEnd(24)) + ctx.esc(s.description || '')
-    );
-    slashReply(`<pre>${lines.join('\n')}</pre>`);
+    try {
+      const { data } = await api.post('/api/skills/search', { query });
+      const skills = Array.isArray(data.skills) ? data.skills : [];
+      if (!skills.length) { slashReply(`No skills found for "${ctx.esc(query)}".`); return true; }
+      const lines = skills.map(skill =>
+        ctx.esc(`/${skill.name || skill.id || ''}`.padEnd(24)) + ctx.esc(skill.description || '')
+      );
+      slashReply(`<pre>${lines.join('\n')}</pre>`);
+    } catch {
+      slashReply('Skill search failed.');
+    }
     return true;
   }
 
   if (sub === 'view' || sub === 'cat' || sub === 'show') {
     const name = (rest[0] || '').trim();
     if (!name) { slashReply('Usage: /skills view name'); return true; }
-    const res = await fetch(`${API_BASE}/api/skills/${encodeURIComponent(name)}/markdown`, { credentials: 'same-origin' });
-    if (!res.ok) { slashReply(`Skill "${ctx.esc(name)}" was not found.`); return true; }
-    const data = await res.json();
-    slashReply(`<pre>${ctx.esc(data.markdown || '')}</pre>`);
+    try {
+      const { data } = await api.get(`/api/skills/${encodeURIComponent(name)}/markdown`);
+      slashReply(`<pre>${ctx.esc(data.markdown || '')}</pre>`);
+    } catch {
+      slashReply(`Skill "${ctx.esc(name)}" was not found.`);
+    }
     return true;
   }
 
@@ -1693,13 +1711,12 @@ async function _cmdReloadSkills(args, ctx) {
 async function _cmdNote(args, ctx) {
   const text = args.join(' ');
   if (!text) { slashReply('Usage: /note Your note here'); return true; }
-  const res = await fetch(`${API_BASE}/api/notes`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: text, content: '', note_type: 'note', source: 'slash' })
-  });
-  if (res.ok) await typewriterReply(`Note added: ${ctx.esc(text)}`);
-  else slashReply('Failed to save note');
+  try {
+    await api.post('/api/notes', { title: text, content: '', note_type: 'note', source: 'slash' });
+    await typewriterReply(`Note added: ${ctx.esc(text)}`);
+  } catch {
+    slashReply('Failed to save note');
+  }
   return true;
 }
 
@@ -1787,25 +1804,26 @@ function _parseTimeSpec(input) {
 async function _cmdTodo(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   if (sub === 'list' || sub === 'ls') {
-    const res = await fetch(`${API_BASE}/api/notes?note_type=note`, { credentials: 'same-origin' });
-    if (!res.ok) { slashReply('Failed to load todos'); return true; }
-    const data = await res.json();
-    const items = (data.notes || data || []).filter(n => !n.archived).slice(0, 30);
-    if (!items.length) { slashReply('No todos'); return true; }
-    const lines = items.map(n => `• ${ctx.esc(n.title || n.content || '').slice(0, 80)}`);
-    slashReply(`<pre>${lines.join('\n')}</pre>`);
+    try {
+      const { data } = await api.get('/api/notes', { params: { note_type: 'note' } });
+      const items = (data?.notes || data || []).filter(note => !note.archived).slice(0, 30);
+      if (!items.length) { slashReply('No todos'); return true; }
+      const lines = items.map(note => `• ${ctx.esc(note.title || note.content || '').slice(0, 80)}`);
+      slashReply(`<pre>${lines.join('\n')}</pre>`);
+    } catch {
+      slashReply('Failed to load todos');
+    }
     return true;
   }
   // Treat everything after /todo (or after /todo add) as the todo text
   const rest = (sub === 'add' ? args.slice(1) : args).join(' ').trim();
   if (!rest) { slashReply('Usage: /todo Your task here  ·  /todo list'); return true; }
-  const res = await fetch(`${API_BASE}/api/notes`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: rest, note_type: 'note', source: 'slash', label: 'todo' }),
-  });
-  if (res.ok) await typewriterReply(`Todo added: ${ctx.esc(rest)}`);
-  else slashReply('Failed to add todo');
+  try {
+    await api.post('/api/notes', { title: rest, note_type: 'note', source: 'slash', label: 'todo' });
+    await typewriterReply(`Todo added: ${ctx.esc(rest)}`);
+  } catch {
+    slashReply('Failed to add todo');
+  }
   return true;
 }
 
@@ -1822,16 +1840,13 @@ async function _cmdEvent(args, ctx) {
     dtend: _toLocalIso(end),
     all_day: false,
   };
-  const res = await fetch(`${API_BASE}/api/calendar/events`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (res.ok) {
+  try {
+    await api.post('/api/calendar/events', body);
     await typewriterReply(`Event: ${ctx.esc(parsed.rest)} — ${start.toLocaleString()}`);
-  } else {
-    const err = await res.text().catch(() => '');
-    slashReply(`Failed to create event${err ? `: ${ctx.esc(err.slice(0,200))}` : ''}`);
+  } catch (err) {
+    const errBody = err.response?.data;
+    const errText = typeof errBody === 'string' ? errBody : (errBody?.detail || '');
+    slashReply(`Failed to create event${errText ? `: ${ctx.esc(String(errText).slice(0, 200))}` : ''}`);
   }
   return true;
 }
@@ -1843,12 +1858,7 @@ async function _cmdShell(args, ctx) {
   if (!cmd) { slashReply('Usage: /sh command'); return true; }
   slashReply(`<pre>$ ${ctx.esc(cmd)}\nRunning...</pre>`);
   try {
-    const res = await fetch(`${API_BASE}/api/shell/exec`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmd })
-    });
-    const data = await res.json();
+    const { data } = await api.post('/api/shell/exec', { command: cmd });
     let out = '';
     if (data.stdout) out += data.stdout;
     if (data.stderr) out += (out ? '\n' : '') + data.stderr;
@@ -1864,34 +1874,34 @@ async function _cmdShell(args, ctx) {
 // ── RAG ──
 
 async function _cmdRagList(args, ctx) {
-  const res = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
-  const data = await res.json();
-  let lines = [];
-  if (data.directories && data.directories.length) {
-    lines.push('<b>Directories:</b>');
-    data.directories.forEach(d => lines.push(`  ${ctx.esc(typeof d === 'string' ? d : d.path || JSON.stringify(d))}`));
+  try {
+    const { data } = await api.get('/api/personal');
+    let lines = [];
+    if (data.directories && data.directories.length) {
+      lines.push('<b>Directories:</b>');
+      data.directories.forEach(directory => lines.push(`  ${ctx.esc(typeof directory === 'string' ? directory : directory.path || JSON.stringify(directory))}`));
+    }
+    if (data.files && data.files.length) {
+      lines.push(`<b>Files (${data.files.length}):</b>`);
+      data.files.slice(0, 30).forEach(file => lines.push(`  ${ctx.esc(file.name || file.path || String(file))}`));
+      if (data.files.length > 30) lines.push(`  ... and ${data.files.length - 30} more`);
+    }
+    slashReply(lines.length ? `<pre>${lines.join('\n')}</pre>` : 'No files or directories indexed');
+  } catch {
+    slashReply('No files or directories indexed');
   }
-  if (data.files && data.files.length) {
-    lines.push(`<b>Files (${data.files.length}):</b>`);
-    data.files.slice(0, 30).forEach(f => lines.push(`  ${ctx.esc(f.name || f.path || String(f))}`));
-    if (data.files.length > 30) lines.push(`  ... and ${data.files.length - 30} more`);
-  }
-  slashReply(lines.length ? `<pre>${lines.join('\n')}</pre>` : 'No files or directories indexed');
   return true;
 }
 
 async function _cmdRagAdd(args, ctx) {
   const dir = args.join(' ');
   if (!dir) { slashReply('Usage: /rag add /path/to/directory'); return true; }
-  const res = await fetch(`${API_BASE}/api/personal/add_directory`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ directory: dir })
-  });
-  if (res.ok) {
-    const data = await res.json();
+  try {
+    const { data } = await api.post('/api/personal/add_directory', { directory: dir });
     await typewriterReply(`Indexed "${ctx.esc(dir)}" (${data.indexed_count || 0} files)`);
-  } else { slashReply('Failed to add directory'); }
+  } catch {
+    slashReply('Failed to add directory');
+  }
   return true;
 }
 
@@ -1901,9 +1911,8 @@ async function _cmdRagRemove(args, ctx) {
   const cleanArg = raw.replace(/\s*-(rf|fr)\b\s*/, '').trim();
 
   if (cleanArg === 'all' || (force && !cleanArg)) {
-    const listRes = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
-    const listData = await listRes.json();
-    const dirs = listData.directories || [];
+    const { data: listData } = await api.get('/api/personal');
+    const dirs = listData?.directories || [];
     if (!dirs.length) { slashReply('No RAG directories to remove'); return true; }
     if (!force) {
       slashReply(`This will remove all ${dirs.length} directories from RAG. Use <code>/rag rm -rf</code> to confirm.`);
@@ -1913,8 +1922,12 @@ async function _cmdRagRemove(args, ctx) {
     for (const d of dirs) {
       const path = typeof d === 'string' ? d : d.path || '';
       if (!path) continue;
-      const res = await fetch(`${API_BASE}/api/personal/remove_directory?directory=${encodeURIComponent(path)}`, { method: 'DELETE', credentials: 'same-origin' });
-      if (res.ok) removed++;
+      try {
+        await api.delete('/api/personal/remove_directory', { params: { directory: path } });
+        removed++;
+      } catch { 
+        console.error(apiErrorMessage(err));
+       }
     }
     await typewriterReply(`Removed ${removed}/${dirs.length} directories from RAG`);
     return true;
@@ -1922,11 +1935,12 @@ async function _cmdRagRemove(args, ctx) {
 
   const dir = cleanArg;
   if (!dir) { slashReply('Usage: /rag remove /path or /rag rm -rf to remove all'); return true; }
-  const res = await fetch(`${API_BASE}/api/personal/remove_directory?directory=${encodeURIComponent(dir)}`, {
-    method: 'DELETE', credentials: 'same-origin'
-  });
-  if (res.ok) await typewriterReply(`Removed "${ctx.esc(dir)}" from RAG`);
-  else slashReply('Failed to remove directory');
+  try {
+    await api.delete('/api/personal/remove_directory', { params: { directory: dir } });
+    await typewriterReply(`Removed "${ctx.esc(dir)}" from RAG`);
+  } catch {
+    slashReply('Failed to remove directory');
+  }
   return true;
 }
 
@@ -1949,10 +1963,9 @@ async function _cmdWebSearch(args, ctx) {
 async function _cmdSearch(args, ctx) {
   const query = args.join(' ');
   if (!query) { slashReply('Usage: /find &lt;query&gt;'); return true; }
-  const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=20`, { credentials: 'same-origin' });
-  if (res.ok) {
-    const data = await res.json();
-    const results = Array.isArray(data) ? data : (data.results || []);
+  try {
+    const { data } = await api.get('/api/search', { params: { q: query, limit: 20 } });
+    const results = Array.isArray(data?.results) ? data.results : [];
     if (!results.length) { slashReply(`No results for "${ctx.esc(query)}"`); return true; }
     const lines = results.slice(0, 20).map(r => {
       const name = ctx.esc(r.session_name || r.name || 'Untitled');
@@ -1961,22 +1974,25 @@ async function _cmdSearch(args, ctx) {
       return `<a href="#${sid}" style="color:var(--red);text-decoration:none">${name}</a>  ${snippet}`;
     });
     slashReply(`<pre>${lines.join('\n')}</pre>`);
-  } else { slashReply('Search failed'); }
+  } catch {
+    slashReply('Search failed');
+  }
   return true;
 }
 
 // ── Stats ──
 
 async function _cmdStats(args, ctx) {
-  const res = await fetch(`${API_BASE}/api/db/stats`, { credentials: 'same-origin' });
-  if (res.ok) {
-    const d = await res.json();
-    slashReply(`<pre>Sessions:  ${d.sessions || '?'}
-Messages:  ${d.messages || '?'}
-Memories:  ${d.memories || '?'}
-Documents: ${d.documents || '?'}
-Uploads:   ${d.uploads || '?'}</pre>`);
-  } else { slashReply('Failed to fetch stats'); }
+  try {
+    const { data } = await api.get('/api/db/stats');
+    slashReply(`<pre>Sessions:  ${data.sessions || '?'}
+      Messages:  ${data.messages || '?'}
+      Memories:  ${data.memories || '?'}
+      Documents: ${data.documents || '?'}
+      Uploads:   ${data.uploads || '?'}</pre>`);
+  } catch {
+    slashReply('Failed to fetch stats');
+  }
   return true;
 }
 
@@ -1992,12 +2008,9 @@ async function _cmdUsage(args, ctx) {
     const sessions = sessionModule.getSessions ? sessionModule.getSessions() : [];
     session = (sessions || []).find(s => s.id === sid) || null;
     if (!session) {
-      const res = await fetch(`${API_BASE}/api/sessions`, { credentials: 'same-origin' });
-      if (res.ok) {
-        const data = await res.json();
-        const items = Array.isArray(data) ? data : (data.sessions || data.items || []);
-        session = items.find(s => s.id === sid) || null;
-      }
+      const { data } = await api.get('/api/sessions');
+      const items = Array.isArray(data?.sessions) ? data.sessions : (data?.items || []);
+      session = items.find(session => session.id === sid) || null;
     }
   } catch (_) {}
 
@@ -2040,22 +2053,14 @@ async function _cmdCompact(args, ctx) {
     reply.body.appendChild(spinnerEl);
     compactSpinner.start(110);
   }
-  const res = await fetch(`${API_BASE}/api/session/${encodeURIComponent(ctx.sid)}/compact`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  compactSpinner.destroy();
-  if (res.ok) {
-    const d = await res.json();
-    slashReply(`Conversation compacted. Summarized ${d.summarized || 0} older messages, kept ${d.kept || 0} recent messages.`);
+  try {
+    const { data } = await api.post(`/api/session/${encodeURIComponent(ctx.sid)}/compact`);
+    compactSpinner.destroy();
+    slashReply(`Conversation compacted. Summarized ${data.summarized || 0} older messages, kept ${data.kept || 0} recent messages.`);
     if (sessionModule?.selectSession) await sessionModule.selectSession(ctx.sid);
-  } else {
-    let detail = 'Compaction failed';
-    try {
-      const err = await res.json();
-      detail = err.detail || detail;
-    } catch {}
+  } catch (err) {
+    compactSpinner.destroy();
+    const detail = err.response?.data?.detail || 'Compaction failed';
     slashReply(ctx.esc(detail));
   }
   return true;
@@ -2068,20 +2073,17 @@ async function _cmdTts(args, ctx) {
   if (!text) { slashReply('Usage: /tts &lt;text to speak&gt;'); return true; }
   slashReply('Synthesizing...');
   try {
-    const res = await fetch(`${API_BASE}/api/tts/synthesize`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, format: 'base64' })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.audio) {
-        const audio = new Audio('data:audio/wav;base64,' + data.audio);
-        audio.play();
-        slashReply('Playing...');
-      } else { slashReply('No audio returned'); }
-    } else { slashReply('TTS failed (is Kokoro running?)'); }
-  } catch(e) { slashReply('TTS service unavailable'); }
+    const { data } = await api.post('/api/tts/synthesize', { text, format: 'base64' });
+    if (data?.audio) {
+      const audio = new Audio('data:audio/wav;base64,' + data.audio);
+      audio.play();
+      slashReply('Playing...');
+    } else { 
+      slashReply('No audio returned');
+    }
+  } catch {
+    slashReply('TTS failed (is Kokoro running?)');
+  }
   return true;
 }
 
@@ -4802,11 +4804,8 @@ async function _cmdTourLibrary(args, ctx) {
   // Try to load the user's most recent document. If none exist, end with a hint.
   let firstDocId = null;
   try {
-    const r = await fetch('/api/documents/library?limit=1&sort=recent', { credentials: 'same-origin' });
-    if (r.ok) {
-      const data = await r.json();
-      if (data.documents && data.documents.length) firstDocId = data.documents[0].id;
-    }
+    const { data } = await api.get('/api/documents/library', { params: { limit: 1, sort: 'recent' } });
+    if (data.documents && data.documents.length) firstDocId = data.documents[0].id;
   } catch (_) {}
 
   if (!firstDocId || !window.documentModule || !window.documentModule.loadDocument) {
@@ -5149,9 +5148,8 @@ async function _cmdSetup(args, ctx) {
 
     if (topic === 'memory' || topic === 'memories') {
       try {
-        const res = await fetch(`${API_BASE}/api/memory`, { credentials: 'same-origin' });
-        const memories = await res.json();
-        const count = Array.isArray(memories) ? memories.length : 0;
+        const { data: memories} = await api.get('/api/memory');
+        const count = Array.isArray(memories) ? memories.length : (memories.memory || []).length;
         await typewriterReply(`You have ${count} saved memor${count === 1 ? 'y' : 'ies'}.\n\nType a memory to save, or use /memory to manage them.`);
       } catch {
         await typewriterReply('Could not load memories.');
@@ -5161,8 +5159,7 @@ async function _cmdSetup(args, ctx) {
 
     if (topic === 'features') {
       try {
-        const res = await fetch(`${API_BASE}/api/auth/features`, { credentials: 'same-origin' });
-        const features = await res.json();
+        const { data: features} = await api.get('/api/auth/features');
         const lines = Object.entries(features).map(([k, v]) => `${k}: ${v ? 'on' : 'off'}`).join('\n');
         await typewriterReply(`Feature toggles:\n\n${lines}\n\nType a feature name to toggle it.`);
         setupMode = 'features';
@@ -5201,9 +5198,8 @@ async function _cmdShortcuts(args, ctx) {
   };
 
   try {
-    const res = await fetch(`${API_BASE}/api/auth/settings`, { credentials: 'same-origin' });
-    const settings = await res.json();
-    if (settings.keybinds) {
+    const { data: settings } = await api.get('/api/auth/settings');
+    if (settings?.keybinds) {
       keybinds = { ...keybinds, ...settings.keybinds };
     }
   } catch (e) {}
@@ -5523,22 +5519,21 @@ async function _cmdUptime(args, ctx) {
 async function _cmdPing(args, ctx) {
   slashReply('<span style="opacity:0.5">Pinging endpoints...</span>');
   try {
-    const res = await fetch(`${API_BASE}/api/ping`, { credentials: 'same-origin' });
-    const data = await res.json();
-    const eps = data.endpoints || [];
-    if (!eps.length) { slashReply('No endpoints configured.'); return true; }
+    const { data } = await api.get('/api/ping');
+    const endpoints = data?.endpoints || [];
+    if (!endpoints.length) { slashReply('No endpoints configured.'); return true; }
     let html = '<div style="font-family:inherit;font-size:0.9em">';
-    for (const ep of eps) {
-      const isUp = ep.status === 'online';
+    for (const endpoint of endpoints) {
+      const isUp = endpoint.status === 'online';
       const dot = isUp ? '\u25CF' : '\u25CB';
       const color = isUp ? 'var(--color-success)' : 'var(--color-error)';
-      const latency = ep.latency_ms != null ? ep.latency_ms + 'ms' : '--';
-      const latencyColor = !isUp ? 'var(--color-error)' : ep.latency_ms < 150 ? 'var(--color-success)' : ep.latency_ms < 500 ? 'var(--color-blind-orange)' : 'var(--color-error)';
-      const models = ep.model_count || 0;
-      const err = ep.error ? ' <span style="opacity:0.4;font-size:0.85em">(' + ctx.esc(ep.error).slice(0, 60) + ')</span>' : '';
+      const latency = endpoint.latency_ms != null ? endpoint.latency_ms + 'ms' : '--';
+      const latencyColor = !isUp ? 'var(--color-error)' : endpoint.latency_ms < 150 ? 'var(--color-success)' : endpoint.latency_ms < 500 ? 'var(--color-blind-orange)' : 'var(--color-error)';
+      const models = endpoint.model_count || 0;
+      const err = endpoint.error ? ' <span style="opacity:0.4;font-size:0.85em">(' + ctx.esc(endpoint.error).slice(0, 60) + ')</span>' : '';
       html += '<div style="display:flex;align-items:center;gap:8px;padding:3px 0">';
       html += '<span style="color:' + color + ';font-size:12px">' + dot + '</span>';
-      html += '<span style="min-width:140px">' + ctx.esc(ep.name) + '</span>';
+      html += '<span style="min-width:140px">' + ctx.esc(endpoint.name) + '</span>';
       html += '<code style="min-width:60px;text-align:right;color:' + latencyColor + '">' + latency + '</code>';
       html += '<span style="opacity:0.4;font-size:0.85em">' + models + ' model' + (models !== 1 ? 's' : '') + '</span>';
       html += err;
@@ -5555,18 +5550,17 @@ async function _cmdPing(args, ctx) {
 async function _cmdProbe(args, ctx) {
   // Find endpoint by name if provided
   const query = args.join(' ').trim();
-  let url = `${API_BASE}/api/probe`;
+  let path = '/api/probe';
   if (query) {
     // Fetch endpoint list to resolve name -> id
     try {
-      const epRes = await fetch(`${API_BASE}/api/model-endpoints`, { credentials: 'same-origin' });
-      const eps = await epRes.json();
-      const match = eps.find(e =>
-        e.name.toLowerCase() === query.toLowerCase() ||
-        e.name.toLowerCase().includes(query.toLowerCase())
+      const { data: endpoints} = await api.get('/api/model-endpoints');
+      const match = endpoints.find(endpoint =>
+        endpoint.name.toLowerCase() === query.toLowerCase() ||
+        endpoint.name.toLowerCase().includes(query.toLowerCase())
       );
       if (match) {
-        url += '?endpoint_id=' + encodeURIComponent(match.id);
+        path += '?endpoint_id=' + encodeURIComponent(match.id);
       } else {
         slashReply('No endpoint matching "' + ctx.esc(query) + '". Run <code>/ping</code> to see endpoints.');
         return true;
@@ -5589,7 +5583,7 @@ async function _cmdProbe(args, ctx) {
   let summary = { total: 0, ok: 0 };
 
   try {
-    const res = await fetch(url, { credentials: 'same-origin' });
+    const res = await apiFetch(path);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -6393,11 +6387,9 @@ async function handleSlashCommand(input) {
 /**
  * Initialize the slash commands module.
  * @param {object} deps - Dependencies from chat.js
- * @param {string} deps.apiBase - The API base URL
  * @param {function} deps.isStreaming - Callback returning current streaming state
  */
 export function initSlashCommands(deps) {
-  API_BASE = deps.apiBase || '';
   if (deps.isStreaming) _isStreamingFn = deps.isStreaming;
 
   // Global delegation for onboarding and setup clicks

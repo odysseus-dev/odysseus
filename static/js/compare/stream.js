@@ -1,4 +1,5 @@
 // compare/stream.js — SSE streaming to panes
+import { api, apiFetch } from '../axios/api.js';
 import state from './state.js';
 import { addFinishBadge } from './vote.js';
 import { getModelCost, safeDisplayImageSrc } from '../chatRenderer.js';
@@ -85,16 +86,11 @@ async function _runSynthForPane(modelToUse, synthPrompt, synthBody, spinner, his
   }
 
   try {
-    const createRes = await fetch(`${state.API_BASE}/api/session`, { method: 'POST', body: fd });
-    if (!createRes.ok) {
-      const errData = await createRes.json().catch(() => ({}));
-      throw new Error(errData.detail || 'Failed to create session');
-    }
-    const createData = await createRes.json();
+    const { data: createData } = await api.post('/api/session', fd);
 
     const synthAc = new AbortController();
     state._abortControllers.push(synthAc);
-    const streamRes = await fetch(`${state.API_BASE}/api/chat_stream`, {
+    const streamRes = await apiFetch('/api/chat_stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session: createData.id, message: synthPrompt }),
@@ -136,8 +132,9 @@ async function _runSynthForPane(modelToUse, synthPrompt, synthBody, spinner, his
     if (window.hljs) synthBody.querySelectorAll('pre code:not(.hljs)').forEach(b => window.hljs.highlightElement(b));
 
     // Cleanup temp session
-    fetch(`${state.API_BASE}/api/session/${createData.id}`, { method: 'DELETE' }).catch(() => {});
+    api.delete(`/api/session/${createData.id}`).catch(() => {});
   } catch (e) {
+    console.error(apiErrorMessage(e));
     if (spinner) spinner.stop();
     synthBody.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;">Synthesis failed: ' + escapeHtml(e.message) + '</div>';
   }
@@ -255,7 +252,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       fd.append('preset_id', presetsModule.getSelectedPreset());
     }
 
-    const response = await fetch(`${state.API_BASE}/api/chat_stream`, {
+    const response = await apiFetch('/api/chat_stream', {
       method: 'POST', body: fd, signal: ac.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -511,7 +508,7 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       dlBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         try {
-          const resp = await fetch(imgD.url);
+          const resp = await apiFetch(imgD.url);
           const blob = await resp.blob();
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);

@@ -10,8 +10,7 @@
 // the calendar's entry module.
 
 import uiModule from '../ui.js';
-
-const API_BASE = window.location.origin;
+import { api } from '../axios/api.js';
 
 let _notifFired = new Set(JSON.parse(localStorage.getItem('cal-notif-fired') || '[]'));
 
@@ -56,9 +55,7 @@ const _REMINDER_STALENESS_MIN = 5;
 
 async function _pollReminders() {
   try {
-    const res = await fetch(`${API_BASE}/api/notes?label=calendar`, { credentials: 'same-origin' });
-    if (!res.ok) return;
-    const notes = await res.json();
+    const { data: notes } = await api.get('/api/notes', { params: { label: 'calendar' } });
     const now = new Date();
     const stalenessMs = _REMINDER_STALENESS_MIN * 60 * 1000;
     for (const note of notes) {
@@ -74,15 +71,10 @@ async function _pollReminders() {
       }
       _notifFired.add(note.id);
       const body = _formatReminderBody(note);
-      fetch(`${API_BASE}/api/notes/fire-reminder`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          note_id: note.id,
-          title: note.title || 'Calendar Reminder',
-          body,
-        }),
+      api.post('/api/notes/fire-reminder', {
+        note_id: note.id,
+        title: note.title || 'Calendar Reminder',
+        body,
       }).catch(() => {});
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification(note.title || 'Calendar Reminder', {

@@ -4,6 +4,8 @@
 
 import { IS_MAC, isAltGrEvent } from './platform.js';
 
+import { api } from './axios/api.js';
+
 const _defaultKeybinds = {
   search: 'ctrl+k', toggle_sidebar: 'ctrl+alt+b', new_session: 'ctrl+alt+n',
   fav_session: 'ctrl+alt+f', delete_session: 'ctrl+alt+d',
@@ -44,20 +46,19 @@ export function _matchesCombo(e, combo, isMac = IS_MAC) {
  * @param {Object} modules.searchChatModule
  * @param {Function} modules._closeCompareIfActive
  * @param {Function} modules._deactivateIncognito
- * @param {string} modules.API_BASE
  */
 export function initKeyboardShortcuts(modules) {
   const {
     el, Storage, sessionModule, uiModule, chatModule,
     adminModule, settingsModule, searchChatModule,
-    _closeCompareIfActive, _deactivateIncognito, API_BASE
+    _closeCompareIfActive, _deactivateIncognito
   } = modules;
 
   window._odysseusKeybinds = { ..._defaultKeybinds };
 
   // Load saved keybinds
-  fetch('/api/auth/settings', { credentials: 'same-origin' })
-    .then(r => r.json())
+  api.get('/api/auth/settings')
+    .then(r => r.data)
     .then(s => { if (s.keybinds) window._odysseusKeybinds = { ..._defaultKeybinds, ...s.keybinds }; })
     .catch(() => {});
 
@@ -185,7 +186,7 @@ export function initKeyboardShortcuts(modules) {
       const newVal = !s.is_important;
       const fd = new FormData();
       fd.append('important', newVal);
-      fetch(`${API_BASE}/api/session/${sid}/important`, { method: 'POST', body: fd });
+      api.post(`/api/session/${sid}/important`, fd);
       s.is_important = newVal;
       sessionModule.renderSessionList();
       uiModule.showToast(newVal ? 'Session favorited' : 'Session unfavorited');
@@ -204,7 +205,7 @@ export function initKeyboardShortcuts(modules) {
         const idx = allSessions.findIndex(x => x.id === sid);
         const nextSession = allSessions.filter(x => !x.archived && x.id !== sid)[Math.max(0, idx)] ||
                             allSessions.find(x => !x.archived && x.id !== sid);
-        fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' }).then(async () => {
+        api.delete(`/api/session/${sid}`).then(async () => {
           await sessionModule.loadSessions();
           if (nextSession) {
             await sessionModule.selectSession(nextSession.id);
@@ -233,8 +234,8 @@ export function initKeyboardShortcuts(modules) {
       fd.append('model', cur ? cur.model || '' : '');
       if (cur && cur.endpoint_id) fd.append('endpoint_id', cur.endpoint_id);
       fd.append('skip_validation', 'true');
-      fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd, credentials: 'same-origin' })
-        .then(r => r.ok ? r.json() : null)
+      api.post(`/api/session`, fd)
+        .then(r => r.data).catch(() => null)
         .then(async data => {
           if (data) {
             await sessionModule.loadSessions();

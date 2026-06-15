@@ -27,6 +27,8 @@
 import { state } from './state.js';
 import { sortModelIds } from '../modelSort.js';
 
+import { api } from '../axios/api.js';
+
 // Heuristic classifier on a model id + endpoint name. A model can be:
 //   - gen: text-to-image generation
 //   - inpaint: image+mask edit (inpaint / img2img)
@@ -61,7 +63,7 @@ function modelCaps(modelId, endpointName, endpointType) {
   return { gen: false, inpaint: false };
 }
 
-export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2img }) {
+export function wireAIModelSelectors({ container, openCookbookForImg2img }) {
   // Delegated handler for the "+ Serve a model in Cookbook…" sentinel
   // option — catches clicks regardless of whether loadAIModels has
   // rewired the individual select yet and survives any innerHTML
@@ -94,8 +96,7 @@ export function wireAIModelSelectors({ container, apiBase, openCookbookForImg2im
       const selectBaseUrl = opts.selectBaseUrl || '';
       const prevGenValue = aiGenSelect?.value || '';
       const prevInpaintValue = aiInpaintSelect?.value || '';
-      const res = await fetch(`${apiBase}/api/model-endpoints`);
-      const endpoints = await res.json();
+            const { data: endpoints } = await api.get(`${apiBase}/api/model-endpoints`);
       if (aiGenSelect) aiGenSelect.innerHTML = '<option value="">None</option>';
       if (aiInpaintSelect) aiInpaintSelect.innerHTML = '<option value="">Auto</option>';
       const perToolSelects = Array.from(document.querySelectorAll('select.ge-tool-model'));

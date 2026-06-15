@@ -1300,7 +1300,6 @@ function initializeEventListeners() {
           uiModule.showToast(data.reason || 'Nothing to sort');
         }
       } catch (e) {
-        // TODO -> validate pattern for error message
         uiModule.showError('Auto-sort: ' + apiErrorMessage(e));
       } finally {
         wp.destroy();
@@ -1442,7 +1441,6 @@ function initializeEventListeners() {
           aiNameInput.value = '';
         }
       } catch (e) {
-        // TODO -> validate pattern for error message
         uiModule.showError('Failed to rename AI: ' + apiErrorMessage(e));
       }
     });
@@ -1504,7 +1502,6 @@ function initializeEventListeners() {
         // Refresh the sessions list
         await sessionModule.loadSessions();
       } catch (e) {
-        // TODO -> validate pattern for error message
         uiModule.showError('Failed to rename session: ' + apiErrorMessage(e));
       }
     });
@@ -3127,7 +3124,6 @@ function initializeEventListeners() {
         }
         uiModule.showToast('Session deleted');
       } catch (e) {
-        // TODO -> validate pattern for error message
         uiModule.showError('Failed to delete session: ' + apiErrorMessage(e));
       }
     });

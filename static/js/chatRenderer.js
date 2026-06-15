@@ -10,6 +10,8 @@ import spinnerModule from './spinner.js';
 import { bindMenuDismiss } from './escMenuStack.js';
 import { matchModelKey } from './model/matchKey.js';
 
+import { api, apiFetch, apiPath } from './axios/api.js';
+
 const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 const REPORT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>';
 const CHAT_ABOUT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
@@ -321,13 +323,7 @@ function _openVisionEditor(att, userMsgEl) {
   closeBtn.innerHTML = '<span class="vision-btn-label">Close</span>';
   closeBtn.addEventListener('click', _closeVisionEditor);
   const _saveVisionText = async () => {
-    const res = await fetch(`/api/upload/${att.id}/vision`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ text: ta.value }),
-    });
-    if (!res.ok) throw new Error('save failed');
+    await api.put(`/api/upload/${att.id}/vision`, { text: ta.value });
   };
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
@@ -385,8 +381,8 @@ function _openVisionEditor(att, userMsgEl) {
   _visionEditorEsc = (e) => { if (e.key === 'Escape') _closeVisionEditor(); };
   document.addEventListener('keydown', _visionEditorEsc);
 
-  fetch(`/api/upload/${att.id}/vision`, { credentials: 'same-origin' })
-    .then(r => r.ok ? r.json() : Promise.reject(r))
+  api.get(`/api/upload/${att.id}/vision`)
+    .then(r => r.data)
     .then(data => {
       ta.value = data.text || '';
       ta.placeholder = '';
@@ -656,7 +652,7 @@ export function applyModelColor(roleEl, modelName) {
       if (!_realCtx && window.sessionModule) {
         const _sid = window.sessionModule.getCurrentSessionId();
         if (_sid) {
-          fetch('/api/session/' + _sid + '/context_info').then(r => r.ok ? r.json() : null).then(d => {
+          api.get('/api/session/' + _sid + '/context_info').then(r => r.data).catch(() => null).then(d => {
             if (d && d.context_length) {
               if (!window._realContextLengths) window._realContextLengths = {};
               window._realContextLengths[modelName] = d.context_length;
@@ -986,8 +982,6 @@ function _appendContinuePrompt(container) {
   container.appendChild(wrap);
 }
 function _appendReportButton(container, sessionId) {
-  var apiBase = window.API_BASE || '';
-
   // Wrapper holds report button + chat-about button
   var wrap = document.createElement('div');
   wrap.className = 'report-btn-wrap';
@@ -997,7 +991,7 @@ function _appendReportButton(container, sessionId) {
   btn.className = 'view-report-btn';
   btn.innerHTML = REPORT_ICON + ' Open Visual Report';
 
-  var reportUrl = apiBase + '/api/research/report/' + sessionId;
+  var reportUrl = '/api/research/report/' + sessionId;
   btn.addEventListener('click', function() {
     window.open(reportUrl, '_blank');
   });
@@ -1013,13 +1007,7 @@ function _appendReportButton(container, sessionId) {
     chatBtn.disabled = true;
     chatBtn.innerHTML = CHAT_ABOUT_ICON + ' Creating…';
     try {
-      var res = await fetch(apiBase + '/api/research/spinoff/' + sessionId, { method: 'POST' });
-      if (!res.ok) {
-        var detail = '';
-        try { detail = (await res.json()).detail || ''; } catch {}
-        throw new Error(detail || ('HTTP ' + res.status));
-      }
-      var payload = await res.json();
+      var { data: payload } = await api.post('/api/research/spinoff/' + sessionId);
       if (window.sessionModule && payload.session_id) {
         await window.sessionModule.loadSessions().catch(() => {});
         await window.sessionModule.selectSession(payload.session_id);
@@ -1209,7 +1197,7 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
   dlBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     try {
-      const resp = await fetch(imageUrl);
+      const resp = await apiFetch(imageUrl);
       const blob = await resp.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -1275,15 +1263,14 @@ export function buildImageBubble(imageUrl, prompt, model, size, quality, imageId
     // the bubble from chat (e.g. external DALL-E url that wasn't saved).
     if (imageId) {
       try {
-        const res = await fetch(`/api/gallery/${encodeURIComponent(imageId)}`, {
-          method: 'DELETE', credentials: 'same-origin',
-        });
-        if (!res.ok && res.status !== 404) {
-          uiModule.showToast?.('Delete failed', 4000);
+        await api.delete(`/api/gallery/${encodeURIComponent(imageId)}`);
+        window.dispatchEvent(new CustomEvent('gallery-refresh'));
+      } catch (err) {
+        if (err.response?.status === 404) {
+          window.dispatchEvent(new CustomEvent('gallery-refresh'));
+          wrap.remove();
           return;
         }
-        window.dispatchEvent(new CustomEvent('gallery-refresh'));
-      } catch (_) {
         uiModule.showToast?.('Delete failed', 4000);
         return;
       }
@@ -1893,13 +1880,10 @@ export function displayMetrics(messageElement, metrics) {
           }, 150);
 
           try {
-            const res = await fetch(window.location.origin + '/api/session/' + sid + '/compact', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-            });
+            const res = await api.post('/api/session/' + sid + '/compact');
             clearInterval(waveInterval);
-            if (res.ok) {
-              const data = await res.json();
+            if (res.data) {
+      const data = res.data;
               // Reload session — the compacted history will show
               if (window.sessionModule) await window.sessionModule.selectSession(sid);
               // Scroll to the compacted message (first msg with compacted metadata)
@@ -1915,7 +1899,7 @@ export function displayMetrics(messageElement, metrics) {
             } else {
               let detail = 'Compaction failed. Try again later.';
               try {
-                const err = await res.json();
+                const err = res.data;
                 if (err.detail) detail = err.detail;
               } catch {}
               compactBody.textContent = detail;

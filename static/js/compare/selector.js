@@ -1,4 +1,5 @@
 // compare/selector.js — model selection modal
+import { api } from '../axios/api.js';
 import state from './state.js';
 import Storage from '../storage.js';
 import { fetchModels, _persistSelections, getExcludedModels } from './models.js';
@@ -570,8 +571,8 @@ async function showModelSelector() {
         listContainer.innerHTML = '';
         if (!state._cachedProviders) {
           listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;text-align:left;">Loading search providers\u2026</div>';
-          fetch(`${state.API_BASE}/api/search/providers`).then(r => r.json()).then(providers => {
-            state._cachedProviders = providers;
+          api.get('/api/search/providers').then(r => {
+            state._cachedProviders = r.data;
             renderModelRows();
           }).catch(() => {
             listContainer.innerHTML = '<div style="color:var(--color-error);font-size:0.85em;padding:12px 0;">Failed to load search providers</div>';
@@ -677,8 +678,8 @@ async function showModelSelector() {
       const needsProviders = state._compareMode === 'research';
       if (needsProviders && !state._cachedProviders) {
         listContainer.innerHTML = '<div style="color:color-mix(in srgb, var(--fg) 40%, transparent);font-size:0.85em;padding:12px 0;">Loading search providers\u2026</div>';
-        fetch(`${state.API_BASE}/api/search/providers`).then(r => r.json()).then(providers => {
-          state._cachedProviders = providers;
+        api.get('/api/search/providers').then(r => {
+          state._cachedProviders = r.data;
           renderModelRows();
         }).catch(() => {
           state._cachedProviders = [];
@@ -1006,12 +1007,9 @@ async function showModelSelector() {
         if (state._compareMode === 'search' && !m.model) {
           return { status: 'ok', model: m.model, skipped: true, skipReason: 'No model' };
         }
-        const res = await fetch(`${state.API_BASE}/api/probe-selected`, {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ models: [{ endpoint_id: m.endpointId || '', model: m.model, endpoint: m.endpoint || '', with_tools: state._compareMode === 'agent' }] }),
+        const { data } = await api.post('/api/probe-selected', {
+          models: [{ endpoint_id: m.endpointId || '', model: m.model, endpoint: m.endpoint || '', with_tools: state._compareMode === 'agent' }],
         });
-        const data = await res.json();
         return (data.results || [])[0] || { status: 'fail', error: 'No response' };
       }
 
@@ -1214,8 +1212,7 @@ async function showModelSelector() {
                 fd.append('query', 'test');
                 fd.append('provider', p.id);
                 fd.append('count', '1');
-                const r = await fetch(`${state.API_BASE}/api/search/query`, { method: 'POST', body: fd, credentials: 'same-origin' });
-                const d = await r.json();
+                const { data: d } = await api.post('/api/search/query', fd);
                 return { status: d.error ? 'fail' : 'ok', error: d.error };
               } catch (e) {
                 return { status: 'fail', error: e.message };
