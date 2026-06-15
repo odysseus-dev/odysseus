@@ -1677,6 +1677,8 @@ To initialize the app predictably and provide developers insights into the runni
 
 </details>
 
+</details>
+
 ## Agent & AI Orchestration
 <details>
 <summary>View Agent & AI Orchestration</summary>
@@ -1844,6 +1846,8 @@ Provides reliable, zero-cost execution for routine system maintenance and user-d
 - **Execution**: The scheduler ([`src/task_scheduler.py`](../src/task_scheduler.py)) dequeues pending tasks from the database and invokes the corresponding function in [`builtin_actions.py`](../src/builtin_actions.py).
 
 
+
+</details>
 
 </details>
 
@@ -2021,6 +2025,8 @@ An iterative `Think → Search → Extract → Synthesize` loop that generates s
 
 </details>
 
+</details>
+
 ## Core Systems (Search, Auth, Files)
 <details>
 <summary>View Core Systems (Search, Auth, Files)</summary>
@@ -2162,6 +2168,8 @@ graph TD
 - **Topic Analysis ([`src/topic_analyzer.py`](../src/topic_analyzer.py), [`src/goal_based_extractor.py`](../src/goal_based_extractor.py))**: Analyzes the generated content dynamically to form a structured summary or determine if the research goal has been met.
 
 
+
+</details>
 
 </details>
 
@@ -2698,3 +2706,5 @@ graph TD
 
 </details>
 
+
+</details>
