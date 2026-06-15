@@ -1,6 +1,6 @@
 # Auth And Security
 
-Last updated: dev@9d7a3d | 2026-06-13
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -33,7 +33,7 @@ Odysseus is a trusted-user private-network app. Admins intentionally have powerf
 
 ## Auth Ownership
 
-- `core.auth.AuthManager` owns users, password hashing, TOTP/backup codes, reserved usernames, privilege defaults, and auth settings stored in `data/auth.json`. Auth config/setup mutations are lock-guarded, and session tokens are persisted separately in `data/sessions.json` behind their own lock.
+- `core.auth.AuthManager` owns users, password hashing, TOTP/backup codes, reserved usernames, privilege defaults, admin promote/demote state, and auth settings stored in `data/auth.json`. Auth config/setup mutations are lock-guarded, and session tokens are persisted separately in `data/sessions.json` behind their own lock.
 - `app.py` owns request-time auth middleware, token-cache rebuild/invalidation, auth exemptions, API-token verification, and internal-tool identity stamping.
 - `routes/auth_routes.py` owns HTTP endpoints for setup, signup/login/logout, 2FA, users, privileges, auth features, and integration settings.
 - `core.middleware.require_admin()` owns the normal admin gate. Local wrappers must document and test any intentional divergence from that boundary.
@@ -53,6 +53,8 @@ Deleting a user revokes that user's browser sessions and API-token rows, then th
 
 Rename first changes the auth username, then migrates owner-bearing DB rows and disk-backed stores. Current rename coverage includes user preferences, active/disk research state, `memory.json`, upload metadata and owner-qualified upload index keys, skills frontmatter/usage state, cached browser sessions, and API-token cache invalidation. If owner migration fails after the auth rename, the route attempts to roll auth back to the old username instead of leaving a split identity.
 
+Admin promotion/demotion is a live auth flag change through `AuthManager.set_admin()` and `PUT /api/auth/users/{username}/admin`. Demotion refuses to remove the last admin, permits self-demotion when another admin remains, restores the pre-admin privilege map when available, and does not revoke sessions or API tokens because later admin checks read the current `is_admin` flag.
+
 ## Owner Attribution
 
 Cookie requests use the real username. Bearer-token requests are stamped as `request.state.current_user = "api"` plus `api_token_owner`, `api_token_scopes`, and token id. Routes that support API-token access must explicitly use `effective_user()` or route-local scope helpers instead of treating `"api"` as an owner.
@@ -66,6 +68,8 @@ Missing-owner values are state-dependent and are not one canonical identity:
 - Chat/agent code that reads `get_current_user(request)` directly gets `None` when auth middleware is disabled, because no middleware stamps request state.
 - SQL `NULL`/JSON missing owners remain legacy/shared compatibility data, not the same thing as a logged-out authenticated caller.
 - `"api"` and `"internal-tool"` are request sentinels. They must not be persisted as normal storage owners unless a route explicitly defines that behavior.
+
+Owner-scoped route code should use `require_user()` or equivalent policy before querying per-owner data. Current note CRUD/reorder/reminder routes do this so an auth-enabled request that reaches the route without identity returns `401` instead of falling into single-user/null-owner compatibility behavior.
 
 ## API Tokens And Scoped Integrations
 
@@ -81,7 +85,7 @@ Agent tools call admin-gated HTTP routes through an in-process loopback. `core.m
 
 `src.tool_security` owns non-admin tool blocking. Non-admin users must not reach admin tools through agent mode, MCP tools, or loopback calls.
 
-Current dev has a no-login/tool mismatch: `owner_is_admin_or_single_user()` treats `AUTH_ENABLED=false` as single-user only while no auth store is configured. Once `auth.json` exists, chat/agent owner `None` is classified as non-admin even though route/admin gates still treat `AUTH_ENABLED=false` as the local operator mode.
+`src.tool_security.owner_is_admin_or_single_user()` treats explicit `AUTH_ENABLED=false` as intentional single-user mode even when an auth store already exists, while keeping pre-setup auth-enabled callers non-admin.
 
 Current admin gates include `require_admin()` call sites across admin wipe, backup, contacts, Cookbook, diagnostics, embeddings, MCP, model, personal docs, presets, skills, uploads, vault, webhook, and companion routes. Local wrappers also exist in auth routes, shell routes, and task action policy; changes to those wrappers need the same trust-boundary review as `require_admin()`.
 
@@ -100,14 +104,14 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
 - `src/url_safety.py` owns local-first outbound URL safety for model endpoints and similar local services. Loopback/LAN can be allowed by default, and private-IP blocking is an explicit caller policy.
 - `src.webhook_manager` validates webhook URLs at create and delivery time. `src.integrations` owns admin-configured integration base URLs and secret masking.
 - Path-based tools, upload/document/gallery/signature/generated-image routes, embedding cache paths, and research JSON helpers must stay confined to allowed roots and owner-scoped files.
-- Secret-like DB columns use `EncryptedText` or `src.secret_storage`. `src.api_key_manager` keeps provider API keys encrypted in `data/api_keys.json` and writes by loading the raw encrypted dict so saving one provider does not rewrite other providers' keys as plaintext. Vault state in `data/vault.json` is a chmod-restricted JSON secret store, not Fernet-encrypted DB storage. Do not log or return decrypted secrets except for intentional admin vault retrieval flows with audit/reason checks.
+- Secret-like DB columns use `EncryptedText` or `src.secret_storage`. `src.api_key_manager` keeps provider API keys encrypted in `data/api_keys.json`, writes by loading the raw encrypted dict so saving one provider does not rewrite other providers' keys as plaintext, and restricts local key-file permissions where the platform supports chmod. Vault state in `data/vault.json` is a chmod-restricted JSON secret store, not Fernet-encrypted DB storage. Do not log or return decrypted secrets except for intentional admin vault retrieval flows with audit/reason checks.
 - `.env` files are secrets-only inputs and should not be read or printed during agent work.
 
 `scripts/diffusion_server.py` is a local model-serving helper with its own web surface. It defaults CORS to deny, installs a trusted-host allowlist for loopback/bind addresses, and only extends Host/CORS through explicit CLI flags.
 
 ## Degraded And Compatibility Behavior
 
-- `AUTH_ENABLED=false` skips `AuthMiddleware` and `src.auth_helpers.require_user()` returns `""` from any host. This preserves local single-user/no-login operation; it is not permission for auth-enabled logged-out callers. Route code should still avoid assuming a non-empty owner, and chat/agent code must handle that direct `get_current_user()` reads return `None` in this mode.
+- `AUTH_ENABLED=false` skips `AuthMiddleware` and `src.auth_helpers.require_user()` returns `""` from any host. This preserves local single-user/no-login operation; it is not permission for auth-enabled logged-out callers. Route code should still avoid assuming a non-empty owner, and chat/agent code must handle that direct `get_current_user()` reads return `None` in this mode. Owner-scoped routes that tolerate no-login mode should still call `require_user()` so auth-enabled anonymous requests fail closed.
 - First-run setup mode redirects browser requests to `/login`, returns API `401 Setup required`, and keeps setup/status/login surfaces auth-exempt. Setup/signup/login are rate-limited; status is exempt but not rate-limited. Route helper fallbacks only tolerate unconfigured anonymous access from loopback.
 - User privilege checks distinguish legacy empty `allowed_models=[]` from explicit no-model access through `allowed_models_restricted=True`.
 - `LOCALHOST_BYPASS` in `app.py` only applies to direct loopback clients and excludes proxy/tunnel headers. Helper fallback code is weaker and should not be treated as the primary bypass boundary.
@@ -121,4 +125,4 @@ Current untrusted surfaces include fetched URLs, web results, emails, memories, 
 - `app.py` AuthMiddleware lacks direct regression coverage for bearer-token state/cache behavior, trusted-loopback proxy-header rejection, and internal-tool owner stamping.
 - Codex/Claude scoped route enforcement and untrusted tool-result reinjection need stronger regression coverage.
 - `THREAT_MODEL.md` still has stale token-scope and `/api/v1/chat` SSRF gap text that should be reconciled with current route validation.
-- The no-login owner model is split across route helper `""`, chat/agent `None`, SQL/JSON null-owner compatibility, and calendar fallback owner behavior. Auth-disabled tool access after auth setup needs a canonical policy and regression coverage.
+- The no-login owner model is split across route helper `""`, chat/agent `None`, SQL/JSON null-owner compatibility, and calendar fallback owner behavior. It has targeted tool-access coverage, but still needs a canonical cross-domain policy.

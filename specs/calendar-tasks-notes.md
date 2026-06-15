@@ -1,6 +1,6 @@
 # Calendar, Tasks, And Notes
 
-Last updated: dev@9d7a3d | 2026-06-13
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -33,7 +33,9 @@ Runtime behavior:
 - recurring rules are expanded server-side, including compound recurrence IDs;
 - RRULE expansion is capped and marks truncated responses;
 - event datetimes preserve UTC/local metadata through `CalendarEvent.is_utc` where supported;
-- CalDAV pull uses a bounded sync window, scopes existing UID lookups to the synced calendar, stamps account ids on local calendars, maps Google principal URLs to event collections, preserves locally-created events that are not yet remote-owned, and deletes stale in-window remote events only when remote object parsing did not fail;
+- CalDAV pull uses a bounded sync window, scopes existing UID lookups to the synced calendar, stamps account ids and remote metadata on local calendars, maps Google principal URLs to event collections, preserves locally-created or writeback-pending events that are not yet remote-owned, and deletes stale in-window remote events only when remote object parsing did not fail;
+- CalDAV writeback stores `remote_href`/`remote_etag`, clears `caldav_sync_pending` only after successful remote writes, and leaves create/update/delete pending markers for retry on failure;
+- sync direction can be pull, push, or both, and pending local writeback rows are included even before remote href metadata exists;
 - ICS import is per-owner, capped, and creates fresh local IDs in the target import calendar;
 - writeback is best-effort and local SQLite remains source of truth when remote writes fail.
 
@@ -53,6 +55,7 @@ Task runtime behavior:
 
 - task runs move through queued/running/success/error/skipped/aborted states;
 - output targets include chat sessions, notifications, email, and MCP delivery paths;
+- LLM and research tasks can carry a built-in `character_id` persona prompt that the scheduler prepends at execution time;
 - task-created chat sessions can be foldered under `Tasks`, and startup migration backfills task/research folders for legacy sessions;
 - event-bus triggers persist counters and `next_run` before scheduler handoff;
 - the in-process scheduler is gated by `ODYSSEUS_INPROCESS_TASKS`, and multiple enabled app processes can double-run work.
@@ -63,12 +66,16 @@ Task runtime behavior:
 
 `routes.note_routes.py` owns notes/todos/reminders. Notes are SQLAlchemy `Note` rows and can include due dates, ordering, images, repeat state, AI classification, source/session provenance, and agent session linkage.
 
+Notes CRUD/reorder/reminder routes resolve the acting owner through `require_user()`: auth-enabled anonymous requests fail closed before hitting owner-scoped queries, while documented no-login/single-user modes still resolve to the compatibility owner path.
+
 Reminder policy:
 
 - "remind me at 5pm" should become a todo/note with a due date;
 - calendar event alarm/reminder UI writes reminder Notes;
 - calendar events are for scheduled time blocks, meetings, appointments, or explicit calendar requests;
 - creating a calendar event named "Reminder" does not create notification behavior.
+
+Built-in reminder/persona prompt text is mirrored server-side for reminder synthesis and scheduled task execution; frontend persona selectors are UI over that server-owned id map, not the authority.
 
 Reminder dispatch is Note-owned:
 
@@ -81,7 +88,7 @@ Email/ntfy failures degrade into channel result fields rather than blocking ever
 
 ## Agent, Codex, And CLI Surfaces
 
-`do_manage_tasks`, `do_manage_notes`, and `do_manage_calendar` own agent-side writes. `do_manage_calendar` supports batch event creation plus list range aliases, calendar name/short-id lookup, and importance/tag aliases. Event classification reads `Memory.text` for personal context before LLM classification. `src.tool_index` encodes the reminder policy that notes/todos own reminders while calendar events own time blocks.
+`do_manage_tasks`, `do_manage_notes`, and `do_manage_calendar` own agent-side writes. `do_manage_calendar` supports batch event creation plus list range aliases, calendar name/short-id lookup, importance/tag aliases, and reminder offsets expressed as numbers, minute/hour words, or common abbreviations such as `min`/`mins`/`hr`/`hrs`. Event classification reads `Memory.text` for personal context before LLM classification. `src.tool_index` encodes the reminder policy that notes/todos own reminders while calendar events own time blocks.
 
 Agent native tool owner handling is not uniform today. `do_manage_tasks()` filters only when `owner` is truthy and creates tasks with the passed owner, so `owner=None` can create legacy/null-owner tasks. `do_manage_notes()` list/query behavior distinguishes `None` from `""`, with `None` acting as broader single-user compatibility while `""` filters to empty-owner rows in some paths. `do_manage_calendar()` query helpers filter only when owner is not `None`, while calendar creation routes through the calendar fallback owner for default calendars. These are compatibility behaviors, not a cross-user sharing model.
 
@@ -105,7 +112,9 @@ The current event bus is not a calendar-event emitter despite the adjacent calen
 - generic scheduled task clock times are stored as UTC values after local conversion;
 - assistant check-ins can use an IANA timezone on `CrewMember`, with UTC fallback.
 
-Dateutil fallbacks strip timezone-aware parser results back to the naive-UTC contract before recurrence/window comparisons. Calendar agent list tools accept current range aliases implemented by `src.tool_implementations`.
+Dateutil fallbacks strip timezone-aware parser results back to the naive-UTC contract before recurrence/window comparisons. Calendar agent list tools accept current range aliases implemented by `src.tool_implementations`, and equal/same-day start/end ranges are normalized to a one-day window instead of silently returning no rows.
+
+Calendar frontend week-start preference is browser-local (`cal-week-start`) with Monday/Sunday controls; it is not persisted as a server preference.
 
 Natural-language date parsing and timezone behavior are compatibility-sensitive and need route/tool/frontend regression coverage when changed. Request-local timezone context is ephemeral and must not be persisted as user state.
 
@@ -131,7 +140,7 @@ Note routes store caller-provided `source`, `session_id`, `image_url`, and agent
 
 ## Testing Coverage
 
-Existing coverage is strongest around CalDAV URL hardening/writeback, CalDAV UID calendar scoping, calendar recurrence/timezone helpers, owner-scoped calendar basics, scheduler restart/cancel/next-run behavior, webhook auth-exemption source shape, notes CLI/tool due-date behavior, task CLI preview, and same-owner chained task validation.
+Existing coverage is strongest around CalDAV URL hardening/writeback, bidirectional/pending CalDAV sync markers, CalDAV UID calendar scoping, calendar recurrence/timezone helpers, owner-scoped calendar basics, scheduler restart/cancel/next-run behavior, webhook auth-exemption source shape, note-route unauthenticated fail-closed behavior, notes CLI/tool due-date behavior, calendar reminder abbreviation parsing, task CLI preview, task persona fields, and same-owner chained task validation.
 
 Route-level coverage is thinner for full calendar route behavior, task CRUD/security/run controls, live webhook token dispatch, notes owner CRUD/reminder delivery, assistant defaults/run status, event-bus triggers, Codex todo/calendar scopes, and frontend panel wiring.
 

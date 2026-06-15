@@ -1,6 +1,6 @@
 # Gallery, Editor, And Media
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -54,7 +54,7 @@ Generated media provenance:
 - generated-but-not-yet-imported images can have no gallery row;
 - once a gallery row exists, owner checks decide visibility where the route enforces them.
 
-`app.py` owns direct `/api/generated-image/{filename}` serving through `src.generated_images.resolve_generated_image_path()`. It validates hex-like image/video filenames, rejects path escape and missing files, serves rowless generated files, checks row owner when a row exists, allows null-owner compatibility rows, and uses immutable/nosniff cache headers. Replace/rotate/save-over-original flows can mutate bytes under the same filename, so frontend cache busting matters.
+`app.py` owns direct `/api/generated-image/{filename}` serving through `src.generated_images.resolve_generated_image_path()`. It validates hex-like image/video filenames, rejects path escape and missing files, serves rowless generated files, checks row owner when a row exists, allows null-owner compatibility rows, and uses immutable/nosniff cache headers. Gallery replace/rotate/save/delete/ZIP paths also resolve filenames through a shared generated-image path helper so database filenames cannot escape `data/generated_images`. Replace/rotate/save-over-original flows can mutate bytes under the same filename, so frontend cache busting matters.
 
 ## Image Tools And Providers
 
@@ -76,12 +76,13 @@ Provider behavior:
 - OpenAI image edits use multipart `/images/edits`, mask conversion, size coercion, model restrictions, and source compositing where needed;
 - diffusion/self-hosted paths use JSON APIs such as inpaint, img2img, variations, harmonize, or A1111-compatible fallbacks;
 - client-supplied endpoint URLs on selected routes must pass outbound endpoint validation; DB-selected image endpoints are admin-trusted today and do not all re-run outbound validation at call time;
+- provider-returned image result URLs are validated with `src.url_safety.check_outbound_url()` before server-side download, with private-IP blocking controlled by image-route settings;
 - editor model pickers load `/api/model-endpoints` and classify image-capable endpoints.
 
 Optional dependency behavior:
 
 - Pillow-backed paths are effectively core for EXIF, rotate, sharpen, and image preparation;
-- Real-ESRGAN powers denoise/upscale when installed and otherwise returns install guidance;
+- Real-ESRGAN powers denoise/upscale when installed and otherwise returns install guidance; import-time torchvision compatibility patches run before Real-ESRGAN imports;
 - remove-bg tries `rembg`, then transformers-style fallback, then an error;
 - face enhancement falls back from GFPGAN/OpenCV toward PIL behavior;
 - video uploads intentionally skip EXIF/ffprobe metadata today.
@@ -135,6 +136,7 @@ Known boundaries:
 - Uploaded images record display dimensions with EXIF orientation when possible; EXIF failures warn/degrade.
 - Video uploads skip EXIF and have no metadata extraction yet.
 - Missing generated files are skipped in ZIP downloads; if all are missing, the route returns no files found.
+- Soft delete commits the gallery row state before removing the disk file, so a failed DB write does not orphan a missing image row.
 - AI tagging can fail when disk files are missing.
 - Static JS/CSS/HTML assets revalidate because there is no frontend build/versioning.
 - Gallery/editor frontend state includes stale-while-revalidate and listener cleanup to avoid stale handlers.

@@ -1,6 +1,6 @@
 # Agent Tools
 
-Last updated: dev@9d7a3d | 2026-06-13
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -56,13 +56,17 @@ Tool registration is split:
 
 When adding, removing, or renaming a tool, update the registry chain, execution dispatch, retrieval text, prompt wording, disabled-tool UI, and tests together.
 
-`src.tool_index.ALWAYS_AVAILABLE` is the ambient backstop for high-frequency tools such as shell/python, web search/fetch, read/write/edit-file, code-nav, `manage_memory`, `ask_user`, `update_plan`, selected Cookbook serve controls, and `app_api`. Retrieval can add contextual tools, but these should not disappear from ordinary agent turns.
+`src.tool_index.ALWAYS_AVAILABLE` is the retrieval catalog for high-frequency tools such as shell/python, web search/fetch, read/write/edit-file, code-nav, `manage_memory`, `ask_user`, `update_plan`, selected Cookbook serve controls, and `app_api`. Current prompt/schema assembly preserves only selected base tools unconditionally, then adds intent-, skill-, and retrieval-relevant tools so unrelated schemas do not flood small contexts.
 
 ## Tool Retrieval And Execution
 
 `src.tool_index.ToolIndex` owns candidate retrieval using embeddings/keywords and cached index data. Security filtering is not its hard boundary: `agent_loop` hides unavailable schemas, and `tool_execution` blocks disabled, admin-only, and public-restricted calls before dispatch.
 
 `src.tool_execution` owns built-in tool execution, MCP dispatch, path confinement, background markers, output truncation, internal HTTP loopback, owner/admin checks, policy-blocked execution results, and formatting tool results for the model/UI. File tools support exact edit diffs, full-file writes, read line ranges, and workspace confinement. Code-navigation tools (`grep`, `glob`, `ls`) prefer `rg`/structured filesystem traversal over ad hoc shell commands. Shared truncation and MCP manager compatibility helpers live in `src.tool_utils`.
+
+Tool retrieval has domain-specific hooks beyond generic similarity: contact queries can surface `resolve_contact`/`manage_contact`; matched skills can add `manage_skills` and their required toolsets to the relevant tool set; explicit admin intents can include admin schemas so prompt text and native schema emission match.
+
+Prompted-tool parsing includes a narrow recovery path for local models that mention a web tool and then emit a bare JSON object. Executed raw web JSON is stripped from assistant text afterward; this is not a general-purpose JSON-command parser.
 
 Current call sites include:
 
@@ -85,12 +89,12 @@ Loop-breaker final-answer rounds, optional verifier retries, and teacher escalat
 - `src.tool_security` owns non-admin blocked-tool decisions.
 - Non-admin users must not reach admin tools through agent mode, MCP, retrieval, or loopback calls.
 - Agent owner is passed from chat route `get_current_user(request)`. In `AUTH_ENABLED=false` mode this is `None`, not the `""` value returned by route dependencies. `blocked_tools_for_owner()`, schema hiding, and `execute_tool_block()` all use that owner.
-- Current dev tool security treats owner `None` as single-user only while no auth store is configured, then as non-admin once auth is configured. That differs from route/admin behavior for `AUTH_ENABLED=false`.
+- Current dev tool security treats explicit `AUTH_ENABLED=false` as single-user even when an auth store exists, while auth-enabled pre-setup callers remain non-admin.
 - Path-based tools must remain confined to allowed roots and reject sensitive paths.
 - Tool output is bounded/truncated where native execution owns the path, including displayed agent-tool output through the shared truncation helper. MCP output must be treated as untrusted; central MCP-output truncation before model re-entry remains a gap.
 - Provider-emitted native tool calls are requests, not authorization. `tool_execution` and route-level policy remain the authority.
 - Guide-only/no-tools mode blocks tools before prompt assembly, before execution, and in chat preprocessing paths that would otherwise fetch context or start tool-backed research.
-- Plan mode is policy, not prompt advice: mutating native tools are disabled and write/unknown MCP tools are hidden and runtime-blocked for that turn.
+- Plan mode is policy, not prompt advice: mutating native tools are disabled through schema-derived detection plus a static backstop, and write/unknown MCP tools are hidden and runtime-blocked for that turn.
 
 ## Internal Loopback
 
@@ -106,12 +110,14 @@ MCP prompt/schema rendering includes server-provided input schemas, but names, t
 
 ## Intent And Recovery Helpers
 
-`src.action_intents` owns deterministic chat-to-agent promotion hints and returns a category/reason so route logs can explain auto-escalation decisions. It must avoid promoting explanatory questions into agent mode. `src.builtin_actions` owns scheduler/background actions outside the normal live agent loop. `src.teacher_escalation` owns recovery/escalation and skill-creation flows. `src.goal_based_extractor` is research-adjacent and should stay cross-referenced from research behavior rather than treated as ordinary tool execution.
+`src.action_intents` owns deterministic chat-to-agent promotion hints and returns a category/reason so route logs can explain auto-escalation decisions. Explicit web-search language is category `web`; a latest-turn explicit web intent can override a stale `allow_web_search=false` UI setting for that turn. It must avoid promoting explanatory questions into agent mode. `src.builtin_actions` owns scheduler/background actions outside the normal live agent loop. `src.teacher_escalation` owns recovery/escalation and skill-creation flows. `src.goal_based_extractor` is research-adjacent and should stay cross-referenced from research behavior rather than treated as ordinary tool execution.
+
+When an email reader is active, browser chat passes active email metadata and the agent loop injects it as protected, untrusted context so default reply/draft behavior targets the selected message. Active email compose documents are handled as existing email drafts rather than generic new-document requests.
 
 ## Degraded Behavior
 
 - ToolIndex can degrade to keyword selection when embeddings, Chroma, or index warmup fail.
-- Agent mode can degrade from native function schemas to prompted fenced-block parsing based on provider/tool-support heuristics. Local Ollama `/v1` defaults to fenced tools unless the endpoint explicitly advertises `supports_tools`.
+- Agent mode can degrade from native function schemas to prompted fenced-block parsing based on provider/tool-support heuristics. Local Ollama `/v1` and native `/api` endpoints default to text tools unless the endpoint explicitly advertises `supports_tools`; `gpt-oss` remains text-tool by default unless the endpoint opts in.
 - MCP startup failure is non-critical; route/status surfaces expose per-server errors.
 - `ODYSSEUS_DISABLE_MCP`, missing `mcp`, uncached browser MCP packages, and per-server disabled tools can remove tools without blocking the app.
 - Global `builtin_browser` disable behavior may not currently match qualified `mcp__builtin_browser__*` tool names.

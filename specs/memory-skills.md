@@ -1,6 +1,6 @@
 # Memory And Skills
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -45,18 +45,18 @@ Extraction handles reasoning-model response shapes and records explicit dislike/
 
 `services/memory/skill_format.py` owns frontmatter/body parsing and emission. `services/memory/skill_importer.py` resolves public GitHub/skills URLs, fetches bundle files with outbound URL safety, and chooses/imports `SKILL.md`. `routes/skills_routes.py` owns HTTP skill CRUD/search/index/markdown/import behavior, owner filtering, tag/search handling, skill test jobs, audit-all jobs, scheduled audit entry points, and admin-gated built-in tool instruction overrides.
 
-Skill extraction is owned by `services/memory/skill_extractor.py`. It can suggest or save skills from conversations, tries all valid brace-delimited JSON candidates before giving up on malformed model output, and saved skills remain user-editable data.
+Skill extraction is owned by `services/memory/skill_extractor.py`. It can suggest or save skills from conversations, tries valid brace-delimited JSON candidates with `JSONDecoder.raw_decode()`, rejects ambiguous multiple top-level JSON objects instead of guessing, and saved skills remain user-editable data.
 
 Agent skill behavior:
 
 - matched skills are owner-scoped, confidence-gated, usage-counted, and wrapped as untrusted context;
-- `index_for()` exposes published skills plus teacher-escalation drafts gated by platform and toolsets;
+- `index_for()` exposes published skills plus teacher-escalation drafts gated by platform and toolsets; `active_toolsets=None` means the caller has no explicit toolset knowledge and does not hide `requires_toolsets` skills, while an explicit list applies the gate;
 - user prefs such as skills enabled, auto-approve, and max injected skills shape runtime insertion;
 - the level-0 base skill index currently calls `index_for(owner=None)`, so it is not fully owner-scoped.
 
 ## Tools, MCP, And Backup
 
-Native `manage_memory` and `manage_skills` tool paths pass owner context and use in-process policy gates. Manual memory add can choose a memory category instead of always defaulting to `fact`, and route-side manual add validates the source session owner before attaching session-derived memories. `mcp_servers/memory_server.py` lazy-initializes `src` managers and currently performs list/add/edit/delete/search without owner scope.
+Native `manage_memory` and `manage_skills` tool paths pass owner context and use in-process policy gates. Manual memory add can choose a memory category instead of always defaulting to `fact`, and route-side manual add validates the source session owner before attaching session-derived memories. `mcp_servers/memory_server.py` lazy-initializes `src` managers and currently performs list/add/edit/delete/search without owner scope; list loads the current JSON store, supports category filtering, and returns a bounded text snippet per memory row.
 
 `/api/export` owner-filters memories and skills. `/api/import` imports skills through current disk-backed `SkillsManager` APIs, stamping missing owners to the importer and preserving supported skill metadata. Full data snapshots through `scripts/odysseus-backup` preserve on-disk skill trees, memory JSON, and caches differently from JSON import/export.
 
@@ -96,7 +96,7 @@ User rename flows update skill frontmatter owner fields and `_usage.json` owner 
 
 ## Testing Coverage
 
-Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, skill owner update/delete, skill prompt-injection wrapping, skill save no-rename behavior, CLI row handling, and selected route owner checks.
+Existing tests cover memory bullet extraction, extraction degraded-vector behavior, manager owner isolation, auto-memory owner isolation, MCP memory list shape, skill owner update/delete, skill prompt-injection wrapping, toolset gating, skill save no-rename behavior, CLI row handling, and selected route owner checks.
 
 Route-level memory CRUD/security, skills route security, MCP memory behavior, vector degraded writes, compatibility facade owner behavior, backup skill import, admin vector cleanup, and frontend endpoint wiring need broader coverage.
 

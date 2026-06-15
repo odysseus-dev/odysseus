@@ -1,6 +1,6 @@
 # Cookbook And Hardware Fit
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -33,7 +33,7 @@ This spec covers model setup/serving and hardware fit in:
 
 ## Cookbook Runtime
 
-`routes.cookbook_routes` owns model download, setup, SSH key, cached model scan, serve, GPU state, kill-pid, state sync, Hugging Face latest lookup, serve diagnosis, and task-status endpoints. `src.cookbook_serve_lifecycle` bridges scheduled `cookbook_serve` tasks into serve/stop behavior; task/calendar scheduling ownership stays in `calendar-tasks-notes.md`.
+`routes.cookbook_routes` owns model download, setup, SSH key, cached model scan, serve, GPU state, kill-pid, state sync, Hugging Face latest lookup, vLLM recipe lookup, serve diagnosis, and task-status endpoints. `src.cookbook_serve_lifecycle` bridges scheduled `cookbook_serve` tasks into serve/stop behavior; task/calendar scheduling ownership stays in `calendar-tasks-notes.md`.
 
 Access policy is split by surface:
 
@@ -50,9 +50,11 @@ Runtime behavior:
 - missing `tmux`, `docker`, or serve-engine binaries return shaped errors where possible;
 - model serve auto-registers LLM or image `ModelEndpoint` rows immediately, then frontend readiness probing can repair/create fallback endpoints;
 - diffusion-server serves are registered as image endpoints;
+- vLLM recipe routes fetch and cache model recipe manifests/YAML from `vllm-project/recipes`, normalize base args/env/dependencies/tool-calling/reasoning variants, and expose compatible strategy metadata for serve setup;
 - Hugging Face download/setup paths can detect and persist encrypted HF tokens for later Cookbook/agent use;
 - local and remote model paths can contain spaces or non-ASCII characters when helper validation/quoting accepts them;
-- task status handles tmux, remote Windows logs, local Windows PID/log files, HF cache completion checks, pip dependency-install success sentinels, exit-code wrappers, serve diagnosis snapshots, and scheduled serve lifecycle hooks.
+- task status handles tmux, remote Windows logs, local Windows PID/log files, HF cache completion checks, stale browser-state download guards, pip dependency-install success sentinels, exit-code wrappers, serve diagnosis snapshots, and scheduled serve lifecycle hooks;
+- scheduled serve lifecycle stop attempts only persist `status=stopped`, clear `_scheduledStopAtMs`, and delete auto-registered endpoints for sessions whose tmux/remote stop command succeeded or were already gone; failed stop attempts are logged without marking unrelated expired serves as stopped.
 
 `routes.cookbook_helpers` owns validation and command construction:
 
@@ -83,6 +85,7 @@ State behavior:
 - task payloads strip raw HF tokens;
 - browser local storage strips HF token values;
 - state POST has anti-wipe guards for server lists;
+- state POST rejects stale `done` download state when the latest shard/cache markers still show an incomplete download;
 - recent server-side tasks are preserved against stale browser overwrites;
 - task-status validates saved shell-bound fields before SSH/tmux commands.
 
@@ -92,7 +95,7 @@ HW Fit is an MIT-licensed llmfit adaptation; attribution lives in project acknow
 
 ## Hardware Fit
 
-`services/hwfit/hardware.py` owns hardware detection across NVIDIA, AMD, Apple Silicon, Windows, CPU, RAM, available RAM, remote SSH, and cached host detections.
+`services/hwfit/hardware.py` owns hardware detection across NVIDIA, AMD, Apple Silicon, Windows, CPU, RAM, available RAM, remote SSH, container/native probe context, and cached host detections.
 
 `services/hwfit/models.py`, `fit.py`, `profiles.py`, and `image_models.py` own model catalog loading, normalization, memory estimates, quantization labels, fit scoring, serve profile computation, image model ranking, and backend/format servability filtering.
 
@@ -101,11 +104,13 @@ HW Fit is an MIT-licensed llmfit adaptation; attribution lives in project acknow
 Runtime behavior:
 
 - hardware detection uses a cache with `fresh=true` bypass;
+- probe results include scope/container visibility metadata, and containerized no-GPU/low-RAM states can return user-facing visibility warnings with rescan/manual/copy-diagnostics actions;
 - manual hardware replacement is a what-if simulator, not additive hardware;
 - ignore switches can drop detected GPU/RAM before ranking;
 - homogeneous GPU grouping targets realistic multi-GPU pools;
 - image model ranking normalizes to a single-GPU fit view;
 - Metal/RDNA/backend restrictions can filter otherwise fit models.
+- Apple Silicon bandwidth estimates use chip/core-specific tables for M-series Max/Pro/Ultra variants and avoid matching non-Apple GPU names.
 - Windows and Apple/consumer-AMD paths filter toward GGUF/llama.cpp-compatible
   choices. On multi-GPU systems, fixed GGUF target quantization that cannot be
   served by the selected backend returns `no_fit` rather than `None`.
@@ -126,8 +131,8 @@ Runtime behavior:
 - Remote SSH host/port validation is shared through route validators for Cookbook/HWFit paths.
 - Windows launcher/runtime Git Bash discovery includes per-user installs under `%LocalAppData%\\Programs\\Git`, and WSL/Git Bash detection shapes PATH handling for NVIDIA/remote flows.
 - macOS startup helpers start ChromaDB alongside the app path.
-- Ollama serve can auto-pick an available port, and task stop paths should verify
-  the process/session is actually gone before treating it as stopped.
+- Ollama serve can auto-pick an available port, and scheduled task stop paths
+  verify stop success before persisting a stopped state.
 
 ## Model Catalog And Latest Lookup
 
@@ -151,7 +156,7 @@ Shell-bound Cookbook inputs must pass helper validation before command construct
 
 ## Testing Coverage
 
-Existing coverage is strongest for helper validation/quoting, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, hardware detection/ranking across AMD/NVIDIA/macOS/manual modes, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, and selected frontend progress regressions.
+Existing coverage is strongest for helper validation/quoting, SSH host validation, pip fallback and dependency-completion regressions, cached scan scripts, serve profile computation, scheduled serve lifecycle state persistence, hardware detection/ranking across AMD/NVIDIA/macOS/manual/container modes, Docker GPU compose overlays, Cookbook CLI state, package detection, Windows path/task helpers, non-numeric GPU counts, and selected frontend progress regressions.
 
 Route-level auth/security and degraded-return coverage is thinner for Cookbook admin routes, shell dependency routes, `/api/cookbook/hf-latest`, state/status edge cases, HW Fit routes, frontend JS behavior, and helper scripts such as `hf_download.py`, `add_hwfit_models.py`, and `diffusion_server.py`.
 
@@ -162,6 +167,5 @@ Route-level auth/security and degraded-return coverage is thinner for Cookbook a
 - Cookbook route auth/security and degraded-return behavior need route-level tests.
 - `/api/cookbook/hf-latest` needs tests locking its user-authenticated access policy and failure behavior.
 - HW Fit routes need route-level tests around missing catalogs, manual overrides, `fit_only`, profiles, and image-model cases.
-- Dependency install/serve diagnosis remains split across Cookbook routes, shell routes, frontend diagnosis, optional binaries, and platform-specific scripts.
-- Cookbook output/error tails are still route-specific despite `routes/cookbook_output.py` centralizing a longer 50-line tail for current serve diagnostics.
+- Dependency install/serve diagnosis remains split across Cookbook routes, shell routes, frontend diagnosis, optional binaries, and platform-specific scripts, even though longer serve-output tails are centralized through `routes/cookbook_output.py`.
 - Model catalog, quantization, backend, and Hugging Face metadata drift need ongoing maintenance.

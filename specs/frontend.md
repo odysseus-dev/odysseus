@@ -1,6 +1,6 @@
 # Frontend
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -20,7 +20,7 @@ This spec covers the current browser app in:
 
 `/backgrounds` currently targets `static/backgrounds.html`; if that route remains, the file must exist or the route should be removed.
 
-`static/manifest.json` and `static/index.html` reference PWA icon files that must exist under `static/`; missing icons are static-asset drift.
+`static/manifest.json` and `static/index.html` reference PWA icon files under `static/icons/`; the current 192px, 512px, and maskable icon files exist and should stay aligned with those references.
 
 ## Current Call Sites Include
 
@@ -78,7 +78,7 @@ Storage/secrets policy:
 - other static assets use cache-first with background refresh;
 - `CACHE_NAME` bumps and `PRECACHE` updates must accompany cache policy or shell asset changes.
 
-`static/manifest.json` owns default PWA metadata. Route-specific manifests can be generated as Blob URLs when supported. Current default icon references must match real files under `static/`.
+`static/manifest.json` owns default PWA metadata. Route-specific manifests can be generated as Blob URLs when supported. Current default icon references must match real files under `static/icons/`.
 
 Offline/PWA behavior is not fully self-contained: KaTeX, Mermaid, and Pyodide use jsDelivr paths, while other vendor libraries are self-hosted under `static/lib`.
 
@@ -102,7 +102,9 @@ Coordinator ownership:
 
 `static/js/MODULE_SUMMARY.md` is historical and explicitly not authoritative. Use the current `static/js/` tree and script tags as truth.
 
-Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, and `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete.
+Current small frontend helper contracts include `static/js/model/matchKey.js` for longest-substring model info/pricing matches, `static/js/models.js` for in-flight `/api/models` request sharing, `static/js/providerDeviceFlow.js` for Copilot/ChatGPT Subscription device-flow polling UI, `static/js/composerArrowUpRecall.js` for prompt recall from an empty composer, `static/js/fileHandler.js` for capped pending-file state and collapsed attachment-chip display, `static/js/streamingSegmenter.js` for incremental markdown/code-fence segmentation, `static/js/emojiShortcodes.js` for shortcode replacement, `static/js/documentLibrary.js` for keeping document counters/language chips in sync after archive/delete, and `static/js/modalSnap.js` for reusable desktop modal edge docking.
+
+Recent browser behavior contracts include mobile chat Enter inserting newlines while desktop Enter submits, regenerate-from-here truncating history while normal resend appends a fresh turn, AI-message delete confirmation, notes search reset on reopen, calendar Monday/Sunday week-start localStorage preference, CardDAV unchanged-password placeholders, admin promote/demote buttons, and admin diagnostics log polling.
 
 ## UI Policy
 
@@ -125,7 +127,7 @@ Current small frontend helper contracts include `static/js/model/matchKey.js` fo
 
 Existing frontend coverage is a mix of Node-executed helper tests, `.mjs` tests, static DOM/CSS/source-shape tests, browser exploration specs, and app/static tests. Many tests are useful source-shape regressions but do not replace browser/module-graph execution.
 
-Recent focused coverage includes model-key matching under Node and document-library counter source-shape checks.
+Recent focused coverage includes model-key matching under Node, document-library counter source-shape checks, chat resend/delete/mobile Enter behavior, notes search reset, calendar week-start preference, modal snap zones, manifest icon existence, admin log fetching, and CardDAV unchanged-password handling.
 
 Missing coverage includes:
 
@@ -133,7 +135,7 @@ Missing coverage includes:
 - CSP header contents and nonce injection for `/` and `/login`;
 - service-worker API/non-GET bypass and cache strategy;
 - service-worker precache versus `index.html` script/module tags, including query strings;
-- manifest icon existence;
+- ongoing manifest/icon reference drift;
 - module graph/load-order validation;
 - degraded vendor/CDN/browser API behavior.
 

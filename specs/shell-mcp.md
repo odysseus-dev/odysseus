@@ -1,6 +1,6 @@
 # Shell And MCP
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -87,7 +87,7 @@ Python stdio built-ins:
 - RAG;
 - email.
 
-The optional browser built-in uses `npx -y @playwright/mcp@latest --headless --caps vision`. It is cache-gated with `npx --no-install`; uncached/missing browser MCP is logged and skipped rather than blocking startup. Python built-ins are omitted from OpenAI function schemas because native/code-block paths already describe those capabilities; the browser built-in is exposed through MCP function schemas when connected.
+The optional browser built-in uses `npx -y @playwright/mcp@latest --headless --caps vision`. It is cache-gated by checking npm's `_npx` cache for the requested package and falling back to `npx --no-install`; uncached/missing browser MCP is logged with install guidance and skipped rather than blocking startup or downloading packages at boot. Python built-ins are omitted from OpenAI function schemas because native/code-block paths already describe those capabilities; the browser built-in is exposed through MCP function schemas when connected.
 
 Built-in Python servers can be reconnected once on tool-call failure. User-configured MCP servers return the call failure instead of automatic reconnect.
 
@@ -111,10 +111,10 @@ Per-server disabled MCP tools currently hide tools from prompts/schemas while li
 - `app.py` starts the background monitor and MCP startup tasks asynchronously; MCP startup is non-critical to app readiness.
 - Configured MCP server startup is bounded and errors are stored in manager status.
 - Missing Python `mcp` dependency degrades attempted MCP connections to error status.
-- Missing or uncached browser NPX package is optional and log-only during built-in startup.
+- Missing or uncached browser NPX package is optional and log-only during built-in startup; startup should not perform an implicit package download.
 - Windows does not support POSIX PTY/tmux paths; streaming falls back to pipes or detached logfile behavior.
 - Docker images include selected shell dependencies, but Docker CLI/socket access from inside the app container is intentionally treated as unavailable unless configured on a remote host.
-- OAuth supports Google `installed` or `web` key shapes, fixed localhost callback URLs, a remote paste-back exchange page, and generic Streamable HTTP OAuth token storage through encrypted `McpServer.oauth_tokens`. Generic Streamable HTTP OAuth redirect metadata can use `OAUTH_REDIRECT_BASE_URL` or `APP_PUBLIC_URL` before falling back to localhost.
+- OAuth supports Google `installed` or `web` key shapes, a remote paste-back exchange page, and generic Streamable HTTP OAuth token storage through encrypted `McpServer.oauth_tokens`. Google and generic MCP OAuth share `src.mcp_oauth.REDIRECT_URI`, built from `OAUTH_REDIRECT_BASE_URL`, `APP_PUBLIC_URL`, or `http://localhost:7000` plus `/api/mcp/oauth/callback`; `APP_PORT` is intentionally not part of this redirect calculation.
 - `services.shell.service` remains a transitional/simple facade separate from route-level compatibility behavior.
 
 ## Security And Provenance

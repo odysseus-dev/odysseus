@@ -1,6 +1,6 @@
 # Research
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -70,7 +70,7 @@ Chat-stream runtime behavior:
 - progress, sources, raw findings, and `research_done` are emitted as SSE events;
 - `/api/research/result/{id}` is destructive for chat consumption and marks/clears consumed in-memory results.
 
-Spinoff creates a new chat session from a saved report. It currently seeds the report text without injecting source details, though it uses the source session owner/endpoint context where available.
+Spinoff/Discuss creates a new chat session from a saved report. It seeds the report text as a system primer with `research_spinoff_from` metadata, uses the source session owner/endpoint context where available, disables RAG by default for the new session, and keeps source details out of the chat context to avoid fabricated citations.
 
 ## Reports And Persistence
 
@@ -133,7 +133,7 @@ Coverage is still thin around live job route ownership, `/api/research/start` ro
 - Consolidate, retire, or clearly deprecate `services/research/research_handler.py`.
 - Decide whether direct JSON access by `manage_research` and `scripts/odysseus-research` must be owner-filtered like browser routes or is local/tool-only.
 - Spinoff endpoint fallback needs continued owner-scoped endpoint regression coverage.
-- Spinoff research context should use the shared untrusted-context role/metadata policy.
+- Spinoff research context is preserved during trimming through metadata, but the system-message primer still needs an explicit policy decision versus the shared untrusted-context role/metadata wrapper.
 - Research search/fetch logic does not yet share a single result shape with chat prefetch and agent tools.
 - Visual report remote image policy needs stronger regressions.
 - Scheduled research persistence needs dedicated route/library/report visibility coverage.

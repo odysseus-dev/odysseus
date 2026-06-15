@@ -1,6 +1,6 @@
 # Email And Contacts
 
-Last updated: dev@9d7a3d | 2026-06-13
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -62,11 +62,12 @@ Email owner semantics are route-local and compatibility-sensitive:
 - attachments and attachment-to-document flows;
 - compose upload, draft/send, `wait_for_delivery`, Sent append, and source `\Answered` marking;
 - schedule/list/delete scheduled emails;
+- pending agent-draft approval/cancel flows;
 - mark read/unread/answered, spam flags, move, archive, and delete.
 
 MCP full-message read/reply/attachment fetches use IMAP `BODY.PEEK[]` rather than bare `RFC822`, so iCloud-style servers return the full body without marking messages seen. Poller UID handling must tolerate both bytes and string UIDs.
 
-IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messages, close sockets after connect/login failures, and preserve Gmail FETCH attributes that follow header literals so unread flag state is not lost.
+IMAP helpers quote mailbox names, raise the Python IMAP line cap for large messages, close sockets after connect/login failures, and preserve Gmail FETCH attributes that follow header literals so unread flag state is not lost. Browser list routes offload blocking IMAP work from async handlers; browser search runs in FastAPI's threadpool, rejects CRLF query input, and can search Gmail All Mail when an INBOX query should include archived or labelled messages.
 
 ## Runtime And Pollers
 
@@ -106,7 +107,9 @@ Remote inbound email HTML is sanitized by frontend email-library utilities befor
 
 `mcp_servers/email_server.py` exposes email tools for MCP/agent use. It has its own account discovery, IMAP/SMTP, attachment, cache, and send paths.
 
-The current MCP email server does not receive the browser request owner. It lists enabled accounts globally, resolves the default/first enabled account globally, resolves model endpoints with `owner=None`, and stamps draft documents from `ODYSSEUS_DOCUMENT_OWNER`, an auth user selected from `auth.json`, or `None`.
+The current MCP email server does not receive the browser request owner. It lists enabled accounts globally, can list/read/search across multiple accounts when no account is selected, resolves the default/first enabled account globally, resolves model endpoints with `owner=None`, and stamps draft documents from `ODYSSEUS_DOCUMENT_OWNER`, an auth user selected from `auth.json`, or `None`.
+
+MCP email send behavior is confirmation-first by default: `send_email` and reply send paths stash a `scheduled_emails` row with `status='agent_draft'` when `agent_email_confirm` is true, and browser routes expose pending drafts for approval or cancellation. Separate MCP draft tools create Odysseus compose documents for user review without sending.
 
 MCP email is a separate local/admin trust boundary. Public and non-admin users must not see or execute email MCP tools. If all-account admin MCP behavior remains intentional, it should be documented as such; otherwise MCP must become owner-aware and reuse route-level credential, attachment containment, sanitization, and transport rules.
 
@@ -121,6 +124,7 @@ Contact runtime behavior:
 - import paths tolerate malformed or non-string contact bodies by skipping invalid rows instead of crashing the import;
 - configured CardDAV uses REPORT with GET fallback and a short in-memory cache;
 - configured-but-offline CardDAV can return cached reads but writes fail instead of falling back to local JSON;
+- CardDAV config reads mask the password, settings-stored passwords are encrypted with `src.secret_storage`, omitted password updates preserve the existing secret, and an explicit empty password clears it;
 - the native contacts CLI is CardDAV-oriented and does not fully match web JSON fallback behavior;
 - agent contact tools reuse helper functions in-process because the HTTP routes require browser/admin auth.
 
@@ -141,7 +145,7 @@ Known security policy details:
 - email pre-retrieval contacts context is allowed only for admin/single-user situations;
 - MCP attachment downloads need route-level path-containment parity; current MCP paths are separate from the HTTP compose/attachment helper path.
 
-CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and derived href writes/deletes pass through outbound URL validation; absolute hrefs from a CardDAV server are constrained back to the configured origin before credentials are reused. CardDAV password storage remains settings-based/plaintext, unlike encrypted CalDAV account storage.
+CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and derived href writes/deletes pass through outbound URL validation; absolute hrefs from a CardDAV server are constrained back to the configured origin before credentials are reused. CardDAV passwords in settings are encrypted and masked on read; environment-sourced legacy password values are used as supplied.
 
 ## Degraded Behavior
 
@@ -153,15 +157,15 @@ CardDAV credentials and URLs are security-sensitive. CardDAV URL setup and deriv
 
 ## Testing Coverage
 
-Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, iCloud-compatible MCP full-message fetch shape, owner scope, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, thread parsing, HTML sanitizer source checks, MCP header decoding, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
+Existing coverage includes header decoding, envelope recipients, IMAP timeout, SMTP security, IMAP reconnect, iCloud-compatible MCP full-message fetch shape, owner scope, owner-keyed sender signatures, Gmail flag parsing, scheduled offset normalization, thread parsing, HTML sanitizer source checks, MCP header decoding, MCP multi-account/search shapes, CardDAV password encryption, mail CLI behavior, contacts parsing/add basics, reply-recipient JS, signature folding, Gmail quote attribution, and selected security regressions.
 
 Route-level and duplicate-path coverage is still thin for email list/read/search/mutations, account CRUD/security, send/draft security, attachments, scheduled-poller failures, contacts admin/CardDAV routes, MCP account/scope behavior, CardDAV degraded mode, and executable frontend behavior.
 
 ## Current Gaps
 
 - Owner-keyed cache policy still needs an explicit decision for thread boundaries, plus continued migration/query audits for every email side table.
-- CardDAV still needs encrypted credential storage, redirect/proxy policy, and route-level tests for URL validation, private-address blocking configuration, and same-origin href enforcement.
-- MCP email needs an explicit owner/scope decision and route-helper parity for credentials, attachment path containment, sanitization, and transport behavior.
+- CardDAV still needs redirect/proxy policy and broader route-level tests for URL validation, private-address blocking configuration, and same-origin href enforcement.
+- MCP email needs an explicit owner/scope decision and route-helper parity for credentials, attachment path containment, sanitization, transport behavior, and pending-draft result text.
 - Empty-owner route compatibility, ownerless email cache rows, and MCP all-account behavior need end-to-end owner-boundary tests.
 - CLI send/contact paths need parity decisions for SMTP security, recipient parsing, local fallback, and normalized contact shapes.
 - Email HTTP route coverage is concentrated in scheduling/account-test helpers rather than full list/read/search/mutation/send/draft/account/attachment flows.

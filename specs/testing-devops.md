@@ -1,13 +1,13 @@
 # Testing And Devops
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
 This spec covers development and validation surfaces in:
 
 - `tests/`, `tests/conftest.py`, `tests/*.mjs`, and `tests/bombadil-spec.ts`;
-- `tests/run_focus.py`, `tests/_taxonomy.py`, `tests/TESTING_STANDARD.md`, and `tests/LAYOUT_INVENTORY.md`;
+- `tests/run_focus.py`, `tests/run_order_report.py`, `tests/_taxonomy.py`, `tests/TESTING_STANDARD.md`, and `tests/LAYOUT_INVENTORY.md`;
 - `pyproject.toml`;
 - `requirements.txt` and `requirements-optional.txt`;
 - `package.json` and `package-lock.json`;
@@ -83,9 +83,9 @@ docker compose ps
 docker compose logs --tail=120 odysseus
 ```
 
-`docker-compose.yml` starts Odysseus, ChromaDB, SearXNG, and ntfy. It binds services to loopback by default, persists `data/`, `logs/`, SSH identity, HuggingFace cache, and user-local Python installs, and gives the Odysseus container host-loopback reachability through `host.docker.internal`.
+`docker-compose.yml` starts Odysseus, ChromaDB, SearXNG, and ntfy. It binds services to loopback by default through `APP_BIND`, `CHROMADB_BIND`, and `NTFY_BIND`, persists configurable `APP_DATA_DIR`/`APP_LOGS_DIR`, SSH identity, HuggingFace cache, and user-local Python installs, and gives the Odysseus container host-loopback reachability through `host.docker.internal`.
 
-`Dockerfile` builds a Python 3.12 slim image with Node/npm, tmux, OpenSSH client, git/cmake, and `gosu`.
+`Dockerfile` builds a Python 3.14 slim image with Node/npm, tmux, OpenSSH client, git/cmake, and `gosu`.
 
 `docker/entrypoint.sh` owns writable path ownership repair, PUID/PGID privilege drop, vLLM/CUDA environment defaults, idempotent `setup.py`, and final uvicorn execution.
 
@@ -136,7 +136,7 @@ When route/API behavior changes, check whether a matching CLI script depends on 
 
 ## GitHub Metadata
 
-`.github/` owns issue/PR templates, description-check workflows, security/governance workflows, Docker publishing, and a lightweight CI workflow. Current CI compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, and runs `python -m pytest -q` as an informational/non-blocking job; the pytest job skips documentation-only changes.
+`.github/` owns issue/PR templates, a copyable PR review template, description-check workflows, security/governance workflows, Docker publishing, and a lightweight CI workflow. Current CI compiles Python with `python -m compileall`, syntax-checks first-party JS with `node --check`, and runs `python -m pytest -q` as an informational/non-blocking job; the pytest job skips documentation-only changes.
 
 `CONTRIBUTING.md` owns the branch model: PRs target `dev`; `main` is the curated user-running branch fast-forwarded from stable `dev` commits. Contributors who accidentally target `main` should retarget the PR base without rebasing.
 
@@ -155,7 +155,7 @@ Issue description checks:
 - route public vulnerability reports toward GitHub Security Advisories;
 - update a bot comment and swap status labels.
 
-Security metadata includes CodeQL/container/secret/workflow scanning and hardened PR/issue description checks that avoid unsafe head-branch execution.
+Security metadata includes container Trivy SARIF upload, Dockerfile lint, dependency review, secret scan, workflow security linting, GitHub default-setup CodeQL, Dependabot metadata, and hardened PR/issue description checks that avoid unsafe head-branch execution. `docs/security-ci.md` documents CodeQL as a dynamic GitHub default-setup workflow; the repo should not add a checked-in CodeQL workflow while that default setup is active.
 
 `scripts/pr_blocker_audit.py` is a read-only maintainer/contributor triage helper documented in `docs/pr-blocker-audit.md`. It can fetch or ingest open PR metadata, estimate hot files and possible duplicate groups, and emit Markdown, JSON, or terminal reports. Its duplicate/blocker output is advisory, not an authority that a PR is blocked.
 
@@ -174,7 +174,7 @@ Common local checks:
 
 ```bash
 ./venv/bin/pytest tests/path.py::test_name
-python -m py_compile app.py routes/*.py src/*.py
+./venv/bin/python -m py_compile app.py routes/*.py src/*.py
 node --check static/js/changed-file.js
 docker compose config
 docker compose up -d --build

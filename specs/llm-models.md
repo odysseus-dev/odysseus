@@ -1,6 +1,6 @@
 # LLM Models And Endpoints
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -29,6 +29,8 @@ This spec covers model/provider behavior in:
 
 `llm_core` owns payload shape. Route files and chat/agent code should request a call; they should not duplicate provider-specific payload quirks.
 
+Provider-specific behavior is part of this layer: `LLM_CONNECT_TIMEOUT` controls the connect budget for sync and streaming calls, Kimi Code endpoints retry a small whitelisted User-Agent set on 403 and cache the accepted value, official Moonshot/Kimi Code and Anthropic Opus 4.7+ payloads omit `temperature` where required, and self-hosted compatible endpoints keep normal OpenAI-compatible parameters unless detected otherwise.
+
 Route-level probe helpers in `routes/model_routes.py` are the current exception: they build minimal provider-specific probe payloads using `llm_core` detection helpers. Keep probe behavior aligned with `llm_core` provider adapters. LLM provider HTTP clients and endpoint probes share `src.tls_overrides.llm_verify()`, which can add an operator-provided `LLM_CA_BUNDLE` on top of normal certificate verification without turning verification off or widening that trust to arbitrary URL fetches.
 
 ## Endpoint Resolution
@@ -40,6 +42,8 @@ Route-level probe helpers in `routes/model_routes.py` are the current exception:
 - endpoint ID resolution;
 - chat, utility, and vision fallback candidate selection;
 - Tailscale hostname resolution where available.
+
+OpenAI-compatible model-list URL construction preserves `/v1` bases and inserts `/v1/models` for bare local bases such as LM Studio `http://localhost:1234`.
 
 `routes/model_routes.py` owns model endpoint CRUD, admin provider discovery/probing, visible/hidden/pinned model lists, endpoint kind and refresh policy, curated/extra model partitioning, `/api/models` catalog caching, Docker loopback rewriting, tool-support probing, endpoint-dependent settings cleanup, and owner filtering. Endpoint dedupe allows the same base URL under different API keys and surfaces API-key fingerprints/key presence without returning secrets.
 
@@ -53,7 +57,7 @@ Decrypted endpoint headers can be copied into session metadata for chat use. End
 
 `src.model_discovery` owns host/env/Tailscale/local-port scanning for model servers. Admin `/api/providers` and `/api/discover` use that scanner; endpoint CRUD, test, refresh, and hidden-model controls are frontend-owned by `static/js/admin.js`.
 
-`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
+`/api/models` is the normal picker/catalog surface. It is auth/owner scoped, per-user/admin-flag cached briefly, can trigger background refresh, preserves offline endpoint rows, filters hidden models, and preserves pinned model IDs for UI selection. API-token callers must carry `chat` scope and a token owner before they can list models. Proxy/API endpoints can be marked cached-first/manual so large upstream catalogs are not repeatedly probed, while explicit refresh paths use longer manual timeouts. `static/js/models.js` and `static/js/modelPicker.js` own the sidebar/picker catalog; `static/js/model/matchKey.js` owns longest-substring model-info/pricing key matching; `static/js/settings.js` owns default, utility, vision, image, TTS, STT, and fallback selectors.
 
 `src.task_endpoint` owns background-task endpoint/model resolution for task routes and scheduler callers. It resolves `task_endpoint_id`/`task_model` through the normal endpoint resolver with owner context.
 
@@ -61,7 +65,7 @@ Cookbook and HWFit own local model download, serve, ranking, and auto-registrati
 
 ## Context Length
 
-`src.model_context` owns model context-length lookup/query and token estimation. Cache keys include endpoint plus model so identical model names on different endpoints do not bleed context-window data. Token estimation counts `tool_calls` so compaction sees tool-only turns instead of underestimating them. Chat/agent context budgeting should call this layer instead of hardcoding model windows.
+`src.model_context` owns model context-length lookup/query and token estimation. Cache keys include endpoint plus model so identical model names on different endpoints do not bleed context-window data. Unknown context lengths are explicit unknowns rather than default values; known lengths feed chat/agent token-budget scaling through `src.context_budget`. Token estimation counts `tool_calls` so compaction sees tool-only turns instead of underestimating them. Chat/agent context budgeting should call this layer instead of hardcoding model windows.
 
 ## Runtime Fallback And Routing
 
@@ -82,13 +86,13 @@ Provider tool calls are untrusted requests, not authorization. `supports_tools` 
 - llama.cpp slot-affinity routing is local-endpoint behavior only and must not be applied to cloud/provider endpoints.
 - Hidden, pinned, cached, endpoint-kind, refresh-policy, and offline model state are UI/runtime compatibility data. Pinned models may not participate in every resolver auto-pick path unless code explicitly includes them.
 - SSE/stream parsers tolerate null choice/usage/tool-call entries and null streaming tool-call arguments; provider events should degrade to empty text or shaped stream errors instead of crashing the chat loop.
-- Provider adapters carry small model-specific quirks: Opus 4.7+ payloads omit `temperature`, Kimi/Moonshot reasoning content is preserved separately, ChatGPT Subscription refreshes bearer credentials, and Ollama `/v1` responses for Qwen3/Gemma4-style thinking can suppress thinking text when requested.
+- Provider adapters carry small model-specific quirks: Opus 4.7+ and official Kimi/Moonshot code payloads omit `temperature`, Kimi/Moonshot reasoning content is preserved separately, ChatGPT Subscription refreshes bearer credentials, and Ollama `/v1` responses for Qwen3/Gemma4-style thinking can suppress thinking text when requested.
 
 ## Security Policy
 
 - Endpoint API keys are encrypted in `ModelEndpoint.api_key` and never returned by endpoint APIs; admin surfaces return key presence only.
 - Endpoint CRUD, probes, provider discovery, and most endpoint configuration are admin-cookie or internal-tool gated.
-- `/api/models` is auth/owner scoped for configured deployments.
+- `/api/models` is auth/owner scoped for configured deployments; API-token access requires `chat` scope and token-owner attribution.
 - Admin-created model endpoints may target local/LAN servers. Non-admin chat session creation must use registered endpoint IDs. API-token `/api/v1/chat` requires `chat` scope and validates direct `base_url` with public-only URL checks.
 
 ## Current Call Sites Include

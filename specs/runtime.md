@@ -1,6 +1,6 @@
 # Runtime
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -19,7 +19,7 @@ This spec covers current app runtime wiring in:
 
 ## App Orchestrator
 
-`app.py` owns process-level startup and HTTP composition. It configures MIME types, `.env` loading, CORS, gzip compression, auth middleware, request timeout middleware, static files, generated-image serving, router registration, SPA HTML routes, health/readiness/runtime endpoints, and lifespan hooks. `core/middleware.py` owns security headers, admin helpers, and internal-tool token constants.
+`app.py` owns process-level startup and HTTP composition. It configures MIME types, `.env` loading, logging under `DATA_DIR/logs`, CORS, gzip compression, auth middleware, request timeout middleware, static files, generated-image serving, router registration, SPA HTML routes, health/readiness/runtime endpoints, and lifespan hooks. `core/middleware.py` owns security headers, admin helpers, and internal-tool token constants.
 
 `src/app_initializer.initialize_managers()` owns shared manager construction. It creates memory, skills, sessions, uploads, personal docs, API keys, presets, chat processor/handler, research handler, model discovery, and optional memory vector store. Route modules receive these dependencies from `app.py`; they should not recreate manager singletons.
 
@@ -45,7 +45,7 @@ Effective middleware order matters. CORS, `SecurityHeadersMiddleware`, `_Request
 
 Security headers include HSTS and a restrictive `Permissions-Policy` that disables camera/geolocation and only allows microphone from self.
 
-`_TIMEOUT_EXEMPT_PREFIXES` owns hard-timeout bypass policy. It is prefix-based and currently exempts all subroutes under `/api/chat`, `/api/shell/stream`, `/api/research`, `/api/model/download`, `/api/model/probe`, `/api/model-endpoints`, `/api/cookbook/setup`, `/api/upload`, and `/api/image`.
+`_TIMEOUT_EXEMPT_PREFIXES` owns hard-timeout bypass policy. It is prefix-based and currently exempts all subroutes under `/api/chat`, `/api/shell/stream`, `/api/research`, `/api/model/download`, `/api/model/probe`, `/api/model-endpoints`, `/api/cookbook/setup`, `/api/upload`, `/api/image`, and `/api/memory/audit`. Memory audit has its own longer inactivity timeout.
 
 Generated-image path resolution fails closed for invalid names, path escape, and missing files. Ownership checks are best-effort when a current user exists: gallery rows owned by a different user return 404, rowless generated files are allowed, and DB/helper failures fail open. See `auth-security.md` for `LOCALHOST_BYPASS`, internal-tool loopback, proxy-header exclusion, and owner-impersonation policy.
 
@@ -74,7 +74,7 @@ Shutdown cancels upload cleanup, stops the task scheduler, closes the webhook ma
 - RAG startup failure is throttled so failed clients do not poison later retries.
 - MCP startup is asynchronous and non-critical. User-server connection is bounded, failures surface through MCP status routes, and builtin MCP calls can reconnect after crashes.
 - `/api/health` is liveness only. `/api/ready` checks database reachability, writable data dir, and local-first storage metadata; it does not prove optional subsystem health for RAG, Chroma, MCP, memory vectors, tool index, or endpoint warmups.
-- `/api/diagnostics/services` is an admin diagnostics endpoint for optional service health. It reports bounded, non-intrusive checks for ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with `ok`/`degraded`/`down`/`disabled` style status values and strips secret-bearing URLs/errors.
+- `/api/diagnostics/services` is an admin diagnostics endpoint for optional service health. It reports bounded, non-intrusive checks for ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with `ok`/`degraded`/`down`/`disabled` style status values and strips secret-bearing URLs/errors. `/api/diagnostics/logs` returns a bounded tail of the app log for admin troubleshooting.
 
 ## Current Gaps
 

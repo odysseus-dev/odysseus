@@ -1,6 +1,6 @@
 # Settings And Admin Surfaces
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -48,7 +48,7 @@ Other active stores include:
 
 ## Bootstrap, Auth, And Settings Routes
 
-`routes.auth_routes` owns first-run setup, login/logout/status, password/TOTP flows, signup controls, user CRUD, privilege edits, feature flags, and app settings. `app.py` exposes setup/status/features/settings routes before cookie auth so first-run and frontend bootstrap can work.
+`routes.auth_routes` owns first-run setup, login/logout/status, password/TOTP flows, signup controls, user CRUD, admin promote/demote, privilege edits, feature flags, and app settings. `app.py` exposes setup/status/features/settings routes before cookie auth so first-run and frontend bootstrap can work.
 
 Settings runtime:
 
@@ -73,7 +73,7 @@ Admin gates inherit the auth contracts in `auth-security.md`: normal deployments
 - custom font selection and `/api/fonts/custom` discovery;
 - CSS variable application.
 
-`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/vault panels, scoped-token helpers, and unified integrations forms. `static/js/admin.js` owns user/admin panels, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, backup/import, and danger-zone wipes.
+`static/js/settings.js` owns the Settings modal shell, non-admin settings panels, admin visibility sync, provider/model/search/research/reminder/email/CalDAV/CardDAV/vault panels, scoped-token helpers, and unified integrations forms. `static/js/admin.js` owns user/admin panels, admin promote/demote controls, model endpoints, builtin tool toggles, MCP admin forms, feature toggles, token/webhook panels, diagnostics logs, backup/import, and danger-zone wipes.
 
 Logout/user-switch flows clear local/session storage to avoid stale cross-account UI state.
 
@@ -118,7 +118,7 @@ HTTP import is best-effort and section-based. It rejects invalid top-level JSON,
 
 ## Diagnostics, Cleanup, And Wipe
 
-`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, and aggregate optional service health. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
+`routes.diagnostics_routes` owns admin diagnostics for DB, RAG, YouTube, research status, aggregate optional service health, and application log tails. The service-health endpoint checks ChromaDB, SearXNG, email accounts, ntfy, and model provider endpoints with bounded probes and redacted output. `/api/diagnostics/logs` reads a bounded tail from `DATA_DIR/logs/app.log`, with missing logs returning an empty result. Diagnostics are operational and must avoid growing into broad secret/environment dumps.
 
 `routes.cleanup_routes` is owner-scoped, not admin-only. It previews and applies session cleanup for the current user through `src.cleanup_service`; when auth is disabled, cleanup can operate as a single-user unscoped flow.
 
@@ -169,7 +169,7 @@ Vault tool paths duplicate some route behavior and can return vault item secrets
 
 ## Testing Notes
 
-Current targeted coverage includes settings store fallback/error paths, settings scrub, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore safety, cleanup owner scope, diagnostics admin-gate/source/service-health checks, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, and a token-budget `manage_settings` path.
+Current targeted coverage includes settings store fallback/error paths, settings scrub, prefs no-clobber behavior, atomic preset store/migration/CLI/localStorage helpers, backup import cross-user dedup, backup CLI restore safety, cleanup owner scope, diagnostics admin-gate/source/service-health/log-tail checks, admin promote/demote, admin wipe gallery, font family derivation, theme helper behavior, vault password-not-in-argv checks, setup/auth regressions, reserved usernames, and a token-budget `manage_settings` path.
 
 ## Current Gaps
 
@@ -177,7 +177,7 @@ Current targeted coverage includes settings store fallback/error paths, settings
 - Add route tests for `/api/auth/features` admin writes.
 - Add `/api/tools` and `manage_settings` tests for secret write refusal, enum/integer coercion failures, structured-setting refusal, reset/default behavior, endpoint/model resolution, and tool enable/disable aliases.
 - Add backup tests for secret-bearing export policy, owner-scoped exported sections, invalid import handling, skills dedup, settings/features merge, and admin gates.
-- Add diagnostics tests for error redaction and sensitive output limits.
+- Add diagnostics tests for broader error redaction and sensitive output limits.
 - Add admin wipe tests for every wipe kind, unknown-kind 400, rollback behavior, and admin gating.
 - Add vault route tests for session omission, permission setting, login/unlock failures, lock/logout clearing, corrupt config, and admin gates.
 - Add frontend tests for Settings/Admin panel save/load flows, vault password clearing, diagnostics buttons, cleanup/wipe confirmations, custom font/theme wiring, and tab state.

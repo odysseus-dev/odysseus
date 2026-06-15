@@ -1,6 +1,6 @@
 # Documents, RAG, And Uploads
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -47,7 +47,7 @@ Chat does not own attachment extraction. Runtime flow:
 - `ChatHandler.preprocess_message()` resolves IDs with the session owner through `UploadHandler.resolve_upload()`, which enforces owner/admin access and no longer treats missing owner context as permission to read owned uploads;
 - vision/OCR cache and attachment metadata are prepared before model calls;
 - text-only models receive stripped multimodal blocks;
-- `src.document_processor.build_user_content()` produces model-ready text, PDF text, Office/EPUB text when MarkItDown is available, image/multimodal blocks, truncation, and PDF auto-document updates;
+- `src.document_processor.build_user_content()` produces model-ready text, PDF text, Office/EPUB text when MarkItDown or the DOCX fallback is available, image/multimodal blocks, truncation, and PDF/Office auto-document updates;
 - chat streams attachment, PDF-created `doc_update`, and `rag_sources` events where applicable.
 
 ## Living Documents And PDF
@@ -72,13 +72,15 @@ PDF runtime behavior:
 - PDF markers must resolve back through an upload owned by the caller;
 - signed-reply preparation uses document `source_email_*` provenance and verifies the document owner and signature owner. Source email account resolution still needs explicit owner-scoped coverage.
 
+Office/EPUB attachment extraction is optional and MarkItDown-backed for `.docx`, `.pptx`, `.xlsx`, `.xls`, and `.epub`; a pure-Python DOCX fallback can extract `word/document.xml`. When a session id is present, full extraction can be saved as a markdown `Document` while the chat-inline copy remains capped.
+
 ## Personal Docs And RAG
 
 `src.personal_docs.PersonalDocsManager` owns personal-directory indexing and keyword retrieval.
 
 `src.rag_vector.VectorRAG` owns Chroma/embedding-backed indexing and owner-filtered retrieval. Chunk ids are owner-scoped so byte-identical chunks from different owners do not suppress each other. `src.rag_singleton` owns lazy initialization, retry throttling, and reset behavior.
 
-`routes/personal_routes.py` owns personal-doc and direct RAG-upload routes. Directory list/index/delete routes are admin-gated. Direct RAG upload is user-authenticated, requires document privilege, forwards owner into the manager wrapper, writes to `data/personal_uploads`, and has looser file-type validation than normal uploads.
+`routes/personal_routes.py` owns personal-doc and direct RAG-upload routes. Directory list/index/delete routes are admin-gated. Direct RAG upload is user-authenticated, requires document privilege, forwards owner into the manager wrapper, writes unique files under per-owner subdirectories of `data/personal_uploads`, and has looser file-type validation than normal uploads.
 
 Current call sites include:
 
@@ -121,7 +123,7 @@ Concrete enforcement points include:
 
 - `UploadHandler.resolve_upload()` for upload ID validation, owner/admin access, and upload-dir confinement;
 - PDF marker ownership checks before resolving source uploads;
-- personal-directory confinement helpers;
+- personal-directory and personal-upload confinement helpers, including symlink/realpath checks before deleting uploaded files or removing indexed directories;
 - owner-filtered `VectorRAG.search(owner=...)`;
 - shared untrusted-context wrappers for RAG preface insertion.
 

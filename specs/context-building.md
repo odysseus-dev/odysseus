@@ -1,6 +1,6 @@
 # Context Building
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -69,6 +69,8 @@ Current behavior is not yet unified:
 
 `src.tool_execution` executes and formats tools. Tool output caps live in `src.constants` and are re-exported through older facades; shared native-tool truncation lives in `src.tool_utils`. `src.agent_loop._append_tool_results()` owns model re-entry: native tool calls return as provider-style `role: "tool"` messages, while fenced-tool results can become a bracketed user message. These results are untrusted, but they do not all currently use `untrusted_context_message()` or `metadata.trusted = False`.
 
+Context budgeting uses known model context windows when available. `src.context_budget` treats the default 6000-token value as an automatic sentinel, scales to a capped fraction of known context length for non-explicit budgets, and leaves unknown windows on conservative defaults.
+
 Side-effect enforcement lives outside context building. Chat route disabled-tool policy, `src.tool_security`, `src.tool_execution`, and `do_app_api()` block unsafe tool execution; prompt wording alone is not the authority.
 
 Guide-only/no-tools policy can suppress context acquisition before the model call. `src.tool_policy` feeds chat route preprocessing and agent-loop assembly so tool-backed search/research/memory/RAG/skills/local-context paths are skipped when the latest user turn explicitly forbids tools.
@@ -83,7 +85,7 @@ Guide-only/no-tools policy can suppress context acquisition before the model cal
 ## Current Call Sites Include
 
 - `ChatProcessor.build_context_preface()` for memory, RAG, web search, URL content, and skills index;
-- `ChatHandler.preprocess_message()` and `youtube_handler` for YouTube fetch/format, then `routes/chat_helpers.py` for wrapping prefetched search/Youtube context;
+- `ChatHandler.preprocess_message()` and the canonical `services.youtube.youtube_handler` import path for YouTube fetch/format, then `routes/chat_helpers.py` for wrapping prefetched search/Youtube context;
 - `routes/chat_routes.py` research context injection;
 - `src.agent_loop` for active editor document, skill context, and tool-result reinsertion;
 - `src.tool_execution` for `web_search`, `web_fetch`, file, shell, MCP, and other tool outputs;

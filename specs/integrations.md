@@ -1,6 +1,6 @@
 # Integrations
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -42,6 +42,7 @@ Runtime behavior:
 - unavailable borrowed route surfaces return 503;
 - capabilities expose scope-derived booleans and partial availability flags;
 - email send and destructive actions remain described as confirmation-required behavior in bundled agent instructions.
+- Cookbook adopt/stop paths validate stored remote SSH host and port before interpolating them into SSH commands.
 
 The local integration skill/helper files require `ODYSSEUS_URL` and `ODYSSEUS_API_TOKEN`. They must use `/api/codex/*` and must not bypass Settings/token scopes through SSH, Docker, direct DB access, local files, MCP internals, or app imports. Helper scripts refuse non-`/api/codex/*` paths.
 
@@ -68,6 +69,7 @@ Current API-token consumers include:
 
 - `/api/codex/*` scoped agent routes;
 - `/api/v1/chat` synchronous external chat;
+- `/api/models` catalog reads for `chat`-scoped token owners;
 - companion read endpoints;
 - selected session and owner-attribution helpers described in `auth-security.md`.
 
@@ -161,7 +163,7 @@ This spec owns the cross-integration framing and agent/token/webhook surfaces. D
 
 ## Testing Notes
 
-Current targeted coverage includes API-token CRUD basics, companion pairing/read-only owner scoping, webhook SSRF validation, webhook auth-exempt source checks, webhook CLI token masking, integration-store shape/encryption migration, Cookbook API-token scopes, and `/api/v1/chat` base-url/fallback owner scoping.
+Current targeted coverage includes API-token CRUD basics, chat-scoped `/api/models` token access, companion pairing/read-only owner scoping, webhook SSRF validation, webhook auth-exempt source checks, webhook CLI token masking, integration-store shape/encryption migration, Cookbook API-token scopes, Cookbook adopt SSH host validation, and `/api/v1/chat` base-url/fallback owner scoping.
 
 The integration audit also ran the targeted venv subset covering those areas with 52 passing tests and one warning.
 

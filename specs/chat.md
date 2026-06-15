@@ -1,6 +1,6 @@
 # Chat
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -45,7 +45,7 @@ Provider adapters live below chat in `src.llm_core`. Chat consumes normalized SS
 
 ## Context Preface
 
-`routes.chat_helpers.build_chat_context()` owns the shared route pipeline: preset extraction, preprocessing, user-message persistence, incognito/no-memory/RAG/skills flags, prefetched compare search, YouTube transcript context, model normalization, and compaction.
+`routes.chat_helpers.build_chat_context()` owns the shared route pipeline: preset extraction, preprocessing, user-message persistence, incognito/no-memory/RAG/skills flags, prefetched compare search, YouTube transcript context, research-spinoff grounding, model normalization, and compaction.
 
 `src.chat_processor.ChatProcessor.build_context_preface()` owns source preface construction. It can add memory, RAG, web search, URL page content, and skills index context before the model call.
 
@@ -70,13 +70,17 @@ Agent-mode tool access is gated in layers. Chat route toggles and privileges bui
 
 `allow_bash` and `allow_web_search` can be read from the JSON request body for browser chat posts that do not submit traditional form fields.
 
+An explicit latest-turn web-search intent can override `allow_web_search=false` for that turn so stale UI toggle state does not suppress a direct user request.
+
 Guide-only/no-tools requests build an effective tool policy before preprocessing and agent dispatch. That policy suppresses tool-backed preprocessing/background extraction/research, disables schemas and MCP for the turn, and is still enforced by `src.tool_execution` if a model emits a tool call anyway.
 
 ## Attachments
 
 `src.chat_handler.ChatHandler.preprocess_message()` owns owner-scoped upload-id resolution, attachment metadata, YouTube transcript/comment preprocessing, image/VL behavior, and enhanced text used by chat. `src.document_processor.build_user_content()` owns conversion of uploaded/chat-attached files into model-ready text or multimodal blocks. `static/js/fileHandler.js` owns frontend pending-file state.
 
-Attachment-only sends are valid. Missing or unauthorized upload ids are skipped, upload failures keep pending files for retry, unsupported media can degrade to text markers, optional Office/PDF/VL dependencies can emit extraction banners, and fillable-PDF auto-document failures fall back to normal PDF extraction. Chat does not own durable document storage; it requests document/upload behavior from those subsystems.
+Attachment-only sends are valid. Missing or unauthorized upload ids are skipped, upload failures keep pending files for retry, unsupported media can degrade to text markers, optional Office/PDF/VL dependencies can emit extraction banners, Office attachments can create markdown documents when extracted server-side, and fillable-PDF auto-document failures fall back to normal PDF extraction. Chat does not own durable document storage; it requests document/upload behavior from those subsystems.
+
+Frontend chat distinguishes normal resend from regenerate-from-here: normal resend appends a fresh user copy and carries upload IDs where available, while regeneration truncates from the selected point. AI-message delete prompts before removing the AI response plus preceding user turn. Desktop Enter submits; mobile Enter inserts a newline unless another platform-specific send control is used.
 
 ## Security And Provenance
 

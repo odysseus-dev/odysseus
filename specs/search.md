@@ -1,6 +1,6 @@
 # Search
 
-Last updated: dev@9d7a3d | 2026-06-12
+Last updated: dev@0750486 | 2026-06-15
 
 ## Scope
 
@@ -95,19 +95,15 @@ Search owns Open Graph image extraction for fetched pages. Research owns promoti
 
 ## YouTube
 
-`src/youtube_handler.py` owns chat YouTube context. `services/youtube/youtube_handler.py` is still used by diagnostics/tests and is not fully consolidated with the `src` copy.
+`services/youtube/youtube_handler.py` owns YouTube URL detection, id extraction, transcript, comment, and formatting behavior. `src/youtube_handler.py` is a compatibility alias to the canonical services module so startup `init_youtube()` state and chat imports share one implementation.
 
-YouTube transcript and comment content is search-like external context. Fixes to parsing, guards, unavailable states, or formatting need parity checks across both handlers until one path is removed.
+YouTube transcript and comment content is search-like external context. URL parsing covers common watch, mobile/music, embed, `/v/`, shorts, live, and `youtu.be` forms and must tolerate non-string input.
 
 ## Compatibility State
 
 `src/search/core.py`, `src/search/providers.py`, `src/search/ranking.py`, `src/search/cache.py`, `src/search/content.py`, `src/search/query.py`, and `src/search/analytics.py` are compatibility shims or module aliases around `services.search`. Ranking helpers exposed through `src.search.ranking` include recency scoring, result ranking, naive-UTC handling, `_SPORTS_HINT_RE`, and age formats.
 
-Still-separate compatibility-sensitive copies include:
-
-- `src/youtube_handler.py` and `services/youtube/youtube_handler.py`.
-
-Tests intentionally cover selected behavior through both import paths, but coverage is not complete parity.
+`src.youtube_handler` remains a compatibility import path, but it should resolve to the same module object as `services.youtube.youtube_handler`.
 
 ## Context Policy
 
