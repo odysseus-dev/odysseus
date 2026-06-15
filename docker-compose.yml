@@ -68,7 +68,7 @@ services:
         condition: service_healthy
       chromadb:
         condition: service_started
-    restart: unless-stopped
+    # restart: unless-stopped
 
   chromadb:
     image: docker.io/chromadb/chroma:latest

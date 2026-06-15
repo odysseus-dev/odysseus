@@ -7,6 +7,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
+import { api, apiFetch, apiPath } from './axios/api.js';
 
 let initialized = false;
 let modalEl = null;
@@ -2172,7 +2173,7 @@ function initAccount() {
         _toRemove.forEach(k => localStorage.removeItem(k));
         sessionStorage.clear();
       } catch (_) {}
-      window.location.href = '/login';
+      window.location.href = apiPath('/login');
     });
   }
 }

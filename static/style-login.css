@@ -1,0 +1,344 @@
+@font-face {
+    font-family: 'Fira Code';
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+    src: url('fonts/FiraCode-Regular.woff2') format('woff2');
+  }
+
+  @font-face {
+    font-family: 'Fira Code';
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+    src: url('fonts/FiraCode-SemiBold.woff2') format('woff2');
+  }
+
+  /* Mirror the main app's :root defaults (static/style.css ~line 18) so an
+   uncustomized theme — or a fresh browser with no `odysseus-theme` in
+   localStorage — renders the login page in the same palette as the rest
+   of the app instead of a different greys+offwhite scheme. */
+  :root {
+    --bg: #282c34;
+    --fg: #9cdef2;
+    --panel: #111;
+    --border: #355a66;
+    --red: #e06c75;
+    --green: #50fa7b;
+    --bg-effect-intensity: 1;
+  }
+
+  /* Background patterns — mirrors static/style.css "Background Patterns"
+   block so the theme's chosen bgPattern renders on login too. The
+   canvas-based effects (rain, constellations, perlin-flow, petals,
+   sparkles, embers) are spawned by the deferred theme.js import below;
+   the static gradient ones (dots, synapse) need these CSS rules. */
+  #synapse-canvas,
+  #rain-canvas,
+  #constellations-canvas,
+  #perlin-flow-canvas,
+  #petals-canvas,
+  #sparkles-canvas,
+  #embers-canvas {
+    opacity: var(--bg-effect-intensity, 1);
+  }
+
+  body.bg-pattern-dots {
+    background-image: radial-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+    background-size: 20px 20px;
+    background-attachment: fixed;
+  }
+
+  body.bg-pattern-synapse {
+    background-image: linear-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-attachment: fixed;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    font-family: 'Fira Code', monospace;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding-top: 15vh;
+    transition: padding-top 0.2s ease;
+  }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    width: 360px;
+    max-width: 90vw;
+    /* Sit above the bg-effect canvases (which spawn at z-index:0) so the
+     falling rain / drifting petals / etc. don't streak across the
+     login form. */
+    position: relative;
+    z-index: 1;
+  }
+
+  .logo {
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .logo span {
+    font-family: 'Fira Code', monospace;
+    font-size: 2rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    /* Same gradient as the main app's welcome-screen "Odysseus" title
+     (static/style.css #welcome-screen .welcome-name) so the brand
+     wordmark is consistent across login + first-launch screens. */
+    background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .setup-note {
+    color: color-mix(in srgb, var(--fg) 60%, transparent);
+    font-size: 0.8rem;
+    margin-bottom: 1rem;
+    text-align: center;
+  }
+
+  label {
+    display: block;
+    font-size: 0.85rem;
+    margin-bottom: 0.3rem;
+    color: color-mix(in srgb, var(--fg) 65%, transparent);
+  }
+
+  input:not(.remember-check) {
+    width: 100%;
+    padding: 0.6rem 0.8rem;
+    margin-bottom: 1rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font-size: 0.95rem;
+    font-family: 'Fira Code', monospace;
+  }
+
+  input:focus {
+    outline: none;
+    border-color: var(--red);
+  }
+
+  /* On touch devices keep inputs at >=16px so iOS Safari doesn't zoom the whole
+   page when a field is focused (it auto-zooms any focused input under 16px).
+   This page has its own inline styles, so it doesn't inherit the main app's
+   equivalent rule in static/style.css; mirror it here. !important also lifts
+   the dynamically-inserted 2FA input, which pins font-size:14px inline. */
+  @media (hover: none) and (pointer: coarse) {
+    input:not(.remember-check) {
+      font-size: 16px !important;
+    }
+  }
+
+  /* Clear, visible focus ring for keyboard users on every focusable control. */
+  input:focus-visible,
+  a:focus-visible,
+  button:focus-visible {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
+  }
+
+  button {
+    width: 100%;
+    /* Asymmetric vertical padding nudges the label 1px down while keeping
+     the button's total height the same as 0.7rem all-around. */
+    padding: calc(0.7rem + 1px) 0.7rem calc(0.7rem - 1px);
+    border: none;
+    border-radius: 6px;
+    /* Darken the brand red slightly so #fff label text clears the WCAG AA
+     4.5:1 contrast threshold (plain --red #e06c75 only reaches ~3.2:1). */
+    background: color-mix(in srgb, var(--red) 78%, #000);
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    font-weight: 600;
+    font-family: 'Fira Code', monospace;
+  }
+
+  button:hover {
+    background: color-mix(in srgb, var(--red) 66%, black);
+  }
+
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .error {
+    color: #e55;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+    display: none;
+  }
+
+  .toggle {
+    text-align: center;
+    margin-top: calc(1rem + 4px);
+    font-size: 0.85rem;
+    color: color-mix(in srgb, var(--fg) 50%, transparent);
+  }
+
+  .toggle a {
+    color: var(--red);
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  .toggle a:hover {
+    text-decoration: underline;
+  }
+
+  .pw-wrapper {
+    position: relative;
+    margin-bottom: 1rem;
+  }
+
+  .pw-wrapper input:not(.remember-check) {
+    padding-right: 2.5rem;
+    margin-bottom: 0;
+  }
+
+  .pw-toggle {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    /* +1px on the centering offset nudges the eye icon down 1px so it
+     lines up visually with the input text baseline. */
+    transform: translateY(calc(-50% + 1px));
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: color-mix(in srgb, var(--fg) 40%, transparent);
+    width: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .pw-toggle:hover {
+    color: var(--fg);
+    background: none;
+  }
+
+  .pw-toggle svg {
+    display: block;
+  }
+
+  .remember-toggle {
+    position: absolute !important;
+    right: 13px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
+    width: 14px !important;
+    height: 14px !important;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    font-size: 0;
+    margin: 0;
+    color: transparent;
+  }
+
+  /* Visually hide the native checkbox but keep it in the accessibility tree
+   and keyboard-focusable (display:none would drop it from tab order). It
+   overlays the dot so a click/tap still toggles it. */
+  .remember-toggle .remember-check {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .remember-toggle .remember-check:focus-visible+.remember-dot {
+    outline: 2px solid var(--red);
+    outline-offset: 2px;
+  }
+
+  .remember-toggle .remember-dot {
+    display: block;
+    width: 10px;
+    height: 10px;
+    min-width: 10px;
+    min-height: 10px;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--fg) 25%, transparent);
+    background: transparent;
+    transition: all 0.15s;
+  }
+
+  .remember-toggle .remember-check:checked+.remember-dot {
+    border-color: transparent;
+    background: color-mix(in srgb, var(--fg) 40%, transparent);
+  }
+
+  .remember-toggle:hover .remember-dot {
+    border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+  }
+
+  .logo-boat {
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-right: 0.4rem;
+    vertical-align: -0.15em;
+    color: var(--red);
+  }
+
+  .version-label {
+    position: fixed;
+    bottom: 12px;
+    right: 16px;
+    font-size: 0.7rem;
+    opacity: 0.25;
+    font-family: 'Fira Code', monospace;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Whirlpool-style spinner shown in the submit button while login /
+   account-creation work is in flight — replaces the previous "Loading…"
+   text. Two-color ring (muted base + accent arc) rotates continuously. */
+  .login-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid color-mix(in srgb, var(--fg, #fff) 22%, transparent);
+    border-top-color: var(--accent, var(--red, #e8a830));
+    border-radius: 50%;
+    animation: login-spin 0.7s linear infinite;
+    vertical-align: -3px;
+  }
+
+  @keyframes login-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }

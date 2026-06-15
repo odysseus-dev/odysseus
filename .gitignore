@@ -102,3 +102,6 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+start-odysseus.sh
+stop-odysseus.sh

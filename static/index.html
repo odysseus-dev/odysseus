@@ -4,15 +4,17 @@
   <meta charset="UTF-8" />
   <title>Odysseus Chat</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
-  <link rel="manifest" href="/static/manifest.json">
+  <link rel="manifest" href="{{BASE_PATH}}/static/manifest.json">
   <meta name="theme-color" content="#282c34">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <script type="module" src="{{BASE_PATH}}/static/lib/axios.min.js"></script> <!-- Axios needs to be loaded first to ensure it is available for other modules -->
   <!-- Disable iOS / Android auto-linkifying of numbers (phone/date/address)
        in email bodies — was wrapping random digits in <a href="tel:..."> with
        browser-default styling that didn't match the Odysseus theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
-  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="{{BASE_PATH}}/static/icons/icon-192.png">
+  <script nonce="{{CSP_NONCE}}">window.__ODYSSEUS_BASE_PATH = '{{BASE_PATH}}';</script>
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
@@ -189,12 +191,12 @@
     } catch(e){}
   })();
   </script>
-  <script defer src="/static/lib/highlight.min.js"></script>
+  <script defer src="{{BASE_PATH}}/static/lib/highlight.min.js"></script>
   <!-- Inter font — self-hosted, no Google dependencies -->
   <style>
-    @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
-    @font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Medium.woff2') format('woff2'); }
-    @font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-SemiBold.woff2') format('woff2'); }
+    @font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('{{BASE_PATH}}/static/fonts/Inter-Regular.woff2') format('woff2'); }
+    @font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('{{BASE_PATH}}/static/fonts/Inter-Medium.woff2') format('woff2'); }
+    @font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('{{BASE_PATH}}/static/fonts/Inter-SemiBold.woff2') format('woff2'); }
   </style>
   <!-- KaTeX CSS is loaded with media="print" so it doesn't block render,
        then flipped to "all" via JS after load. Mermaid init runs once the
@@ -213,12 +215,13 @@
       }, { once: true });
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css">
-  <link rel="modulepreload" href="/static/app.js">
-  <link rel="modulepreload" href="/static/js/chat.js">
-  <link rel="modulepreload" href="/static/js/ui.js">
-  <link rel="modulepreload" href="/static/js/sessions.js">
-  <link rel="modulepreload" href="/static/js/markdown.js">
+
+  <link rel="stylesheet" href="{{BASE_PATH}}/static/style.css">
+  <link rel="modulepreload" href="{{BASE_PATH}}/static/app.js">
+  <link rel="modulepreload" href="{{BASE_PATH}}/static/js/chat.js">
+  <link rel="modulepreload" href="{{BASE_PATH}}/static/js/ui.js">
+  <link rel="modulepreload" href="{{BASE_PATH}}/static/js/sessions.js">
+  <link rel="modulepreload" href="{{BASE_PATH}}/static/js/markdown.js">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content, viewport-fit=cover" />
 </head>
 <body>
@@ -954,33 +957,7 @@
       </button>
       <div id="welcome-setup" style="display:none"></div>
     </div>
-    <script nonce="{{CSP_NONCE}}">
-    (function(){
-      var mobile = window.matchMedia('(max-width: 768px)').matches;
-      var desktop = [
-        'Tip: Press Ctrl+K to search across all your conversations.',
-        'Tip: Press Ctrl+B to quickly toggle the sidebar.',
-        'Tip: Shift-click the sidebar toggle to swap it to the other side.',
-        'Tip: Drag and drop files onto the chat to attach them.',
-        'Tip: Right-click a session for rename, delete, and memory options.',
-      ];
-      var phone = [
-        'Tip: Long-press a session for rename, delete, and memory options.',
-        'Tip: Tap the eye icon for Nobody mode — no history saved.',
-        'Tip: Switch to Agent mode for web search and code execution.',
-        'Tip: Use Compare mode to test different models side by side.',
-        'Tip: Attach images or files using the + button next to the input.',
-      ];
-      var tips = mobile ? phone : desktop;
-      var el = document.getElementById('welcome-tip');
-      if (el) {
-        el.textContent = 'Type /setup, then choose Local models or API.';
-      }
-      fetch('/api/version').then(function(r){return r.json()}).then(function(d){
-        if (d.version) window._appVersion = d.version;
-      }).catch(function(){});
-    })();
-    </script>
+    
     <div id="chat-history" class="chat-history" role="log" aria-live="polite"></div>
 
     <!-- Attachments strip -->
@@ -2385,44 +2362,43 @@
   <!-- Toast container (aria-live for screen readers) -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-
-
-<!-- Load modules in this order -->
-<script type="module" src="/static/js/storage.js"></script>
-<script type="module" src="/static/js/ui.js"></script>
-<script type="module" src="/static/js/markdown.js"></script>
-<script type="module" src="/static/js/dragSort.js"></script>
-<script type="module" src="/static/js/sessions.js"></script>
-<script type="module" src="/static/js/memory.js"></script>
-<script type="module" src="/static/js/skills.js"></script>
-<script type="module" src="/static/js/tourHints.js"></script>
-<script type="module" src="/static/js/tourAutoplay.js"></script>
-<script type="module" src="/static/js/fileHandler.js"></script>
-<script type="module" src="/static/js/voiceRecorder.js"></script>
-<script type="module" src="/static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
-<script type="module" src="/static/js/rag.js"></script>
-<script type="module" src="/static/js/presets.js"></script>
-<script type="module" src="/static/js/search.js"></script>
-<script type="module" src="/static/js/spinner.js"></script>
-<script type="module" src="/static/js/tts-ai.js"></script>
-<script type="module" src="/static/js/document.js"></script>
-<script type="module" src="/static/js/gallery.js"></script>
-<script type="module" src="/static/js/chatRenderer.js"></script>
-<script type="module" src="/static/js/codeRunner.js"></script>
-<script type="module" src="/static/js/chatStream.js"></script>
-<script type="module" src="/static/js/chat.js?v=20260609ws"></script>
-<script type="module" src="/static/js/cookbook.js"></script>
-<script src="/static/js/cookbookSchedule.js"></script>
-<script type="module" src="/static/js/search-chat.js"></script>
-<script type="module" src="/static/js/compare/index.js"></script>
-<script type="module" src="/static/js/theme.js"></script>
-<script type="module" src="/static/js/censor.js"></script>
-<script type="module" src="/static/js/settings.js"></script>
-<script type="module" src="/static/js/admin.js"></script>
-<script type="module" src="/static/js/assistant.js"></script>
-<script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
-<script type="module" src="/static/js/init.js"></script>
-<script type="module" src="/static/js/a11y.js"></script>
-<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
+  <!-- Load modules in this order -->
+  <script type="module" src="{{BASE_PATH}}/static/js/axios/api.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/storage.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/ui.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/markdown.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/dragSort.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/sessions.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/memory.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/skills.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/tourHints.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/tourAutoplay.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/fileHandler.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/voiceRecorder.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
+  <script type="module" src="{{BASE_PATH}}/static/js/rag.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/presets.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/search.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/spinner.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/tts-ai.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/document.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/gallery.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/chatRenderer.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/codeRunner.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/chatStream.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/chat.js?v=20260609ws"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/cookbook.js"></script>
+  <script src="{{BASE_PATH}}/static/js/cookbookSchedule.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/search-chat.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/compare/index.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/theme.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/censor.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/settings.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/admin.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/assistant.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/app.js"></script>  <!-- app.js must be LAST -->
+  <script type="module" src="{{BASE_PATH}}/static/js/init.js"></script>
+  <script type="module" src="{{BASE_PATH}}/static/js/a11y.js"></script>
+  <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('{{BASE_PATH}}/static/sw.js').catch(()=>{});}</script>
 </body>
 </html>

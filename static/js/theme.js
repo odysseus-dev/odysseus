@@ -7,6 +7,7 @@ import { initColorPickers, attachColorPicker } from './colorPicker.js';
 import { hexToRgb } from './color/hex.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
+import { api, apiPath } from './axios/api.js';
 
 export const THEMES = {
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
@@ -118,12 +119,8 @@ export function deleteCustomTheme(name) {
 }
 function _syncCustomThemesToServer(ct) {
   try {
-    fetch('/api/prefs/custom-themes', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ value: ct }),
-    }).catch(e => console.warn('Theme sync (custom) failed:', e));
+    api.put('/api/prefs/custom-themes', { value: ct }, { credentials: 'same-origin' })
+      .catch(e => console.warn('Theme sync (custom) failed:', e));
   } catch (e) { console.warn('Theme sync (custom) error:', e); }
 }
 
@@ -465,21 +462,14 @@ export function save(name, colors, opts) {
 }
 
 function _syncToServer(obj) {
-  try {
-    fetch('/api/prefs/theme', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ value: obj }),
-    }).catch(e => console.warn('Theme sync failed:', e));
-  } catch (e) { console.warn('Theme sync error:', e); }
+    api.put('/api/prefs/theme', { value: obj }, { credentials: 'same-origin' })
+      .catch(err => console.warn('Theme sync failed:', err));
 }
 
 async function _loadFromServer() {
   try {
-    const res = await fetch('/api/prefs/theme', { credentials: 'same-origin' });
-    const data = await res.json();
-    return data.value || null;
+    const res = await api.get('/api/prefs/theme', { credentials: 'same-origin' });
+    return res.data?.value || null;
   } catch { return null; }
 }
 
@@ -2064,13 +2054,13 @@ async function _initWithSync() {
   }
   // Also sync custom themes from server
   try {
-    const res = await fetch('/api/prefs/custom-themes', { credentials: 'same-origin' });
-    const data = await res.json();
-    if (data.value && typeof data.value === 'object') {
+    const res = await api.get('/api/prefs/custom-themes', { credentials: 'same-origin' });
+    const customThemes = await res.data;
+    if (customThemes && typeof customThemes === 'object') {
       const local = _loadCustomThemes();
       // Merge: server themes fill in missing local ones
       let changed = false;
-      for (const [name, colors] of Object.entries(data.value)) {
+      for (const [name, colors] of Object.entries(customThemes)) {
         if (!local[name]) { local[name] = colors; changed = true; }
       }
       if (changed) _saveCustomThemes(local);

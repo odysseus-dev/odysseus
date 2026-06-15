@@ -2,6 +2,7 @@
 // ES6 module — extracted from index.html inline scripts
 
 import Storage from './storage.js';
+import { api } from './axios/api.js';
 
 function clearFreshComposerRestore() {
   const msgInput = document.getElementById('message');
@@ -26,9 +27,7 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
 // in without the previous one logging out cleanly.
 (async () => {
   try {
-    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
-    if (!res.ok) return;
-    const data = await res.json().catch(() => ({}));
+    const { data } = await api.get('/api/auth/status');
     const liveUser = (data && data.username) || '';
     if (!liveUser) return;
     const KEY = 'odysseus-auth-user';

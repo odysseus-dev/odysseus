@@ -110,9 +110,9 @@ body {
 }
 
 /* Self-hosted Fira Code font */
-@font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
-@font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
-@font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('fonts/FiraCode-Light.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('fonts/FiraCode-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('fonts/FiraCode-SemiBold.woff2') format('woff2'); }
 
 /* Code block baseline */
 pre, code, .hljs {
@@ -7506,9 +7506,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
 /* ── Components (from style.css) ── */
 
 /* Self-hosted Fira Code font */
-@font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
-@font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
-@font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('fonts/FiraCode-Light.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('fonts/FiraCode-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('fonts/FiraCode-SemiBold.woff2') format('woff2'); }
 
 /* Scrollbar styling */
 

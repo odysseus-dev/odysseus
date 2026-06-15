@@ -24,12 +24,12 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import { api, apiFetch, apiPath } from './axios/api.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
-  let API_BASE = '';
   let currentAbort = null;
   let isStreaming = false;
   // Continuous stall watchdog: while streaming, if the SSE stream produces
@@ -157,20 +157,25 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   async function _probeCurrentEndpointStatus(endpointUrl, signal) {
     const target = _normalizeEndpointForCompare(endpointUrl);
     if (!target) return null;
-    const modelsRes = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin', signal });
-    if (!modelsRes.ok) return null;
-    const modelsData = await modelsRes.json().catch(() => ({}));
+    let modelsData = {};
+    try {
+      const modelsRes = await api.get('/api/models', { signal });
+      modelsData = modelsRes.data || {};
+    } catch (_) {
+      return null;
+    }
     const item = (modelsData.items || []).find(ep =>
       _normalizeEndpointForCompare(ep.url || ep.endpoint_url || ep.base_url) === target
     );
     if (!item || !item.endpoint_id) return null;
 
-    const probesRes = await fetch(`${API_BASE}/api/model-endpoints/probe-local`, {
-      credentials: 'same-origin',
-      signal,
-    });
-    if (!probesRes.ok) return null;
-    const probes = await probesRes.json().catch(() => ({}));
+    let probes = {};
+    try {
+      const probesRes = await api.get('/api/model-endpoints/probe-local', { signal });
+      probes = probesRes.data || {};
+    } catch (_) {
+      return null;
+    }
     return probes[item.endpoint_id] || null;
   }
 
@@ -178,7 +183,6 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    * Initialize with dependencies
    */
   export function init(apiBase) {
-    API_BASE = apiBase;
     initSlashCommands({ apiBase, isStreaming: () => isStreaming });
     // Initialize email inbox
     emailInbox.init(documentModule);
@@ -296,7 +300,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Cancel server-side research if in progress
       const _cancelSid = sessionModule.getCurrentSessionId();
       if (_cancelSid && _researchingStreamIds.has(_cancelSid)) {
-        fetch(`${API_BASE}/api/research/cancel/${_cancelSid}`, { method: 'POST' }).catch(e => console.warn('Research cancel failed:', e));
+        api.post(`/api/research/cancel/${_cancelSid}`).catch(e => console.warn('Research cancel failed:', e));
         _researchingStreamIds.delete(_cancelSid);
         _clearResearchTimer();
       }
@@ -390,7 +394,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
         // Tell server to mark this message as stopped
         const _sid = sessionModule.getCurrentSessionId();
-        if (_sid) fetch(`${API_BASE}/api/session/${_sid}/mark-stopped`, { method: 'POST' }).catch(e => console.warn('mark-stopped failed:', e));
+        if (_sid) api.post(`/api/session/${_sid}/mark-stopped`).catch(e => console.warn('mark-stopped failed:', e));
 
         // Add footer with copy/regen if not already present
         if (!currentHolder.querySelector('.msg-footer')) {
@@ -483,8 +487,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       try {
         let dc = null;
         try {
-          const dcRes = await fetch('/api/default-chat');
-          dc = await dcRes.json();
+          const dcRes = await api.get('/api/default-chat');
+          dc = dcRes.data;
           if (dc && dc.endpoint_url && dc.model) {
             try { window.__odysseusDefaultChat = dc; } catch (_) {}
           }
@@ -725,10 +729,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
               const dotIdx = info.name.lastIndexOf('.');
               const title = dotIdx > 0 ? info.name.slice(0, dotIdx) : info.name;
               const ext = dotIdx >= 0 ? info.name.slice(dotIdx).toLowerCase() : '';
-              await fetch(`${API_BASE}/api/document`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, language: EXT_LANG[ext] || '', content }),
+              await api.post('/api/document', {
+                title,
+                language: EXT_LANG[ext] || '',
+                content,
               });
               imported++;
             } catch (e) { console.error('Import failed:', info.name, e); }
@@ -843,9 +847,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           abortCtrl._reason = 'timeout';
           try {
             if (streamSessionId) {
-              fetch(`/api/chat/stop/${encodeURIComponent(streamSessionId)}`, {
+              apiFetch(`/api/chat/stop/${encodeURIComponent(streamSessionId)}`, {
                 method: 'POST',
-                credentials: 'same-origin',
               }).catch(() => {});
             }
           } catch (_) {}
@@ -988,7 +991,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
         catch { return ''; }
       })();
-      const res = await fetch(`${API_BASE}/api/chat_stream`, {
+      const res = await apiFetch('/api/chat_stream', {
         method: 'POST',
         body: fd,
         headers: { 'X-Tz-Offset': String(_tzOffsetMin), 'X-Tz-Name': _tzName },
@@ -1939,9 +1942,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                         _iw.className = 'attach-image-preview';
                         _iw.dataset.fileId = _att.id;
                         _iw.style.cursor = 'pointer';
-                        _iw.onclick = () => window.open(API_BASE + '/api/upload/' + _att.id, '_blank');
+                        _iw.onclick = () => window.open(apiPath('/api/upload/' + _att.id), '_blank');
                         const _im = document.createElement('img');
-                        _im.src = API_BASE + '/api/upload/' + _att.id;
+                        _im.src = apiPath('/api/upload/' + _att.id);
                         _im.alt = _att.name || 'Image';
                         _im.style.cssText = 'max-width:300px;max-height:200px;border-radius:6px;display:block;';
                         _iw.appendChild(_im);
@@ -1963,7 +1966,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                         if (_card && _att.id) {
                           _card.dataset.fileId = _att.id;
                           _card.style.cursor = 'pointer';
-                          _card.onclick = () => window.open(API_BASE + '/api/upload/' + _att.id, '_blank');
+                          _card.onclick = () => window.open(apiPath('/api/upload/' + _att.id), '_blank');
                         }
                       }
                     }
@@ -2820,10 +2823,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             // Persist merge to server
             const sid = sessionModule.getCurrentSessionId();
             if (sid) {
-              fetch(`${API_BASE}/api/session/${sid}/merge-last-assistant`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ separator: '\n\n*(continued)*\n\n' })
+              api.post(`/api/session/${sid}/merge-last-assistant`, {
+                separator: '\n\n*(continued)*\n\n',
               }).catch(e => console.warn('merge-last-assistant failed:', e));
             }
           }
@@ -2960,7 +2961,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
             // Tell server to mark this message as stopped
             const _sid2 = sessionModule.getCurrentSessionId();
-            if (_sid2) fetch(`${API_BASE}/api/session/${_sid2}/mark-stopped`, { method: 'POST' }).catch(e => console.warn('mark-stopped failed:', e));
+            if (_sid2) api.post(`/api/session/${_sid2}/mark-stopped`).catch(e => console.warn('mark-stopped failed:', e));
 
             if (!holder.querySelector('.msg-footer')) {
               holder.appendChild(createMsgFooter(holder));
@@ -3121,7 +3122,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const _sid = _streamSessionId
           || (window.sessionModule && window.sessionModule.getCurrentSessionId && window.sessionModule.getCurrentSessionId());
         if (_sid) {
-          fetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+          apiFetch(`/api/chat/stop/${encodeURIComponent(_sid)}`, { method: 'POST' }).catch(() => {});
         }
       } catch (_) {}
     }
@@ -3266,16 +3267,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           || holder.querySelector('.msg-header .msg-model')?.textContent
           || '';
       }
-      fetch(`${API_BASE}/api/session/${sid}/inject_messages`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{
-            role: 'assistant',
-            content: '',
-            metadata: { stopped: true, cancelled: true, model: modelName },
-          }],
-        }),
+      api.post(`/api/session/${sid}/inject_messages`, {
+        messages: [{
+          role: 'assistant',
+          content: '',
+          metadata: { stopped: true, cancelled: true, model: modelName },
+        }],
       }).catch(() => {});
     }
   }
@@ -3334,7 +3331,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     let res;
     try {
-      res = await fetch(`${API_BASE}/api/chat/resume/${sessionId}`);
+      res = await apiFetch(`/api/chat/resume/${sessionId}`);
     } catch (e) {
       return false;
     }
@@ -3843,11 +3840,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
       const keepCount = msgIndex;
       try {
-        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keep_count: keepCount })
-        });
+        await api.post(`/api/session/${sessionId}/truncate`, { keep_count: keepCount });
 
         // Remove DOM elements from msgIndex onward
         for (let i = allMsgs.length - 1; i >= msgIndex; i--) {
@@ -3933,11 +3926,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         // Regenerate flows intentionally trim history to this point before
         // resubmitting. The plain "Resend message" action must not do this.
         const keepCount = msgIndex;
-        await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ keep_count: keepCount })
-        });
+        await api.post(`/api/session/${sessionId}/truncate`, { keep_count: keepCount });
 
         // Drop the AI replies after the user message but KEEP the user bubble
         // itself (so its photo stays visible). Then suppress the new user
@@ -4049,11 +4038,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const keepCount = userIndex;
 
     try {
-      await fetch(`${API_BASE}/api/session/${sessionId}/truncate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount })
-      });
+      await api.post(`/api/session/${sessionId}/truncate`, { keep_count: keepCount });
 
       for (let i = allMsgs.length - 1; i > aiIndex; i--) {
         allMsgs[i].remove();
@@ -4107,10 +4092,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // Persist variants to server
     const sid = sessionModule.getCurrentSessionId();
     if (sid) {
-      fetch(`${API_BASE}/api/session/${sid}/update-last-meta`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metadata: { variants: variants, variantIndex: variants.length - 1 } })
+      api.post(`/api/session/${sid}/update-last-meta`, {
+        metadata: { variants: variants, variantIndex: variants.length - 1 },
       }).catch(e => console.warn('update-last-meta (variants) failed:', e));
     }
   }
@@ -4205,10 +4188,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     // Persist selected variant to server
     const sid = sessionModule.getCurrentSessionId();
     if (sid) {
-      fetch(`${API_BASE}/api/session/${sid}/update-last-meta`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ metadata: { variantIndex: newIdx } })
+      api.post(`/api/session/${sid}/update-last-meta`, {
+        metadata: { variantIndex: newIdx },
       }).catch(e => console.warn('update-last-meta (variantIndex) failed:', e));
     }
   }
@@ -4225,13 +4206,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const keepCount = aiIndex + 1;
 
     try {
-      const res = await fetch(`${API_BASE}/api/session/${sessionId}/fork`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keep_count: keepCount }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const res = await api.post(`/api/session/${sessionId}/fork`, { keep_count: keepCount });
+      const data = res.data;
 
       await sessionModule.loadSessions();
       await sessionModule.selectSession(data.id);
@@ -4250,17 +4226,16 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   export async function checkPendingResearch(sessionId) {
     if (!sessionId) return;
     try {
-      const res = await fetch(`${API_BASE}/api/research/status/${sessionId}`);
-      if (!res.ok) return; // 404 = no research for this session
-      const data = await res.json();
+      const res = await api.get(`/api/research/status/${sessionId}`);
+      const data = res.data;
 
       if (data.status === 'done') {
         // Fetch and render the completed result
         _notifyResearchComplete(sessionId, data.query || '');
         if (sessionModule && sessionModule.clearResearching) sessionModule.clearResearching(sessionId);
-        const resultRes = await fetch(`${API_BASE}/api/research/result/${sessionId}`, { method: 'POST' });
-        if (resultRes.ok) {
-          const resultData = await resultRes.json();
+        const resultRes = await api.post(`/api/research/result/${sessionId}`);
+        if (resultRes.status === 200) {
+          const resultData = resultRes.data;
           if (resultData.result) {
             // Skip if history already has a research message for this session
             if (document.querySelector(`#chat-history .msg-ai[data-research-session="${sessionId}"]`)) return;
@@ -4406,16 +4381,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
           return;
         }
         try {
-          const pollRes = await fetch(`${API_BASE}/api/research/status/${sessionId}`);
-          if (!pollRes.ok) {
-            clearInterval(pollInterval);
-            spinner.destroy();
-            _clearResearchTimer();
-            _researchingStreamIds.delete(sessionId);
-            if (sessionModule && sessionModule.clearResearching) sessionModule.clearResearching(sessionId);
-            return;
-          }
-          const pollData = await pollRes.json();
+          const pollRes = await api.get(`/api/research/status/${sessionId}`);
+          const pollData = pollRes.data;
           updateSpinnerFromProgress(pollData.progress);
           if (_researchSynapse && pollData.progress) {
             _researchSynapse.setPhase(pollData.progress.phase, pollData.progress);
@@ -4432,23 +4399,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
             if (pollData.status === 'done') {
               _notifyResearchComplete(sessionId, data.query || '');
-              const rRes = await fetch(`${API_BASE}/api/research/result/${sessionId}`, { method: 'POST' });
-              if (rRes.ok) {
-                const rData = await rRes.json();
-                if (rData.result) {
-                  var srcHtml = '';
-                  if (rData.sources && rData.sources.length > 0) {
-                    srcHtml = _buildSourcesBox(rData.sources, 'research');
-                  }
-                  var findingsHtml = chatRenderer.buildFindingsBox(rData.raw_findings);
-                  bodyDiv.innerHTML = srcHtml + markdownModule.processWithThinking(
-                    markdownModule.squashOutsideCode(rData.result)
-                  ) + findingsHtml;
-                  holder.dataset.raw = rData.result;
-                  _appendViewReportLink(holder, sessionId);
-                  if (window.hljs) {
-                    holder.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
-                  }
+              const rRes = await api.post(`/api/research/result/${sessionId}`);
+              const rData = rRes.data;
+              if (rData.result) {
+                var srcHtml = '';
+                if (rData.sources && rData.sources.length > 0) {
+                  srcHtml = _buildSourcesBox(rData.sources, 'research');
+                }
+                var findingsHtml = chatRenderer.buildFindingsBox(rData.raw_findings);
+                bodyDiv.innerHTML = srcHtml + markdownModule.processWithThinking(
+                  markdownModule.squashOutsideCode(rData.result)
+                ) + findingsHtml;
+                holder.dataset.raw = rData.result;
+                _appendViewReportLink(holder, sessionId);
+                if (window.hljs) {
+                  holder.querySelectorAll('pre code').forEach(b => window.hljs.highlightElement(b));
                 }
               }
             } else {
@@ -4456,6 +4421,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
             }
           }
         } catch (e) {
+          if (e.response?.status === 404) {
+            clearInterval(pollInterval);
+            spinner.destroy();
+            _clearResearchTimer();
+            _researchingStreamIds.delete(sessionId);
+            if (sessionModule && sessionModule.clearResearching) sessionModule.clearResearching(sessionId);
+            return;
+          }
           console.error('Research poll error:', e);
         }
       }, 2000);
@@ -4587,12 +4560,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     }
 
     try {
-      const res = await fetch(`${API_BASE}/api/session/${sessionId}/delete-messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ msg_ids: msgIds })
-      });
-      if (!res.ok) throw new Error('Server error ' + res.status);
+      await api.post(`/api/session/${sessionId}/delete-messages`, { msg_ids: msgIds });
       domToRemove.forEach(el => el.remove());
       if (uiModule) uiModule.showToast('Message deleted');
     } catch (err) {
@@ -4659,12 +4627,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       if (!sessionId) { cleanup(); return; }
 
       try {
-        const res = await fetch(`${API_BASE}/api/session/${sessionId}/edit-message`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ msg_id: msgId, content: newContent }),
+        await api.post(`/api/session/${sessionId}/edit-message`, {
+          msg_id: msgId,
+          content: newContent,
         });
-        if (!res.ok) throw new Error('Server error ' + res.status);
 
         // Re-render body with markdown
         body.innerHTML = markdownModule.processWithThinking(markdownModule.squashOutsideCode(newContent));
@@ -4732,7 +4698,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     const _killRwSpin = () => { if (_rwSpin) { try { _rwSpin.destroy(); } catch (_) {} _rwSpin = null; } };
 
     try {
-      const res = await fetch(`${API_BASE}/api/rewrite`, {
+      const res = await apiFetch('/api/rewrite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -4825,10 +4791,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
         // Persist variant metadata to server
         try {
-          await fetch(`${API_BASE}/api/session/${sessionId}/update-last-meta`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ metadata: { variants: variants, variantIndex: variants.length - 1 } }),
+          await api.post(`/api/session/${sessionId}/update-last-meta`, {
+            metadata: { variants: variants, variantIndex: variants.length - 1 },
           });
         } catch (_) {}
 
@@ -4880,7 +4844,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   async function openAttachment(att, isImage) {
     if (!att || !att.id) return;
     const id = att.id, name = att.name || '', mime = att.mime || '';
-    const url = `${API_BASE}/api/upload/${id}`;
+    const url = apiPath(`/api/upload/${id}`);
 
     // Images → Gallery editor.
     if (isImage) {
@@ -4915,8 +4879,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         const _fd = new FormData();
         _fd.append('name', name || 'Attachment');
         _fd.append('skip_validation', 'true');
-        const r = await fetch(`${API_BASE}/api/session`, { method: 'POST', body: _fd, credentials: 'same-origin' });
-        if (r.ok) { const d = await r.json(); if (d && d.id) { sid = d.id; if (sessionModule.loadSessions) await sessionModule.loadSessions(); } }
+        const r = await api.post('/api/session', _fd);
+        const d = r.data;
+        if (d && d.id) { sid = d.id; if (sessionModule.loadSessions) await sessionModule.loadSessions(); }
       } catch (_) {}
     }
 
@@ -4924,21 +4889,21 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       let doc;
       if (isPdf) {
         // import-pdf wants a fresh file upload — re-fetch the stored blob and post it.
-        const blob = await (await fetch(url)).blob();
+        const blob = await (await apiFetch(url)).blob();
         const fd = new FormData();
         fd.append('file', blob, name || 'document.pdf');
         if (sid) fd.append('session_id', sid);
-        const res = await fetch(`${API_BASE}/api/documents/import-pdf`, { method: 'POST', body: fd, credentials: 'same-origin' });
-        if (!res.ok) throw new Error('import-pdf ' + res.status);
-        doc = await res.json();
+        const res = await api.post('/api/documents/import-pdf', fd);
+        doc = res.data;
       } else {
-        const text = await (await fetch(url)).text();
-        const res = await fetch(`${API_BASE}/api/document`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sid || null, title: name.replace(/\.[^.]+$/, '') || 'Document', content: text, language: _attachLang(name) }),
+        const text = await (await apiFetch(url)).text();
+        const res = await api.post('/api/document', {
+          session_id: sid || null,
+          title: name.replace(/\.[^.]+$/, '') || 'Document',
+          content: text,
+          language: _attachLang(name),
         });
-        if (!res.ok) throw new Error('document ' + res.status);
-        doc = await res.json();
+        doc = res.data;
       }
       if (doc && doc.id) {
         _attachDocCache.set(id, doc.id);
