@@ -1,14 +1,14 @@
 # Podman Quadlet Deployment with Automatic Updating
-This guide provides instuctions on how to setup Odysseus using Podman and systemd for automatic updating.
+This guide provides instructions on how to set up Odysseus using Podman and systemd for automatic updating.
 
 ## Part 0: Pre-setup requirements
-For this setup please make sure 
+For this setup please make sure
 - Linux
 - Podman Desktop
 - git
 - nano
 
-are installed properly. (It migth work with Podman Engine, but I have not tested that)
+are installed properly. (It might work with Podman Engine, but I have not tested that)
 
 ## Part 1: Initial setup
 
@@ -40,7 +40,7 @@ nano .env
 - Use your arrow keys to move down and enter your API keys, then press ```Ctrl+0```, ```Enter``` and ```Ctrl+X``` to save and exit.
 
 # Step 2: Create the Quadlet Container File
-Now we create the folder and file that that tells Podman how to run the Odysseus container. 
+Now we create the folder and file that that tells Podman how to run the Odysseus container.
 
 1. Create the systemd folder for Podman (```-p``` ensures it creates any missing parent folders.)
 ```bash
@@ -68,7 +68,7 @@ WantedBy=default.target
 ```
 
 ## Step 3: Create the Auto-Updater Service
-Next, we create the background service that checks the GitHub for new code. 
+Next, we create the background service that checks the GitHub for new code.
 
 1. Create the user systemd folder
 ```bash
@@ -112,7 +112,7 @@ WantedBy=timers.target
 ```
 
 ## Step 5: Start and Enable Everything
-Finally, we build the inital container and activate the automatic background tasks.
+Finally, we build the initial container and activate the automatic background tasks.
 
 1. Reload systemd so it recognizes all the new files we have created
 ```bash
@@ -135,7 +135,7 @@ systemctl --user start odysseus
 ```
 
 ## Step 6: You're done, time to login!
-If you installed Podman Desktop, you will see the odysseus container up and running and you can visit http://localhost:7000 to use it.
+If you installed Podman Desktop, you will see the odysseus container up and running, and you can visit http://localhost:7000 to use it.
 
 When you visit http://localhost:7000 for the first time the app generates a temporary admin password, it can be found in the background system logs. Run the following to read the logs.
 ```bash
@@ -153,17 +153,17 @@ Closer to the bottom, look for a section that looks like this:
 The password can be reset in Odysseus app settings.
 
 ## Step 7: Enable lingering (Mandatory for headless server, optional otherwise)
-By default, when a user logs out, all of their background processes are killed, including Odysseus. Enableing lingering will bypass this, which is necessary for headless servers (like Fedora server) since one usually only login temporary on those systems.
+By default, when a user logs out, all of their background processes are killed, including Odysseus. Enabling lingering will bypass this, which is necessary for headless servers (like Fedora server) since one usually only login temporary on those systems.
 
-Use 
+Use
 ```bash
 loginctl enable-linger $USER
 ```
-to enable lingering and 
+to enable lingering and
 ```bash
 loginctl user-status $USER
 ```
-to check if lingering is active for your account. 
+to check if lingering is active for your account.
 
 ## Notes
 - You can run the following command to see your active user timers to check if it worked. Look for odysseus-updater.timer.
@@ -176,7 +176,7 @@ systemctl --user list-timers
 systemctl --user start odysseus-updater.service
 ```
 
-To see what the updater script did during its run, you can look at the systemd log history. If new code has been published it should show a ```git pull``` followed by Podman building the new image layers and ending with a message that the odysseus container was restarted. 
+To see what the updater script did during its run, you can look at the systemd log history. If new code has been published it should show a ```git pull``` followed by Podman building the new image layers and ending with a message that the odysseus container was restarted.
 ```bash
 journalctl --user -u odysseus-updater.service
 ```
@@ -194,8 +194,8 @@ systemctl --user restart odysseus
 ```bash
 systemctl --user stop odysseus
 ```
-Use 
+Use
 ```bash
 systemctl --user start odysseus
 ```
-to start the container/service again. 
+to start the container/service again.
