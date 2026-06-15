@@ -15033,6 +15033,28 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 #doclib-modal.doclib-fullscreen .doclib-modal-content {
   transition: none !important;
 }
+@media (max-width: 768px) {
+  body.left-dock-active:not(.email-doc-split-active) .chat-container,
+  body.right-dock-active .chat-container,
+  body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+    margin-left: 0;
+    margin-right: 0;
+  }
+  .modal.modal-right-docked .modal-content,
+  .modal.modal-left-docked .modal-content,
+  .notes-pane.modal-right-docked,
+  .notes-pane.modal-left-docked {
+    left: 0 !important;
+    right: 0 !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+  }
+  .modal.modal-right-docked .modal-content,
+  .modal.modal-left-docked .modal-content {
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+  }
+}
 .modal.modal-right-docked .email-reader-header,
 .modal.modal-left-docked .email-reader-header {
   flex-direction: column;
@@ -21435,6 +21457,64 @@ body.gallery-selecting .gallery-dl-btn,
   .hwfit-preset-model { display: none; }
 }
 
+@container (max-width: 380px) {
+  #cookbook-modal .cookbook-dl-input {
+    flex-wrap: wrap;
+  }
+  #cookbook-modal .cookbook-dl-repo,
+  #cookbook-modal .cookbook-dl-btn {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  #cookbook-modal .cookbook-dl-btn {
+    justify-content: center;
+    width: 100%;
+  }
+  #cookbook-modal .hwfit-toolbar {
+    gap: 6px;
+  }
+  #cookbook-modal .hwfit-toolbar .hwfit-search,
+  #cookbook-modal .hwfit-ctx-control,
+  #cookbook-modal .hwfit-toolbar .hwfit-host,
+  #cookbook-modal .hwfit-env-row .hwfit-envpath {
+    flex: 1 1 100%;
+    min-width: 0;
+    width: 100%;
+  }
+  #cookbook-modal .hwfit-ctx-control input[type="range"] {
+    flex: 1 1 auto;
+    min-width: 64px;
+    width: auto;
+  }
+  #cookbook-modal .hwfit-c-ctx,
+  #cookbook-modal .hwfit-c-speed,
+  #cookbook-modal .hwfit-c-mode {
+    display: none;
+  }
+  #cookbook-modal .hwfit-row,
+  #cookbook-modal .hwfit-header {
+    gap: 4px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  #cookbook-modal .hwfit-fit {
+    width: 44px;
+  }
+  #cookbook-modal .hwfit-c-score {
+    width: 34px;
+  }
+  #cookbook-modal .hwfit-panel-fields {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  #cookbook-modal .hwfit-panel-fields input[type="text"] {
+    width: 100%;
+  }
+  #cookbook-modal .hwfit-preset-model {
+    display: none;
+  }
+}
+
 /* ===== Settings Modal Layout ===== */
 .settings-modal-content {
   width: min(720px, 92vw);
@@ -23508,7 +23588,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   gap: 6px;
 }
 
-@container (max-width: 360px) {
+@container (max-width: 380px) {
   .cookbook-tab:has(svg),
   .memory-tab:has(svg),
   .admin-tab:has(svg),

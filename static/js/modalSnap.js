@@ -22,7 +22,10 @@ const UNSNAP_PX = 80;
 const MIN_CHAT_WIDTH = 380;
 const EMAIL_DOC_SPLIT_WIDTH_KEY = 'odysseus-email-doc-split-width';
 const EDGE_DOCK_WIDTH_KEY_PREFIX = 'odysseus-edge-dock-width';
-const MIN_EDGE_DOCK_WIDTH = 320;
+// 360 CSS px is the common Android phone layout width. Keep docked panels
+// usable down to that point, then let the mobile/full-width rules take over.
+const MIN_EDGE_DOCK_WIDTH = 360;
+const MOBILE_DOCK_BREAKPOINT = 768;
 
 let _edgeDockHandlePositioner = null;
 let _edgeDockHandlePositionRaf = 0;
@@ -106,8 +109,13 @@ function _saveDockWidth(modal, content, side, width) {
   try { localStorage.setItem(key, String(Math.round(width))); } catch (_) {}
 }
 
-function _minEdgeDockWidth() {
-  return window.innerWidth < 900 ? 280 : MIN_EDGE_DOCK_WIDTH;
+function _compactDockViewport() {
+  return window.innerWidth <= MOBILE_DOCK_BREAKPOINT;
+}
+
+function _minEdgeDockWidth(available = window.innerWidth) {
+  const usable = Math.max(0, Math.round(available));
+  return usable > 0 ? Math.min(MIN_EDGE_DOCK_WIDTH, usable) : MIN_EDGE_DOCK_WIDTH;
 }
 
 function _activeDockWidth(side) {
@@ -121,12 +129,16 @@ function _activeDockWidth(side) {
 }
 
 function _clampDockWidthToSpace(width, min, max) {
-  const floor = Math.min(min, Math.max(220, Math.round(max)));
+  const floor = Math.max(0, Math.round(min));
   const ceiling = Math.max(floor, Math.round(max));
   return Math.min(ceiling, Math.max(floor, Math.round(width)));
 }
 
 function _clampRightDockWidth(width) {
+  if (_compactDockViewport()) {
+    const max = window.innerWidth;
+    return _clampDockWidthToSpace(width, _minEdgeDockWidth(max), max);
+  }
   const min = _minEdgeDockWidth();
   const navRight = _leftNavRight();
   const leftDockW = _activeDockWidth('left');
@@ -136,15 +148,20 @@ function _clampRightDockWidth(width) {
 }
 
 function _clampLeftDockWidth(width, left = _leftNavRight()) {
-  const min = _minEdgeDockWidth();
   const rightDockW = _activeDockWidth('right');
   const available = Math.max(0, window.innerWidth - left - rightDockW);
+  const min = _minEdgeDockWidth(available);
+  if (_compactDockViewport()) return _clampDockWidthToSpace(width, min, available);
   const max = Math.min(Math.round(available * 0.82), available - MIN_CHAT_WIDTH);
   return _clampDockWidthToSpace(width, min, max);
 }
 
+function _preferredRightDockWidth(modal, content) {
+  return content?._userDockWidth || _storedDockWidth(modal, content, 'right') || _defaultDockWidth();
+}
+
 function _resolveRightDockWidth(modal, content) {
-  return _clampRightDockWidth(content?._userDockWidth || _storedDockWidth(modal, content, 'right') || _defaultDockWidth());
+  return _clampRightDockWidth(_preferredRightDockWidth(modal, content));
 }
 
 function _resolveLeftDockWidth(content, left = _leftNavRight()) {
@@ -556,16 +573,28 @@ function _applyDockInternal(modal, side, dockClass) {
       };
     }
   } else {
-    w = _resolveRightDockWidth(modal, content);
+    const requestedW = _preferredRightDockWidth(modal, content);
+    if (!_compactDockViewport() && _shouldAutoCollapseSidebar(Math.max(requestedW, MIN_EDGE_DOCK_WIDTH))) {
+      _collapseSidebarToRail();
+      content._preDockSnapshot.collapsedSidebar = true;
+    }
+    w = _clampRightDockWidth(requestedW);
     content.style.left = 'auto';
     content.style.right = '0';
     content.style.width = w + 'px';
     content.style.maxWidth = w + 'px';
     document.body.classList.add('right-dock-active');
     document.documentElement.style.setProperty('--right-dock-w', w + 'px');
-    if (_shouldAutoCollapseSidebar(w)) {
+    if (!_compactDockViewport() && _shouldAutoCollapseSidebar(w)) {
       _collapseSidebarToRail();
       content._preDockSnapshot.collapsedSidebar = true;
+      const recalculatedW = _clampRightDockWidth(requestedW);
+      if (recalculatedW !== w) {
+        w = recalculatedW;
+        content.style.width = w + 'px';
+        content.style.maxWidth = w + 'px';
+        document.documentElement.style.setProperty('--right-dock-w', w + 'px');
+      }
     }
   }
   content._dockSide = side;
@@ -914,7 +943,12 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     if (!content) return 0;
     let w = 0;
     if (side === 'right') {
-      w = _clampRightDockWidth(window.innerWidth - clientX);
+      const requestedW = window.innerWidth - clientX;
+      if (!_compactDockViewport() && _shouldAutoCollapseSidebar(Math.max(requestedW, MIN_EDGE_DOCK_WIDTH))) {
+        _collapseSidebarToRail();
+        if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
+      }
+      w = _clampRightDockWidth(requestedW);
       content._userDockWidth = w;
       content.style.left = 'auto';
       content.style.right = '0';
@@ -922,9 +956,17 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       content.style.maxWidth = w + 'px';
       document.body.classList.add('right-dock-active');
       document.documentElement.style.setProperty('--right-dock-w', w + 'px');
-      if (_shouldAutoCollapseSidebar(w)) {
+      if (!_compactDockViewport() && _shouldAutoCollapseSidebar(w)) {
         _collapseSidebarToRail();
         if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
+        const recalculatedW = _clampRightDockWidth(requestedW);
+        if (recalculatedW !== w) {
+          w = recalculatedW;
+          content._userDockWidth = w;
+          content.style.width = w + 'px';
+          content.style.maxWidth = w + 'px';
+          document.documentElement.style.setProperty('--right-dock-w', w + 'px');
+        }
       }
     } else {
       const left = _leftNavRight();

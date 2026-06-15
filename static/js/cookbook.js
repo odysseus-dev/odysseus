@@ -2191,9 +2191,12 @@ export async function open(opts) {
   modal.classList.remove('hidden');
   if (_content) {
     void _content.offsetWidth;
-    _content.addEventListener('animationend', () => {
+    const finishEnter = () => {
+      _content.removeEventListener('animationend', finishEnter);
       _content.classList.remove('cookbook-modal-entering');
-    }, { once: true });
+    };
+    _content.addEventListener('animationend', finishEnter);
+    setTimeout(finishEnter, window.innerWidth <= 768 ? 420 : 360);
   }
   setTimeout(_applyIntent, 0);
   } finally {
