@@ -75,6 +75,12 @@ def _lookup_apple_bandwidth(system):
     if not isinstance(gpu_name, str) or not gpu_name:
         return None
     gn = gpu_name.lower()
+
+    # Guard against false matches on non-Apple GPUs whose names contain
+    # "m3"/"m4"/"m5" (e.g. NVIDIA Quadro M4 000).
+    if "apple" not in gn:
+        return None
+
     raw_cores = system.get("gpu_cores")
     try:
         gpu_cores = int(raw_cores) if raw_cores is not None else None

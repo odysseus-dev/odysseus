@@ -25,3 +25,16 @@ def test_apple_max_bandwidth_falls_back_conservatively_without_gpu_cores():
 def test_fixed_apple_bandwidth_entries_include_updated_m5_values():
     assert _lookup_bandwidth({"gpu_name": "Apple M5 Pro"}) == 307
     assert _lookup_bandwidth({"gpu_name": "Apple M5"}) == 153
+
+
+def test_non_apple_gpu_does_not_match_apple_bandwidth():
+    """NVIDIA Quadro M4 000 should NOT match Apple bandwidth lookup."""
+    assert _lookup_bandwidth({"gpu_name": "NVIDIA Quadro M4 000"}) is None
+    assert _lookup_bandwidth({"gpu_name": "NVIDIA Quadro M3 000"}) is None
+    assert _lookup_bandwidth({"gpu_name": "NVIDIA Quadro M5 000"}) is None
+
+
+def test_non_apple_gpu_with_cores_does_not_match():
+    """NVIDIA GPU with core count should not match Apple bandwidth."""
+    assert _lookup_bandwidth({"gpu_name": "NVIDIA GeForce RTX 4090", "gpu_cores": 128}) is None
+    assert _lookup_bandwidth({"gpu_name": "AMD Radeon RX 9070 XT", "gpu_cores": 64}) is None
