@@ -3352,17 +3352,23 @@ body.bg-pattern-sparkles {
     .ctx-detail-popup--expanded {
       min-width: 280px;
       max-width: 360px;
-      /* Category hues mixed with --fg so swatches/bars stay legible on any theme */
-      --ctx-cat-system_prompt: color-mix(in srgb, hsl(210 52% 58%) 62%, var(--fg));
-      --ctx-cat-tool_definitions: color-mix(in srgb, hsl(42 52% 58%) 62%, var(--fg));
-      --ctx-cat-rules: color-mix(in srgb, hsl(270 42% 62%) 62%, var(--fg));
-      --ctx-cat-skills: color-mix(in srgb, hsl(145 45% 55%) 62%, var(--fg));
-      --ctx-cat-mcp: color-mix(in srgb, hsl(330 48% 58%) 62%, var(--fg));
-      --ctx-cat-memory: color-mix(in srgb, hsl(180 42% 55%) 62%, var(--fg));
-      --ctx-cat-documents: color-mix(in srgb, hsl(85 40% 55%) 62%, var(--fg));
-      --ctx-cat-web: color-mix(in srgb, hsl(205 50% 55%) 62%, var(--fg));
-      --ctx-cat-summarized_conversation: color-mix(in srgb, hsl(32 45% 58%) 62%, var(--fg));
-      --ctx-cat-conversation: color-mix(in srgb, var(--fg) 45%, var(--border));
+      /*
+       * Category colors: high-chroma hues with a light fg anchor only for
+       * contrast. Mixing heavily with --fg collapsed every bucket toward grey
+       * on custom themes; conversation also matched the empty bar track.
+       * Hues are spaced ~30–40° apart on the wheel for legibility in both
+       * the segmented bar and the swatch key.
+       */
+      --ctx-cat-system_prompt: color-mix(in srgb, hsl(212 78% 52%) 78%, var(--fg));
+      --ctx-cat-tool_definitions: color-mix(in srgb, hsl(36 82% 50%) 78%, var(--fg));
+      --ctx-cat-rules: color-mix(in srgb, hsl(278 72% 58%) 78%, var(--fg));
+      --ctx-cat-skills: color-mix(in srgb, hsl(142 70% 46%) 78%, var(--fg));
+      --ctx-cat-mcp: color-mix(in srgb, hsl(328 76% 54%) 78%, var(--fg));
+      --ctx-cat-memory: color-mix(in srgb, hsl(172 68% 44%) 78%, var(--fg));
+      --ctx-cat-documents: color-mix(in srgb, hsl(88 62% 46%) 78%, var(--fg));
+      --ctx-cat-web: color-mix(in srgb, hsl(192 74% 46%) 78%, var(--fg));
+      --ctx-cat-summarized_conversation: color-mix(in srgb, hsl(24 78% 52%) 78%, var(--fg));
+      --ctx-cat-conversation: color-mix(in srgb, hsl(252 62% 58%) 78%, var(--fg));
     }
     .ctx-popup-header {
       display: flex;
@@ -3419,16 +3425,19 @@ body.bg-pattern-sparkles {
       display: flex;
       width: 100%;
       height: 8px;
-      background: color-mix(in srgb, var(--border) 70%, var(--fg));
+      /* Unused window — neutral track only; do not mix --fg or it matches segments */
+      background: color-mix(in srgb, var(--border) 88%, var(--bg));
+      border: 1px solid color-mix(in srgb, var(--border) 65%, var(--fg));
       border-radius: 4px;
       overflow: hidden;
       margin-bottom: 10px;
+      box-sizing: border-box;
     }
     .ctx-segment {
       height: 100%;
       background: var(--cat-color, var(--color-muted));
       min-width: 2px;
-      opacity: 0.92;
+      box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--fg) 12%, transparent);
     }
     .ctx-cat-list {
       display: flex;
@@ -3448,7 +3457,7 @@ body.bg-pattern-sparkles {
       border-radius: 2px;
       flex-shrink: 0;
       background: var(--cat-color, var(--color-muted));
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 18%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 22%, transparent);
     }
     .ctx-cat-label {
       flex: 1;
