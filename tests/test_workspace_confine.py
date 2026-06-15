@@ -223,6 +223,78 @@ def test_low_signal_without_workspace_excludes_file_tools(monkeypatch):
     assert "get_workspace" not in names
 
 
+def test_disable_low_signal_gate_env_triggers_retrieval(monkeypatch):
+    """ODYSSEUS_DISABLE_LOW_SIGNAL_TOOL_SKIP=1 must bypass the low-signal
+    short-circuit so full RAG retrieval runs even on short/vague messages.
+
+    The test patches get_tool_index to return a fake index whose
+    get_tools_for_query is recorded. Without the env var the fake is never
+    called (the gate exits early). With the env var set the gate is skipped
+    and the fake runs, proving retrieval was attempted.
+    """
+    import asyncio
+    import src.agent_loop as al
+    from src.tool_index import ALWAYS_AVAILABLE
+
+    monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
+    monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
+    monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
+
+    retrieval_calls = []
+
+    class _FakeIndex:
+        healthy = True
+
+        def get_tools_for_query(self, query, k=8, always_include=None):
+            retrieval_calls.append(query)
+            return set(ALWAYS_AVAILABLE) | {"web_search"}
+
+    monkeypatch.setenv("ODYSSEUS_DISABLE_LOW_SIGNAL_TOOL_SKIP", "1")
+    # Patch get_tool_index *inside* agent_loop's namespace so the import
+    # inside stream_agent_loop picks up the fake.
+    monkeypatch.setattr(
+        al,
+        "_build_retrieval_tools",
+        None,  # placeholder; actual patch is via get_tool_index below
+        raising=False,
+    )
+
+    import src.tool_index as ti
+    monkeypatch.setattr(ti, "get_tool_index", lambda: _FakeIndex(), raising=False)
+
+    captured = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        captured.append(kwargs.get("tools"))
+        yield "data: " + json.dumps({"delta": "ok"}) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    async def _run():
+        gen = al.stream_agent_loop(
+            "https://api.openai.com/v1", "gpt-test",
+            [{"role": "user", "content": "ok"}],  # deliberately short / low-signal
+            max_rounds=1, relevant_tools=None, owner="admin", workspace=None,
+        )
+        return [c async for c in gen]
+
+    asyncio.run(_run())
+
+    # Retrieval must have been attempted (gate was bypassed).
+    assert retrieval_calls, (
+        "get_tools_for_query was never called; the low-signal gate was not bypassed "
+        "despite ODYSSEUS_DISABLE_LOW_SIGNAL_TOOL_SKIP=1"
+    )
+    # web_search (returned by the fake) must appear in the sent tool set.
+    schemas = captured[0] or []
+    sent_names = {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
+    assert "web_search" in sent_names, (
+        f"Expected web_search in sent tools (from fake retrieval) but got: {sorted(sent_names)}"
+    )
+
+
 # ── browse route is admin-gated ─────────────────────────────────────────
 
 def test_browse_is_admin_gated(monkeypatch):

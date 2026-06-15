@@ -1799,7 +1799,11 @@ async def stream_agent_loop(
     _t1 = time.time()
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
-    if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
+    import os as _os
+    _disable_low_signal_gate = _os.environ.get(
+        "ODYSSEUS_DISABLE_LOW_SIGNAL_TOOL_SKIP", ""
+    ).lower() in {"1", "true", "yes"}
+    if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")) and not _disable_low_signal_gate:
         from src.tool_index import ALWAYS_AVAILABLE
         _relevant_tools = set(ALWAYS_AVAILABLE)
         if workspace:
@@ -1813,6 +1817,8 @@ async def stream_agent_loop(
             logger.info("[tool-rag] Low-signal but workspace active; including read-only file tools")
         else:
             logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
+    elif not guide_only and not _relevant_tools and bool(_intent.get("low_signal")) and _disable_low_signal_gate:
+        logger.info("[tool-rag] Low-signal gate disabled by ODYSSEUS_DISABLE_LOW_SIGNAL_TOOL_SKIP; proceeding to full retrieval")
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
