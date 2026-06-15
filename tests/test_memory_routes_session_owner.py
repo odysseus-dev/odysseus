@@ -8,6 +8,8 @@ credentials, or session title.
 """
 import asyncio
 import io
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -79,6 +81,78 @@ def test_owner_can_access_own_session(monkeypatch):
     gbs = _route(router, "/api/memory/by-session/{session_id}", "GET")
     out = gbs(request=None, session_id="alice-sess")
     assert out["session_name"] == "Secret project"
+
+
+def test_audit_session_fallback_uses_resolver_without_manual_default(monkeypatch):
+    import src.task_endpoint as task_endpoint
+
+    memory_manager = MagicMock()
+    memory_vector = MagicMock()
+    session_headers = {"Authorization": "Bearer session"}
+    session_manager = MagicMock()
+    session_manager.get_session.return_value = SimpleNamespace(
+        owner="alice",
+        endpoint_url="http://session.example/v1/chat/completions",
+        model="session-model",
+        headers=session_headers,
+    )
+    router = mr.setup_memory_routes(memory_manager, session_manager, memory_vector)
+    audit_route = _route(router, "/api/memory/audit", "POST")
+
+    resolver_calls = []
+    audit_calls = []
+
+    def fake_resolve_task_endpoint(
+        fallback_url=None,
+        fallback_model=None,
+        fallback_headers=None,
+        owner=None,
+    ):
+        resolver_calls.append((fallback_url, fallback_model, fallback_headers, owner))
+        if fallback_url and fallback_model:
+            return fallback_url, fallback_model, fallback_headers
+        return None, None, {}
+
+    async def fake_audit_memories(memory_manager_arg, memory_vector_arg, endpoint_url, model, headers, owner=None):
+        audit_calls.append((memory_manager_arg, memory_vector_arg, endpoint_url, model, headers, owner))
+        return {"before": 2, "after": 1}
+
+    fake_model_routes = types.ModuleType("routes.model_routes")
+    fake_model_routes._load_settings = lambda: {
+        "default_endpoint_id": "default",
+        "default_model": "default-model",
+    }
+    fake_model_routes._normalize_base = lambda base: base.rstrip("/")
+    fake_model_routes.build_chat_url = lambda base: f"{base}/chat/completions"
+
+    monkeypatch.setattr(mr, "resolve_task_endpoint", fake_resolve_task_endpoint)
+    monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", fake_resolve_task_endpoint)
+    monkeypatch.setattr(mr, "audit_memories", fake_audit_memories)
+    monkeypatch.setitem(sys.modules, "routes.model_routes", fake_model_routes)
+    monkeypatch.setattr(
+        mr,
+        "SessionLocal",
+        lambda: (_ for _ in ()).throw(AssertionError("manual default branch should not run")),
+    )
+
+    out = asyncio.run(audit_route(request=_request("alice"), session="session-1"))
+
+    assert resolver_calls == [(
+        "http://session.example/v1/chat/completions",
+        "session-model",
+        session_headers,
+        "alice",
+    )]
+    assert audit_calls == [(
+        memory_manager,
+        memory_vector,
+        "http://session.example/v1/chat/completions",
+        "session-model",
+        session_headers,
+        "alice",
+    )]
+    assert out["ok"] is True
+    assert out["removed"] == 1
 
 
 def test_add_memory_rejects_other_users_session(monkeypatch):
