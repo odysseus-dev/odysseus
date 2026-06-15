@@ -749,7 +749,7 @@ async def _execute_tool_block_impl(
         desc = f"search_chats: {query[:80]}"
         result = await do_search_chats(query, owner=owner)
     elif tool in ("chat_with_model", "create_session", "list_sessions",
-                  "send_to_session", "pipeline",
+                  "send_to_session", "pipeline", "spawn_agents",
                   "manage_session", "manage_memory", "list_models",
                   "ui_control", "ask_teacher"):
         from src.ai_interaction import dispatch_ai_tool

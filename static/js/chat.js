@@ -800,6 +800,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       const _autoChk = el('auto-toggle');
       const _autoOn = !!(_autoChk && _autoChk.checked);
       if (_autoOn) isAgentMode = true;
+      // Parallel mode: enables the spawn_agents tool — also needs agent mode.
+      const _parChk = el('parallel-toggle');
+      const _parOn = !!(_parChk && _parChk.checked);
+      if (_parOn) isAgentMode = true;
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
       if (el('web-toggle').checked) {
         if (isAgentMode) {
@@ -819,6 +823,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       // Auto mode flag — skip when research forced chat mode (mutually exclusive).
       if (_autoOn && !el('research-toggle').checked) {
         fd.append('auto', 'true');
+      }
+      // Parallel mode flag — same chat-mode exclusivity as auto.
+      if (_parOn && !el('research-toggle').checked) {
+        fd.append('parallel', 'true');
       }
       const ragChk = el('rag-toggle');
       if (ragChk && !ragChk.checked) {

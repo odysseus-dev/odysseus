@@ -481,6 +481,12 @@ def setup_chat_routes(
         auto_mode = str(
             form_data.get("auto") or (body or {}).get("auto") or ""
         ).lower() == "true"
+        # Parallel mode: make the spawn_agents tool available so the agent can
+        # fan out independent work across several concurrent autonomous agents.
+        # Off by default — disabled below so it never fires unprompted.
+        parallel_mode = str(
+            form_data.get("parallel") or (body or {}).get("parallel") or ""
+        ).lower() == "true"
         # Issue #3229: API callers send JSON, not FormData.  Read from the
         # JSON body as fallback so callers who send {"allow_bash": true}
         # actually get bash enabled.
@@ -537,6 +543,12 @@ def setup_chat_routes(
             user_requested_agent = True
             auto_escalated = False  # not a light promotion — full tools wanted
             logger.info("auto mode: full autonomous agent loop")
+        # Parallel mode needs the full agent loop (it spawns child agent loops).
+        if parallel_mode:
+            chat_mode = "agent"
+            user_requested_agent = True
+            auto_escalated = False
+            logger.info("parallel mode: spawn_agents enabled")
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
@@ -789,6 +801,12 @@ def setup_chat_routes(
         if plan_mode:
             from src.tool_security import plan_mode_disabled_tools
             disabled_tools.update(plan_mode_disabled_tools())
+
+        # spawn_agents is base-available (ALWAYS_AVAILABLE) so the Parallel toggle
+        # can surface it deterministically; keep it disabled unless the toggle is
+        # on, so ordinary turns never fan out unprompted.
+        if not parallel_mode:
+            disabled_tools.add("spawn_agents")
 
         # Auto mode pauses for nothing: drop ask_user so the agent can't stall
         # waiting on a button, and ignore guide-only phrasing (the user asked for

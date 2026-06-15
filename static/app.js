@@ -1700,13 +1700,13 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
-  // Auto mode toggle: autonomous agent. Opt-in power switch — defaults OFF and
-  // is NOT per-mode (a single global flag), unlike the tool toggles above.
-  (function setupAutoToggle() {
-    const btn = el('auto-toggle-btn');
-    const chk = el('auto-toggle');
+  // Power-mode toggles (Auto, Parallel): opt-in switches — default OFF and NOT
+  // per-mode (single global flags), unlike the tool toggles above.
+  function setupGlobalToggle(btnId, checkboxId, stateKey, onLabel) {
+    const btn = el(btnId);
+    const chk = el(checkboxId);
     if (!btn || !chk) return;
-    const saved = !!loadToggleState().auto;
+    const saved = !!loadToggleState()[stateKey];
     chk.checked = saved;
     btn.classList.toggle('active', saved);
     btn.setAttribute('aria-pressed', String(saved));
@@ -1714,12 +1714,14 @@ function initializeEventListeners() {
       chk.checked = !chk.checked;
       btn.classList.toggle('active', chk.checked);
       btn.setAttribute('aria-pressed', String(chk.checked));
-      const st = loadToggleState(); st.auto = chk.checked; saveToggleState(st);
+      const st = loadToggleState(); st[stateKey] = chk.checked; saveToggleState(st);
       if (uiModule?.showToast) {
-        uiModule.showToast('Auto mode ' + (chk.checked ? 'on — autonomous agent' : 'off'), 1800);
+        uiModule.showToast((chk.checked ? onLabel + ' on' : onLabel + ' off'), 1800);
       }
     });
-  })();
+  }
+  setupGlobalToggle('auto-toggle-btn', 'auto-toggle', 'auto', 'Auto mode — autonomous agent');
+  setupGlobalToggle('parallel-toggle-btn', 'parallel-toggle', 'parallel', 'Parallel mode — concurrent agents');
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)

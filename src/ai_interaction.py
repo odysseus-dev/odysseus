@@ -22,6 +22,18 @@ AI_CHAT_TIMEOUT = 120  # seconds for a single LLM call
 MAX_DEBATE_ROUNDS = 5
 MAX_PIPELINE_STEPS = 10
 
+# Parallel autonomous agents (spawn_agents tool)
+MAX_PARALLEL_AGENTS = 5         # hard cap on concurrent child agent loops
+PARALLEL_AGENT_MAX_ROUNDS = 12  # per-child round budget (keeps fan-out bounded)
+PARALLEL_AGENT_TIMEOUT = 900    # seconds for the whole fan-out
+# Tools children must never touch: document editing races on process-global
+# active-doc state, and a child must not recursively fan out or pause for input.
+_CHILD_DISABLED_TOOLS = frozenset({
+    "create_document", "update_document", "edit_document",
+    "suggest_document", "manage_documents",
+    "spawn_agents", "ask_user",
+})
+
 # ---------------------------------------------------------------------------
 # Global managers (set from app.py, same pattern as _mcp_manager)
 # _session_manager is kept as a local cache for performance (avoiding
@@ -709,6 +721,116 @@ async def do_pipeline(content: str, session_id: Optional[str] = None, owner: Opt
     except Exception as e:
         logger.error(f"pipeline failed at step {len(step_outputs) + 1}: {e}")
         return {"error": f"Pipeline failed at step {len(step_outputs) + 1}: {e}"}
+
+
+async def _drain_agent_stream(stream) -> str:
+    """Run a child agent loop to completion, returning its final text output.
+
+    Mirrors the chat route's delta-collection: accumulate non-thinking `delta`
+    chunks from the SSE stream and drop the event envelope.
+    """
+    parts = []
+    async for chunk in stream:
+        if not chunk.startswith("data: ") or chunk.startswith("data: [DONE]"):
+            continue
+        try:
+            data = json.loads(chunk[6:])
+        except json.JSONDecodeError:
+            continue
+        if "delta" in data and not data.get("thinking"):
+            parts.append(data["delta"])
+    return "".join(parts).strip()
+
+
+async def do_spawn_agents(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Fan out N autonomous agent loops that run concurrently on independent tasks.
+
+    Content format (JSON):  {"tasks": ["do X", "do Y", "do Z"]}
+    Or one task per line.
+
+    Each task runs its own full agent loop (with tools) in parallel, inheriting
+    the parent session's model/endpoint/headers. Children run with a unique
+    synthetic session id so they never alias the parent's run registry; document
+    tools are disabled (process-global active-doc state would race) and children
+    can't recursively spawn or pause for input. Results are aggregated and
+    returned to the calling agent, which summarizes them for the user.
+    """
+    import asyncio
+    from src.agent_loop import stream_agent_loop
+    from src.tool_policy import build_effective_tool_policy
+
+    if not _session_manager:
+        return {"error": "Session manager not available"}
+    sess = _session_manager.get_session(session_id) if session_id else None
+    if not sess:
+        return {"error": "spawn_agents must run inside an agent session"}
+
+    # Parse tasks: JSON {"tasks": [...]} / a bare JSON list / one task per line.
+    tasks = None
+    try:
+        data = json.loads(content.strip())
+        if isinstance(data, dict) and "tasks" in data:
+            tasks = data["tasks"]
+        elif isinstance(data, list):
+            tasks = data
+    except (json.JSONDecodeError, TypeError):
+        pass
+    if not tasks:
+        tasks = content.strip().split("\n")
+    tasks = [str(t).strip() for t in (tasks or []) if str(t).strip()]
+    if not tasks:
+        return {"error": 'No tasks provided (give JSON {"tasks": [...]} or one task per line)'}
+    if len(tasks) > MAX_PARALLEL_AGENTS:
+        return {"error": f"Maximum {MAX_PARALLEL_AGENTS} parallel agents allowed (got {len(tasks)})"}
+
+    url = sess.endpoint_url
+    model = sess.model
+    headers = getattr(sess, "headers", None)
+    disabled = set(_CHILD_DISABLED_TOOLS)
+    child_policy = build_effective_tool_policy(disabled_tools=disabled, last_user_message="")
+
+    async def _run_branch(i: int, task: str) -> Dict:
+        try:
+            stream = stream_agent_loop(
+                url, model,
+                [{"role": "user", "content": task}],
+                headers=headers,
+                max_rounds=PARALLEL_AGENT_MAX_ROUNDS,
+                max_tool_calls=0,
+                session_id=f"{session_id}::branch{i}",
+                disabled_tools=disabled,
+                tool_policy=child_policy,
+                owner=owner,
+            )
+            out = await _drain_agent_stream(stream)
+            return {"task": task, "output": out[:6000], "error": None}
+        except Exception as e:  # one branch failing must not poison the rest
+            logger.error(f"spawn_agents branch {i} failed: {e}")
+            return {"task": task, "output": "", "error": str(e)}
+
+    coros = [_run_branch(i, t) for i, t in enumerate(tasks)]
+    try:
+        branches = await asyncio.wait_for(
+            asyncio.gather(*coros), timeout=PARALLEL_AGENT_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        return {"error": f"Parallel agents timed out after {PARALLEL_AGENT_TIMEOUT}s"}
+
+    ok = sum(1 for b in branches if not b["error"])
+    lines = [f"# Parallel agents ({ok}/{len(branches)} succeeded)\n"]
+    for i, b in enumerate(branches):
+        lines.append(f"## Agent {i + 1}: {b['task'][:80]}")
+        if b["error"]:
+            lines.append(f"*Failed: {b['error']}*\n")
+        else:
+            lines.append((b["output"] or "(no output)") + "\n")
+        lines.append("\n---\n")
+    return {
+        "results": "\n".join(lines),
+        "branches": branches,
+        "count": len(branches),
+        "succeeded": ok,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1812,6 +1934,10 @@ async def dispatch_ai_tool(
     elif tool == "pipeline":
         desc = "pipeline: running steps"
         result = await do_pipeline(content, session_id, owner=owner)
+
+    elif tool == "spawn_agents":
+        desc = "spawn_agents: running parallel agents"
+        result = await do_spawn_agents(content, session_id, owner=owner)
 
     elif tool == "manage_session":
         action = content.split("\n")[0].strip()[:40]

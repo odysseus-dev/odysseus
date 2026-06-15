@@ -42,6 +42,10 @@ ALWAYS_AVAILABLE = frozenset({
     "ask_user",
     # Write back to the active plan (tick steps done / revise) during execution.
     "update_plan",
+    # Parallel autonomous agents. Base-available so the Parallel toggle can
+    # surface it deterministically; the chat route disables it again whenever
+    # the toggle is OFF, so it never reaches the model in ordinary turns.
+    "spawn_agents",
 })
 
 # Tools that the Personal Assistant always has access to during scheduled
@@ -86,6 +90,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "chat_with_model": "Send a message to a different AI model. Compare responses, get specialized help, delegate tasks.",
     "ask_teacher": "Ask a more capable model for help with a difficult problem. Escalate complex tasks.",
     "pipeline": "Run a multi-step AI pipeline with multiple models. Chain tasks together in sequence.",
+    "spawn_agents": "Run up to 5 autonomous agents in parallel on independent tasks. Fan out, delegate, parallelize work; each agent has its own tools and runs to completion.",
     "list_models": "List all available AI models and their endpoints.",
     "manage_session": "Chat management: rename, archive, delete, or fork chats (the UI calls these 'chats'; internally 'sessions'). Use for 'rename my chats', 'rename this chat', 'archive/delete a chat'.",
     "manage_memory": "Memory management: list, add, edit, delete, or search persistent memories.",

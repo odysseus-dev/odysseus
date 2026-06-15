@@ -363,6 +363,24 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "spawn_agents",
+            "description": "Run up to 5 autonomous agents IN PARALLEL on independent tasks. Each gets its own full agent loop with tools (shell, web, files) and inherits the current model. Use it to fan out genuinely independent work (e.g. 'research A', 'research B', 'research C') and get all results at once. Each agent runs to completion; you then summarize their combined output. Do NOT use it for steps that depend on each other (use pipeline for that). Document-editing tools are unavailable to the parallel agents.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tasks": {
+                        "type": "array",
+                        "description": "Independent tasks, one per agent (max 5). Each is a complete, self-contained instruction.",
+                        "items": {"type": "string"}
+                    }
+                },
+                "required": ["tasks"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "manage_session",
             "description": "Manage a chat: rename, archive, unarchive, delete, mark important, truncate history, or fork it. (The UI calls these 'chats'; 'session' is the internal term.) For destructive actions like delete, call list_sessions first and pass the exact id returned there; never invent ids.",
             "parameters": {
@@ -1305,6 +1323,9 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
     elif tool_type == "pipeline":
         # Pass as JSON for the pipeline parser
         content = json.dumps({"steps": args.get("steps", [])})
+    elif tool_type == "spawn_agents":
+        # Pass as JSON for the spawn_agents parser
+        content = json.dumps({"tasks": args.get("tasks", [])})
     elif tool_type == "manage_session":
         action = args.get("action", "")
         value = args.get("value", "")
