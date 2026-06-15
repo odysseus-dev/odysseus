@@ -112,17 +112,20 @@ class TestPayload:
         )
         assert p["system"][0]["text"] == _IDENTITY
 
-    def test_oauth_reframe_block_after_identity(self):
+    def test_oauth_guidance_block_after_identity(self):
         p = llm_core._build_anthropic_payload(
             "claude-opus-4-8", [{"role": "user", "content": "hi"}], 0.0, 16, oauth=True
         )
-        assert "claude.ai" in p["system"][1]["text"]
+        guidance = p["system"][1]["text"].lower()
+        # Empowering, not restrictive: keeps tool/agent powers, no refusals.
+        assert "tools" in guidance and "never refuse" in guidance
+        assert "not a terminal" not in guidance
 
-    def test_oauth_keeps_user_system_after_identity_and_reframe(self):
+    def test_oauth_keeps_user_system_after_identity_and_guidance(self):
         msgs = [{"role": "system", "content": "You are a pirate."}, {"role": "user", "content": "hi"}]
         p = llm_core._build_anthropic_payload("claude-opus-4-8", msgs, 0.0, 16, oauth=True)
         assert p["system"][0]["text"] == _IDENTITY            # identity first
-        assert "claude.ai" in p["system"][1]["text"]          # reframe second
+        assert "Claude Code" in p["system"][1]["text"]        # guidance second
         assert p["system"][2]["text"] == "You are a pirate."  # user system last
 
     def test_non_oauth_has_no_identity(self):
