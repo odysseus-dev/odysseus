@@ -2490,33 +2490,12 @@ async function _showCalSettings() {
   `;
   document.body.appendChild(overlay);
 
-  // Make Calendar Settings panel draggable (created dynamically, missed by app.js drag init)
-  const _dragContent = overlay.querySelector('.modal-content');
-  const _dragHeader  = overlay.querySelector('.modal-header');
-  let _dx, _dy, _sl, _st, _dragging = false;
-  _dragHeader.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.close-btn')) return;
-    e.preventDefault();
-    _dragging = true;
-    const r = _dragContent.getBoundingClientRect();
-    _dx = e.clientX; _dy = e.clientY; _sl = r.left; _st = r.top;
-    _dragContent.style.position = 'fixed';
-    _dragContent.style.left = _sl + 'px';
-    _dragContent.style.top  = _st + 'px';
-    _dragContent.style.margin = '0';
-    const onMove = (e) => {
-      if (!_dragging) return;
-      _dragContent.style.left = (_sl + e.clientX - _dx) + 'px';
-      _dragContent.style.top  = (_st + e.clientY - _dy) + 'px';
-    };
-    const onUp = () => {
-      _dragging = false;
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
+  // Make Calendar Settings panel draggable using the shared window-drag helper
+  const _content = overlay.querySelector('.modal-content');
+  const _header = overlay.querySelector('.modal-header');
+  if (_content && _header) {
+    makeWindowDraggable(overlay, { content: _content, header: _header });
+  }
 
   const cleanup = () => overlay.remove();
   overlay.querySelector('#cal-settings-close').addEventListener('click', cleanup);
