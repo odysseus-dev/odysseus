@@ -8,6 +8,7 @@ import hashlib
 import threading
 import re
 import os
+import base64
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT
@@ -351,10 +352,43 @@ def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
     here, on a shallow copy, leaving non-tool messages untouched. The opaque
     Gemini `extra_content` (thought_signature) is dropped — it is meaningless to
     Ollama and only matters when the conversation is replayed to Gemini.
+
+    OpenAI-style multimodal content arrays (list of {type, text/image_url} blocks)
+    are also converted: text parts are joined into a plain ``content`` string and
+    base64 image data is moved to Ollama's ``images`` list field.  Without this,
+    Ollama's Go backend rejects the request with HTTP 400 — "cannot unmarshal
+    array into Go struct field ChatRequest.messages.content of type string".
     """
     out: List[Dict] = []
     for m in messages or []:
-        tcs = m.get("tool_calls") if isinstance(m, dict) else None
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+
+        # --- Convert OpenAI multimodal content arrays to Ollama format ---
+        content = m.get("content")
+        if isinstance(content, list):
+            text_parts: List[str] = []
+            images: List[str] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                ptype = part.get("type", "")
+                if ptype == "text":
+                    text_parts.append(part.get("text", ""))
+                elif ptype == "image_url":
+                    url_obj = part.get("image_url") or {}
+                    url = url_obj.get("url", "")
+                    if url.startswith("data:") and ";base64," in url:
+                        images.append(url.split(";base64,", 1)[1])
+            if text_parts or images:
+                nm = dict(m)
+                nm["content"] = "\n".join(text_parts) if text_parts else ""
+                if images:
+                    nm["images"] = images
+                m = nm
+
+        tcs = m.get("tool_calls")
         if not tcs:
             out.append(m)
             continue
