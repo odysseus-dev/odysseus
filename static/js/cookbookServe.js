@@ -530,7 +530,7 @@ function _rerenderCachedModels() {
         : (_lastUsed || (_isLegacyFlat ? _allSs : {}));
       const detectedBackend = _detectBackend(m).backend;
       const _allowedBackends = new Set(_isWindows()
-        ? ['llamacpp']
+        ? ['llamacpp', 'diffusers']
         : (_isMetal() ? ['llamacpp', 'ollama'] : ['vllm', 'sglang', 'llamacpp', 'ollama', 'diffusers']));
       const defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
         ? ss.backend
@@ -590,7 +590,7 @@ function _rerenderCachedModels() {
       // Row 1: Backend + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
       const _backendChoices = _isWindows()
-        ? [['llamacpp','llama.cpp']]
+        ? [['llamacpp','llama.cpp'],['diffusers','Diffusers']]
         : _isMetal()
         // Diffusers (diffusion_server.py) is CUDA-only — omit it on Metal.
         ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
