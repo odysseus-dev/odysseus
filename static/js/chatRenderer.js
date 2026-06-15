@@ -1973,8 +1973,10 @@ export function displayMetrics(messageElement, metrics) {
         popup.classList.add('ctx-detail-popup--expanded');
         const cats = (breakdown && breakdown.categories) || [];
         const total = (breakdown && breakdown.total_tokens) || usedTokens || 0;
+        // Scale the bar against the context window so unused space shows as grey.
+        const denom = Math.max(total, totalCtx) || 1;
         const segments = cats.map(c => {
-          const pct = total > 0 ? (c.tokens / total) * 100 : 0;
+          const pct = denom > 0 ? (c.tokens / denom) * 100 : 0;
           return `<div class="ctx-segment" style="width:${pct}%;--cat-color:var(--ctx-cat-${c.id});" title="${c.label}: ${fmtNum(c.tokens)} tokens"></div>`;
         }).join('');
         const rows = cats.map(c => `
