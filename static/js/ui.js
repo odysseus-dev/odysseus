@@ -297,8 +297,8 @@ function _wireToastSwipe(el) {
  * Show success toast message
  */
 
-const TOAST_MIN_DURATION = 2000;  
-const TOAST_MAX_DURATION = 6000;  
+const TOAST_MIN_DURATION = 2000;
+const TOAST_MAX_DURATION = 6000;
 const TOAST_MS_PER_CHAR = 50;
 
 function _getDefaultToastDuration(msg) {
