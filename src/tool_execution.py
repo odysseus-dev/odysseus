@@ -513,7 +513,7 @@ async def execute_tool_block(
     """
     token = _active_workspace.set(workspace or None)
     try:
-        return await _execute_tool_block_impl(
+        output = await _execute_tool_block_impl(
             block,
             session_id=session_id,
             disabled_tools=disabled_tools,
@@ -521,6 +521,7 @@ async def execute_tool_block(
             progress_cb=progress_cb,
             tool_policy=tool_policy,
         )
+        return output
     finally:
         _active_workspace.reset(token)
 
@@ -555,6 +556,22 @@ async def _execute_tool_block_impl(
         do_vault_search, do_vault_get, do_vault_unlock,
         do_app_api,
     )
+
+    # HACK:
+    # This is a temporary workaround for a circular dependency between
+    # tool_execution.py and agent_tools.__init__.py.
+    #
+    # See issue #4277:
+    # refactor(tools): Move the registry from __init__.py into a
+    # dedicated registry.py module.
+    #
+    # Do not copy this pattern elsewhere. This import should be removed
+    # once the registry refactor is completed.
+    try:
+        agent_tools_mod = __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"])
+        dynamic_handlers = getattr(agent_tools_mod, "TOOL_HANDLERS", {})
+    except ImportError:
+        dynamic_handlers = {}
 
     tool = block.tool_type
     content = block.content
@@ -788,18 +805,8 @@ async def _execute_tool_block_impl(
             desc = f"mcp: {tool}"
             result = {"error": "MCP manager not available", "exit_code": 1}
 
-
-    # HACK:
-    # This is a temporary workaround for a circular dependency between
-    # tool_execution.py and agent_tools.__init__.py.
-    #
-    # See issue #4277:
-    # refactor(tools): Move the registry from __init__.py into a
-    # dedicated registry.py module.
-    #
-    # Do not copy this pattern elsewhere. This import should be removed
-    # once the registry refactor is completed.
-    elif tool in __import__("src.agent_tools", fromlist=["TOOL_HANDLERS"]).TOOL_HANDLERS:
+    
+    elif tool in dynamic_handlers:
         first_line = content.split(chr(10))[0][:80]
         desc = f"registry: {tool} {first_line}".strip()
         res = await _direct_fallback(tool, content, progress_cb=progress_cb)
@@ -808,6 +815,13 @@ async def _execute_tool_block_impl(
             desc, result = res
         else:
             result = res or {"error": f"{tool}: execution failed", "exit_code": 1}
+
+    else:
+        desc = f"unknown: {tool}"
+        result = {
+            "error": f"Unknown tool: {tool}",
+            "exit_code": 1
+        }
 
     logger.info(f"Tool executed: {desc} -> exit_code={result.get('exit_code', 'n/a')}")
     return desc, result
