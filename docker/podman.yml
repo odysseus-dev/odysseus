@@ -18,6 +18,9 @@
 #   COMPOSE_FILE=docker-compose.yml:docker/podman.yml
 services:
   odysseus:
+    # Rootless Podman: map container user to host user so bind-mounted
+    # files under data/ stay owned by the host user.
+    userns_mode: keep-id
     extra_hosts:
       # Podman resolves host-gateway to the host's bridge gateway IP on
       # bridge networks, so the same mapping works as in Docker. Redundant

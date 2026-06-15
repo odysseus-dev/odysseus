@@ -6,11 +6,13 @@
 #   1. Install nvidia-container-toolkit:
 #      sudo apt install nvidia-container-toolkit   # Debian/Ubuntu
 #      sudo dnf install nvidia-container-toolkit   # Fedora
-#   2. Configure for Podman:
-#      sudo nvidia-ctk runtime configure --runtime=podman
-#      sudo systemctl restart podman
-#   3. Verify:
-#      podman info | grep -i nvidia
+#   2. Generate CDI specification for Podman:
+#      sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+#   3. (SELinux only) Enable container device access:
+#      sudo setsebool -P container_use_devices true
+#   4. Verify:
+#      nvidia-ctk cdi list
+#      podman run --rm --device nvidia.com/gpu=all docker.io/nvidia/cuda:11.0.3-base-ubuntu20.04 nvidia-smi
 #
 # Usage:
 #   podman-compose -f docker-compose.yml -f docker/podman.yml -f docker/podman.gpu-nvidia.yml up -d

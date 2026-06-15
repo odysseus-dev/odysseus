@@ -142,12 +142,14 @@ _step "5/5  Checking GPU access..."
 GPU_AVAILABLE=0
 if command -v nvidia-smi &>/dev/null || [ -d /proc/driver/nvidia ]; then
   _info "NVIDIA GPU detected on host."
-  if podman info 2>/dev/null | grep -qi "nvidia"; then
-    _pass "NVIDIA container toolkit configured for podman"
+  if test -f /etc/cdi/nvidia.yaml && nvidia-ctk cdi list &>/dev/null; then
+    _pass "NVIDIA CDI configured for Podman"
     GPU_AVAILABLE=1
   else
-    _warn "NVIDIA GPU found but nvidia-container-toolkit not configured for podman."
-    _warn "  Install: sudo nvidia-ctk runtime configure --runtime=podman && sudo systemctl restart podman"
+    _warn "NVIDIA GPU found but CDI not configured."
+    _warn "  Run: sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml"
+    _warn "  Verify: nvidia-ctk cdi list"
+    _warn "  (SELinux only) sudo setsebool -P container_use_devices true"
     _info "  For GPU overlay: podman-compose -f docker-compose.yml -f docker/podman.yml -f docker/podman.gpu-nvidia.yml up -d"
   fi
 fi
