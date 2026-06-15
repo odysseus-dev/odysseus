@@ -83,7 +83,9 @@ def test_skill_vector_ideal(monkeypatch):
 # Degradation (fallback) scenario – simulate unhealthy store
 # ---------------------------------------------------------------------------
 def test_skill_vector_degraded(monkeypatch):
-    # Force the store to be unhealthy
+    # Patch the lane builder to avoid hitting real FastEmbed/Chroma
+    monkeypatch.setattr('src.skill_vector.build_embedding_lanes', lambda _: [DummyLane()])
+    
     with tempfile.TemporaryDirectory() as td:
         sv = SkillVectorStore(td)
         # Manually mark as unhealthy

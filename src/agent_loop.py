@@ -746,11 +746,11 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     to an assistant question, or if the assistant asked a question).
     """
     text = str(last_user or "").strip()
-    
+
     # Check if there's a previous assistant turn - only then can a short reply
     # be a continuation. First user message is never a continuation just because it's short.
     has_prior_assistant = any(m.get("role") == "assistant" for m in messages[:-1])
-    
+
     is_short_reply = has_prior_assistant and len(text) < 40
     continuation = is_short_reply or _assistant_requested_followup(messages)
     retrieval_query = _recent_context_for_retrieval(messages) if continuation else text
@@ -796,9 +796,9 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3) -> st
     surfaced. Newest-first, so the latest turn survives the length cap."""
     from src.settings import get_setting
     from src.context_compactor import _truncate_text_to_token_budget
-    
+
     max_tokens = get_setting("rag_context_max_tokens", 511)
-    
+
     collected = []
     for msg in reversed(messages):
         if msg.get("role") != "user":
@@ -813,9 +813,9 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3) -> st
         collected.append(content)
         if len(collected) >= max_user:
             break
-            
+
     full_text = "\n".join(collected)
-    
+
     # We use the mathematical upper bound for chars from the token budget
     # (_truncate_text_to_token_budget does it this way, but leaves a notice block).
     # Here we just truncate purely to avoid sending notices to the VectorDB.
@@ -1854,22 +1854,22 @@ async def stream_agent_loop(
         logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
 
     # Reverse-Map: If the retrieved tools belong to a domain, activate that domain
-    # and seed the corresponding domain tools into the selected tool set. 
+    # and seed the corresponding domain tools into the selected tool set.
     # This ensures "domain packs" work via semantic RAG instead of English regexes.
     # Skip this expansion in low_signal mode to preserve the restricted tool set.
     if not guide_only and _relevant_tools is not None and not bool(_intent.get("low_signal")):
         active_domains = set(_intent.get("domains") or [])
-        
+
         # 1. Reverse-map retrieved tools to their domains
         for tool in list(_relevant_tools):
             for domain, domain_tools in _DOMAIN_TOOL_MAP.items():
                 if tool in domain_tools:
                     active_domains.add(domain)
-                   
+
         # 2. Inject the full tool packs for the activated domains
         for _domain in active_domains:
             _relevant_tools.update(_DOMAIN_TOOL_MAP.get(str(_domain), set()))
-           
+
         if "cookbook" in active_domains:
             _relevant_tools.update({
                 "list_served_models",
