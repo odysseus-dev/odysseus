@@ -947,6 +947,18 @@ def _build_system_prompt(
                 ),
             }
 
+    _final_answer_message = {
+        "role": "system",
+        "_protected": True,
+        "content": (
+            "## FINAL ANSWER CONTRACT\n"
+            "After tool work is complete and no more tools are needed, write only the final answer for the user.\n"
+            "- Keep the final answer concise by default, even if the solving phase used high reasoning or verbosity.\n"
+            "- Do not replay tool commands, raw logs, or earlier failed attempts unless the user explicitly asks for process details.\n"
+            "- Prefer 1-4 sentences or a short bullet list. If blocked, state the exact blocker and the next useful action."
+        ),
+    }
+
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
     # massive tool-description system prompt.
@@ -1277,6 +1289,9 @@ def _build_system_prompt(
             break
     if _workspace_message:
         merged.insert(last_user_idx, _workspace_message)
+        last_user_idx += 1
+    if _final_answer_message:
+        merged.insert(last_user_idx, _final_answer_message)
         last_user_idx += 1
     if _doc_message:
         merged.insert(last_user_idx, _doc_message)

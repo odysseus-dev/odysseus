@@ -294,6 +294,21 @@ def test_workspace_contract_prompt_is_injected(monkeypatch):
     assert "Do not say you lack permission" in contract["content"]
 
 
+def test_final_answer_contract_prompt_is_injected(monkeypatch):
+    captured = _captured_agent_request(monkeypatch, workspace=None)
+    messages = captured["messages"]
+    contract = next(
+        (m for m in messages if "FINAL ANSWER CONTRACT" in (m.get("content") or "")),
+        None,
+    )
+
+    assert contract is not None
+    assert contract["role"] == "system"
+    assert contract.get("_protected") is None
+    assert "Keep the final answer concise" in contract["content"]
+    assert "Do not replay tool commands" in contract["content"]
+
+
 # ── browse route is admin-gated ─────────────────────────────────────────
 
 def test_browse_is_admin_gated(monkeypatch):
