@@ -25,9 +25,28 @@ const EDGE_DOCK_WIDTH_KEY_PREFIX = 'odysseus-edge-dock-width';
 const MIN_EDGE_DOCK_WIDTH = 320;
 
 let _edgeDockHandlePositioner = null;
+let _edgeDockHandlePositionRaf = 0;
 
 function _positionEdgeDockResizeHandles() {
   try { _edgeDockHandlePositioner && _edgeDockHandlePositioner(); } catch (_) {}
+}
+
+function _scheduleEdgeDockResizeHandles() {
+  if (_edgeDockHandlePositionRaf) return;
+  if (typeof requestAnimationFrame !== 'function') {
+    _positionEdgeDockResizeHandles();
+    return;
+  }
+  _edgeDockHandlePositionRaf = requestAnimationFrame(() => {
+    _edgeDockHandlePositionRaf = 0;
+    _positionEdgeDockResizeHandles();
+  });
+}
+
+function _settleEdgeDockResizeHandles() {
+  _scheduleEdgeDockResizeHandles();
+  setTimeout(_positionEdgeDockResizeHandles, 80);
+  setTimeout(_positionEdgeDockResizeHandles, 240);
 }
 
 function _dockClassForSide(side) {
@@ -325,7 +344,7 @@ function _collapseSidebarToRail() {
 // {modal, content} or null when nothing usable was passed in.
 function _resolveDockNodes(target) {
   if (!target) return null;
-  const content = target.querySelector
+  const content = target.querySelector && target.classList?.contains('modal')
     ? (target.querySelector('.modal-content') || target)
     : target;
   return { modal: target, content };
@@ -859,24 +878,11 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     document.body.appendChild(handle);
   }
 
-  const _isUsableDockOwner = (owner) => {
-    if (!owner || !owner.isConnected) return false;
-    if (owner.classList?.contains('hidden')) return false;
-    if (owner.style?.display === 'none') return false;
-    const nodes = _resolveDockNodes(owner);
-    const content = nodes?.content;
-    if (!content || !content.isConnected) return false;
-    if (content.classList?.contains('hidden')) return false;
-    if (content.style?.display === 'none') return false;
-    const r = content.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  };
-
   const _activeDockOwner = (side) => {
     const cls = _dockClassForSide(side);
     const all = Array.from(document.querySelectorAll(`.${cls}`));
     for (const owner of all.reverse()) {
-      if (_isUsableDockOwner(owner)) return owner;
+      if (_isActiveDockOwner(owner)) return owner;
     }
     return null;
   };
@@ -961,12 +967,18 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       }
       const r = content.getBoundingClientRect();
       const x = side === 'right' ? r.left : r.right;
-      if (!Number.isFinite(x) || x <= 0 || x >= window.innerWidth) {
+      const top = Math.max(0, r.top);
+      const bottom = Math.min(window.innerHeight, r.bottom);
+      const height = bottom - top;
+      if (!Number.isFinite(x) || x <= 0 || x >= window.innerWidth || height <= 0) {
         _hideHandle(handle);
         continue;
       }
       _setStyle(handle, 'display', 'block');
       _setStyle(handle, 'left', (x - 5) + 'px');
+      _setStyle(handle, 'top', top + 'px');
+      _setStyle(handle, 'bottom', 'auto');
+      _setStyle(handle, 'height', height + 'px');
       _setStyle(handle, 'zIndex', String(_zIndexFor(owner) + 1));
     }
   };
@@ -1025,6 +1037,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   new MutationObserver(schedulePosition).observe(document.body, { childList: true });
   window.addEventListener('resize', _positionEdgeDockResizeHandles);
   window.addEventListener('odysseus:modal-opened', _positionEdgeDockResizeHandles);
+  window.addEventListener('odysseus:edge-dock-replace', _settleEdgeDockResizeHandles);
   _positionEdgeDockResizeHandles();
 })();
 
