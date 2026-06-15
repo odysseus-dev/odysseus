@@ -863,6 +863,7 @@ def clean_thinking_for_save(content: str, metadata: dict | None = None) -> tuple
 def prepare_agent_response_for_save(
     full_response: str,
     last_metrics: dict | None,
+    user_message: str | None = None,
 ) -> tuple[str, dict | None]:
     """Return final display content plus metrics for a completed agent turn.
 
@@ -872,11 +873,19 @@ def prepare_agent_response_for_save(
     reconstruction/expansion.
     """
     if not isinstance(last_metrics, dict) or not last_metrics.get("tool_events"):
-        return full_response, last_metrics
+        return _guard_unverified_agent_file_success(
+            user_message,
+            full_response,
+            last_metrics,
+        )
 
     round_texts = last_metrics.get("round_texts")
     if not isinstance(round_texts, list):
-        return full_response, last_metrics
+        return _guard_unverified_agent_file_success(
+            user_message,
+            full_response,
+            last_metrics,
+        )
 
     final_response = ""
     for text in reversed(round_texts):
@@ -885,14 +894,108 @@ def prepare_agent_response_for_save(
             break
 
     if not final_response:
-        return full_response, last_metrics
+        return _guard_unverified_agent_file_success(
+            user_message,
+            full_response,
+            last_metrics,
+        )
 
     metadata = dict(last_metrics)
     metadata["agent_final_response"] = final_response
     if final_response.strip() != (full_response or "").strip():
         metadata["agent_saved_final_only"] = True
         metadata["agent_accumulated_response_chars"] = len(full_response or "")
-    return final_response, metadata
+    return _guard_unverified_agent_file_success(
+        user_message,
+        final_response,
+        metadata,
+    )
+
+
+_FILE_MUTATION_REQUEST_RE = re.compile(
+    r"\b(copy|create|write|append|edit|modify|replace|rename|move|save|"
+    r"update|change|delete)\b",
+    re.IGNORECASE,
+)
+_FILE_TARGET_RE = re.compile(
+    r"(/workspace\b|\\|/|\bfile\b|\bfolder\b|\bworkspace\b|\bproject\b|"
+    r"\brepo\b|\breadme\b|\.[A-Za-z0-9]{1,12}\b)",
+    re.IGNORECASE,
+)
+_SUCCESS_CLAIM_RE = re.compile(
+    r"\b(done|created|copied|wrote|written|appended|edited|updated|"
+    r"saved|completed|success(?:ful|fully)?|verified)\b",
+    re.IGNORECASE,
+)
+_BLOCKED_OR_FAILURE_RE = re.compile(
+    r"\b(not completed|not created|not copied|not written|not saved|"
+    r"couldn['’]?t|cannot|can['’]?t|failed|blocked|unable|permission denied)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_file_mutation_request(user_message: str | None) -> bool:
+    text = (user_message or "").strip()
+    if not text:
+        return False
+    return bool(_FILE_MUTATION_REQUEST_RE.search(text) and _FILE_TARGET_RE.search(text))
+
+
+def _looks_like_success_claim(final_response: str | None) -> bool:
+    text = (final_response or "").strip()
+    if not text:
+        return False
+    if _BLOCKED_OR_FAILURE_RE.search(text):
+        return False
+    return bool(_SUCCESS_CLAIM_RE.search(text))
+
+
+def _has_successful_file_mutation(tool_events: list) -> bool:
+    for ev in tool_events or []:
+        if not isinstance(ev, dict):
+            continue
+        if ev.get("exit_code") not in (None, 0):
+            continue
+        tool = str(ev.get("tool") or "").lower()
+        output = str(ev.get("output") or "")
+        if tool in {"write_file", "edit_file"}:
+            return True
+        if output.startswith("Written:"):
+            return True
+    return False
+
+
+def _guard_unverified_agent_file_success(
+    user_message: str | None,
+    final_response: str,
+    last_metrics: dict | None,
+) -> tuple[str, dict | None]:
+    if not (
+        _looks_like_file_mutation_request(user_message)
+        and _looks_like_success_claim(final_response)
+    ):
+        return final_response, last_metrics
+
+    tool_events = []
+    if isinstance(last_metrics, dict) and isinstance(last_metrics.get("tool_events"), list):
+        tool_events = last_metrics["tool_events"]
+
+    metadata = dict(last_metrics or {})
+    if _has_successful_file_mutation(tool_events):
+        metadata["agent_file_mutation_verified"] = True
+        return final_response, metadata
+
+    metadata["agent_file_mutation_verification_failed"] = True
+    metadata["agent_unverified_final_response"] = final_response
+    guarded = (
+        "I couldn't verify that the requested workspace file change completed, "
+        "so I won't claim it did. Expand Process to inspect the tool results, "
+        "or ask me to retry using the file tools."
+    )
+    metadata["agent_final_response"] = guarded
+    if final_response.strip() != guarded:
+        metadata["agent_saved_final_only"] = True
+    return guarded, metadata
 
 
 def save_assistant_response(

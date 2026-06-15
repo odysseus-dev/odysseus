@@ -1246,6 +1246,7 @@ def setup_chat_routes(
                                 final_response, save_metrics = prepare_agent_response_for_save(
                                     full_response,
                                     last_metrics,
+                                    user_message=message,
                                 )
                                 _stream_set(session, partial=final_response)
                                 _saved_id = save_assistant_response(

@@ -245,6 +245,99 @@ def test_prepare_agent_response_for_save_falls_back_without_clean_rounds():
     assert metadata == metrics
 
 
+def test_prepare_agent_response_for_save_blocks_unverified_workspace_write_success():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [{"tool": "read_file", "command": "README.txt", "exit_code": 0}],
+        "round_texts": ["Done - README_copy.txt was created."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(
+        "raw accumulated",
+        metrics,
+        user_message="copy README.txt to README_copy.txt in the workspace",
+    )
+
+    assert "couldn't verify" in content
+    assert metadata["agent_file_mutation_verification_failed"] is True
+    assert metadata["agent_unverified_final_response"] == "Done - README_copy.txt was created."
+    assert metadata["agent_final_response"] == content
+
+
+def test_prepare_agent_response_for_save_accepts_file_tool_write_success():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [
+            {
+                "tool": "write_file",
+                "command": "README_copy.txt",
+                "output": "Wrote 12 bytes to /workspace/README_copy.txt",
+                "exit_code": 0,
+            }
+        ],
+        "round_texts": ["Done - README_copy.txt was created."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(
+        "raw accumulated",
+        metrics,
+        user_message="copy README.txt to README_copy.txt in the workspace",
+    )
+
+    assert content == "Done - README_copy.txt was created."
+    assert metadata["agent_file_mutation_verified"] is True
+    assert "agent_file_mutation_verification_failed" not in metadata
+
+
+def test_prepare_agent_response_for_save_does_not_certify_shell_write_success():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [
+            {
+                "tool": "bash",
+                "command": "cp /workspace/README.txt /workspace/README_copy.txt",
+                "output": "",
+                "exit_code": 0,
+            }
+        ],
+        "round_texts": ["Done - README_copy.txt was created."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(
+        "raw accumulated",
+        metrics,
+        user_message="copy README.txt to README_copy.txt in the workspace",
+    )
+
+    assert "couldn't verify" in content
+    assert metadata["agent_file_mutation_verification_failed"] is True
+    assert metadata["agent_unverified_final_response"] == "Done - README_copy.txt was created."
+
+
+def test_prepare_agent_response_for_save_keeps_honest_blocked_file_answer():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [
+            {
+                "tool": "write_file",
+                "command": "README_copy.txt",
+                "output": "permission denied",
+                "exit_code": 1,
+            }
+        ],
+        "round_texts": ["I couldn't create README_copy.txt because write_file failed."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(
+        "raw accumulated",
+        metrics,
+        user_message="copy README.txt to README_copy.txt in the workspace",
+    )
+
+    assert content == "I couldn't create README_copy.txt because write_file failed."
+    assert "agent_file_mutation_verification_failed" not in metadata
+
+
 def test_save_assistant_response_preserves_actual_and_requested_model():
     sess = _FakeSession("selected-model")
 
