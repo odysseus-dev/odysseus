@@ -218,3 +218,47 @@ def test_save_assistant_response_preserves_actual_and_requested_model():
 
     assert sess.history[-1].metadata["requested_model"] == "selected-model"
     assert sess.history[-1].metadata["model"] == "actual-model"
+
+
+from types import SimpleNamespace
+from routes.chat_helpers import _session_is_research_spinoff
+
+
+class _SpinMsg:
+    def __init__(self, role, metadata=None):
+        self.role = role
+        self.metadata = metadata
+
+
+def test_spinoff_detected_from_chatmessage_history():
+    sess = SimpleNamespace(history=[
+        _SpinMsg("system", {"research_spinoff_from": "rp-1"}),
+        _SpinMsg("user", None),
+    ])
+    assert _session_is_research_spinoff(sess) is True
+
+
+def test_spinoff_detected_from_dict_history():
+    sess = SimpleNamespace(history=[
+        {"role": "system", "metadata": {"research_spinoff_from": "rp-2"}},
+        {"role": "user", "content": "hi"},
+    ])
+    assert _session_is_research_spinoff(sess) is True
+
+
+def test_non_spinoff_plain_session_is_false():
+    sess = SimpleNamespace(history=[
+        _SpinMsg("system", {"compacted": True}),
+        _SpinMsg("user", None),
+    ])
+    assert _session_is_research_spinoff(sess) is False
+
+
+def test_metadata_on_non_system_message_ignored():
+    sess = SimpleNamespace(history=[_SpinMsg("user", {"research_spinoff_from": "rp-3"})])
+    assert _session_is_research_spinoff(sess) is False
+
+
+def test_empty_or_missing_history():
+    assert _session_is_research_spinoff(SimpleNamespace(history=[])) is False
+    assert _session_is_research_spinoff(SimpleNamespace()) is False
