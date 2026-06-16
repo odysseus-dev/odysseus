@@ -41,21 +41,56 @@ ROCM_SYSTEM = {
     "gpu_vram_gb": 24.0,
 }
 
+ARM64_SYSTEM = {
+    "backend": "arm64",
+    "gpu_name": None,
+    "gpu_vram_gb": 0,
+}
+
+AARCH64_SYSTEM = {
+    "backend": "aarch64",
+    "gpu_name": None,
+    "gpu_vram_gb": 0,
+}
+
 QUANT = "Q4_K_M"
 
 
 @pytest.mark.parametrize(
     "non_cpu_system",
-    [CUDA_SYSTEM, METAL_SYSTEM, ROCM_SYSTEM],
-    ids=["cuda", "metal", "rocm"],
+    [CUDA_SYSTEM, ROCM_SYSTEM],
+    ids=["cuda", "rocm"],
 )
 def test_cpu_only_on_non_cpu_backend_uses_cpu_x86_fallback(non_cpu_system):
-    """cpu_only must ignore non-CPU backends and use the CPU fallback constant."""
+    """cpu_only must ignore discrete GPU backends and use the x86 CPU fallback constant."""
     non_cpu_tps = _estimate_speed(DENSE_MODEL, QUANT, "cpu_only", non_cpu_system)
     cpu_tps = _estimate_speed(DENSE_MODEL, QUANT, "cpu_only", CPU_X86_SYSTEM)
 
     assert non_cpu_tps == pytest.approx(cpu_tps, rel=1e-9, abs=1e-9)
     assert non_cpu_tps > 0
+
+
+def test_cpu_only_on_metal_apple_silicon_uses_cpu_arm_fallback():
+    """Apple Silicon/Metal cpu_only should map to the ARM CPU fallback constant."""
+    metal_tps = _estimate_speed(DENSE_MODEL, QUANT, "cpu_only", METAL_SYSTEM)
+    arm_tps = _estimate_speed(DENSE_MODEL, QUANT, "cpu_only", CPU_ARM_SYSTEM)
+
+    assert metal_tps == pytest.approx(arm_tps, rel=1e-9, abs=1e-9)
+    assert metal_tps > 0
+
+
+@pytest.mark.parametrize(
+    "arm_alias_system",
+    [ARM64_SYSTEM, AARCH64_SYSTEM, CPU_ARM_SYSTEM],
+    ids=["arm64", "aarch64", "cpu_arm"],
+)
+def test_cpu_only_preserves_arm_backends(arm_alias_system):
+    """ARM CPU backends and their aliases must stay on the ARM CPU fallback."""
+    alias_tps = _estimate_speed(DENSE_MODEL, QUANT, "cpu_only", arm_alias_system)
+    arm_tps = _estimate_speed(DENSE_MODEL, QUANT, "cpu_only", CPU_ARM_SYSTEM)
+
+    assert alias_tps == pytest.approx(arm_tps, rel=1e-9, abs=1e-9)
+    assert alias_tps > 0
 
 
 def test_cpu_only_preserves_known_cpu_backends():
