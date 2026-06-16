@@ -296,13 +296,43 @@ def _is_ollama_native_url(url: str) -> bool:
     return local_ollama_host and (path == "" or path == "/api" or path.startswith("/api/"))
 
 
+def _ollama_host_origin() -> Optional[str]:
+    """Return the origin (scheme://host:port) from the OLLAMA_HOST env var.
+
+    Ollama uses ``OLLAMA_HOST`` to advertise a custom listen address
+    (e.g. ``0.0.0.0:8080`` or ``http://localhost:8080``).  We normalise it
+    to an origin so callers can compare against a request URL without
+    network I/O.
+    """
+    raw = os.environ.get("OLLAMA_HOST", "").strip()
+    if not raw:
+        return None
+    # Accept bare ``host:port`` (no scheme) by prepending http://.
+    if not raw.startswith(("http://", "https://")):
+        raw = f"http://{raw}"
+    try:
+        p = urlparse(raw)
+        host = p.hostname or ""
+        port = p.port
+        if not host:
+            return None
+        scheme = p.scheme or "http"
+        return f"{scheme}://{host}:{port}" if port else f"{scheme}://{host}"
+    except Exception:
+        return None
+
+
 def _is_ollama_openai_compat_url(url: str) -> bool:
     """Return True for local Ollama's OpenAI-compatible /v1 surface.
 
-    Mirrors the host detection used by ``_is_ollama_native_url`` so that the
-    two helpers stay in lockstep: a localhost Ollama on a non-default port
-    (custom ``OLLAMA_HOST``, reverse proxy, container port remap) is treated
-    the same way here as it is on the native ``/api`` path.
+    Detection strategy (no network I/O):
+
+    1. **Port 11434** (Ollama default): fast match.
+    2. **OLLAMA_HOST env var**: if the URL's origin matches the configured
+       Ollama host, treat it as Ollama regardless of port.  This covers
+       custom ``OLLAMA_HOST`` ports, container port remaps, and reverse
+       proxies — without a fragile ``/api/tags`` probe.
+    3. **Remote / non-local URLs**: never match.
     """
     try:
         parsed = urlparse(url or "")
@@ -310,8 +340,32 @@ def _is_ollama_openai_compat_url(url: str) -> bool:
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
-    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
-    return local_ollama_host and (path == "/v1" or path.startswith("/v1/"))
+    if path != "/v1" and not path.startswith("/v1/"):
+        return False
+    # Fast path: Ollama's default port.
+    if parsed.port == 11434:
+        return True
+    # Check OLLAMA_HOST env var for custom ports.
+    ollama_origin = _ollama_host_origin()
+    if ollama_origin:
+        scheme = parsed.scheme or "http"
+        netloc = parsed.netloc or ""
+        if "/" in netloc:
+            netloc = netloc.split("/", 1)[0]
+        request_origin = f"{scheme}://{netloc}"
+        # Compare origins.  Treat 0.0.0.0 in OLLAMA_HOST as a wildcard
+        # that matches any local address (127.0.0.1, localhost, ::1, etc.)
+        # since Ollama binds to all interfaces when configured with 0.0.0.0.
+        req_norm = request_origin.rstrip("/")
+        env_norm = ollama_origin.rstrip("/")
+        if req_norm == env_norm:
+            return True
+        if host in {"localhost", "127.0.0.1", "::1"}:
+            # Replace the request host with 0.0.0.0 and re-compare.
+            wildcard = req_norm.replace(f"{scheme}://{host}", f"{scheme}://0.0.0.0")
+            if wildcard == env_norm:
+                return True
+    return False
 
 
 def _ollama_api_root(url: str) -> str:

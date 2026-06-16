@@ -1,12 +1,14 @@
 """Tests for Ollama /v1 thinking-suppression helpers.
 
 Covers:
-- _is_ollama_openai_compat_url: URL classification (local host + /v1 path)
+- _is_ollama_openai_compat_url: URL classification (port 11434 + OLLAMA_HOST)
+- _ollama_host_origin: OLLAMA_HOST env var parsing
 - think: false is injected into the payload for Ollama /v1 thinking models
 - think: false is NOT injected for non-thinking models or non-Ollama /v1 endpoints
 """
 import asyncio
 import json
+import os
 
 from src import llm_core
 
@@ -68,13 +70,45 @@ def _capture_payload(monkeypatch, url, model):
 
 
 # ---------------------------------------------------------------------------
+# _ollama_host_origin — OLLAMA_HOST env var parsing
+# ---------------------------------------------------------------------------
+
+class TestOllamaHostOrigin:
+    """Unit tests for OLLAMA_HOST environment variable parsing."""
+
+    def test_empty_when_unset(self, monkeypatch):
+        monkeypatch.delenv("OLLAMA_HOST", raising=False)
+        assert llm_core._ollama_host_origin() is None
+
+    def test_empty_string(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "")
+        assert llm_core._ollama_host_origin() is None
+
+    def test_bare_host_port(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:8080")
+        assert llm_core._ollama_host_origin() == "http://0.0.0.0:8080"
+
+    def test_http_scheme(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "http://localhost:8080")
+        assert llm_core._ollama_host_origin() == "http://localhost:8080"
+
+    def test_https_scheme(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "https://ollama.example.com:443")
+        assert llm_core._ollama_host_origin() == "https://ollama.example.com:443"
+
+    def test_no_port(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "http://localhost")
+        assert llm_core._ollama_host_origin() == "http://localhost"
+
+
+# ---------------------------------------------------------------------------
 # _is_ollama_openai_compat_url — pure function, no I/O
 # ---------------------------------------------------------------------------
 
 class TestIsOllamaOpenAICompatUrl:
     """Unit tests for the URL classifier that gates think-suppression."""
 
-    # Positive cases — should be True
+    # Positive cases — default port 11434
     def test_default_port_v1_root(self):
         assert llm_core._is_ollama_openai_compat_url("http://127.0.0.1:11434/v1")
 
@@ -91,15 +125,22 @@ class TestIsOllamaOpenAICompatUrl:
         # IPv6 addresses in URLs require square brackets per RFC 3986
         assert llm_core._is_ollama_openai_compat_url("http://[::1]:11434/v1")
 
-    def test_any_local_non_default_port(self):
-        """Localhost on a non-default port (custom OLLAMA_HOST) must also match."""
-        assert llm_core._is_ollama_openai_compat_url("http://127.0.0.1:11435/v1")
-
-    def test_localhost_non_default_port(self):
-        assert llm_core._is_ollama_openai_compat_url("http://localhost:8080/v1/chat/completions")
-
     def test_zero_dot_zero_host(self):
         assert llm_core._is_ollama_openai_compat_url("http://0.0.0.0:11434/v1")
+
+    # Positive cases — OLLAMA_HOST env var for custom ports
+    def test_custom_port_via_ollama_host(self, monkeypatch):
+        """Custom-port Ollama detected via OLLAMA_HOST env var."""
+        monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11435")
+        assert llm_core._is_ollama_openai_compat_url("http://127.0.0.1:11435/v1")
+
+    def test_custom_port_localhost_via_ollama_host(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "localhost:8080")
+        assert llm_core._is_ollama_openai_compat_url("http://localhost:8080/v1/chat/completions")
+
+    def test_custom_port_with_scheme(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_HOST", "http://localhost:9090")
+        assert llm_core._is_ollama_openai_compat_url("http://localhost:9090/v1")
 
     # Negative cases — should be False
     def test_openai_api_v1(self):
@@ -124,6 +165,20 @@ class TestIsOllamaOpenAICompatUrl:
 
     def test_none_like_empty(self):
         assert not llm_core._is_ollama_openai_compat_url(None)  # type: ignore[arg-type]
+
+    def test_custom_port_without_ollama_host_env(self, monkeypatch):
+        """Custom port on localhost without OLLAMA_HOST must NOT match.
+
+        This prevents false positives for local vLLM / llama.cpp / LM Studio
+        servers that happen to be on localhost but are not Ollama.
+        """
+        monkeypatch.delenv("OLLAMA_HOST", raising=False)
+        assert not llm_core._is_ollama_openai_compat_url("http://127.0.0.1:8080/v1")
+
+    def test_custom_port_wrong_host_in_ollama_host(self, monkeypatch):
+        """OLLAMA_HOST set to a different host:port must not match."""
+        monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:9090")
+        assert not llm_core._is_ollama_openai_compat_url("http://127.0.0.1:8080/v1")
 
 
 # ---------------------------------------------------------------------------
@@ -155,11 +210,23 @@ class TestThinkSuppression:
         )
         assert "think" not in payload
 
-    def test_think_false_for_non_default_port_thinking_model(self, monkeypatch):
+    def test_think_false_for_custom_port_with_ollama_host(self, monkeypatch):
         """Custom-port localhost Ollama (e.g. OLLAMA_HOST=0.0.0.0:11435) must
-        also receive think:false — this is the regression guarded by the
-        host-set check added in this fix."""
+        also receive think:false when OLLAMA_HOST is set."""
+        monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11435")
         payload = _capture_payload(
             monkeypatch, "http://127.0.0.1:11435/v1/chat/completions", "qwen3:14b"
         )
         assert payload.get("think") is False
+
+    def test_no_think_for_custom_port_without_ollama_host(self, monkeypatch):
+        """Custom port without OLLAMA_HOST must NOT inject think:false.
+
+        This prevents injecting Ollama-specific params into local vLLM /
+        llama.cpp servers that happen to be on a non-default port.
+        """
+        monkeypatch.delenv("OLLAMA_HOST", raising=False)
+        payload = _capture_payload(
+            monkeypatch, "http://127.0.0.1:8080/v1/chat/completions", "qwen3:14b"
+        )
+        assert "think" not in payload
