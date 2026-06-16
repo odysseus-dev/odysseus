@@ -655,6 +655,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         _INT_RANGES = {
             "agent_max_rounds": (1, 200),
             "agent_max_tool_calls": (0, 1000),  # 0 = unlimited
+            # Loaded-model cap: floor 1 (never "unlimited"), ceiling 8 so a
+            # fat-fingered huge value can't invite an OOM stack of models.
+            "max_loaded_models": (1, 8),
         }
         for key in DEFAULT_SETTINGS:
             if key not in body:

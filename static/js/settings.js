@@ -1739,6 +1739,45 @@ async function initAgentSettings() {
       } catch (_) {}
     });
   }
+
+  // Model serving card (loaded-model cap + stop-previous + VRAM headroom).
+  // These back the server-side serve-safety guard so a model can't be stacked
+  // until the GPU OOMs. Saved to the same settings store the guard reads.
+  var maxLoaded = el('set-maxLoadedModels');
+  var serveRepl = el('set-serveReplacesPrevious');
+  var vramHead = el('set-serveVramHeadroom');
+  if (maxLoaded || serveRepl || vramHead) {
+    try {
+      var ms = await fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json());
+      if (maxLoaded) maxLoaded.value = (ms.max_loaded_models != null ? ms.max_loaded_models : 1);
+      if (serveRepl) serveRepl.checked = ms.serve_replaces_previous !== false;
+      if (vramHead) vramHead.value = (ms.serve_vram_headroom_gb != null ? ms.serve_vram_headroom_gb : 2);
+    } catch (_) {}
+    // "Stop previous" only applies in single-model mode; show its relevance.
+    var syncReplState = () => {
+      if (!serveRepl) return;
+      var single = !maxLoaded || (parseInt(maxLoaded.value, 10) || 1) <= 1;
+      serveRepl.closest('.settings-row').style.opacity = single ? '' : '0.45';
+    };
+    syncReplState();
+    var saveServe = async () => {
+      syncReplState();
+      try {
+        await fetch('/api/auth/settings', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            max_loaded_models: maxLoaded ? Math.max(1, Math.min(8, parseInt(maxLoaded.value, 10) || 1)) : 1,
+            serve_replaces_previous: serveRepl ? !!serveRepl.checked : true,
+            serve_vram_headroom_gb: vramHead ? Math.max(0, parseFloat(vramHead.value) || 0) : 2,
+          }),
+        });
+      } catch (_) {}
+    };
+    if (maxLoaded) maxLoaded.addEventListener('change', saveServe);
+    if (serveRepl) serveRepl.addEventListener('change', saveServe);
+    if (vramHead) vramHead.addEventListener('change', saveServe);
+  }
 }
 
 /* ═══════════════════════════════════════════
