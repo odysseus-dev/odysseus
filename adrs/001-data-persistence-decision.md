@@ -47,6 +47,62 @@ Reference: [persistence.md spec](https://github.com/RaresKeY/odysseus/blob/docs/
 
 ---
 
+## Summary Index
+
+This inventory covers 47 use-cases identified from specs and codebase analysis. It may not be exhaustive — additional persistence domains may exist in areas not covered by the current specs or in recently added features.
+
+| UC | Use-case | Current backend | Recommendation |
+|---|---|---|---|
+| 1 | Chat Sessions and Messages | SQLite `app.db` | Keep current |
+| 2 | Documents and Document Versions | SQLite `app.db` | Keep current |
+| 3 | Comparisons | SQLite `app.db` | Keep current |
+| 4 | User Accounts and Auth Config | JSON `auth.json` | Needs discussion |
+| 5 | Session Tokens | JSON `sessions.json` | Needs discussion |
+| 6 | API Tokens | SQLite `app.db` | Keep current |
+| 7 | API Key Manager State | JSON `api_keys.json` + `.key` | Needs discussion |
+| 8 | Encryption Keys | filesystem `.app_key` / `.key` | Keep current |
+| 9 | Email Accounts | SQLite `app.db` | Keep current |
+| 10 | Scheduled Email State | separate SQLite `scheduled_emails.db` | Migrate (consolidate into `app.db`) |
+| 11 | Contacts | JSON `contacts.json` / CardDAV | Keep current |
+| 12 | Email Cache | separate SQLite `email_cache.db` (dead) | Remove |
+| 13 | Email Attachment Staging | filesystem `mail-attachments/` | Keep current |
+| 14 | Calendars and Events | SQLite `app.db` | Keep current |
+| 15 | Scheduled Tasks and Task Runs | SQLite `app.db` | Keep current |
+| 16 | Notes and Todos | SQLite `app.db` | Keep current |
+| 17 | Crew Members | SQLite `app.db` | Keep current |
+| 18 | Gallery Images and Albums | SQLite + filesystem `generated_images/` | Keep current |
+| 19 | Editor Drafts and Signatures | SQLite `app.db` | Keep current |
+| 20 | Upload Files and Metadata | filesystem `uploads/` + JSON `uploads.json` | Add SQLite reference |
+| 21 | Emoji Cache | filesystem `emoji_cache/` | Keep current |
+| 22 | TTS Audio Cache | filesystem `tts_cache/` | Keep current |
+| 23 | Persistent Memories | dual-store `memory.json` + SQLite `memories` | Migrate (complete partial migration) |
+| 24 | Skills | filesystem `SKILL.md` + `_usage.json` | Add SQLite reference |
+| 25 | Vector Embeddings | ChromaDB | Keep current |
+| 26 | Research Reports | JSON `deep_research/{id}.json` | Add SQLite reference |
+| 27 | Personal Document Indexes | file-backed `PersonalDocsManager` | Keep current |
+| 28 | Global Settings | JSON `settings.json` | Migrate to SQLite |
+| 29 | Feature Flags | JSON `features.json` | Migrate to SQLite |
+| 30 | User Preferences | JSON `user_prefs.json` | Migrate to SQLite |
+| 31 | Presets | JSON `presets.json` | Migrate to SQLite |
+| 32 | Model Endpoints | SQLite `app.db` | Keep current |
+| 33 | MCP Server Configs | SQLite `app.db` | Keep current |
+| 34 | Integration Presets | JSON `integrations.json` | Migrate to SQLite |
+| 35 | Vault Config | JSON `vault.json` | Migrate to SQLite |
+| 36 | Embedding Endpoint Config | JSON `embedding_endpoint.json` | Migrate to SQLite |
+| 37 | Provider Auth Sessions | SQLite `app.db` | Keep current |
+| 38 | Webhooks | SQLite `app.db` | Keep current |
+| 39 | User Tools and Tool Data | SQLite `app.db` | Keep current |
+| 40 | Background Jobs | JSON `bg_jobs.json` + filesystem | Keep current |
+| 41 | Cookbook State File | JSON `cookbook_state.json` | Migrate to SQLite |
+| 42 | Cookbook Download Completeness | not persisted (derived at runtime) | Needs discussion |
+| 43 | Search Cache and Analytics | filesystem | Keep current |
+| 44 | HuggingFace Model Cache | external filesystem `HF_HOME` | Keep current |
+| 45 | Reminder Dedupe State | JSON `note_pings_<owner>.json` | Keep current |
+| 46 | Calendar Tidy State | JSON `tidy_calendar_state.json` | Keep current |
+| 47 | Memory Document | file `memory_doc.md` (dead) | Remove |
+
+---
+
 ## Domain I. Core Application State
 
 These domains are already in SQLite `app.db` and are well-served by it.
@@ -600,7 +656,7 @@ All domains in this group are already in SQLite `app.db`.
 
 **Recommendation:** Migrate to SQLite
 
-**Rationale:** The chmod 0600 argument does not hold up. `app.db` already contains encrypted API keys, bcrypt password hashes, TOTP secrets, and bearer token hashes — it should be chmod 0600 itself. If it is not, that is a security bug to fix, not a reason to keep vault secrets in a separate file. Moving `BW_SESSION` and vault config into `app.db` (using the `EncryptedText` pattern for the session token) consolidates secret-bearing state into one file with one permission boundary. The vault-specific chmod code can be removed, and the vault route's corrupt-or-non-object config fallback becomes a standard SQLite query. See [Open Question 1](#open-questions) for counter-arguments.
+**Rationale:** `app.db` already contains encrypted API keys, bcrypt password hashes, and bearer token hashes. Moving `BW_SESSION` and vault config into `app.db` (using the `EncryptedText` pattern for the session token) consolidates secret-bearing state into one file with one permission boundary. The vault-specific chmod code can be removed, and the vault route's corrupt-or-non-object config fallback becomes a standard SQLite query. **Prerequisite:** `app.db` must be chmod 0600 first (see Migration Prerequisites). See [Open Question 1](#open-questions) for counter-arguments.
 
 ### Use-case 36. Embedding Endpoint Config
 
@@ -822,7 +878,7 @@ All domains in this group are already in SQLite `app.db`.
 
 2. Ownership normalization: this ADR recommends a single canonical owner representation (see below). What should the canonical no-login / single-user owner value be? Should this be addressed here or in a dedicated ownership ADR?
 3. Should `auth.json` and `sessions.json` migrate to SQLite for crash safety, or does the working lock-guard pattern justify keeping them as JSON? These are the highest-risk migration candidates due to security sensitivity.
-4. Migration ordering: which domains should migrate first? A suggested priority based on impact vs. risk: (a) settings/features/embedding config → `config` table (low risk, eliminates 3 files), (b) presets + integration presets (low risk, eliminates corrupt-store fallback and dormant model ambiguity), (c) memories (medium risk, biggest user-facing improvement), (d) user preferences (low risk, eliminates full-file-rewrite scaling problem), (e) cookbook state (low-medium risk, CLI needs updating), (f) upload/skills/research metadata as SQLite references.
+4. Migration ordering: which domains should migrate first? Suggested priority based on recalibrated risk (see Migration Risk Assessment — risks are higher than initially estimated due to accessor bypass patterns): (a) dead code removal: email_cache.db, memory_doc.md (zero risk), (b) vault + presets + embedding config (low risk, self-contained), (c) integration presets (low risk, but dormant model needs schema revision), (d) skills + research indexes (low-medium, rebuildable from disk), (e) user preferences (low-medium, auth-disabled invariant), (f) settings + features (medium, bypass writers must be audited first), (g) uploads metadata (medium, non-rebuildable index — data loss if botched), (h) memories (med-high, dual-store + ChromaDB ID coupling), (i) cookbook state (med-high, multi-process accessors), (j) scheduled emails (med-high, nine tables across five modules).
 
 ### Ownership Model — The Bigger Problem
 
@@ -842,11 +898,11 @@ On top of that, four distinct "no owner" values coexist:
 - `ODYSSEUS_FALLBACK_OWNER` / `owner@localhost`: calendar route normalization
 
 This fragmentation means:
-- **User rename is a cross-store data migration** that touches SQL rows, JSON files, disk files, and frontmatter. If any step fails partially, ownership splits across stores (see use-case 4 note).
+- **User rename is a cross-store fan-out with partial rollback.** One function (`rename_user` in `auth_routes.py`) rewrites ownership across SQL tables, `user_prefs.json`, research JSON files, `memory.json`, the uploads index, and skills frontmatter — each through a different mechanism. The auth and SQL steps have a rollback path. The four file-based steps do not: they log a warning on failure and continue. A rename that fails partway leaves ownership split across stores with no way back.
 - **Owner-scoping bugs are easy to introduce** because each store implements ownership differently. The use-case notes in this ADR flag six cross-owner data leak points (use-cases 9, 10, 18, 24, 26, and the agent skill index).
 - **New features must learn four patterns** to implement ownership correctly.
 
-Consolidating more domains into SQLite (as this ADR recommends) naturally reduces ownership shapes — SQL `owner` column + `owner_filter()` becomes the dominant pattern. But the "no owner" value fragmentation remains regardless of backend choice and needs its own decision.
+Consolidating ownership into a single `UPDATE ... SET owner = ?` is arguably worth more than any individual backend swap. Every domain that moves to SQLite reduces the rename fan-out by one store, and once ownership lives in one database, rename becomes a single transaction instead of a multi-store prayer.
 
 **Recommendation:** Adopt a single canonical owner representation. For SQL domains, this means a consistent `owner` column convention (including a canonical value for the no-login case). For any remaining file-backed domains, ownership should be tracked via SQLite reference tables rather than encoded in filenames or frontmatter. User rename should be a single-transaction operation wherever possible — which requires ownership to live in one store, not four.
 
@@ -859,7 +915,7 @@ Two backup mechanisms exist with different coverage:
 | `routes/backup_routes.py` (HTTP) | Memories, presets, skills, settings, features, prefs | Calendar, tasks, notes, documents, gallery, sessions, email, MCP, endpoints |
 | `scripts/odysseus-backup` (local) | SQLite backup of `app.db`, key files, JSON stores, skills tree | Some large subtrees behind flags (deep research, mail attachments) |
 
-Consolidating more domains into `app.db` would increase the coverage of the local SQLite backup without needing domain-specific backup logic. If all the "Migrate to SQLite" recommendations in this ADR are implemented, the remaining file-backed stores are: `auth.json` and `sessions.json` (Needs discussion), `api_keys.json` (Needs discussion), `contacts.json` (Keep — CardDAV fallback), `bg_jobs.json` (Keep — process management), `note_pings_<owner>.json` (Keep — ephemeral dedupe), and `tidy_calendar_state.json` (Keep — watermark). That is roughly 6-7 JSON/state files, down from 13+. The stores that remain are either security-sensitive migration candidates, ephemeral caches, or fallback stores — not core application state. The `app.db` file should be chmod 0600 — it already contains encrypted API keys, bcrypt hashes, and bearer tokens.
+Consolidating more domains into `app.db` would increase the coverage of the local SQLite backup without needing domain-specific backup logic. If all the "Migrate to SQLite" recommendations in this ADR are implemented, the remaining file-backed stores are: `auth.json` and `sessions.json` (Needs discussion), `api_keys.json` (Needs discussion), `contacts.json` (Keep — CardDAV fallback), `bg_jobs.json` (Keep — process management), `note_pings_<owner>.json` (Keep — ephemeral dedupe), and `tidy_calendar_state.json` (Keep — watermark). That is roughly 6-7 JSON/state files, down from 13+. The stores that remain are either security-sensitive migration candidates, ephemeral caches, or fallback stores — not core application state.
 
 ### Separate SQLite Databases vs. Consolidated app.db
 
@@ -881,25 +937,55 @@ This pattern provides:
 - Elimination of custom write code (uploads.json has its own locked writer with `.bak` recovery; memory.json has its own temp-and-replace)
 - Standard backup via SQLite backup APIs
 
+### Accessor Bypass — The Hidden Migration Risk
+
+The real risk in every migration is not the manager itself — it is the code paths that bypass the manager and access the store directly. This pattern repeats across multiple domains. The per-domain analysis above was scoped against each manager's public API, but a migration that only updates the manager will silently split the source of truth. The split will not show up in tests that go through the manager.
+
+Known bypass patterns, verified against code:
+
+| Domain | Manager / expected path | Bypass code | What it does |
+|--------|------------------------|-------------|-------------|
+| Settings | `src.settings.save_settings()` | `contacts_routes._load_settings()` / `_save_settings()` | Reads/writes `settings.json` directly, no cache invalidation, no defaults-merge |
+| Settings | `src.settings.save_settings()` | `email_helpers._load_settings()` / `_save_settings()` | Same: direct JSON read/write bypassing the settings module |
+| Uploads | `UploadHandler` | `upload_routes.download_file()`, `upload_routes._load_upload_info()` | Reads `uploads.json` directly with `open()` + `json.load()`, outside `UploadHandler` |
+| Skills | `SkillsManager` | Auth rename path in `auth_routes.py` | Rewrites `SKILL.md` frontmatter owner directly, does not call `SkillsManager` |
+| Research | `ResearchHandler` | `research_routes.py` archive/delete | Writes research JSON with plain `write_text()` (not even atomic), bypassing handler |
+| Memories | `MemoryManager` | `builtin_actions.py` | Reads `Memory` SQLAlchemy model directly via `db.query(Memory)`, bypassing `MemoryManager` entirely (the dual-store problem in use-case 23) |
+
+**Any migration PR must audit for these bypasses first.** The migration itself is straightforward — change the manager to read/write SQLite. The dangerous part is the code that never goes through the manager. If those paths are not updated, the old file store and the new SQLite store will diverge, and the divergence will be silent.
+
+### Migration Prerequisites
+
+Two hard prerequisites must be completed before any secret-bearing store migrates into `app.db`:
+
+**1. `app.db` must be chmod 0600.**
+
+Right now `data/app.db` is world-readable (0644), while `vault.json` and the encryption keys are 0600. The database already holds bearer-token hashes and encrypted provider keys — that is an existing security gap. Moving vault session tokens, integration secrets, settings API keys, cookbook HF tokens, or embedding API keys out of 0600 files into a 0644 database is a regression, not a consolidation. This is a hard precondition for use-cases 28 (settings), 34 (integrations), 35 (vault), 36 (embedding config), and 41 (cookbook state), not a footnote. The fix is straightforward (chmod in the entrypoint + startup), but it must land first.
+
+**2. The config table scaffolding must be built once, not per-domain.**
+
+Use-cases 28 (settings), 29 (features), and 36 (embedding config) all need a `config` table that does not exist yet, plus a migration path and a secret-encryption convention. Whoever lands the first of them pays the scaffolding cost and sets the convention the others inherit — they cannot each be independently "Low" risk. Use-case 28 (settings) should be the anchor: it exercises every hard invariant (cache, defaults-merge, override-detection, secrets). Features and embedding config ride the same rails once settings is built.
+
 ### Migration Risk Assessment
 
-For domains where migration is recommended:
+For domains where migration is recommended. Risks have been recalibrated to account for accessor bypass patterns (see above), non-rebuildable indexes, multi-process writers, and shared scaffolding dependencies. Audit for non-manager accessors before migrating any domain.
 
-| Domain | Risk | Mitigation |
-|--------|------|------------|
-| Memories → SQLite | Medium — active store, owner fields, vector index coupling | Read-and-insert migration; preserve all fields; vector store stays separate; keep JSON reader as fallback during transition |
-| Upload metadata → SQLite | Low — metadata only, files unchanged | Insert from `uploads.json`; keep atomic writer as read-only fallback |
-| Skills metadata → SQLite | Low — metadata index, files remain authoritative | Build index from disk scan; files remain source of truth |
-| Research index → SQLite | Low — metadata only, JSON files unchanged | Scan directory, insert metadata rows |
-| Settings + Features → SQLite | Low — single-document stores, in-process cache unchanged | Read JSON on startup, write to `config` table; keep JSON reader as one-time migration fallback |
-| User Preferences → SQLite | Low — per-user key-value pairs | Read `_users` map, insert rows per user; legacy flat-prefs support becomes a migration step, not permanent code |
-| Presets → SQLite | Low — admin-managed | Read JSON, insert rows; `PresetManager` corrupt-store fallback in `load()` can be removed |
-| Integration Presets → SQLite | Low — tiny store, dormant model already exists | Read JSON, populate `Integration` rows; remove dormant model ambiguity |
-| Embedding Endpoint Config → SQLite | Low — single config value | Merge into `config` table or `ModelEndpoint` metadata |
-| Cookbook State → SQLite | Low-Medium — shared with CLI, contains encrypted tokens | Read JSON, insert rows; CLI updated to read SQLite; encrypted tokens use `EncryptedText` pattern |
-| Vault Config → SQLite | Low — tiny store, admin-only | Read JSON, insert row; `BW_SESSION` uses `EncryptedText`; remove vault-specific chmod code; ensure `app.db` is chmod 0600 |
-| Scheduled Emails → `app.db` | Low — already SQLite, just moving tables | Move table definitions to `core/database.py`; startup migration copies rows from `scheduled_emails.db` if it exists; helper code in `email_helpers.py` switches to `app.db` session |
-| Email Cache → Remove | None — dead code | Remove `EMAIL_CACHE_DB` constant, `_get_cached_summaries()` function, and `email_ai` table reference from `mcp_servers/email_server.py` |
+| Domain | Risk | Why | Mitigation |
+|--------|------|-----|------------|
+| Memories → SQLite | **Med-High** | No single write chokepoint: `memory.json` is written by `MemoryManager` and separately by the rename path; the SQLite `Memory` table has no writer at all. Memory IDs must be carried verbatim or the ChromaDB index orphans. | Audit all write paths before migration. Preserve IDs exactly. Keep JSON reader as fallback during transition. |
+| Upload metadata → SQLite | **Medium** | The index is not rebuildable — `owner`, `hash`, and `original_name` live only in `uploads.json`, never on disk. Drift is permanent data loss. Two route handlers read `uploads.json` directly outside `UploadHandler`. | Audit bypass readers in `upload_routes.py`. Migration must be lossless — no fallback to "rebuild from disk." |
+| Skills metadata → SQLite | Low-Medium | Rebuildable from disk scan so drift self-heals. But auth rename rewrites `SKILL.md` frontmatter directly, bypassing `SkillsManager`. | Build index from disk scan; files remain source of truth. Audit rename path. |
+| Research index → SQLite | Low-Medium | Rebuildable from disk scan. But archive/delete in `research_routes.py` writes JSON with plain `write_text()` (not atomic), bypassing handler. | Scan directory, insert metadata rows. Audit route-level writers. |
+| Settings + Features → SQLite | **Medium** | Hot read path, full-defaults-merge, `is_setting_overridden()` reads the raw file, in-band secrets, and writers that bypass `src/settings.py` (contacts_routes, email_helpers each have their own `_load_settings`/`_save_settings`). | Audit all bypass writers first. Migration must preserve defaults-merge semantics and cache invalidation. Config-table scaffolding needed before embedding config can merge in. |
+| User Preferences → SQLite | Low-Medium | The auth-disabled "first user" overlay aliasing is a non-obvious invariant that a per-row schema can break. | Preserve first-user overlay semantics. Test auth-disabled single-user flow. |
+| Presets → SQLite | Low | Needs the load-once in-memory `.presets` and defaults-forward-fill preserved. | Read JSON, insert rows. Preserve `PresetManager` defaults-healing and in-memory cache semantics. |
+| Integration Presets → SQLite | Low | The "dormant model already exists" premise is misleading: the model is schema-incompatible with the JSON store and has no encrypted column for the API key. | Revise or replace the dormant `Integration` model rather than populating it as-is. |
+| Embedding Endpoint Config → SQLite | Low | Depends on the config-table scaffolding from settings migration. | Merge into `config` table or `ModelEndpoint` metadata after settings migration lands. |
+| Cookbook State → SQLite | **Med-High** | Several direct-disk accessors across three processes including a real CLI/cron writer. Race guards are application-level merge logic, not torn-write protection. | Audit all accessors across web app, CLI, and serve lifecycle. Row-level SQLite updates eliminate the file-overwrite race but application-level merge logic must be preserved. |
+| Vault Config → SQLite | Low | Small, admin-only. Requires `app.db` chmod 0600 prerequisite. | Read JSON, insert row; `BW_SESSION` uses `EncryptedText`. |
+| Scheduled Emails → `app.db` | **Med-High** | Nine tables, not one. Raw `sqlite3` connections to the separate DB are spread across five modules (`email_routes`, `email_pollers`, `email_helpers`, `task_routes`, `builtin_actions`). The "helpers stay in `email_helpers.py`" framing understates it: those helpers ARE the connection and migration machinery. | Audit all raw `sqlite3` connection sites. Move table definitions to `core/database.py` with SQLAlchemy models. Startup migration copies rows. Every `sqlite3.connect(SCHEDULED_DB)` call must switch to `SessionLocal()`. |
+| Email Cache → Remove | None | Dead code. | Remove `EMAIL_CACHE_DB` constant, `_get_cached_summaries()`, and `email_ai` table reference from `mcp_servers/email_server.py`. |
+| Memory Doc → Remove | None | Dead code. | Remove `MEMORY_DOC` constant from `src/constants.py` and `memory_doc` field from `src/config.py`. |
 
 ## Prior Art
 
