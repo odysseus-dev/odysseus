@@ -263,6 +263,10 @@ and configure everything else inside **Settings**.
 
 ## Troubleshooting & Advanced Setup
 
+> **Integration traps** (copy buttons dead over LAN/Tailscale, phone ntfy
+> reminders, local Dovecot auth, self-hosted CalDAV/Radicale sync) have their own
+> page of 30-second fixes: [Self-Host Troubleshooting](self-host-troubleshooting.md).
+
 ### `chromadb-client` conflicts with embedded ChromaDB
 If `chromadb-client` (the lightweight HTTP-only package) is installed alongside the full `chromadb` package, Odysseus starts but ChromaDB silently falls back to HTTP-only mode and fails.
 
