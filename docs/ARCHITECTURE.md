@@ -16,6 +16,128 @@ graph TD
     FastAPI --> OS["Local OS Tools & MCP Servers"]
 ```
 
+### Exhaustive System Architecture
+
+```mermaid
+graph TB
+    subgraph Frontend["Frontend (Vanilla JS SPA)"]
+        direction TB
+        AppJS["app.js Orchestrator"]
+
+        subgraph CoreUI["Core App"]
+            ChatUI["Chat Engine (chat.js, chatStream.js)"]
+            DocUI["Document Library & Editor"]
+            CanvasUI["AI Canvas Editor (editor/)"]
+        end
+
+        subgraph Workspaces["Workspace & Apps"]
+            CompareUI["Compare Mode"]
+            MailUI["Email Inbox"]
+            CalUI["Calendar & Tasks"]
+            GalleryUI["Gallery & Memory"]
+            CookbookUI["Cookbook UI"]
+        end
+
+        AppJS --> CoreUI
+        AppJS --> Workspaces
+    end
+
+    subgraph Backend["Backend (FastAPI & Python)"]
+        direction TB
+        FastAPI["FastAPI Orchestrator (app.py)"]
+        Middleware["Core Middleware (Auth, Security, CSP)"]
+        Routers["Feature Routers (routes/)"]
+
+        FastAPI --> Middleware --> Routers
+
+        subgraph CoreLogic["Core Logic & Infrastructure"]
+            SessionMan["Session Manager"]
+            AtomicIO["Atomic IO"]
+            EventBus["Event Bus"]
+            TaskSched["Task Scheduler"]
+            SecretStore["Secret Vault"]
+        end
+
+        Routers <--> CoreLogic
+
+        subgraph AgentEngine["Agent & AI Engine"]
+            ActionIntent["Action Intents Regex"]
+            AgentLoop["Agent Loop (agent_loop.py)"]
+            TeacherEsc["Teacher Escalation"]
+            ContextCompactor["Context Compactor"]
+            MemoryRAG["Memory & RAG Manager"]
+            DeepResearch["Deep Research"]
+
+            ActionIntent -->|'Promote to Agent'| AgentLoop
+            AgentLoop <--> MemoryRAG
+            AgentLoop <--> TeacherEsc
+            AgentLoop <--> ContextCompactor
+        end
+
+        Routers <--> AgentEngine
+
+        subgraph AgentTools["Agent Tools & Dispatch"]
+            ToolIndex["Tool Index"]
+            FSTools["Filesystem Tools"]
+            ShellTools["Shell/Subprocess Tools"]
+            WebTools["Web & Search Tools"]
+            MCPMan["MCP Manager"]
+            BuiltInMCP["Built-in MCP Servers"]
+
+            AgentLoop --> ToolIndex
+            ToolIndex --> FSTools & ShellTools & WebTools & MCPMan
+            MCPMan --> BuiltInMCP
+        end
+
+        subgraph BgServices["Background Services"]
+            HWFit["HW Fitness & Model Router"]
+            MailCalSync["IMAP/SMTP & CalDAV Sync"]
+            SearchService["Search/SearXNG Engine"]
+            SpeechMedia["TTS, STT, YT-DLP"]
+            WebhookMan["Webhook Dispatcher"]
+        end
+
+        CoreLogic <--> BgServices
+        AgentEngine <--> BgServices
+    end
+
+    subgraph DataPersistence["Local Data Persistence (data/)"]
+        SQLite["SQLite Database"]
+        ChromaDB["ChromaDB (Vector Store)"]
+        LocalFileSystem["Local Workspace & Uploads"]
+    end
+
+    subgraph ExternalEcosystem["External Ecosystem"]
+        ExtLLMs["External LLMs (OpenAI, Anthropic)"]
+        LocLLMs["Local Models (vLLM, llama.cpp, Ollama)"]
+        WebEndpoints["Public Web / External Sites"]
+        ExtMailServers["External Mail & CalDAV Servers"]
+        CompanionBridge["Mobile Companion & Ext Agents"]
+    end
+
+    %% Connections
+    Frontend --|'HTTP/REST & SSE Streaming'|--> FastAPI
+
+    Backend --|'SQLAlchemy'|--> SQLite
+    MemoryRAG --|'API'|--> ChromaDB
+    FSTools --|'File IO'|--> LocalFileSystem
+    AtomicIO --|'File IO'|--> LocalFileSystem
+
+    AgentEngine --|'Prompting'|--> ExtLLMs
+    AgentEngine --|'Prompting'|--> LocLLMs
+    CookbookUI --|'Launch via tmux'|--> LocLLMs
+    HWFit --|'Profiles'|--> LocLLMs
+
+    WebTools --|'Scraping'|--> WebEndpoints
+    SearchService --|'Query'|--> WebEndpoints
+    DeepResearch --|'Iterative Scraping'|--> WebEndpoints
+
+    MailCalSync --|'IMAP/SMTP/CalDAV'|--> ExtMailServers
+
+    CompanionBridge --|'Token Pair'|--> Middleware
+    WebhookMan --|'POST'|--> WebEndpoints
+```
+
 ### Core Responsibilities
 - **Frontend (Vanilla JS):** Manages user interactions, chat rendering, file attachments, state management, and real-time streaming updates.
 - **Backend (FastAPI):** Orchestrates API routes, manages the database, executes agent loops and system tools, and interfaces with LLM providers or local models.
