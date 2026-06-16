@@ -22,6 +22,7 @@ import {
   _tryFoldHintSig, _foldSignature, _SIG_ICON, _QUOTE_ICON,
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
+import { collapseSidebarToRail } from './modalSnap.js';
 
 const API_BASE = window.location.origin;
 let _emailUnreadChipClickWired = false;
@@ -29,6 +30,7 @@ let _libLoadSeq = 0;
 let _libFolderSeq = 0;
 let _libSearchSeq = 0;
 let _libSearchHadResults = false;
+let _libSearchInFlight = false;
 let _activeEmailReaderForSelectAll = null;
 
 function _isEmailTypingTarget(t) {
@@ -60,6 +62,52 @@ function _markEmailReaderActive(reader) {
   reader.addEventListener('pointerdown', () => { _activeEmailReaderForSelectAll = reader; }, true);
   reader.addEventListener('focusin', () => { _activeEmailReaderForSelectAll = reader; }, true);
 }
+
+// Stash the email identity (uid + folder + account) on the reader element
+// so chat submits and other code paths can ask "what email is the user
+// currently looking at?" without re-deriving from the DOM hierarchy.
+function _stampReaderContext(reader, em, folder, account) {
+  if (!reader || !em) return;
+  reader.dataset.emailUid = String(em.uid || '');
+  reader.dataset.emailFolder = String(folder || state._libFolder || 'INBOX');
+  reader.dataset.emailAccount = String(account || state._libAccountId || '');
+  if (em.subject) reader.dataset.emailSubject = String(em.subject);
+  if (em.from_address || em.from_name) {
+    reader.dataset.emailFrom = String(em.from_address || em.from_name);
+  }
+}
+
+// Returns { uid, folder, account, subject, from } for the email the user
+// is most likely referring to — the last reader they interacted with, then
+// any open reader-modal as a fallback. Returns null when no email reader
+// is open. Exported below for chat.js to read on submit.
+function _getActiveEmailContext() {
+  const candidates = [];
+  if (_activeEmailReaderForSelectAll && _activeEmailReaderForSelectAll.isConnected) {
+    candidates.push(_activeEmailReaderForSelectAll);
+  }
+  // Visible reader-tab modals (popped-out windows).
+  document.querySelectorAll('.modal[id^="email-reader-"]:not(.hidden):not(.modal-minimized) .email-card-reader').forEach(el => candidates.push(el));
+  // Expanded inline reader in the library list.
+  document.querySelectorAll('#email-lib-modal:not(.hidden) .doclib-card.email-card-expanded .email-card-reader').forEach(el => candidates.push(el));
+  for (const r of candidates) {
+    const uid = r?.dataset?.emailUid;
+    if (uid) {
+      return {
+        uid,
+        folder: r.dataset.emailFolder || 'INBOX',
+        account: r.dataset.emailAccount || '',
+        subject: r.dataset.emailSubject || '',
+        from: r.dataset.emailFrom || '',
+      };
+    }
+  }
+  return null;
+}
+
+// Frontend reads via the global so chat.js doesn't need a separate import
+// path (emailLibrary loads lazily in some entry points).
+try { window.__odysseusGetActiveEmailContext = _getActiveEmailContext; } catch (_) {}
 
 const _COPY_EMAIL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
 
@@ -126,6 +174,20 @@ async function _copyTextToClipboard(text) {
   } catch (_) {
     return false;
   }
+}
+
+function _wireMetaToggle(root) {
+  const toggle = root && root.querySelector('.email-reader-meta-toggle');
+  const details = root && root.querySelector('.email-reader-meta-details');
+  if (!toggle || !details) return;
+  toggle.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const open = details.hasAttribute('hidden');
+    if (open) details.removeAttribute('hidden');
+    else details.setAttribute('hidden', '');
+    toggle.setAttribute('aria-expanded', String(open));
+    toggle.classList.toggle('open', open);
+  });
 }
 
 function _recipientChipHtml(full, label, extraClass = '') {
@@ -234,9 +296,9 @@ function _syncEmailReadState(uid, isRead = true) {
     dot.className = 'email-card-unread-dot';
     dot.style.cssText = `width:6px;height:6px;border-radius:50%;background:${_senderColor(senderName)};flex-shrink:0;margin-left:2px;`;
     const done = titleRow.querySelector('.email-card-done');
-    const rightCluster = titleRow.querySelector('.email-card-header-menu')?.parentElement;
+    const navArrows = titleRow.querySelector('.email-card-nav-arrows');
     if (done) done.insertAdjacentElement('afterend', dot);
-    else if (rightCluster) titleRow.insertBefore(dot, rightCluster);
+    else if (navArrows) titleRow.insertBefore(dot, navArrows);
     else titleRow.appendChild(dot);
   });
 }
@@ -300,14 +362,8 @@ function _renderAccountsLoading() {
   try {
     const wp = spinnerModule.createWhirlpool(14);
     wp.element.classList.add('email-accounts-loading-whirlpool');
-    const label = document.createElement('span');
-    label.className = 'email-accounts-loading-label';
-    label.textContent = 'Accounts';
     strip.appendChild(wp.element);
-    strip.appendChild(label);
-  } catch (_) {
-    strip.textContent = 'Accounts...';
-  }
+  } catch (_) {}
 }
 
 function _syncEmailReminderBellVisibility(enabled) {
@@ -326,6 +382,12 @@ async function _loadEmailReminderBellVisibility() {
     _syncEmailReminderBellVisibility(false);
   }
 }
+// Live-update the bell when the reminder channel changes in Settings,
+// so the user doesn't have to reopen Email to see the change apply.
+window.addEventListener('odysseus-reminder-channel-changed', (e) => {
+  const ch = e?.detail?.channel;
+  _syncEmailReminderBellVisibility(ch === 'email');
+});
 
 function _readCssPx(name) {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name);
@@ -406,7 +468,14 @@ function _clearEmailDocumentSplit() {
   ].forEach(prop => docPane.style.removeProperty(prop));
 }
 
-function _hasDesktopRoomForEmailAndDocument(modal) {
+// Compute the left-edge x assuming the wide sidebar has collapsed to the
+// rail. Used by the "try collapsing the sidebar first" path so we can decide
+// whether collapsing recovers enough room before minimizing email.
+function _emailSplitLeftEdgeIfSidebarCollapsed() {
+  return _readCssPx('--icon-rail-w');
+}
+
+function _hasDesktopRoomForEmailAndDocument(modal, opts = {}) {
   if (window.innerWidth <= 768) return false;
   if (window.innerWidth >= 1100) return true;
   const content = modal?.querySelector?.('.modal-content');
@@ -416,18 +485,31 @@ function _hasDesktopRoomForEmailAndDocument(modal) {
   const emailWidth = isFullscreen
     ? Math.min(440, Math.max(360, Math.round(window.innerWidth * 0.30)))
     : Math.max(360, Math.round(rect?.width || 440));
-  const docMinWidth = 560;
-  const breathingRoom = 72;
-  const leftEdge = isFullscreen ? _emailSplitLeftEdge() : Math.max(0, Math.round(rect?.left || _emailSplitLeftEdge()));
+  // Relaxed thresholds — the old 560 + 72 forced an unnecessary tab-down
+  // on ~1200–1300px viewports where there was visually plenty of room.
+  const docMinWidth = 460;
+  const breathingRoom = 40;
+  const leftEdgeNow = isFullscreen ? _emailSplitLeftEdge() : Math.max(0, Math.round(rect?.left || _emailSplitLeftEdge()));
+  const leftEdge = opts.assumeSidebarCollapsed ? _emailSplitLeftEdgeIfSidebarCollapsed() : leftEdgeNow;
   return (window.innerWidth - leftEdge - emailWidth) >= (docMinWidth + breathingRoom);
 }
 
 function _prepareEmailWindowForDocument(modal) {
   if (window.innerWidth <= 768) return true;
   if (!modal) return false;
+  // Try to make breathing room by collapsing the wide sidebar to the rail
+  // when there isn't enough horizontal space for both panes. The
+  // route-collapse marker that collapseSidebarToRail() sets means the
+  // sidebar will auto-restore when the doc closes. Crucially, we no
+  // longer fall back to clearing the split when even that isn't enough —
+  // the user opted out of auto-tab-down, so we proceed with the dock
+  // even if it's cramped.
   if (!_hasDesktopRoomForEmailAndDocument(modal)) {
-    _clearEmailDocumentSplit();
-    return true;
+    const sidebar = document.getElementById('sidebar');
+    const sidebarWasOpen = sidebar && !sidebar.classList.contains('hidden');
+    if (sidebarWasOpen && _hasDesktopRoomForEmailAndDocument(modal, { assumeSidebarCollapsed: true })) {
+      try { collapseSidebarToRail(); } catch (_) {}
+    }
   }
   if (modal.classList.contains('modal-left-docked')) {
     const content = modal.querySelector('.modal-content');
@@ -675,7 +757,7 @@ async function _prewarmDefaultEmailView() {
   } catch (_) {}
 
   const accountQS = accountId ? `&account_id=${encodeURIComponent(accountId)}` : '';
-  const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folder)}${accountQS}&limit=100&offset=0&filter=${filter}`, {
+  const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folder)}${accountQS}&limit=500&offset=0&filter=${filter}`, {
     credentials: 'same-origin',
   });
   if (!res.ok) return;
@@ -752,6 +834,13 @@ export function openEmailLibrary(opts = {}) {
   state._libEmails = [];
   state._libOffset = 0;
   state._libSearch = '';
+  state._libSearchDraft = '';
+  // Reset select-mode on each open so the toolbar Select button
+  // never opens already-toggled-on after a previous session.
+  state._selectMode = false;
+  if (state._selectedUids) state._selectedUids.clear();
+  state._libSearchPills = [];
+  _libSuggestionCache = null;
   state._libFilter = 'all';
   state._libHasAttachments = false;
   // Animate the very first card render with a domino cascade (same as the
@@ -786,9 +875,8 @@ export function openEmailLibrary(opts = {}) {
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:10px;overflow:hidden;">
         <div class="admin-card" style="flex:1;flex-direction:column;display:flex;overflow:hidden;">
-          <p class="memory-desc doclib-desc">All emails. Click to open as a document.</p>
           <div class="email-accounts-row">
-            <div id="email-lib-accounts" style="display:flex;gap:4px;flex-wrap:wrap;flex:1;"></div>
+            <div id="email-lib-accounts" style="display:flex;gap:4px;flex:1;min-width:0;"></div>
             <button class="memory-toolbar-btn email-compose-jiggle" id="email-lib-compose-btn">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-2px;margin-right:3px;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
               New
@@ -799,7 +887,10 @@ export function openEmailLibrary(opts = {}) {
               <select class="memory-sort-select" id="email-lib-folder" style="flex:1;min-width:0;text-overflow:ellipsis;">
                 <option value="INBOX">Inbox</option>
               </select>
-              <select class="memory-sort-select" id="email-lib-filter" style="flex:1;min-width:0;">
+              <!-- Hidden native select kept as the source of truth — all
+                   existing change handlers still fire via the custom picker
+                   dispatching 'change' on it. -->
+              <select class="memory-sort-select" id="email-lib-filter" style="display:none;">
                 <option value="all">All</option>
                 <option value="unread">Unread</option>
                 <option value="favorites">Favorites</option>
@@ -816,7 +907,14 @@ export function openEmailLibrary(opts = {}) {
                   <option value="tag:marketing">Marketing</option>
                 </optgroup>
               </select>
-              <button class="memory-toolbar-btn email-filter-select-btn" id="email-lib-select-btn">Select</button>
+              <div class="email-filter-picker" id="email-filter-picker" style="flex:1;min-width:0;position:relative;">
+                <button type="button" class="email-filter-btn" id="email-filter-btn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="email-filter-current"><span class="email-filter-icon"></span><span class="email-filter-label">All</span></span>
+                  <svg class="email-filter-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+                <div class="email-filter-menu" id="email-filter-menu" role="listbox" hidden></div>
+              </div>
+              <button class="memory-toolbar-btn email-filter-select-btn" id="email-lib-select-btn"><svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>Select</button>
               <button class="memory-toolbar-btn email-filter-refresh-btn" id="email-lib-refresh-btn" title="Refresh">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
               </button>
@@ -827,7 +925,12 @@ export function openEmailLibrary(opts = {}) {
             </div>
             <div class="email-search-row" style="display:flex;gap:6px;align-items:flex-start;">
             <div class="email-search-wrap" style="position:relative;flex:1;min-width:140px;">
-              <input type="text" id="email-lib-search" placeholder="Search emails\u2026" class="memory-search-input" style="width:100%;padding-right:96px;" />
+              <div class="email-lib-chip-bar memory-search-input" id="email-lib-chip-bar" style="width:100%;padding-right:96px;padding-left:26px;display:flex;align-items:center;flex-wrap:wrap;gap:4px;cursor:text;min-height:30px;position:relative;">
+                <svg class="email-lib-chip-bar-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="position:absolute;left:8px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--accent, var(--red));"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+                <span id="email-lib-pills" style="display:contents"></span>
+                <input type="text" id="email-lib-search" placeholder="Search by name or text" autocomplete="off" style="flex:1;min-width:80px;border:0;outline:none;background:transparent;color:inherit;font:inherit;padding:0;position:relative;top:-1px;" />
+              </div>
+              <div id="email-lib-suggest" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:60;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,0.25);max-height:240px;overflow-y:auto;"></div>
               <button class="memory-toolbar-btn email-undone-toggle email-undone-toggle-inline" id="email-undone-btn" title="Show only emails not marked as done (undone)">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               </button>
@@ -841,7 +944,7 @@ export function openEmailLibrary(opts = {}) {
             </div>
           </div>
           <div id="email-lib-bulk" class="memory-bulk-bar hidden" style="margin-bottom:5px;">
-            <label class="memory-bulk-check-all" style="position:relative;top:2px;"><input type="checkbox" id="email-lib-select-all"> All</label>
+            <label class="memory-bulk-check-all" style="position:relative;top:0px;"><input type="checkbox" id="email-lib-select-all"> All</label>
             <span id="email-lib-selected-count" style="position:relative;top:1px;">0 Selected</span>
             <button class="memory-toolbar-btn" id="email-lib-bulk-actions" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Actions <span style="opacity:0.55;font-size:9px;">▼</span></button>
             <button class="memory-toolbar-btn" id="email-lib-bulk-delete" style="position:relative;top:-2px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>Delete</button>
@@ -970,7 +1073,10 @@ export function openEmailLibrary(opts = {}) {
     // Sync quick-toggle active states so they mirror the dropdown.
     document.getElementById('email-undone-btn')?.classList.toggle('active', state._libFilter === 'undone');
     document.getElementById('email-reminder-btn')?.classList.toggle('active', state._libFilter === 'reminders');
+    // Mirror the picker label/icon.
+    _renderFilterPickerCurrent();
   });
+  _initFilterPicker();
   document.getElementById('email-attach-btn')?.addEventListener('click', () => {
     const btn = document.getElementById('email-attach-btn');
     state._libHasAttachments = !state._libHasAttachments;
@@ -1048,12 +1154,11 @@ export function openEmailLibrary(opts = {}) {
   // \Flagged search). _libSort stays at its 'recent' default so the grid keeps
   // the API's newest-first order.
 
-  let searchTimer = null;
-  document.getElementById('email-lib-search').addEventListener('input', (e) => {
-    state._libSearch = e.target.value;
-    if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(_doSearch, 350);
-  });
+  // Chip-bar search: pills represent contact + free-text filters; the live
+  // input below drives the autocomplete dropdown. Old behavior — instant
+  // local filter on every keystroke + server-side IMAP search after 350ms
+  // — is replaced by deterministic local filtering against the snapshot.
+  _initEmailSearchChipBar();
 
   document.getElementById('email-lib-refresh-btn').addEventListener('click', async () => {
     const btn = document.getElementById('email-lib-refresh-btn');
@@ -1179,10 +1284,20 @@ export function openEmailLibrary(opts = {}) {
     }
   }
 
-  // Select mode toggle
+  // Select mode toggle — icon + label swap matches the brain memories
+  // select button (dot+Select ↔ X+Cancel).
+  const _SELECT_BTN_DOT_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>';
+  const _SELECT_BTN_X_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  const _setSelectBtnState = (on) => {
+    const btn = document.getElementById('email-lib-select-btn');
+    if (!btn) return;
+    if (on) { btn.classList.add('active'); btn.innerHTML = _SELECT_BTN_X_SVG + 'Cancel'; }
+    else { btn.classList.remove('active'); btn.innerHTML = _SELECT_BTN_DOT_SVG + 'Select'; }
+  };
   document.getElementById('email-lib-select-btn').addEventListener('click', () => {
     state._selectMode = !state._selectMode;
     state._selectedUids.clear();
+    _setSelectBtnState(state._selectMode);
     _updateBulkBar();
     _renderGrid();
   });
@@ -1202,6 +1317,7 @@ export function openEmailLibrary(opts = {}) {
   document.getElementById('email-lib-bulk-cancel')?.addEventListener('click', () => {
     state._selectMode = false;
     state._selectedUids.clear();
+    _setSelectBtnState(false);
     _updateBulkBar();
     _renderGrid();
   });
@@ -1284,10 +1400,15 @@ export function openEmailLibrary(opts = {}) {
   document.addEventListener('keydown', state._libEscHandler, true);
 
   _renderAccountsLoading();
-  _loadAccounts();
-  _loadFolders();
-  _loadEmailReminderBellVisibility();
-  _loadEmails();
+  // Await accounts before loading emails so the list request carries the
+  // right account_id from the very first fetch (now that we auto-select
+  // an explicit account instead of relying on a 'Default' chip).
+  (async () => {
+    await _loadAccounts();
+    _loadFolders();
+    _loadEmailReminderBellVisibility();
+    _loadEmails();
+  })();
 }
 
 async function _loadAccounts() {
@@ -1297,6 +1418,15 @@ async function _loadAccounts() {
     const d = await r.json();
     state._libAccounts = d.accounts || [];
   } catch (_) { state._libAccounts = []; }
+  // The 'Default' chip is gone — pick an explicit account so the email
+  // list and any per-email actions (open in new tab, mark read, etc.)
+  // always carry an account_id and can't desync from the server's
+  // is_default state.
+  if (!state._libAccountId && state._libAccounts.length) {
+    const def = state._libAccounts.find(a => a.is_default) || state._libAccounts[0];
+    state._libAccountId = def.id;
+    _publishActiveAccount();
+  }
   _renderAccountsStrip();
 }
 
@@ -1305,12 +1435,23 @@ function _renderAccountsStrip() {
   if (!strip) return;
   strip.style.display = 'flex';
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-  const allActive = !state._libAccountId ? ' active' : '';
-  let html = `<button class="memory-toolbar-btn gallery-chip${allActive}" data-acc-id="">All (default)</button>`;
+  // The 'Default' chip caused desync bugs (changing the server-side
+  // default via the dot while still on the cached 'default' view would
+  // open the wrong account's emails). Each account renders as its own
+  // chip; the active one is selected explicitly via _loadAccounts.
+  let html = '';
+  // 6px dot — matches the sidebar notification-dot size.
+  const _dotFilled = '<svg width="6" height="6" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>';
+  const _dotHollow = '<svg width="6" height="6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="9"/></svg>';
   for (const a of state._libAccounts) {
     const active = state._libAccountId === a.id ? ' active' : '';
     const label = a.name || a.from_address || a.imap_user || 'account';
-    html += `<button class="memory-toolbar-btn gallery-chip${active}" data-acc-id="${esc(a.id)}" title="${esc(a.from_address || a.imap_user || '')}${a.is_default ? ' (default)' : ''}">${esc(label)}</button>`;
+    const dot = a.is_default ? _dotFilled : _dotHollow;
+    const dotTitle = a.is_default ? 'Default account' : 'Set as default';
+    html += `<span class="gallery-chip-wrap" style="position:relative;display:inline-flex;align-items:center;">`
+         + `<button class="memory-toolbar-btn gallery-chip${active}" data-acc-id="${esc(a.id)}" title="${esc(a.from_address || a.imap_user || '')}${a.is_default ? ' (default)' : ''}" style="padding-right:24px;">${esc(label)}</button>`
+         + `<button class="email-lib-default-dot${a.is_default ? ' is-default' : ''}" data-set-default="${esc(a.id)}" title="${dotTitle}" aria-label="${dotTitle}" style="position:absolute;right:6px;top:calc(50% - 3px);transform:translateY(-50%);background:none;border:0;padding:0;width:18px;height:18px;cursor:pointer;color:${a.is_default ? 'var(--accent, var(--red))' : 'inherit'};opacity:${a.is_default ? '1' : '0.45'};display:inline-flex;align-items:center;justify-content:center;line-height:0;">${dot}</button>`
+         + `</span>`;
   }
   strip.innerHTML = html;
   strip.querySelectorAll('button[data-acc-id]').forEach(btn => {
@@ -1323,6 +1464,72 @@ function _renderAccountsStrip() {
       _loadEmails({ force: true, useCache: false });
     });
   });
+  // Star handler: POST set-default, then reload accounts + re-render so
+  // the chip stars reflect the new default.
+  strip.querySelectorAll('button[data-set-default]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const acctId = btn.dataset.setDefault;
+      if (!acctId) return;
+      try {
+        await fetch(`${API_BASE}/api/email/accounts/${encodeURIComponent(acctId)}/set-default`, {
+          method: 'POST', credentials: 'same-origin',
+        });
+        // Refresh the local accounts cache and re-render the strip.
+        for (const a of state._libAccounts) a.is_default = (a.id === acctId);
+        _renderAccountsStrip();
+      } catch (err) {
+        console.error('Set default account failed:', err);
+      }
+    });
+  });
+  // Idempotent — wire wheel + grab-drag scroll once per strip element.
+  if (!strip._scrollWired) {
+    strip._scrollWired = true;
+    // Vertical wheel → horizontal scroll. Only intercept when there's
+    // actually horizontal overflow to scroll through, otherwise let the
+    // page do its normal vertical scroll.
+    strip.addEventListener('wheel', (e) => {
+      if (strip.scrollWidth <= strip.clientWidth) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      strip.scrollLeft += e.deltaY;
+    }, { passive: false });
+    // Click-and-drag scroll. Track mousedown, then mousemove deltas
+    // bump scrollLeft. Cancel a chip click if the user actually dragged
+    // more than a few pixels.
+    let dragging = false;
+    let startX = 0;
+    let startScroll = 0;
+    let moved = 0;
+    strip.style.cursor = 'grab';
+    strip.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      dragging = true;
+      moved = 0;
+      startX = e.pageX;
+      startScroll = strip.scrollLeft;
+      strip.style.cursor = 'grabbing';
+      strip.style.userSelect = 'none';
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.pageX - startX;
+      moved = Math.max(moved, Math.abs(dx));
+      strip.scrollLeft = startScroll - dx;
+    });
+    window.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      strip.style.cursor = 'grab';
+      strip.style.userSelect = '';
+    });
+    // Swallow chip clicks fired after a real drag — the user meant to scroll,
+    // not select.
+    strip.addEventListener('click', (e) => {
+      if (moved > 5) { e.stopPropagation(); e.preventDefault(); moved = 0; }
+    }, true);
+  }
   _publishActiveAccount();
 }
 
@@ -1416,6 +1623,12 @@ function _makeDraggable(content, modal, fsClass) {
 function _snapEmailModalToLeftSidebar(modal) {
   if (!modal) return false;
   if (window.innerWidth < 900) return false;
+  // "Open in new tab" reader modals (id="email-view-…") are explicitly
+  // floating windows the user already positioned. Replying from one
+  // shouldn't yank it to the left edge — leave it on top in its current
+  // spot. Reply still opens the compose document; the user can drag the
+  // reader away or close it themselves.
+  if ((modal.id || '').startsWith('email-view-')) return false;
   const content = modal.querySelector('.modal-content');
   if (!content) return false;
   // Only dock if currently fullscreen — for a manually-sized window the
@@ -1525,6 +1738,609 @@ function _crossFolderCandidates() {
   return Array.from(new Set(candidates.filter(Boolean)));
 }
 
+// Snapshot of state._libEmails taken right before search starts so we
+// can both filter locally and restore on clear without re-fetching.
+let _libPreSearchEmails = null;
+let _libPreSearchTotal = 0;
+
+// Cached contact suggestions for the chip-input autocomplete. Built on
+// first focus / first keystroke from contacts + currently-loaded senders.
+let _libSuggestionCache = null;
+let _libSuggestionFocusIdx = 0;
+
+async function _buildSuggestionSource() {
+  // Combine the contacts list with senders/recipients visible in the
+  // loaded email list. Dedup by lowercased email address; prefer
+  // contact-supplied display names where present.
+  const map = new Map();
+  const _add = (name, email) => {
+    const key = String(email || '').trim().toLowerCase();
+    if (!key) return;
+    const prev = map.get(key);
+    if (!prev || (name && !prev.name)) {
+      map.set(key, { name: (name || '').trim(), email: key });
+    }
+  };
+  // 1) Senders / recipients already in the loaded grid.
+  for (const em of (state._libEmails || [])) {
+    _add(em.from_name, em.from_address);
+    const _parse = (s) => String(s || '').split(',').forEach(seg => {
+      const m = seg.match(/^\s*"?([^"<]*)"?\s*<?([^>]+)>?\s*$/);
+      if (m) _add(m[1], m[2]);
+    });
+    _parse(em.to);
+    _parse(em.cc);
+  }
+  // 2) Address book — best-effort.
+  try {
+    const r = await fetch(`${API_BASE}/api/contacts/list`, { credentials: 'same-origin' });
+    if (r.ok) {
+      const d = await r.json();
+      for (const c of (d.contacts || [])) {
+        const email = c.email || (c.emails && c.emails[0]) || '';
+        _add(c.name || c.full_name, email);
+      }
+    }
+  } catch (_) {}
+  return Array.from(map.values()).filter(x => x.email);
+}
+
+function _scoreSuggestion(s, needle) {
+  // Crude relevance: startsWith on name or email wins big; substring is fine.
+  const n = (s.name || '').toLowerCase();
+  const e = (s.email || '').toLowerCase();
+  if (n.startsWith(needle) || e.startsWith(needle)) return 3;
+  if (n.includes(needle) || e.includes(needle)) return 2;
+  return 0;
+}
+
+// Filter / attachment suggestions surfaced inside the same chip-bar
+// dropdown. Typing 'attachment', 'unread', 'urgent' etc. surfaces the
+// corresponding filter row with its icon; picking it pins a filter
+// pill that drives state._libFilter or the has-attachments toggle.
+const _LIB_FILTER_OPTIONS = [
+  { value: 'filter:has-attachments', label: 'Has attachments', keywords: ['attachment', 'attachments', 'has attachment', 'attach'] },
+  { value: 'filter:unread',          label: 'Unread',          keywords: ['unread', 'new', 'unseen'] },
+  { value: 'filter:favorites',       label: 'Favorites',       keywords: ['favorite', 'favorites', 'starred', 'star', 'flagged'] },
+  { value: 'filter:undone',          label: 'Undone',          keywords: ['undone', 'pending', 'todo'] },
+  { value: 'filter:reminders',       label: 'Reminders',       keywords: ['reminder', 'reminders'] },
+  { value: 'filter:unanswered',      label: 'Unanswered',      keywords: ['unanswered', 'unreplied', 'no reply'] },
+  { value: 'filter:pending_30d',     label: 'Pending · 30d',   keywords: ['pending 30d', 'pending', 'recent pending'] },
+  { value: 'filter:stale_30d',       label: 'Stale · >30d',    keywords: ['stale', 'old', 'stale 30d'] },
+  { value: 'filter:tag:urgent',      label: 'Urgent',          keywords: ['urgent', 'critical'] },
+  { value: 'filter:tag:reply-soon',  label: 'Reply soon',      keywords: ['reply soon', 'reply', 'follow up'] },
+  { value: 'filter:tag:spam',        label: 'Spam',            keywords: ['spam', 'junk'] },
+  { value: 'filter:tag:newsletter',  label: 'Newsletter',      keywords: ['newsletter', 'newsletters', 'subscriptions'] },
+  { value: 'filter:tag:marketing',   label: 'Marketing',       keywords: ['marketing', 'promo', 'promotional'] },
+];
+
+function _libFilterIconFor(value) {
+  // value is 'filter:<X>' — strip prefix and reuse the existing icon map.
+  const v = String(value || '').replace(/^filter:/, '');
+  if (v === 'has-attachments') return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
+  return _EMAIL_FILTER_ICONS[v] || _EMAIL_FILTER_ICONS['all'];
+}
+
+function _scoreFilterOption(opt, needle) {
+  for (const kw of opt.keywords) {
+    if (kw === needle) return 4;
+    if (kw.startsWith(needle)) return 3;
+    if (kw.includes(needle)) return 2;
+  }
+  if (opt.label.toLowerCase().includes(needle)) return 2;
+  return 0;
+}
+
+function _filterSuggestions(needle, limit = 10) {
+  const n = String(needle || '').trim().toLowerCase();
+  if (!n) return [];
+  // Filter / attachment matches first — typing 'unread' should surface
+  // the filter row before contact suggestions, since 'unread' isn't a
+  // person.
+  const filterMatches = _LIB_FILTER_OPTIONS
+    .map(opt => ({ s: { kind: 'filter', value: opt.value, label: opt.label, icon: _libFilterIconFor(opt.value) }, score: _scoreFilterOption(opt, n) }))
+    .filter(x => x.score > 0);
+  const src = _libSuggestionCache || [];
+  const contactMatches = src
+    .map(s => ({ s: { kind: 'contact', ...s }, score: _scoreSuggestion(s, n) }))
+    .filter(x => x.score > 0);
+  // Email subject / sender-name matches — use the snapshot (unfiltered
+  // list) when available so suggestions don't shrink as pills narrow the
+  // visible grid. Cap to 4 so contacts + filters stay visible.
+  const emails = _libPreSearchEmails || state._libEmails || [];
+  const emailMatches = [];
+  for (const em of emails) {
+    const subj = String(em.subject || '').toLowerCase();
+    const fromN = String(em.from_name || '').toLowerCase();
+    let score = 0;
+    if (subj.startsWith(n) || fromN.startsWith(n)) score = 3;
+    else if (subj.includes(n) || fromN.includes(n)) score = 1;
+    if (score > 0) emailMatches.push({ s: { kind: 'email', uid: em.uid, subject: em.subject || '(no subject)', from_name: em.from_name || em.from_address || '' }, score });
+    if (emailMatches.length >= 4) break;
+  }
+  return filterMatches.concat(contactMatches).concat(emailMatches)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(x => x.s);
+}
+
+function _emailMatchesPill(em, pill) {
+  if (!pill) return false;
+  if (pill.type === 'contact') {
+    const target = (pill.email || '').toLowerCase();
+    if (!target) return false;
+    if (String(em.from_address || '').toLowerCase() === target) return true;
+    if (String(em.to || '').toLowerCase().includes(target)) return true;
+    if (String(em.cc || '').toLowerCase().includes(target)) return true;
+    return false;
+  }
+  if (pill.type === 'filter') {
+    // Filter pills delegate to the server-side filter (state._libFilter)
+    // or the has-attachments toggle. The list is already pre-filtered by
+    // those when this runs, so the pill is effectively always-true here
+    // — it lives in the pill bar purely as a visible affordance.
+    return true;
+  }
+  // text pill — broad local-match
+  const q = (pill.text || '').toLowerCase();
+  if (!q) return true;
+  return _matchesQuery(em, q);
+}
+
+function _matchesQuery(em, q) {
+  const needle = q.toLowerCase();
+  return (
+    String(em.subject || '').toLowerCase().includes(needle) ||
+    String(em.from_name || '').toLowerCase().includes(needle) ||
+    String(em.from_address || '').toLowerCase().includes(needle) ||
+    String(em.snippet || em.preview || '').toLowerCase().includes(needle)
+  );
+}
+
+// Apply the active pill filter to the snapshot. Each pill is OR-ed; an
+// email shows up if ANY pill matches (a contact pill matches by from/to/cc
+// equality, a text pill matches by the broad _matchesQuery substring).
+function _applyPillFilter() {
+  const pills = state._libSearchPills || [];
+  const draft = (state._libSearchDraft || '').trim();
+  const noPills = pills.length === 0;
+  const noDraft = draft.length === 0;
+  // First time we apply with anything active: snapshot the loaded list.
+  if (!noPills || draft.length >= 1) {
+    if (!_libPreSearchEmails) {
+      _libPreSearchEmails = (state._libEmails || []).slice();
+      _libPreSearchTotal = state._libTotal;
+    }
+  }
+  if (noPills && noDraft) {
+    if (_libPreSearchEmails) {
+      state._libEmails = _libPreSearchEmails;
+      state._libTotal = _libPreSearchTotal;
+      _libPreSearchEmails = null;
+      _libPreSearchTotal = 0;
+    }
+    _renderGrid();
+    return;
+  }
+  const source = _libPreSearchEmails || state._libEmails || [];
+  // If the active server search covers a piece of text (either the live
+  // draft OR an Enter-committed text pill), skip the local re-filter for
+  // it — _emailMatchesPill only checks subject/from_name/from_address/
+  // snippet (no BODY), so it was dropping legitimate server hits where
+  // the match was in body text. Real pills (contact, filter chips) still
+  // apply, and other text pills with different strings still apply.
+  const libSearchLower = (_libSearchHadResults ? (state._libSearch || '').trim().toLowerCase() : '');
+  const serverHandledDraft = !!(libSearchLower && draft && libSearchLower === draft.toLowerCase());
+  const draftPill = (!serverHandledDraft && draft.length >= 1) ? { type: 'text', text: draft } : null;
+  // Filter out text pills whose text matches the active server search —
+  // those were the trigger for the IMAP query and don't need re-checking.
+  const effectiveBasePills = libSearchLower
+    ? pills.filter(p => !(p.type === 'text' && (p.text || '').toLowerCase() === libSearchLower))
+    : pills;
+  const effective = draftPill ? effectiveBasePills.concat([draftPill]) : effectiveBasePills;
+  // AND across pills — "alice + bob" should mean both alice AND bob are
+  // somewhere on the email (from/to/cc), not "from alice OR from bob".
+  const filtered = source.filter(em => effective.every(p => _emailMatchesPill(em, p)));
+  state._libEmails = filtered;
+  _renderGrid();
+}
+// Back-compat shim: older call sites still expect _localSearchFilter.
+function _localSearchFilter(query) {
+  state._libSearchDraft = String(query || '');
+  _applyPillFilter();
+}
+
+// Render the active pills inside the chip bar. Each pill carries a × to
+// remove individually. Backspace on empty input also pops the last one.
+function _renderSearchPills() {
+  const wrap = document.getElementById('email-lib-pills');
+  if (!wrap) return;
+  const pills = state._libSearchPills || [];
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  wrap.innerHTML = pills.map((p, i) => {
+    // Filter pills render as icon-only (the icon is the affordance);
+    // contact + text pills carry their label as text.
+    if (p.type === 'filter') {
+      const titleAttr = `${(p.label || p.value).replace(/"/g, '&quot;')}`;
+      return `<span class="email-lib-pill" data-pill-idx="${i}" title="${titleAttr}" style="display:inline-flex;align-items:center;gap:2px;padding:0 4px 0 6px;border-radius:999px;background:color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);color:var(--accent, var(--red));line-height:18px;height:18px;flex-shrink:0;">
+        <span style="display:inline-flex;align-items:center;width:11px;height:11px;flex-shrink:0;">${_libFilterIconFor(p.value)}</span>
+        <button type="button" class="email-lib-pill-x" data-pill-idx="${i}" title="Remove" style="background:transparent;border:0;color:inherit;cursor:pointer;font-size:11px;line-height:1;padding:0 2px;opacity:0.7;position:relative;top:-4px;">×</button>
+      </span>`;
+    }
+    const label = p.type === 'contact' ? (p.name || p.email || '?') : (p.text || '');
+    return `<span class="email-lib-pill" data-pill-idx="${i}" style="display:inline-flex;align-items:center;gap:3px;padding:0 4px 0 6px;border-radius:999px;background:color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);color:var(--accent, var(--red));font-size:10px;line-height:18px;height:18px;font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;">
+      <span style="overflow:hidden;text-overflow:ellipsis;">${esc(label)}</span>
+      <button type="button" class="email-lib-pill-x" data-pill-idx="${i}" title="Remove" style="background:transparent;border:0;color:inherit;cursor:pointer;font-size:11px;line-height:1;padding:0 2px;opacity:0.7;position:relative;top:-4px;">×</button>
+    </span>`;
+  }).join('');
+  wrap.querySelectorAll('.email-lib-pill-x').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = Number(btn.dataset.pillIdx);
+      if (Number.isFinite(idx)) _removeSearchPillAt(idx);
+    });
+  });
+}
+
+function _applyFilterPillSideEffect(pill) {
+  // Filter pills drive the existing has-attachments toggle / filter
+  // dropdown so the server returns the right list. Only one filter
+  // pill is active at a time (see _addSearchPill).
+  const sel = document.getElementById('email-lib-filter');
+  const attachBtn = document.getElementById('email-attach-btn');
+  if (pill.value === 'filter:has-attachments') {
+    if (!state._libHasAttachments) {
+      state._libHasAttachments = true;
+      if (attachBtn) attachBtn.classList.add('active');
+    }
+    if (sel && sel.value !== 'all') { sel.value = 'all'; sel.dispatchEvent(new Event('change')); }
+    return;
+  }
+  // Any other filter pill — set the dropdown value, clear attachments
+  if (state._libHasAttachments) {
+    state._libHasAttachments = false;
+    if (attachBtn) attachBtn.classList.remove('active');
+  }
+  if (sel) {
+    const v = pill.value.replace(/^filter:/, '');
+    if (sel.value !== v) { sel.value = v; sel.dispatchEvent(new Event('change')); }
+  }
+}
+
+function _clearFilterPillSideEffect() {
+  const sel = document.getElementById('email-lib-filter');
+  const attachBtn = document.getElementById('email-attach-btn');
+  if (state._libHasAttachments) {
+    state._libHasAttachments = false;
+    if (attachBtn) attachBtn.classList.remove('active');
+  }
+  if (sel && sel.value !== 'all') {
+    sel.value = 'all'; sel.dispatchEvent(new Event('change'));
+  }
+}
+
+function _addSearchPill(pill) {
+  if (!pill) return;
+  if (!Array.isArray(state._libSearchPills)) state._libSearchPills = [];
+  // Dedup by email (contact), text (text pill), or filter value.
+  if (pill.type === 'contact') {
+    const key = (pill.email || '').toLowerCase();
+    if (!key) return;
+    if (state._libSearchPills.some(p => p.type === 'contact' && (p.email || '').toLowerCase() === key)) return;
+  } else if (pill.type === 'text') {
+    const t = (pill.text || '').toLowerCase();
+    if (!t) return;
+    if (state._libSearchPills.some(p => p.type === 'text' && (p.text || '').toLowerCase() === t)) return;
+  } else if (pill.type === 'filter') {
+    // Single-filter rule — drop any existing filter pill before adding.
+    state._libSearchPills = state._libSearchPills.filter(p => p.type !== 'filter');
+    state._libSearchPills.push(pill);
+    _applyFilterPillSideEffect(pill);
+    _renderSearchPills();
+    return;
+  }
+  state._libSearchPills.push(pill);
+  _renderSearchPills();
+  _applyPillFilter();
+}
+
+function _removeSearchPillAt(idx) {
+  if (!Array.isArray(state._libSearchPills)) return;
+  const removed = state._libSearchPills[idx];
+  state._libSearchPills.splice(idx, 1);
+  if (removed && removed.type === 'filter') _clearFilterPillSideEffect();
+  _renderSearchPills();
+  // Pill cleared all the way: if we got into search-result mode via the
+  // IMAP search, the pre-search snapshot is now those results too (set
+  // in _doSearch). Restoring from it would leave the user staring at
+  // the same results with the pill bar empty. Re-fetch the real inbox
+  // so removing the last pill genuinely "goes back".
+  const noPillsLeft = (state._libSearchPills || []).length === 0
+    && !(state._libSearchDraft || '').trim();
+  if (noPillsLeft && _libSearchHadResults) {
+    _libSearchHadResults = false;
+    _libPreSearchEmails = null;
+    _libPreSearchTotal = 0;
+    state._libSearch = '';
+    state._libOffset = 0;
+    const _searchInput = document.getElementById('email-lib-search');
+    if (_searchInput) _searchInput.value = '';
+    _loadEmails({ useCache: true });
+    return;
+  }
+  _applyPillFilter();
+}
+
+// Render the autocomplete dropdown below the input. focusIdx highlights
+// the active row; Tab autocompletes / Enter accepts that row.
+function _renderSearchSuggestions(items) {
+  const menu = document.getElementById('email-lib-suggest');
+  if (!menu) return;
+  if (!items.length) { menu.style.display = 'none'; menu.innerHTML = ''; return; }
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  menu.innerHTML = items.map((s, i) => {
+    const highlight = i === _libSuggestionFocusIdx ? 'background:color-mix(in srgb, var(--fg) 8%, transparent);' : '';
+    if (s.kind === 'filter') {
+      return `<div class="email-lib-suggest-item" data-idx="${i}" style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;font-size:12px;${highlight}">
+        <span style="display:inline-flex;align-items:center;width:13px;height:13px;color:var(--accent, var(--red));flex-shrink:0;">${s.icon}</span>
+        <span style="font-weight:600;">${esc(s.label)}</span>
+      </div>`;
+    }
+    if (s.kind === 'email') {
+      return `<div class="email-lib-suggest-item" data-idx="${i}" style="display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:12px;${highlight}">
+        <span style="display:inline-flex;align-items:center;width:13px;height:13px;color:var(--fg-muted, var(--fg));opacity:0.55;flex-shrink:0;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2 6 12 13 22 6"/></svg></span>
+        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.subject)}</span>
+        ${s.from_name ? `<span style="opacity:0.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">— ${esc(s.from_name)}</span>` : ''}
+      </div>`;
+    }
+    return `<div class="email-lib-suggest-item" data-idx="${i}" style="display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:12px;${highlight}">
+      <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.name || s.email)}</span>
+      ${s.name ? `<span style="opacity:0.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(s.email)}</span>` : ''}
+    </div>`;
+  }).join('');
+  menu.style.display = '';
+  menu.querySelectorAll('.email-lib-suggest-item').forEach(row => {
+    row.addEventListener('mousedown', (e) => {
+      // mousedown (not click) so we beat the input blur handler that hides the menu.
+      e.preventDefault();
+      const idx = Number(row.dataset.idx);
+      const item = items[idx];
+      if (item) _acceptSuggestion(item);
+    });
+  });
+}
+
+function _hideSearchSuggestions() {
+  const menu = document.getElementById('email-lib-suggest');
+  if (menu) { menu.style.display = 'none'; menu.innerHTML = ''; }
+  _libSuggestionFocusIdx = 0;
+}
+
+function _acceptSuggestion(s) {
+  const input = document.getElementById('email-lib-search');
+  if (s.kind === 'filter') {
+    _addSearchPill({ type: 'filter', value: s.value, label: s.label });
+  } else if (s.kind === 'email') {
+    // Clear the draft + dropdown and open the matching card directly.
+    if (input) input.value = '';
+    state._libSearchDraft = '';
+    _hideSearchSuggestions();
+    _applyPillFilter();
+    const grid = document.getElementById('email-lib-grid');
+    const card = grid?.querySelector(`.doclib-card[data-uid="${CSS.escape(String(s.uid))}"]`);
+    const em = (state._libEmails || []).find(x => String(x.uid) === String(s.uid))
+            || (_libPreSearchEmails || []).find(x => String(x.uid) === String(s.uid));
+    if (card && em) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      _toggleCardPreview(card, em);
+    }
+    return;
+  } else {
+    _addSearchPill({ type: 'contact', name: s.name, email: s.email });
+    // Same as the text-pill path in the Enter handler: trigger the IMAP
+    // search so unloaded emails (older than the current page) show up
+    // when picking a contact. The local pill filter then narrows the
+    // search results to that contact's address.
+    const _q = (s.email || s.name || '').trim();
+    if (_q && _q.length >= 2) {
+      state._libSearch = _q;
+      _doSearch();
+    }
+  }
+  if (input) input.value = '';
+  state._libSearchDraft = '';
+  _hideSearchSuggestions();
+  _applyPillFilter();
+  if (input) input.focus();
+}
+
+async function _initEmailSearchChipBar() {
+  const bar = document.getElementById('email-lib-chip-bar');
+  const input = document.getElementById('email-lib-search');
+  if (!bar || !input) return;
+  state._libSearchPills = state._libSearchPills || [];
+  state._libSearchDraft = '';
+  _renderSearchPills();
+
+  // Lazy-load suggestion source on first focus / keystroke.
+  const _ensureSuggestionCache = async () => {
+    if (_libSuggestionCache) return;
+    _libSuggestionCache = await _buildSuggestionSource();
+  };
+
+  // Click anywhere in the bar lands the cursor in the input field.
+  bar.addEventListener('click', (e) => {
+    if (e.target.closest('.email-lib-pill-x')) return;
+    input.focus();
+  });
+
+  let _itemsRef = [];
+  const _refreshSuggestions = async () => {
+    await _ensureSuggestionCache();
+    _itemsRef = _filterSuggestions(input.value);
+    // Default to no focused suggestion — text typing should feel like
+    // regular search; the user has to ArrowDown / Tab explicitly to
+    // pick a contact. Enter without a focused row commits as text.
+    _libSuggestionFocusIdx = -1;
+    _renderSearchSuggestions(_itemsRef);
+  };
+
+  input.addEventListener('focus', _refreshSuggestions);
+  // Debounced IMAP search — fires ~500ms after the user stops typing so
+  // searches for names/text not in the current inbox page actually surface
+  // hits, instead of just locally filtering the visible window.
+  //
+  // Live local filtering on EVERY keystroke was clobbering server hits:
+  // _emailMatchesPill / _matchesQuery check subject/from_name/from_address/
+  // snippet but never body, so intermediate text like "sam" reduced the
+  // 61 server results to whatever matched just those four fields (often
+  // 0). User saw "no emails" while typing. So local filter is gone from
+  // the typing path — debounced server search drives the grid. Pill
+  // add/remove still re-runs the local filter through _applyPillFilter
+  // directly.
+  let _libSearchTypingTimer = null;
+  input.addEventListener('input', async () => {
+    state._libSearchDraft = input.value;
+    try { console.log('[email-search] input event, value=', JSON.stringify(input.value)); } catch {}
+    await _refreshSuggestions();
+    if (_libSearchTypingTimer) clearTimeout(_libSearchTypingTimer);
+    const v = input.value.trim();
+    if (v.length >= 2) {
+      _libSearchTypingTimer = setTimeout(() => {
+        const cur = (input.value || '').trim();
+        if (cur === v && cur.length >= 2) {
+          state._libSearch = cur;
+          try { console.log('[email-search] firing _doSearch for', cur); } catch {}
+          _doSearch();
+        } else {
+          try { console.log('[email-search] debounce expired but input changed (was', v, 'now', cur, ')'); } catch {}
+        }
+      }, 500);
+    } else if (!v && _libSearchHadResults) {
+      // Cleared the input → restore the inbox the same way the pill-clear
+      // path does. Otherwise the stale search results stayed up after the
+      // user backspaced everything out.
+      _libSearchHadResults = false;
+      _libPreSearchEmails = null;
+      _libPreSearchTotal = 0;
+      state._libSearch = '';
+      state._libOffset = 0;
+      _loadEmails({ useCache: true });
+    }
+  });
+  input.addEventListener('blur', () => {
+    // Delay so click/mousedown on a suggestion fires first.
+    setTimeout(_hideSearchSuggestions, 120);
+  });
+  input.addEventListener('keydown', (e) => {
+    const menu = document.getElementById('email-lib-suggest');
+    const menuOpen = menu && menu.style.display !== 'none';
+    if (e.key === 'Backspace' && !input.value && (state._libSearchPills || []).length) {
+      e.preventDefault();
+      _removeSearchPillAt(state._libSearchPills.length - 1);
+      return;
+    }
+    if (e.key === 'ArrowDown' && menuOpen) {
+      e.preventDefault();
+      // -1 → 0 → 1 → … → length-1, then wraps back to -1 (no selection)
+      const next = _libSuggestionFocusIdx + 1;
+      _libSuggestionFocusIdx = next >= _itemsRef.length ? -1 : next;
+      _renderSearchSuggestions(_itemsRef);
+      return;
+    }
+    if (e.key === 'ArrowUp' && menuOpen) {
+      e.preventDefault();
+      // -1 → length-1 → length-2 → … → 0 → -1
+      const next = _libSuggestionFocusIdx - 1;
+      _libSuggestionFocusIdx = next < -1 ? _itemsRef.length - 1 : next;
+      _renderSearchSuggestions(_itemsRef);
+      return;
+    }
+    if (e.key === 'Tab' && menuOpen) {
+      // Tab autocompletes the FIRST suggestion (most-relevant), regardless
+      // of whether the user arrowed down yet — matches the user's mental
+      // model of "type a name and tab to pick".
+      const pick = _libSuggestionFocusIdx >= 0 ? _itemsRef[_libSuggestionFocusIdx] : _itemsRef[0];
+      if (pick) { e.preventDefault(); _acceptSuggestion(pick); return; }
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Only commit a contact if the user explicitly focused one. Plain
+      // Enter should default to a text pill so regular text search works
+      // without forcing a contact pick.
+      if (menuOpen && _libSuggestionFocusIdx >= 0 && _itemsRef[_libSuggestionFocusIdx]) {
+        _acceptSuggestion(_itemsRef[_libSuggestionFocusIdx]);
+        return;
+      }
+      const v = input.value.trim();
+      if (v) {
+        _addSearchPill({ type: 'text', text: v });
+        input.value = '';
+        state._libSearchDraft = '';
+        _hideSearchSuggestions();
+        // Pill-only filtering used to only check emails already loaded into
+        // state._libEmails (the visible page of the inbox). Searches for
+        // names/text that aren't in the current page returned "no emails"
+        // even when matches existed on the server. Trigger the IMAP
+        // search so state._libEmails is replaced with the actual hits,
+        // then the pill filter narrows to matches.
+        state._libSearch = v;
+        _doSearch();
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (menuOpen) {
+        // Just close the dropdown — let the modal Esc handler run on the
+        // next Esc to actually dismiss the library.
+        e.preventDefault();
+        e.stopPropagation();
+        _hideSearchSuggestions();
+      } else {
+        // Blur first so the modal Esc handler doesn't get suppressed by
+        // any IME / typing-target check, and let the event propagate.
+        try { input.blur(); } catch (_) {}
+      }
+    }
+  });
+}
+
+// Click-to-add: clicking a recipient-chip in the email reader OR a
+// .email-meta-sender in the library list drops the person into the
+// library search as a contact pill so the user can pivot to "everything
+// from / to this person" in one tap.
+window.addEventListener('click', (e) => {
+  const lib = document.getElementById('email-lib-modal');
+  // 1) Recipient chips inside the email reader area
+  const chip = e.target.closest && e.target.closest('.recipient-chip');
+  if (chip && chip.closest('.email-reader-header, .email-card-reader, .email-reader-tab-modal')) {
+    // Don't pivot to library search for chips in the From / To / Cc
+    // meta — clicking those should just toggle the expanded address
+    // view via the per-reader handler.
+    if (chip.closest('.email-reader-meta')) return;
+    const email = (chip.dataset && chip.dataset.email) || '';
+    const name = (chip.dataset && chip.dataset.name) || (chip.textContent || '').trim();
+    if (!email) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { window.openEmailLibrary && window.openEmailLibrary(); } catch (_) {}
+    _addSearchPill({ type: 'contact', name, email });
+    return;
+  }
+  // 2) Sender name in a library list card row (only when the library is open)
+  if (lib && !lib.classList.contains('hidden')) {
+    const senderEl = e.target.closest && e.target.closest('.email-meta-sender');
+    if (senderEl && senderEl.closest('#email-lib-grid')) {
+      const email = (senderEl.dataset && senderEl.dataset.email) || '';
+      const name = (senderEl.dataset && senderEl.dataset.name) || (senderEl.textContent || '').trim();
+      if (!email) return;
+      e.preventDefault();
+      e.stopPropagation();
+      _addSearchPill({ type: 'contact', name, email });
+    }
+  }
+}, true);
+
 async function _doSearch() {
   const seq = ++_libSearchSeq;
   const q = state._libSearch.trim();
@@ -1540,17 +2356,26 @@ async function _doSearch() {
     _renderGrid();
     return;
   }
-  const grid = document.getElementById('email-lib-grid');
-  if (!grid) return;
-  const sp = _renderEmailLoading(grid);
   const accountAtStart = state._libAccountId || '';
   const folderAtStart = state._libFolder || 'INBOX';
+  // No grid-blanking spinner — the local filter already painted something
+  // useful. Surface progress in the stats badge instead so the user knows
+  // the server search is still grinding.
+  const stats = document.getElementById('email-lib-stats');
+  const originalStatsText = stats?.textContent || '';
+  if (stats) stats.textContent = 'Searching…';
+  _libSearchInFlight = true;
+  // Force a re-render so the "Searching…" empty-state shows (and any
+  // existing "No emails" gets replaced) while the fetch is in flight.
+  _renderGrid();
 
+  const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
   try {
-    const accountQS = accountAtStart ? `&account_id=${encodeURIComponent(accountAtStart)}` : '';
+    // Single fast fetch — limit=100 so the IMAP fetch loop doesn't spend
+    // 60 s pulling 500 headers serially. We can wire "Load more" later
+    // off `state._libTotal` if needed.
     const res = await fetch(`${API_BASE}/api/email/search?folder=${encodeURIComponent(folderAtStart)}${accountQS}&q=${encodeURIComponent(q)}&limit=100`);
     const data = await res.json();
-    sp.destroy();
     if (
       seq !== _libSearchSeq ||
       q !== state._libSearch.trim() ||
@@ -1564,14 +2389,138 @@ async function _doSearch() {
     const results = data.emails || [];
     _libSearchHadResults = true;
     state._libEmails = results;  // temporarily replace with search results
+    state._libTotal = data.total || results.length;
+    // Refresh the pre-search snapshot so any subsequent _applyPillFilter
+    // call (focus / pill edit / etc.) sources from the actual search
+    // results, not the stale inbox page that was loaded before the
+    // search ran. Without this, active pills (a contact pill from the
+    // suggestion the user just clicked) would filter the inbox snapshot
+    // → near-always empty → user sees "no emails" even though the
+    // server search succeeded.
+    _libPreSearchEmails = results.slice();
+    _libPreSearchTotal = state._libTotal;
+    // If pills are active (and they usually are after a contact-pill or
+    // text-pill add), re-run the pill filter so the visible grid is the
+    // pill-narrowed intersection of the new search results. Otherwise
+    // _renderGrid below would render the raw server response, which
+    // might not match the active pills the user just added.
+    if ((state._libSearchPills || []).length) {
+      _applyPillFilter();
+      // Fall back to rendering the raw results if the pill intersection
+      // hid everything but the user just confirmed they want this query.
+      if (!(state._libEmails || []).length) state._libEmails = results;
+    }
     _renderGrid();
 
-    const stats = document.getElementById('email-lib-stats');
-    if (stats) stats.textContent = `${data.total || results.length} match${(data.total || results.length) === 1 ? '' : 'es'}`;
+    const count = data.total || results.length;
+    if (stats) stats.textContent = `${count} match${count === 1 ? '' : 'es'} on server`;
+    try { console.log('[email-search]', JSON.stringify({ q, folder: folderAtStart, count, returned: results.length })); } catch {}
   } catch (e) {
-    sp.destroy();
-    grid.innerHTML = '<div class="email-loading">Search failed</div>';
+    if (stats) stats.textContent = originalStatsText || 'Search failed';
+    try { console.error('[email-search] fetch failed:', e); } catch {}
+  } finally {
+    _libSearchInFlight = false;
   }
+}
+
+// Custom dropdown for the email filter (All/Unread/Favorites/...). Replaces
+// the native <select> so each row can carry an SVG icon. The hidden
+// <select id="email-lib-filter"> stays as the value source — clicking a
+// menu item updates its value and dispatches 'change', so every existing
+// listener keeps working.
+const _EMAIL_FILTER_ICONS = {
+  'all':           '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+  'unread':        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>',
+  'favorites':     '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+  'undone':        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/></svg>',
+  'reminders':     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>',
+  'unanswered':    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg>',
+  'pending_30d':   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  'stale_30d':     '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="10" y1="14" x2="14" y2="18"/><line x1="14" y1="14" x2="10" y2="18"/></svg>',
+  'tag:urgent':    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  'tag:reply-soon':'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/><circle cx="18" cy="6" r="2" fill="currentColor" stroke="none"/></svg>',
+  'tag:spam':      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>',
+  'tag:newsletter':'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>',
+  'tag:marketing': '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
+};
+
+function _filterIcon(value) {
+  return _EMAIL_FILTER_ICONS[value] || _EMAIL_FILTER_ICONS['all'];
+}
+
+function _renderFilterPickerCurrent() {
+  const sel = document.getElementById('email-lib-filter');
+  const btn = document.getElementById('email-filter-btn');
+  if (!sel || !btn) return;
+  const value = sel.value || 'all';
+  const opt = sel.querySelector(`option[value="${CSS.escape(value)}"]`);
+  const label = opt ? opt.textContent : value;
+  const iconWrap = btn.querySelector('.email-filter-icon');
+  const labelEl = btn.querySelector('.email-filter-label');
+  if (iconWrap) iconWrap.innerHTML = _filterIcon(value);
+  if (labelEl) labelEl.textContent = label;
+}
+
+function _initFilterPicker() {
+  const sel = document.getElementById('email-lib-filter');
+  const picker = document.getElementById('email-filter-picker');
+  const btn = document.getElementById('email-filter-btn');
+  const menu = document.getElementById('email-filter-menu');
+  if (!sel || !picker || !btn || !menu || picker._wired) return;
+  picker._wired = true;
+
+  // Build menu from the hidden <select> contents (preserves optgroup labels).
+  const items = [];
+  for (const child of sel.children) {
+    if (child.tagName === 'OPTGROUP') {
+      items.push({ group: child.label });
+      for (const o of child.children) {
+        items.push({ value: o.value, label: o.textContent, group: child.label });
+      }
+    } else if (child.tagName === 'OPTION') {
+      items.push({ value: child.value, label: child.textContent });
+    }
+  }
+  menu.innerHTML = items.map(it => {
+    if (!it.value) {
+      return `<div class="email-filter-group">${it.group}</div>`;
+    }
+    return `<button type="button" role="option" class="email-filter-item" data-value="${it.value}">
+      <span class="email-filter-item-icon">${_filterIcon(it.value)}</span>
+      <span class="email-filter-item-label">${it.label}</span>
+    </button>`;
+  }).join('');
+
+  const close = () => {
+    menu.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    menu.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (menu.hidden) open(); else close();
+  });
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.email-filter-item');
+    if (!item) return;
+    sel.value = item.dataset.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    close();
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.hidden && !picker.contains(e.target)) close();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menu.hidden) {
+      e.stopPropagation();
+      close();
+    }
+  }, { capture: true });
+
+  _renderFilterPickerCurrent();
 }
 
 function _renderEmailLoading(grid) {
@@ -1697,7 +2646,18 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
       state._libEmails = data.emails || [];
       state._libTotal = data.total || 0;
       if (sp) sp.destroy();
-      _renderGrid();
+      // If chip-bar pills are active, swap the snapshot to the freshly
+      // loaded list and re-apply the filter so pills persist across
+      // refreshes / folder switches instead of getting wiped.
+      const _activePills = (state._libSearchPills || []).length > 0
+                       || (state._libSearchDraft || '').length > 0;
+      if (_activePills) {
+        _libPreSearchEmails = state._libEmails.slice();
+        _libPreSearchTotal = state._libTotal;
+        _applyPillFilter();
+      } else {
+        _renderGrid();
+      }
       const stats = document.getElementById('email-lib-stats');
       if (stats) stats.textContent = `${state._libTotal} emails`;
       _refreshUnreadBadge();
@@ -1788,6 +2748,7 @@ function _renderGrid() {
   grid.innerHTML = '';
 
   let filtered = state._libEmails;
+  try { console.log('[email-search] _renderGrid: state._libEmails.length=', (state._libEmails || []).length, 'pills=', (state._libSearchPills || []).length, 'draft=', JSON.stringify(state._libSearchDraft || ''), 'libSearch=', JSON.stringify(state._libSearch || '')); } catch {}
 
   // Apply sort
   if (state._libSort === 'unread') {
@@ -1796,8 +2757,39 @@ function _renderGrid() {
     filtered = [...filtered].sort((a, b) => Number(b.is_flagged) - Number(a.is_flagged));
   }
   // 'recent' is the default order from the API
+  // Stable secondary sort: favorited (is_flagged) emails ALWAYS bubble to
+  // the top of whatever order the sort above produced. This pins the
+  // user's flagged items so they're the first thing in the inbox no
+  // matter which sort mode is active.
+  filtered = [...filtered].sort((a, b) => Number(!!b.is_flagged) - Number(!!a.is_flagged));
 
   if (filtered.length === 0) {
+    // Active search — don't flash "No emails": the IMAP fetch is still
+    // running. Show a "Searching…" placeholder until _doSearch resolves
+    // and renders again. Without this the user saw an empty state
+    // smiley for ~500ms between the optimistic pill-filter clear and
+    // the server response landing.
+    if (_libSearchInFlight) {
+      grid.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.className = 'email-loading';
+      wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;padding:24px;opacity:0.75;';
+      grid.appendChild(wrap);
+      // Whirlpool spinner for parity with the rest of the cookbook /
+      // doclib loaders. Falls back to plain text if the import fails.
+      import('./spinner.js').then(sp => {
+        if (!wrap.isConnected) return;
+        const w = sp.default.createWhirlpool(20);
+        w.element.style.cssText = 'margin:0;display:block;';
+        wrap.appendChild(w.element);
+        const lbl = document.createElement('span');
+        lbl.textContent = 'Searching…';
+        wrap.appendChild(lbl);
+      }).catch(() => {
+        wrap.textContent = 'Searching…';
+      });
+      return;
+    }
     // Inbox-zero is a win — pair the message with a small smiley so the
     // empty state reads as "all caught up", not "something's broken".
     const _smileyIco = '<span style="vertical-align:-3px;margin-left:6px;">' + emptyStateIcon('smiley') + '</span>';
@@ -1892,10 +2884,16 @@ function _createCard(em) {
   // hides the actually useful info. Outside Sent, show the sender as before.
   const isSentFolderEarly = /sent/i.test(state._libFolder);
   let senderName;
+  let senderAddress;
   if (isSentFolderEarly) {
     senderName = _formatRecipients(em.to) || em.to || '(no recipient)';
+    // First address out of em.to for click-to-pill targeting.
+    const _firstTo = String(em.to || '').split(',')[0] || '';
+    const _m = _firstTo.match(/<([^>]+)>/);
+    senderAddress = (_m ? _m[1] : _firstTo).trim();
   } else {
     senderName = em.from_name || em.from_address;
+    senderAddress = em.from_address || '';
   }
   const color = _senderColor(senderName);
 
@@ -1988,7 +2986,7 @@ function _createCard(em) {
     const star = document.createElement('span');
     star.title = 'Favorited';
     star.style.cssText = 'color:var(--accent, var(--red));opacity:0.85;flex-shrink:0;display:inline-flex;';
-    star.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+    star.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
     titleRow.appendChild(star);
   }
 
@@ -2016,27 +3014,10 @@ function _createCard(em) {
     await _toggleCardPreview(sibling, nextEm);
     sibling.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
-  // Right cluster: expanded-only actions menu + nav arrows. The normal
-  // `.memory-item-actions` menu is hidden while expanded, so this keeps
-  // the same email actions available beside the previous/next controls.
-  const rightCluster = document.createElement('span');
-  rightCluster.style.cssText = 'margin-left:auto;display:inline-flex;align-items:center;gap:6px;';
-  const headerMenuBtn = document.createElement('button');
-  headerMenuBtn.type = 'button';
-  headerMenuBtn.className = 'email-card-header-menu';
-  headerMenuBtn.title = 'Actions';
-  headerMenuBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>';
-  headerMenuBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    _showCardMenu(em, headerMenuBtn);
-  });
-  // The CSS rule on .email-card-nav-arrows still sets margin-left:auto
-  // (needed when the arrows live alone in the title row). Inside this
-  // wrapper, we want the cluster's gap to apply, so cancel that auto.
-  navArrows.style.marginLeft = '0';
-  rightCluster.appendChild(headerMenuBtn);
-  rightCluster.appendChild(navArrows);
-  titleRow.appendChild(rightCluster);
+  // Just the nav arrows here — the per-card `.memory-item-actions` menu
+  // at the bottom of the card stays visible while expanded (see the CSS
+  // override below), so duplicating it in the header was redundant.
+  titleRow.appendChild(navArrows);
 
   content.appendChild(titleRow);
 
@@ -2044,7 +3025,7 @@ function _createCard(em) {
   meta.className = 'memory-item-meta';
   meta.style.cssText = 'font-size:10px;opacity:0.7;margin-top:2px;';
   const senderPrefix = isSentFolderEarly ? 'to ' : '';
-  meta.innerHTML = `<span class="email-meta-sender"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
+  meta.innerHTML = `<span class="email-meta-sender" data-email="${_esc(senderAddress || '')}" data-name="${_esc(senderName || '')}"><span style="opacity:0.55">${senderPrefix}</span><span style="color:${color};font-weight:600">${_esc(senderName)}</span></span><span class="email-meta-sep"> · </span><span class="email-meta-date">${_esc(dateStr)}</span>`;
   content.appendChild(meta);
 
   card.appendChild(content);
@@ -2145,13 +3126,19 @@ function _prefetchAdjacentEmails(card, count = 1) {
   const target = targets.find(t => t?.dataset?.uid);
   const uid = target?.dataset?.uid;
   if (!uid) return;
-  const key = `${state._libAccountId || ''}|${state._libFolder}|${uid}`;
+  // Use the email's actual folder when it was stamped by the search
+  // endpoint; otherwise default to the currently-selected folder.
+  const _emFold = (() => {
+    const emObj = (state._libEmails || []).find(e => String(e.uid) === String(uid));
+    return (emObj && emObj.folder) || state._libFolder || 'INBOX';
+  })();
+  const key = `${state._libAccountId || ''}|${_emFold}|${uid}`;
   if (_emailReadPrefetching.has(key) || _emailReadPrefetching.size > 0) return;
   if (_emailReadPrefetchTimer) clearTimeout(_emailReadPrefetchTimer);
   _emailReadPrefetchTimer = setTimeout(() => {
     _emailReadPrefetchTimer = null;
     _emailReadPrefetching.add(key);
-    fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uid)}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&mark_seen=false`)
+    fetch(`${API_BASE}/api/email/read/${encodeURIComponent(uid)}?folder=${encodeURIComponent(_emFold)}${_acct()}&mark_seen=false`)
       .catch(() => {})
       .finally(() => _emailReadPrefetching.delete(key));
   }, 900);
@@ -2159,7 +3146,10 @@ function _prefetchAdjacentEmails(card, count = 1) {
 
 async function _toggleCardPreview(card, em) {
   const accountAtStart = state._libAccountId || '';
-  const folderAtStart = state._libFolder || 'INBOX';
+  // Prefer the per-email folder stamped by the search endpoint (results
+  // from "All Mail" carry folder="[Gmail]/All Mail"). Falls back to the
+  // currently-selected folder for normal inbox cards.
+  const folderAtStart = (em && em.folder) || state._libFolder || 'INBOX';
   const uidAtStart = String(em?.uid || card?.dataset?.uid || '');
   const grid = card.closest('.doclib-grid');
   const gridRect = grid?.getBoundingClientRect?.();
@@ -2199,6 +3189,13 @@ async function _toggleCardPreview(card, em) {
   card.classList.add('email-card-expanded');
   card.classList.add('doclib-card-expanded');
   card.style.minHeight = `${Math.round(stableOpenHeight)}px`;
+  // Pull the card into view in case the user clicked an email further up
+  // the list whose top is partially scrolled off the viewport. Wait for
+  // the layout to settle (minHeight just changed) before scrolling so
+  // the browser scrolls toward the post-expansion position.
+  requestAnimationFrame(() => {
+    try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
+  });
   if (!em.is_read) {
     _syncEmailReadState(em.uid, true);
     fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(folderAtStart)}${_acct()}`, { method: 'POST' })
@@ -2244,6 +3241,7 @@ async function _toggleCardPreview(card, em) {
     // Mark as read locally
     _syncEmailReadState(em.uid, true);
     _prefetchAdjacentEmails(card);
+    _stampReaderContext(reader, { ...em, ...data }, state._libFolder, state._libAccountId);
 
     // Build the attachments wrap using the shared helper so the signature-
     // image filter (small inline PNGs/JPGs, Outlook image001 placeholders,
@@ -2282,20 +3280,20 @@ async function _toggleCardPreview(card, em) {
     reader.innerHTML = `
       <div class="email-reader-header">
         <div class="email-reader-meta">
-          <div class="email-reader-meta-row"><strong>From:</strong><span class="recipient-chips">${fromChip}</span></div>
-          ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
-          ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
-        </div>
-        <div class="email-reader-actions">
-          <div class="email-reader-actions-row email-reader-actions-row-primary">
+          <div class="email-reader-meta-row email-reader-meta-from">
+            <strong>From:</strong>
+            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="Show recipients"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
+          </div>
+          ${(data.to || data.cc) ? `<div class="email-reader-meta-details" hidden>
+            ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildRecipients(data.to)}</span></div>` : ''}
+            ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildRecipients(data.cc)}</span></div>` : ''}
+          </div>` : ''}
+          <div class="email-reader-actions-inline">
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
             ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
-          </div>
-          <div class="email-reader-actions-row email-reader-actions-row-secondary">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
             </div>
@@ -2363,6 +3361,7 @@ async function _toggleCardPreview(card, em) {
       ev.stopPropagation();
       await _summarizeEmail(reader, data, ev.currentTarget);
     });
+    _wireMetaToggle(reader);
     // from-sender / thread-search Search button is DISABLED for now —
     // the search + threaded sidebar UX is too buggy to ship. Physically
     // remove it from every reader render path. Re-enable by deleting
@@ -3625,8 +4624,24 @@ function _wireAttachmentHandlers(reader, folder) {
         window.open(url, '_blank');
         return;
       }
-      const orig = chip.style.opacity;
-      chip.style.opacity = '0.6';
+      // Swap the paperclip icon for a whirlpool spinner while the
+      // download is in flight, so large attachments give a clear cue
+      // they're loading. Restore on completion.
+      const iconSvg = chip.querySelector(':scope > svg');
+      const origIconHtml = iconSvg ? iconSvg.outerHTML : '';
+      let _wp = null;
+      let _spinnerHost = null;
+      try {
+        const sp = window.spinnerModule || (await import('./spinner.js')).default;
+        _wp = sp.createWhirlpool(12);
+        _spinnerHost = document.createElement('span');
+        _spinnerHost.className = 'email-attachment-spinner';
+        _spinnerHost.style.cssText = 'display:inline-flex;width:12px;height:12px;align-items:center;justify-content:center;flex-shrink:0;position:relative;top:-2px;';
+        _spinnerHost.appendChild(_wp.element);
+        if (iconSvg) iconSvg.replaceWith(_spinnerHost);
+      } catch (_) {}
+      const origOpacity = chip.style.opacity;
+      chip.style.opacity = '0.85';
       try {
         const res = await fetch(url, { credentials: 'same-origin' });
         if (!res.ok) {
@@ -3647,7 +4662,14 @@ function _wireAttachmentHandlers(reader, folder) {
         console.error('attachment download error', e);
         location.href = url;
       } finally {
-        chip.style.opacity = orig;
+        chip.style.opacity = origOpacity;
+        if (_spinnerHost && _spinnerHost.parentNode && origIconHtml) {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = origIconHtml;
+          const restored = tmp.firstChild;
+          if (restored) _spinnerHost.replaceWith(restored);
+        }
+        if (_wp) { try { _wp.destroy(); } catch (_) {} }
       }
     });
   });
@@ -3942,6 +4964,7 @@ async function _openEmailAsTab(em, folder) {
       return;
     }
     _syncEmailReadState(em.uid, true);
+    _stampReaderContext(reader, { ...em, ...data }, useFolder, state._libAccountId);
     const buildChips = (str) => {
       if (!str) return '';
       return _splitRecipientList(str).map(a => {
@@ -3955,18 +4978,19 @@ async function _openEmailAsTab(em, folder) {
     reader.innerHTML = `
       <div class="email-reader-header">
         <div class="email-reader-meta">
-          <div class="email-reader-meta-row"><strong>From:</strong><span class="recipient-chips">${fromChip}</span></div>
-          ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildChips(data.to)}</span></div>` : ''}
-          ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildChips(data.cc)}</span></div>` : ''}
-        </div>
-        <div class="email-reader-actions">
-          <div class="email-reader-actions-row email-reader-actions-row-primary">
+          <div class="email-reader-meta-row email-reader-meta-from">
+            <strong>From:</strong>
+            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="Show recipients"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
+          </div>
+          ${(data.to || data.cc) ? `<div class="email-reader-meta-details" hidden>
+            ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${buildChips(data.to)}</span></div>` : ''}
+            ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${buildChips(data.cc)}</span></div>` : ''}
+          </div>` : ''}
+          <div class="email-reader-actions-inline">
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
             ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
-          </div>
-          <div class="email-reader-actions-row email-reader-actions-row-secondary">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
@@ -4005,6 +5029,7 @@ async function _openEmailAsTab(em, folder) {
       ev.stopPropagation();
       try { await _summarizeEmail(reader, data, ev.currentTarget); } catch {}
     });
+    _wireMetaToggle(reader);
     reader.querySelector('[data-act="from-sender"]')?.remove();
     reader.querySelector('[data-act="from-sender"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
@@ -4109,20 +5134,20 @@ async function _openEmailWindow(em, folder) {
     bodyEl.innerHTML = `
       <div class="email-reader-header">
         <div class="email-reader-meta">
-          <div class="email-reader-meta-row"><strong>From:</strong><span class="recipient-chips">${fromChip}</span></div>
-          ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${_chipsFor(data.to)}</span></div>` : ''}
-          ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${_chipsFor(data.cc)}</span></div>` : ''}
-        </div>
-        <div class="email-reader-actions">
-          <div class="email-reader-actions-row email-reader-actions-row-primary">
+          <div class="email-reader-meta-row email-reader-meta-from">
+            <strong>From:</strong>
+            <span class="recipient-chips">${fromChip}${(data.to || data.cc) ? `<button class="email-reader-meta-toggle" type="button" aria-expanded="false" title="Show recipients"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>` : ''}</span>
+          </div>
+          ${(data.to || data.cc) ? `<div class="email-reader-meta-details" hidden>
+            ${data.to ? `<div class="email-reader-meta-row"><strong>To:</strong><span class="recipient-chips">${_chipsFor(data.to)}</span></div>` : ''}
+            ${data.cc ? `<div class="email-reader-meta-row"><strong>Cc:</strong><span class="recipient-chips">${_chipsFor(data.cc)}</span></div>` : ''}
+          </div>` : ''}
+          <div class="email-reader-actions-inline">
+            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="reply" title="Reply"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><span class="reader-btn-label">Reply</span></button>
             ${_hasMultipleRecipients(data) ? `<button class="memory-toolbar-btn reader-icon-btn" data-act="reply-all" title="Reply All"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 17 2 12 7 7"/><polyline points="12 17 7 12 12 7"/><path d="M22 18v-2a4 4 0 0 0-4-4H7"/></svg><span class="reader-btn-label">Reply all</span></button>` : ''}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="forward" title="Forward"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg><span class="reader-btn-label">Forward</span></button>
-          </div>
-          <div class="email-reader-actions-row email-reader-actions-row-secondary">
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
-            <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
             </div>
@@ -4160,6 +5185,7 @@ async function _openEmailWindow(em, folder) {
       ev.stopPropagation();
       try { await _summarizeEmail(bodyEl, data, ev.currentTarget); } catch {}
     });
+    _wireMetaToggle(bodyEl);
     bodyEl.querySelector('[data-act="from-sender"]')?.remove();
     bodyEl.querySelector('[data-act="from-sender"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
@@ -4483,6 +5509,10 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
 
   const _bubblesIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
   const _contactIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>';
+  // Three groups separated by dividers:
+  //   1. Open / Mark Unread / Remind — the per-email view actions
+  //   2. Save sender / Not Done / Archive — non-destructive state changes
+  //   3. Move to Spam / Move to Trash / Delete — destructive
   const actions = [
     {
       label: 'Open in new tab',
@@ -4490,6 +5520,77 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
       action: async () => {
         const folder = state._libFolder || 'INBOX';
         await _openEmailAsTab(em, folder);
+      },
+    },
+    {
+      label: 'Remind to reply',
+      icon: _bellIcon,
+      submenu: 'remind',
+    },
+    { separator: true },
+    {
+      label: em.is_read ? 'Mark as Unread' : 'Mark as Read',
+      icon: _unreadIcon,
+      action: async () => {
+        const newRead = !em.is_read;
+        _syncEmailReadState(em.uid, newRead);
+        try {
+          if (newRead) {
+            await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+          } else {
+            await fetch(`${API_BASE}/api/email/mark-unread/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+          }
+        } catch (e) { console.error(e); }
+        _renderGrid();
+      },
+    },
+    {
+      // Favorite (pin to top). Same bookmark glyph we use for the
+      // sidebar-pin / favorites filter so the visual language stays
+      // consistent. Toggling updates em.is_flagged and re-sorts via
+      // _renderGrid (favorited rows are always pinned at the top).
+      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+      action: async () => {
+        const next = !em.is_flagged;
+        em.is_flagged = next;
+        _renderGrid();
+        try {
+          await fetch(`${API_BASE}/api/email/flag/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&on=${next ? 'true' : 'false'}`, { method: 'POST' });
+        } catch (e) {
+          // Roll back the optimistic flip if the server didn't take it.
+          em.is_flagged = !next;
+          _renderGrid();
+          console.error('Failed to toggle favorite:', e);
+        }
+      },
+    },
+    {
+      label: em.is_answered ? 'Mark as Not Done' : 'Mark as Done',
+      icon: _checkIcon,
+      action: async () => {
+        const newState = !em.is_answered;
+        em.is_answered = newState;
+        if (newState) _syncEmailReadState(em.uid, true);
+        try {
+          if (newState) {
+            await fetch(`${API_BASE}/api/email/mark-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+            await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+          } else {
+            await fetch(`${API_BASE}/api/email/clear-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+          }
+        } catch (e) { console.error('Failed to toggle done:', e); }
+        _renderGrid();
+      },
+    },
+    {
+      label: 'Move to Archive',
+      icon: _archIcon,
+      action: async () => {
+        try {
+          await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        } catch (e) { console.error(e); }
+        await closeAndRemove();
       },
     },
     {
@@ -4522,58 +5623,7 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
         }
       },
     },
-    // Threaded ⇄ Plain-text view toggle removed — threaded view disabled
-    // for now (too buggy). Emails always render plain text. Restore this
-    // menu item + _bubblesDisabled() localStorage logic to bring it back.
-    {
-      label: em.is_read ? 'Mark Unread' : 'Mark Read',
-      icon: _unreadIcon,
-      action: async () => {
-        const newRead = !em.is_read;
-        _syncEmailReadState(em.uid, newRead);
-        try {
-          if (newRead) {
-            await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          } else {
-            await fetch(`${API_BASE}/api/email/mark-unread/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          }
-        } catch (e) { console.error(e); }
-        _renderGrid();
-      },
-    },
-    {
-      label: em.is_answered ? 'Not Done' : 'Done',
-      icon: _checkIcon,
-      action: async () => {
-        const newState = !em.is_answered;
-        em.is_answered = newState;
-        if (newState) _syncEmailReadState(em.uid, true);
-        try {
-          if (newState) {
-            await fetch(`${API_BASE}/api/email/mark-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-            await fetch(`${API_BASE}/api/email/mark-read/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          } else {
-            await fetch(`${API_BASE}/api/email/clear-answered/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          }
-        } catch (e) { console.error('Failed to toggle done:', e); }
-        _renderGrid();
-      },
-    },
-    {
-      label: 'Archive',
-      icon: _archIcon,
-      action: async () => {
-        try {
-          await fetch(`${API_BASE}/api/email/archive/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-        } catch (e) { console.error(e); }
-        await closeAndRemove();
-      },
-    },
-    {
-      label: 'Remind to reply',
-      icon: _bellIcon,
-      submenu: 'remind',
-    },
+    { separator: true },
     {
       label: 'Move to Spam',
       icon: _spamIcon,
@@ -4614,6 +5664,12 @@ function _showReaderMoreMenu(em, card, reader, anchor) {
   ];
 
   for (const a of actions) {
+    if (a.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'dropdown-divider';
+      dropdown.appendChild(sep);
+      continue;
+    }
     const item = document.createElement('div');
     item.className = 'dropdown-item-compact' + (a.danger ? ' dropdown-item-danger' : '');
     const arrow = a.submenu ? '<span style="margin-left:auto;opacity:0.5;">›</span>' : '';
@@ -4724,6 +5780,22 @@ function _showCardMenu(em, anchor) {
       },
     });
     actions.push({
+      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+      action: async () => {
+        const next = !em.is_flagged;
+        em.is_flagged = next;
+        _renderGrid();
+        try {
+          await fetch(`${API_BASE}/api/email/flag/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&on=${next ? 'true' : 'false'}`, { method: 'POST' });
+        } catch (e) {
+          em.is_flagged = !next;
+          _renderGrid();
+          console.error('Failed to toggle favorite:', e);
+        }
+      },
+    });
+    actions.push({
       label: 'Archive',
       icon: _archIcon,
       action: async () => {
@@ -4735,6 +5807,22 @@ function _showCardMenu(em, anchor) {
       },
     });
   } else {
+    actions.push({
+      label: em.is_flagged ? 'Unfavorite' : 'Favorite (pin to top)',
+      icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="' + (em.is_flagged ? 'currentColor' : 'none') + '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+      action: async () => {
+        const next = !em.is_flagged;
+        em.is_flagged = next;
+        _renderGrid();
+        try {
+          await fetch(`${API_BASE}/api/email/flag/${em.uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}&on=${next ? 'true' : 'false'}`, { method: 'POST' });
+        } catch (e) {
+          em.is_flagged = !next;
+          _renderGrid();
+          console.error('Failed to toggle favorite:', e);
+        }
+      },
+    });
     actions.push({
       label: 'Archive',
       icon: _archIcon,
@@ -4909,67 +5997,123 @@ async function _bulkAction(action) {
   const originalDeleteHtml = deleteBtn?.innerHTML || '';
   const originalCountText = countEl?.textContent || '';
   let busySpinner = null;
-  if (action === 'delete') {
-    if (deleteBtn) {
-      deleteBtn.disabled = true;
-      deleteBtn.classList.add('email-bulk-loading');
-      deleteBtn.innerHTML = '<span class="email-bulk-loading-label">Deleting</span>';
-      busySpinner = spinnerModule.create('', 'clean', 'whirlpool');
-      const spEl = busySpinner.createElement();
-      spEl.classList.add('email-bulk-whirlpool');
-      deleteBtn.appendChild(spEl);
-      busySpinner.start();
-    }
-    if (actionsBtn) actionsBtn.disabled = true;
-    if (cancelBtn) cancelBtn.disabled = true;
-    if (selectAll) selectAll.disabled = true;
-    if (countEl) countEl.textContent = `Deleting ${uids.length}...`;
+  // Loading state for every bulk action, not just delete — large
+  // selections (e.g. 90+ Dones) used to silently hammer the server
+  // with sequential requests and the user got zero feedback. Now the
+  // Actions button (or Delete button) shows a whirlpool + verb-ing
+  // label, and the count surfaces progress.
+  const verbing = {
+    delete: 'Deleting',
+    archive: 'Archiving',
+    done: 'Marking done',
+    read: 'Marking read',
+    unread: 'Marking unread',
+  }[action] || 'Updating';
+  const targetBtn = action === 'delete' ? deleteBtn : actionsBtn;
+  let originalTargetHtml = '';
+  if (targetBtn) {
+    originalTargetHtml = targetBtn.innerHTML;
+    targetBtn.disabled = true;
+    targetBtn.classList.add('email-bulk-loading');
+    targetBtn.innerHTML = `<span class="email-bulk-loading-label">${verbing}</span>`;
+    busySpinner = spinnerModule.create('', 'clean', 'whirlpool');
+    const spEl = busySpinner.createElement();
+    spEl.classList.add('email-bulk-whirlpool');
+    targetBtn.appendChild(spEl);
+    busySpinner.start();
   }
+  if (action !== 'delete' && deleteBtn) deleteBtn.disabled = true;
+  if (action === 'delete' && actionsBtn) actionsBtn.disabled = true;
+  if (cancelBtn) cancelBtn.disabled = true;
+  if (selectAll) selectAll.disabled = true;
+  if (countEl) countEl.textContent = `${verbing} ${uids.length}…`;
+
+  // Single-uid worker.
+  const handleOne = async (uid) => {
+    try {
+      if (action === 'archive') {
+        await fetch(`${API_BASE}/api/email/archive/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+      } else if (action === 'delete') {
+        await fetch(`${API_BASE}/api/email/delete/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
+      } else if (action === 'done') {
+        // uid may come back from the Set as a string while em.uid is
+        // numeric (or vice versa) — coerce both sides so the in-memory
+        // state actually flips and the post-loop re-render shows the
+        // done checkmark.
+        const em = state._libEmails.find(e => String(e.uid) === String(uid));
+        if (em) { em.is_answered = true; em.is_read = true; }
+        const ansRes = await fetch(`${API_BASE}/api/email/mark-answered/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        const readRes = await fetch(`${API_BASE}/api/email/mark-read/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        if (!ansRes.ok || !readRes.ok) throw new Error(`mark-done HTTP ${ansRes.status}/${readRes.status}`);
+      } else if (action === 'read' || action === 'unread') {
+        const endpoint = action === 'read' ? 'mark-read' : 'mark-unread';
+        const res = await fetch(`${API_BASE}/api/email/${endpoint}/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
+        let data = null;
+        try { data = await res.json(); } catch (_) {}
+        if (!res.ok || data?.success === false) {
+          throw new Error(data?.error || `HTTP ${res.status}`);
+        }
+        _syncEmailReadState(uid, action === 'read');
+      }
+    } catch (e) {
+      if (action === 'read' || action === 'unread') failedReadSync += 1;
+      console.error(`Failed to ${action} ${uid}:`, e);
+    }
+  };
 
   try {
-    for (const uid of uids) {
-      try {
-        if (action === 'archive') {
-          await fetch(`${API_BASE}/api/email/archive/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-        } else if (action === 'delete') {
-          await fetch(`${API_BASE}/api/email/delete/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'DELETE' });
-        } else if (action === 'done') {
-          const em = state._libEmails.find(e => e.uid === uid);
-          if (em) {
-            em.is_answered = true;
-            em.is_read = true;
-          }
-          await fetch(`${API_BASE}/api/email/mark-answered/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          await fetch(`${API_BASE}/api/email/mark-read/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-        } else if (action === 'read' || action === 'unread') {
-          const endpoint = action === 'read' ? 'mark-read' : 'mark-unread';
-          const res = await fetch(`${API_BASE}/api/email/${endpoint}/${uid}?folder=${encodeURIComponent(state._libFolder)}${_acct()}`, { method: 'POST' });
-          let data = null;
-          try { data = await res.json(); } catch (_) {}
-          if (!res.ok || data?.success === false) {
-            throw new Error(data?.error || `HTTP ${res.status}`);
-          }
-          _syncEmailReadState(uid, action === 'read');
+    // Run in parallel with a concurrency cap so 92 emails don't take
+    // 30 seconds sequentially but we also don't open 92 simultaneous
+    // connections.
+    const CONCURRENCY = 6;
+    const queue = uids.slice();
+    let inFlight = 0;
+    let nextSlot = 0;
+    let finishedCount = 0;
+    await new Promise((resolve) => {
+      const launch = () => {
+        while (inFlight < CONCURRENCY && nextSlot < queue.length) {
+          const uid = queue[nextSlot++];
+          inFlight++;
+          handleOne(uid).finally(() => {
+            inFlight--;
+            finishedCount++;
+            if (countEl) countEl.textContent = `${verbing} ${finishedCount}/${queue.length}…`;
+            if (nextSlot >= queue.length && inFlight === 0) resolve();
+            else launch();
+          });
         }
-      } catch (e) {
-        if (action === 'read' || action === 'unread') failedReadSync += 1;
-        console.error(`Failed to ${action} ${uid}:`, e);
-      }
-    }
+        if (queue.length === 0) resolve();
+      };
+      launch();
+    });
 
     if (action === 'archive' || action === 'delete') {
+      await _animateEmailCardRemoval(uids);
+      const removed = new Set(uids.map(uid => String(uid)));
+      state._libEmails = state._libEmails.filter(e => !removed.has(String(e.uid)));
+    } else if (action === 'done' && state._libFilter === 'undone') {
+      // The undone filter is a "show only not-done" view — after marking
+      // selected emails done, they no longer match. Animate them out and
+      // drop them from the local list so the view reflects the filter
+      // instead of leaving freshly-done cards sitting there.
       await _animateEmailCardRemoval(uids);
       const removed = new Set(uids.map(uid => String(uid)));
       state._libEmails = state._libEmails.filter(e => !removed.has(String(e.uid)));
     }
   } finally {
     if (busySpinner) busySpinner.destroy();
-    if (deleteBtn) {
-      deleteBtn.disabled = false;
-      deleteBtn.classList.remove('email-bulk-loading');
-      deleteBtn.innerHTML = originalDeleteHtml;
+    // Restore whichever button we hijacked (delete vs actions).
+    if (targetBtn) {
+      targetBtn.disabled = false;
+      targetBtn.classList.remove('email-bulk-loading');
+      targetBtn.innerHTML = originalTargetHtml || targetBtn.innerHTML;
     }
-    if (actionsBtn) actionsBtn.disabled = false;
+    if (deleteBtn && deleteBtn !== targetBtn) {
+      deleteBtn.disabled = false;
+      deleteBtn.innerHTML = originalDeleteHtml || deleteBtn.innerHTML;
+    }
+    if (actionsBtn && actionsBtn !== targetBtn) actionsBtn.disabled = false;
     if (cancelBtn) cancelBtn.disabled = false;
     if (selectAll) selectAll.disabled = false;
     if (countEl) countEl.textContent = originalCountText;
@@ -5000,7 +6144,7 @@ function _summaryIcon(data) {
   return `<svg width="14" height="14" viewBox="0 0 24 24" fill="${fill}"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>`;
 }
 
-async function _runAiReplyFromButton(btn, em, data, mode) {
+async function _runAiReplyFromButton(btn, em, data, mode, noteHint = '') {
   _snapEmailModalToLeftSidebar(btn.closest('.modal'));
   btn.disabled = true;
   const orig = btn.innerHTML;
@@ -5012,7 +6156,7 @@ async function _runAiReplyFromButton(btn, em, data, mode) {
     btn.appendChild(wp.element);
   } catch (_) {}
   try {
-    if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode });
+    if (state._onEmailClick) await state._onEmailClick({ email: em, emailData: data, mode, noteHint });
   } finally {
     try { wp && wp.stop(); } catch (_) {}
     btn.disabled = false;
@@ -5030,10 +6174,31 @@ function _showAiReplyChoice(btn, em, data) {
   const rect = btn.getBoundingClientRect();
   const menu = document.createElement('div');
   menu.className = 'email-ai-reply-choice';
+  /* Clamp width to viewport minus 16px margin so the menu (textarea
+     + Fast/Full buttons) never spills off the right edge on narrow
+     mobile screens. */
+  const menuMaxW = Math.min(220, window.innerWidth - 16);
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuMaxW - 8));
+  /* Vertical placement: prefer below the button, but flip above if
+     there's not enough room (e.g. button near bottom of viewport).
+     Estimated menu height is ~150px (textarea + buttons + padding). */
+  const estHeight = 150;
+  const spaceBelow = window.innerHeight - rect.bottom - 8;
+  const spaceAbove = rect.top - 8;
+  let top;
+  if (spaceBelow >= estHeight || spaceBelow >= spaceAbove) {
+    top = Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - estHeight - 8));
+  } else {
+    top = Math.max(8, rect.top - estHeight - 6);
+  }
   menu.style.cssText = [
     'position:fixed',
-    `left:${Math.max(8, Math.min(rect.left, window.innerWidth - 190))}px`,
-    `top:${Math.min(window.innerHeight - 96, rect.bottom + 6)}px`,
+    `left:${left}px`,
+    `top:${top}px`,
+    `max-width:${menuMaxW}px`,
+    `max-height:${window.innerHeight - 16}px`,
+    'overflow:auto',
+    'box-sizing:border-box',
     'z-index:10060',
     'display:flex',
     'gap:6px',
@@ -5043,29 +6208,65 @@ function _showAiReplyChoice(btn, em, data) {
     'border-radius:7px',
     'box-shadow:0 8px 24px rgba(0,0,0,.28)',
   ].join(';');
+  // Fast = lightning bolt (already used as a 'fast' glyph elsewhere in the app).
+  // Full = layered concentric circles to suggest "more, deeper" — not a fully
+  // filled circle so it reads as a complement to the lightning, not as a "stop".
   menu.innerHTML = `
-    <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft">Fast</button>
-    <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Uses the fuller reply context">Full</button>
+    <div class="email-ai-reply-row" style="display:flex;flex-direction:column;gap:6px;min-width:180px;">
+      <textarea data-note-input rows="2" placeholder="Add context (optional)" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
+      <div style="display:flex;align-items:center;gap:4px;">
+        <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          Fast
+        </button>
+        <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Uses the fuller reply context" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:var(--accent, var(--red));"><circle cx="12" cy="12" r="6"/></svg>
+          Full
+        </button>
+      </div>
+    </div>
   `;
+  const noteInput = menu.querySelector('[data-note-input]');
+  setTimeout(() => noteInput.focus(), 0);
   menu.addEventListener('click', async (ev) => {
     const choice = ev.target.closest('[data-mode]');
     if (!choice) return;
     ev.preventDefault();
     ev.stopPropagation();
     const mode = choice.getAttribute('data-mode') || 'ai-reply';
+    const noteHint = (noteInput.value || '').trim();
     _closeAiReplyChoice();
-    await _runAiReplyFromButton(btn, em, data, mode);
+    await _runAiReplyFromButton(btn, em, data, mode, noteHint);
   });
+  // Esc closes the popover; ignore plain clicks inside the menu so the
+  // textarea stays focused.
+  menu.addEventListener('mousedown', (ev) => ev.stopPropagation());
   document.body.appendChild(menu);
-  setTimeout(() => document.addEventListener('click', _closeAiReplyChoice, true), 0);
+  // Outside-click closer: only fires when the click target is OUTSIDE
+  // the menu. The original handler closed on any click which made
+  // focusing the textarea immediately dismiss the popover.
+  const outsideClose = (ev) => {
+    if (menu.contains(ev.target)) return;
+    document.removeEventListener('click', outsideClose, true);
+    _closeAiReplyChoice();
+  };
+  setTimeout(() => document.addEventListener('click', outsideClose, true), 0);
 }
 
 function _handleAiReplyButton(ev, em, data) {
   ev.stopPropagation();
   const btn = ev.currentTarget;
-  if (data?.cached_ai_reply) {
+  // First click on a cached email surfaces the cached draft. Second
+  // click clears the cache and opens the Fast/Full + context menu so
+  // the user can ask for a fresh draft (with new steering).
+  if (data?.cached_ai_reply && !btn.dataset.shownOnce) {
+    btn.dataset.shownOnce = '1';
     _runAiReplyFromButton(btn, em, data, 'ai-reply');
     return;
+  }
+  if (data?.cached_ai_reply) {
+    data.cached_ai_reply = null;
+    btn.dataset.shownOnce = '';
   }
   _showAiReplyChoice(btn, em, data);
 }
@@ -5152,11 +6353,57 @@ function _showLibRemindSubmenu(em, parentDropdown) {
     tmp.addEventListener('blur', () => setTimeout(() => tmp.remove(), 200));
   });
   parentDropdown.appendChild(customItem);
+  // "Note" — prompts for free-text and saves it as a note without a
+  // due_date, so no timer/reminder fires.
+  const noteItem = document.createElement('div');
+  noteItem.className = 'dropdown-item-compact';
+  noteItem.innerHTML = '<span>Note</span>';
+  noteItem.addEventListener('click', (e) => {
+    e.stopPropagation();
+    parentDropdown.remove();
+    _promptEmailNote(em);
+  });
+  parentDropdown.appendChild(noteItem);
 }
 
-async function _createEmailReplyReminder(em, dueDate) {
+function _promptEmailNote(em) {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;padding:16px;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;min-width:280px;max-width:min(420px, 92vw);display:flex;flex-direction:column;gap:8px;box-shadow:0 12px 32px rgba(0,0,0,0.4);';
+  const subject = em.subject || '(no subject)';
+  card.innerHTML = `
+    <div style="font-size:11px;opacity:0.6;">Note about ${_esc(subject)}</div>
+    <textarea data-note placeholder="Write your note…" rows="4" style="resize:vertical;min-height:80px;font-family:inherit;font-size:12px;padding:7px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-elev,#1a1a1a);color:var(--fg);box-sizing:border-box;width:100%;"></textarea>
+    <div style="display:flex;gap:6px;justify-content:flex-end;">
+      <button class="memory-toolbar-btn" data-act="cancel">Cancel</button>
+      <button class="memory-toolbar-btn active" data-act="save">Save</button>
+    </div>
+  `;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const ta = card.querySelector('[data-note]');
+  setTimeout(() => ta.focus(), 0);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (ev) => { if (ev.target === overlay) close(); });
+  card.querySelector('[data-act="cancel"]').addEventListener('click', close);
+  card.querySelector('[data-act="save"]').addEventListener('click', async () => {
+    const text = (ta.value || '').trim();
+    if (!text) { ta.focus(); return; }
+    close();
+    await _createEmailReplyReminder(em, null, text);
+  });
+  ta.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') close();
+    else if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') card.querySelector('[data-act="save"]').click();
+  });
+}
+
+async function _createEmailReplyReminder(em, dueDate, customText = '') {
   const pad = n => String(n).padStart(2,'0');
-  const iso = `${dueDate.getFullYear()}-${pad(dueDate.getMonth()+1)}-${pad(dueDate.getDate())}T${pad(dueDate.getHours())}:${pad(dueDate.getMinutes())}`;
+  const iso = dueDate
+    ? `${dueDate.getFullYear()}-${pad(dueDate.getMonth()+1)}-${pad(dueDate.getDate())}T${pad(dueDate.getHours())}:${pad(dueDate.getMinutes())}`
+    : null;
   const fullFrom = em.from || em.sender || '';
   // Extract just the first name from "First Last <email@x>" or fall back to email local part
   let from = 'someone';
@@ -5171,17 +6418,18 @@ async function _createEmailReplyReminder(em, dueDate) {
   const subject = em.subject || '(no subject)';
   const folder = state._libFolder || 'INBOX';
   const deepLink = `${window.location.origin}/#email=${encodeURIComponent(folder)}:${em.uid}`;
+  const itemText = customText || `Reply to ${from}: ${subject}`;
   const payload = {
     title: `Reply: ${subject}`,
     note_type: 'todo',
     items: [
-      { text: `Reply to ${from}: ${subject}`, checked: false },
+      { text: itemText, checked: false },
     ],
     content: `Open email: ${deepLink}`,
     label: 'email reminder',
-    due_date: iso,
     source: 'email',
   };
+  if (iso) payload.due_date = iso;
   try {
     const res = await fetch(`${API_BASE}/api/notes`, {
       method: 'POST', credentials: 'same-origin',
@@ -5190,8 +6438,12 @@ async function _createEmailReplyReminder(em, dueDate) {
     });
     if (!res.ok) throw new Error('Failed');
     const { showToast } = await import('./ui.js');
-    const fmt = dueDate.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
-    showToast(`Todo reminder set for ${fmt}`);
+    if (dueDate) {
+      const fmt = dueDate.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+      showToast(`Todo reminder set for ${fmt}`);
+    } else {
+      showToast('Reply note saved');
+    }
     if ('Notification' in window && Notification.permission === 'default') {
       try { Notification.requestPermission(); } catch {}
     }

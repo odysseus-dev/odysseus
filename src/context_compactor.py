@@ -244,9 +244,17 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     protected_tokens = estimate_tokens(protected_msgs)
     budget -= protected_tokens
 
-    # Priority: keep first system msg (preset prompt), drop others (memory, RAG, memo)
-    essential_system = system_msgs[:1] if system_msgs else []
-    extra_system = system_msgs[1:]
+    # Priority: keep first system msg (preset prompt), drop others (memory, RAG, memo).
+    # Exception: a research-spinoff primer (the seeded report that grounds a
+    # "Discuss" chat) must never be dropped — it is the conversation's whole
+    # knowledge base. Treat any system message carrying research_spinoff_from
+    # metadata as essential alongside the leading system prompt.
+    def _is_research_primer(m):
+        return bool((m.get("metadata") or {}).get("research_spinoff_from"))
+    _primers = [m for m in system_msgs if _is_research_primer(m)]
+    _non_primer = [m for m in system_msgs if not _is_research_primer(m)]
+    essential_system = (_non_primer[:1] if _non_primer else []) + _primers
+    extra_system = _non_primer[1:]
 
     # Try dropping extra system messages one by one (from the end)
     trimmed = essential_system + convo_msgs
@@ -307,6 +315,7 @@ async def maybe_compact(
     model: str,
     messages: List[Dict],
     headers: Optional[Dict] = None,
+    owner: Optional[str] = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 
@@ -353,7 +362,7 @@ async def maybe_compact(
     )
 
     # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility")
+    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
     compact_url = util_url or endpoint_url
     compact_model = util_model or model
     compact_headers = util_headers if util_url else headers
@@ -380,7 +389,10 @@ async def maybe_compact(
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")
-        return system_msgs + recent, context_length, False
+        # Degrade gracefully: keep the conversation intact rather than
+        # silently dropping the older half. was_compacted=False signals the
+        # caller nothing was summarized; trim_for_context handles length.
+        return messages, context_length, False
 
     summary_msg = {
         "role": "system",
@@ -434,8 +446,8 @@ def _update_session_history(session, split_point: int, summary: str,
     )
     new_history = system_prefix + [summary_msg] + recent_history
     try:
-        from core import models as _core_models
-        manager = getattr(_core_models, "_session_manager", None)
+        from core.models import get_session_manager_instance
+        manager = get_session_manager_instance()
     except Exception:
         manager = None
     if manager and getattr(session, "id", None):

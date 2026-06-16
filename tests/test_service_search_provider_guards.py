@@ -90,8 +90,8 @@ def test_service_ddg_html_fallback_sends_safesearch(monkeypatch):
         seen["params"] = kwargs["params"]
         return _Response()
 
-    monkeypatch.setitem(sys.modules, "duckduckgo_search", None)
     monkeypatch.setattr(providers, "_get_search_settings", lambda: {"search_safesearch": "off"})
+    monkeypatch.setitem(sys.modules, "ddgs", None)
     monkeypatch.setattr(providers.httpx, "get", fake_get)
 
     results = providers.duckduckgo_search("odysseus", count=1)

@@ -11,7 +11,10 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
+from core.middleware import INTERNAL_TOOL_USER
+from core.constants import internal_api_base
 from src.auth_helpers import get_current_user
+from src.constants import DATA_DIR, EMAIL_URGENCY_CACHE_DIR
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 
@@ -56,7 +59,7 @@ def _maybe_cascade_calendar_event(task) -> None:
         try:
             with httpx.Client(timeout=10) as client:
                 r = client.delete(
-                    f"http://localhost:7000/api/calendar/events/{uid}",
+                    f"{internal_api_base()}/api/calendar/events/{uid}",
                     headers=headers,
                 )
                 if r.status_code >= 400:
@@ -81,7 +84,7 @@ def _maybe_cascade_calendar_event(task) -> None:
     try:
         with httpx.Client(timeout=10) as client:
             # Find the Cookbook calendar.
-            cal_r = client.get("http://localhost:7000/api/calendar/calendars", headers=headers)
+            cal_r = client.get(f"{internal_api_base()}/api/calendar/calendars", headers=headers)
             if cal_r.status_code >= 400:
                 return
             cals = (cal_r.json() or {}).get("calendars", [])
@@ -98,7 +101,7 @@ def _maybe_cascade_calendar_event(task) -> None:
             start = (now - _td(days=30)).isoformat()
             end = (now + _td(days=365)).isoformat()
             ev_r = client.get(
-                "http://localhost:7000/api/calendar/events",
+                f"{internal_api_base()}/api/calendar/events",
                 params={"start": start, "end": end, "calendar": cal_href},
                 headers=headers,
             )
@@ -149,6 +152,7 @@ class TaskCreate(BaseModel):
     endpoint_url: Optional[str] = None
     then_task_id: Optional[str] = None            # chain: run this task after success
     notifications_enabled: Optional[bool] = None  # None lets action-specific defaults apply
+    character_id: Optional[str] = None             # built-in persona id (PERSONAS) — biases output voice
 
 
 class TaskUpdate(BaseModel):
@@ -169,6 +173,7 @@ class TaskUpdate(BaseModel):
     endpoint_url: Optional[str] = None
     then_task_id: Optional[str] = None
     notifications_enabled: Optional[bool] = None
+    character_id: Optional[str] = None
 
 
 def _display_task_name(t: ScheduledTask) -> str:
@@ -201,6 +206,7 @@ def _task_to_dict(t: ScheduledTask, include_last_run_result: bool = False) -> di
         "output_target": t.output_target,
         "session_id": t.session_id,
         "crew_member_id": getattr(t, "crew_member_id", None),
+        "character_id": getattr(t, "character_id", None),
         "model": t.model,
         "endpoint_url": t.endpoint_url,
         "run_count": t.run_count or 0,
@@ -291,20 +297,24 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     def _owner(request: Request):
         return get_current_user(request)
 
-    async def _generate_task_name(prompt: str) -> str:
+    async def _generate_task_name(prompt: str, owner: Optional[str] = None) -> str:
         """Use LLM to generate a short task name from the prompt."""
         try:
             from src.llm_core import llm_call_async
             from core.database import Session as DbSession
             db = SessionLocal()
             try:
-                recent = db.query(DbSession).filter(
+                q = db.query(DbSession).filter(
                     DbSession.endpoint_url.isnot(None),
                     DbSession.model.isnot(None),
-                ).order_by(DbSession.created_at.desc()).first()
+                )
+                if owner:
+                    q = q.filter(DbSession.owner == owner)
+                recent = q.order_by(DbSession.created_at.desc()).first()
                 if not recent:
                     return prompt[:50].strip()
                 url, model = recent.endpoint_url, recent.model
+                headers = recent.headers or {}
             finally:
                 db.close()
 
@@ -315,6 +325,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     {"role": "user", "content": prompt[:500]},
                 ],
                 max_tokens=20,
+                headers=headers,
                 timeout=15,
             )
             title = result.strip().strip('"\'').strip()
@@ -417,7 +428,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         # In-process tool-loopback marker — AuthMiddleware validated
         # the internal token + loopback client before stamping this,
         # so treat as admin-equivalent.
-        if user == "internal-tool":
+        if user == INTERNAL_TOOL_USER:
             return True
         try:
             from core.auth import AuthManager
@@ -428,6 +439,20 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             return bool(auth.is_admin(user))
         except Exception:
             return False
+
+    def _validate_then_task_id(db, then_task_id: Optional[str], user: Optional[str], current_task_id: Optional[str] = None) -> Optional[str]:
+        target_id = (then_task_id or "").strip()
+        if not target_id:
+            return None
+        if current_task_id and target_id == current_task_id:
+            raise HTTPException(400, "Task cannot chain to itself")
+        q = db.query(ScheduledTask).filter(ScheduledTask.id == target_id)
+        if user:
+            q = q.filter(ScheduledTask.owner == user)
+        target = q.first()
+        if not target:
+            raise HTTPException(404, "Chained task not found")
+        return target.id
 
     @router.post("")
     async def create_task(request: Request, req: TaskCreate):
@@ -465,7 +490,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 from src.builtin_actions import BUILTIN_ACTION_INFO
                 name = BUILTIN_ACTION_INFO.get(req.action, req.action or "Action Task")
             elif req.prompt:
-                name = await _generate_task_name(req.prompt)
+                name = await _generate_task_name(req.prompt, owner=user)
             else:
                 name = "Untitled Task"
 
@@ -492,11 +517,21 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         task_id = str(uuid.uuid4())
         db = SessionLocal()
         try:
+            then_task_id = _validate_then_task_id(db, req.then_task_id, user)
             notifications_enabled = (
                 False if req.task_type == "action" and req.notifications_enabled is None
                 else bool(req.notifications_enabled) if req.notifications_enabled is not None
                 else True
             )
+            # Validate chained task belongs to same owner
+            if req.then_task_id:
+                chain_target = db.query(ScheduledTask).filter(
+                    ScheduledTask.id == req.then_task_id
+                ).first()
+                if not chain_target:
+                    raise HTTPException(400, "Chained task not found")
+                if chain_target.owner != user:
+                    raise HTTPException(403, "Cannot chain to another user's task")
             task = ScheduledTask(
                 id=task_id,
                 owner=user,
@@ -518,9 +553,10 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 output_target=req.output_target,
                 model=req.model or None,
                 endpoint_url=req.endpoint_url or None,
-                then_task_id=req.then_task_id or None,
+                then_task_id=then_task_id,
                 webhook_token=webhook_token,
                 notifications_enabled=notifications_enabled,
+                character_id=(req.character_id or None),
             )
             db.add(task)
             db.commit()
@@ -600,7 +636,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         removed_files = 0
         if action == "check_email_urgency":
-            cache_dir = Path("data/email_urgency_cache")
+            cache_dir = Path(EMAIL_URGENCY_CACHE_DIR)
             if cache_dir.exists():
                 for child in cache_dir.glob("*.json"):
                     try:
@@ -609,7 +645,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     except Exception:
                         pass
             owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (user or "default"))
-            for state_path in [Path(f"data/email_urgency_state_{owner_slug}.json")]:
+            for state_path in [Path(DATA_DIR) / f"email_urgency_state_{owner_slug}.json"]:
                 try:
                     if state_path.exists():
                         state_path.unlink()
@@ -671,9 +707,12 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             if req.trigger_count is not None:
                 task.trigger_count = req.trigger_count
             if req.then_task_id is not None:
-                task.then_task_id = req.then_task_id or None
+                task.then_task_id = _validate_then_task_id(db, req.then_task_id, user, current_task_id=task.id)
             if req.notifications_enabled is not None:
                 task.notifications_enabled = bool(req.notifications_enabled)
+            if req.character_id is not None:
+                # Empty string clears the persona; non-empty stores the id.
+                task.character_id = req.character_id or None
             if req.cron_expression is not None:
                 if req.cron_expression:
                     try:
@@ -952,7 +991,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "tag", "label", "move", "archive", "delete", "mark", "schedule",
         )
         try:
-            from src.agent_tools import get_mcp_manager
+            from src.tool_utils import get_mcp_manager
             mcp = get_mcp_manager()
             if mcp:
                 for tool in mcp.get_all_tools():
@@ -1047,6 +1086,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
         desc = (body.get("description") or "").strip()
         if not desc:
             return {"success": False, "message": "Nothing to parse"}
+        user = _owner(request)
 
         now = _dt.now()
         # Give the model the current date/time + weekday so relative phrasing
@@ -1073,9 +1113,9 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             "use cron '0 H * * 1-5'. Keep the prompt actionable and self-contained."
         )
         try:
-            url, model, headers = resolve_endpoint("utility")
+            url, model, headers = resolve_endpoint("utility", owner=user or None)
             if not url:
-                url, model, headers = resolve_endpoint("default")
+                url, model, headers = resolve_endpoint("default", owner=user or None)
             if not (url and model):
                 return {"success": False, "message": "No model endpoint configured"}
             raw = await llm_call_async(

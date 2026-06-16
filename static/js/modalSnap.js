@@ -302,6 +302,7 @@ function _anchorLeftDock(content) {
   }
 }
 
+export function collapseSidebarToRail() { return _collapseSidebarToRail(); }
 function _collapseSidebarToRail() {
   const sidebar = document.getElementById('sidebar');
   const rail = document.getElementById('icon-rail');
@@ -808,7 +809,10 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     handle.style.bottom = '0';
     handle.style.width = '10px';
     handle.style.cursor = 'col-resize';
-    handle.style.background = 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)';
+    // Invisible at rest, accent stripe fades in on hover (see
+    // .edge-dock-resize-handle CSS rule).
+    handle.style.background = 'transparent';
+    handle.style.transition = 'background 0.18s ease';
     handle.style.pointerEvents = 'auto';
     handle.style.touchAction = 'none';
     handle.style.display = 'none';
@@ -994,7 +998,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   stripe.style.bottom = '0';
   stripe.style.width = '10px';
   stripe.style.cursor = 'col-resize';
-  stripe.style.zIndex = '9999';
+  stripe.style.zIndex = '261';
   stripe.style.background = 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)';
   stripe.style.pointerEvents = 'auto';
   stripe.style.touchAction = 'none';

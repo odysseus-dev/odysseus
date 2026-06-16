@@ -15,7 +15,7 @@ faster-whisper
 # DuckDuckGo as a search provider option.
 # Install if you want DDG in the search-provider dropdown.
 # Alternatives: SearXNG, Brave, Tavily, Serper, Google PSE.
-duckduckgo-search
+ddgs
 
 # PDF form-filling feature (fillable AcroForm detection, field extraction,
 # value/annotation/signature stamping, page rendering for the form overlay).
@@ -33,4 +33,4 @@ PyMuPDF
 # magika (onnxruntime), already a core dep via fastembed. We avoid the
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
-markitdown[docx,pptx,xlsx,xls]==0.1.5
+markitdown[docx,pptx,xlsx,xls]==0.1.6
