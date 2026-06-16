@@ -405,9 +405,11 @@ async function _fetchNotes() {
     if (!res.ok) { _notes = []; return; }
     const data = await res.json();
     _notes = data.notes || data || [];
+    return true;
   } catch (e) {
     console.error('Failed to fetch notes:', e);
     _notes = [];
+    return false;
   } finally {
     _loading = false;
   }
@@ -5077,20 +5079,22 @@ async function _initReminders() {
 // just opening the panel when the card isn't found (panel still
 // loading, note in a different filter, etc.).
 async function openNote(noteId) {
-  // If the panel is already open, openPanel() short-circuits and does
-  // nothing — including no re-fetch — so a freshly-created note added
-  // server-side never shows up. Force a refresh by closing first when
-  // open, then re-opening. Clicking the sidebar Notes button as a
-  // last resort keeps this working even if the module state got out
-  // of sync (rare but seen during HMR or after a stuck modal).
-  try {
-    if (isPanelOpen && isPanelOpen()) {
-      closePanel();
-      // give the close animation a frame to settle
-      await new Promise(r => setTimeout(r, 30));
+  // Clear search/filtering so that the note that is opened can be revealed
+  _searchQuery = '';
+  _activeLabel = null;
+  _activeFilter = null;
+
+  if (_open) {
+    const refreshed = await _fetchNotes();
+    if (!refreshed) {
+      uiModule.showError?.('Could not refresh notes');
+      return;
     }
-  } catch (_) {}
-  openPanel();
+    _renderNotes();
+  }
+  else {
+    openPanel();
+  }
   // openPanel() kicks off _fetchNotes() asynchronously, so the cards
   // for newly-created notes may not be in the DOM yet. Also poll the
   // _notes module array directly — if the note IS loaded but the
