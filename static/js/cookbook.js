@@ -5,6 +5,7 @@
 
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { api } from './axios/api.js';
 import { providerLogo } from './providers.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis, _runQuickCmd, ERROR_PATTERNS } from './cookbook-diagnosis.js';
@@ -771,8 +772,7 @@ async function _fetchDependencies() {
       if (_depPort) _pkgParams.set('ssh_port', _depPort);
       if (_depVenv) _pkgParams.set('venv', _depVenv);
     }
-    const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
-    const data = await resp.json();
+    const { data } = await api.get('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
@@ -976,16 +976,20 @@ async function _fetchDependencies() {
           env_prefix: envPrefix || undefined,
           platform: _envState.platform || undefined,
         };
-        const res = await fetch('/api/model/serve', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(reqBody),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
+        let data;
+        try {
+          const res = await api.post('/api/model/serve', reqBody);
+          data = res.data;
+        } catch (err) {
+          data = err.response?.data || {};
           // FastAPI HTTPException returns {detail: …}; the route's own
           // path returns {ok:false, error:…}. Surface whichever we get.
-          const reason = data.detail || data.error || `HTTP ${res.status}`;
+          const reason = data.detail || data.error || `HTTP ${err.response?.status || 'error'}`;
+          uiModule.showToast('Install failed: ' + String(reason).slice(0, 200));
+          return;
+        }
+        if (!data.ok) {
+          const reason = data.detail || data.error || 'unknown';
           uiModule.showToast('Install failed: ' + String(reason).slice(0, 200));
           return;
         }
@@ -1432,18 +1436,22 @@ function _wireTabEvents(body) {
       rebuildBtn.disabled = true;
       rebuildBtn.textContent = 'Clearing...';
       try {
-        const res = await fetch('/api/cookbook/rebuild-engine', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        let data;
+        try {
+          const res = await api.post('/api/cookbook/rebuild-engine', {
             engine: 'llamacpp',
             remote_host: host || undefined,
             ssh_port: _getPort(host) || undefined,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-          const reason = data.detail || data.error || `HTTP ${res.status}`;
+          });
+          data = res.data;
+        } catch (err) {
+          data = err.response?.data || {};
+          const reason = data.detail || data.error || `HTTP ${err.response?.status || 'error'}`;
+          uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
+          return;
+        }
+        if (!data.ok) {
+          const reason = data.detail || data.error || 'unknown';
           uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
         } else {
           uiModule.showToast(`Cleared llama.cpp build on ${where}. Re-launch the serve task to rebuild with GPU support.`);
@@ -1748,13 +1756,10 @@ function _wireTabEvents(body) {
         if (host) qp.set('host', host);
         if (sshPort) qp.set('ssh_port', sshPort);
         if (platform) qp.set('platform', platform);
-        const r = await fetch(`/api/hwfit/system?${qp}`);
-        if (r.ok) {
-          const sys = await r.json();
-          const hw = { vram: sys?.gpu_vram_gb || 0, backend: String(sys?.backend || '').toLowerCase() };
-          _hwCache[cacheKey] = hw;
-          return hw;
-        }
+        const { data: sys } = await api.get(`/api/hwfit/system?${qp}`);
+        const hw = { vram: sys?.gpu_vram_gb || 0, backend: String(sys?.backend || '').toLowerCase() };
+        _hwCache[cacheKey] = hw;
+        return hw;
       } catch {}
       _hwCache[cacheKey] = { vram: 0, backend: '' };
       return _hwCache[cacheKey];
@@ -1781,8 +1786,7 @@ function _wireTabEvents(body) {
       try {
         let lastErr = '';
         const _fetchLatest = async (v) => {
-          const res = await fetch(`/api/cookbook/hf-latest?vram_gb=${v}&limit=10`);
-          const data = await res.json();
+          const { data } = await api.get(`/api/cookbook/hf-latest?vram_gb=${v}&limit=10`);
           if (data.error) lastErr = data.error;   // HF API timeout/rate-limit etc.
           return data.models || [];
         };
@@ -1880,8 +1884,7 @@ function _wireTabEvents(body) {
     async function _loadOllama(refresh = false) {
       olList.innerHTML = '<div class="hwfit-loading" style="opacity:0.5;font-size:11px;text-align:center;padding:12px;">Loading…</div>';
       try {
-        const res = await fetch(`/api/cookbook/ollama/library${refresh ? '?refresh=1' : ''}`);
-        const data = await res.json();
+        const { data } = await api.get(`/api/cookbook/ollama/library${refresh ? '?refresh=1' : ''}`);
         const models = data.models || [];
         if (!models.length) {
           olList.innerHTML = '<div class="hwfit-loading">No models</div>';

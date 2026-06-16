@@ -8,6 +8,7 @@ import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { providerLogo } from './providers.js';
 import { isAltGrEvent } from './platform.js';
+import { api, apiPath, apiErrorMessage } from './axios/api.js';
 
 let initialized = false;
 let modalEl = null;
@@ -205,8 +206,7 @@ const _aiEndpointRefreshers = new Set();
 let _aiEndpointRefreshInFlight = null;
 
 async function _fetchModelEndpoints() {
-  const epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-  const endpoints = await epRes.json();
+  const { data: endpoints } = await api.get('/api/model-endpoints');
   return Array.isArray(endpoints) ? endpoints : [];
 }
 
@@ -361,10 +361,7 @@ function _bindFallbackWidget(opts) {
     var body = {};
     body[settingKey] = clean;
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      await api.post('/api/auth/settings', body);
     } catch (e) { console.warn('[fallback] save failed for ' + settingKey, e); }
   }
 
@@ -528,8 +525,7 @@ async function initDefaultChat() {
   }
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (settings.default_endpoint_id) epSel.value = settings.default_endpoint_id;
     refreshModels(settings.default_model || '');
     _fallbacks = Array.isArray(settings.default_model_fallbacks)
@@ -543,14 +539,11 @@ async function initDefaultChat() {
   async function saveDefault() {
     try {
       var clean = _fallbacks.filter(function(f) { return f.endpoint_id && f.model; });
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await api.post('/api/auth/settings', {
           default_endpoint_id: epSel.value,
           default_model: modelSel.value,
           default_model_fallbacks: clean
-        })
-      });
+        });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -593,8 +586,7 @@ async function initUtilityModel() {
   }
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (settings.utility_endpoint_id) epSel.value = settings.utility_endpoint_id;
     refreshModels(settings.utility_model || '');
     fallbackWidget = _bindFallbackWidget({
@@ -613,13 +605,10 @@ async function initUtilityModel() {
   // no toggle, "—" means "unset, use chat").
   async function saveUtility() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      await api.post('/api/auth/settings', {
           utility_endpoint_id: epSel.value || '',
           utility_model: modelSel.value || ''
-        })
-      });
+        });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 1500);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -680,8 +669,7 @@ async function initTeacherModel() {
   }
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (enabledToggle) enabledToggle.checked = !!settings.teacher_enabled;
     // teacher_model is stored as "model@endpoint_name". Split on the
     // LAST `@` so model ids that contain @ aren't mangled.
@@ -711,10 +699,7 @@ async function initTeacherModel() {
         spec = ep ? (modelSel.value + '@' + ep.name) : modelSel.value;
       }
       var enabled = enabledToggle ? !!enabledToggle.checked : false;
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacher_enabled: enabled, teacher_model: spec })
-      });
+      await api.post('/api/auth/settings', { teacher_enabled: enabled, teacher_model: spec });
       msg.textContent = enabled ? (spec ? 'Saved' : 'Pick an endpoint + model') : 'Disabled';
       msg.style.color = enabled && !spec ? 'var(--red)' : 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
@@ -745,8 +730,7 @@ async function initImageSettings() {
   const enabledToggle = el('set-imgEnabledToggle');
   const configWrap = modelSel ? modelSel.closest('div[style*="flex-direction"]') : null;
   try {
-    const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
-    const modelsData = await modelsRes.json();
+    const { data: modelsData } = await api.get('/api/models');
     // Inpaint-compat allowlist — image gen here is scoped to inpainting only,
     // so DALL-E / GPT-Image-1 (no inpaint API) are excluded. Currently:
     //   - any model with 'inpaint' in the id
@@ -772,8 +756,7 @@ async function initImageSettings() {
     });
   } catch (e) { console.warn('Failed to load models for image settings', e); }
   try {
-    const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await settingsRes.json();
+    const { data: settings } = await api.get('/api/auth/settings');
     if (settings.image_model) modelSel.value = settings.image_model;
     if (settings.image_quality) qualSel.value = settings.image_quality;
     if (enabledToggle) enabledToggle.checked = settings.image_gen_enabled === true;
@@ -789,8 +772,7 @@ async function initImageSettings() {
 
   async function saveSettings() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value }) });
+      await api.post('/api/auth/settings', { image_gen_enabled: enabledToggle ? enabledToggle.checked : false, image_model: modelSel.value, image_quality: qualSel.value });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
@@ -813,8 +795,7 @@ async function initVisionSettings() {
     return !_vlExclude.some(function(kw) { return lower.includes(kw); });
   }
   try {
-    const modelsRes = await fetch('/api/models', { credentials: 'same-origin' });
-    const modelsData = await modelsRes.json();
+    const { data: modelsData } = await api.get('/api/models');
     const visionModels = [];
     (modelsData.items || []).forEach(item => {
       if (item.offline) return;
@@ -834,8 +815,7 @@ async function initVisionSettings() {
     _visionEndpoints = await _fetchModelEndpoints();
   } catch (e) { console.warn('Failed to load endpoints for vision fallback', e); }
   try {
-    const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await settingsRes.json();
+    const { data: settings } = await api.get('/api/auth/settings');
     if (settings.vision_model) vlSel.value = settings.vision_model;
     _syncModelLogo(vlSel);
     if (enabledToggle) enabledToggle.checked = settings.vision_enabled !== false;
@@ -863,8 +843,7 @@ async function initVisionSettings() {
 
   async function saveSettings() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value }) });
+      await api.post('/api/auth/settings', { vision_enabled: enabledToggle ? enabledToggle.checked : true, vision_model: vlSel.value });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)'; setTimeout(() => { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
   }
@@ -914,8 +893,7 @@ async function initTtsSettings() {
 
   var ttsKeywords = ['tts', 'audio'];
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
+    var { data: endpoints } = await api.get('/api/model-endpoints');
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
       var hasTTS = (ep.models || []).some(m => ttsKeywords.some(kw => m.toLowerCase().includes(kw)));
@@ -925,8 +903,7 @@ async function initTtsSettings() {
   } catch (e) { console.warn('Failed to load endpoints for TTS', e); }
 
   try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await settingsRes.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (settings.tts_provider) provSel.value = settings.tts_provider;
     if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
     if (settings.tts_voice) { voiceSelect.value = settings.tts_voice; voiceInput.value = settings.tts_voice; }
@@ -945,8 +922,7 @@ async function initTtsSettings() {
 
   async function saveTTS() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' }) });
+      await api.post('/api/auth/settings', { tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' });
       ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
     } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
@@ -954,7 +930,7 @@ async function initTtsSettings() {
 
   async function saveAndClearCache() {
     await saveTTS();
-    fetch('/api/tts/clear-cache', { method: 'POST', credentials: 'same-origin' }).catch(function(){});
+    api.post('/api/tts/clear-cache').catch(function(){});
   }
 
   provSel.addEventListener('change', function() {
@@ -1012,13 +988,8 @@ async function initTtsSettings() {
             window.speechSynthesis.speak(utt);
           });
         } else {
-          var res = await fetch('/api/tts/synthesize', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: testText, format: 'audio' })
-          });
-          if (!res.ok) { var err = await res.json().catch(function() { return {}; }); throw new Error(err.detail?.message || 'Synthesis failed'); }
-          var blob = await res.blob();
+          var res = await api.post('/api/tts/synthesize', { text: testText, format: 'audio' }, { responseType: 'blob' });
+          var blob = res.data;
           var url = URL.createObjectURL(blob);
           previewAudio = new Audio(url);
           previewBtn.textContent = 'Stop'; previewBtn.style.borderColor = 'var(--red, #e55)';
@@ -1083,8 +1054,7 @@ async function initSttSettings() {
 
   // Add API endpoints that might support STT
   try {
-    var epRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    var endpoints = await epRes.json();
+    var { data: endpoints } = await api.get('/api/model-endpoints');
     endpoints.forEach(function(ep) {
       if (!ep.is_enabled) return;
       var opt = document.createElement('option'); opt.value = 'endpoint:' + ep.id; opt.textContent = ep.name + ' (API)'; provSel.appendChild(opt);
@@ -1093,8 +1063,7 @@ async function initSttSettings() {
 
   // Load saved settings
   try {
-    var settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await settingsRes.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (settings.stt_provider) provSel.value = settings.stt_provider;
     if (settings.stt_model) { modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model; }
     if (settings.stt_language) langInput.value = settings.stt_language;
@@ -1107,9 +1076,7 @@ async function initSttSettings() {
   async function saveSTT() {
     try {
       var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() }) });
+      await api.post('/api/auth/settings', { stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() });
       sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
       // Notify voiceRecorder of effective provider and update send button icon
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
@@ -1199,8 +1166,7 @@ async function initSearchSettings() {
   }
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    _settings = await res.json();
+    var { data: _settings } = await api.get('/api/auth/settings');
     if (_settings.search_provider) provSel.value = _settings.search_provider;
     updateCountDisplay();
     if (_settings.search_url) urlInput.value = _settings.search_url;
@@ -1220,8 +1186,7 @@ async function initSearchSettings() {
 
   async function refreshStatus() {
     try {
-      var sRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-      var s = await sRes.json();
+      var { data: s } = await api.get('/api/auth/settings');
       _settings = s;
       var active = s.search_provider || 'searxng';
       var label = _searchLabels[active] || active;
@@ -1265,10 +1230,7 @@ async function initSearchSettings() {
         payload[kf] = keyInput.value.trim();
         _settings[kf] = keyInput.value.trim();
       }
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await api.post('/api/auth/settings', payload);
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
       if (searchModule && searchModule.refresh) searchModule.refresh();
@@ -1420,11 +1382,7 @@ async function initSearchSettings() {
   async function _saveFallbackChain(chain) {
     _settings.search_fallback_chain = chain;
     try {
-      await fetch('/api/auth/settings', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ search_fallback_chain: chain }),
-      });
+      await api.post('/api/auth/settings', { search_fallback_chain: chain });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(refreshStatus, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1466,8 +1424,7 @@ async function initSearchSettings() {
         fd.append('query', 'hello world');
         fd.append('provider', prov);
         fd.append('count', '3');
-        var r = await fetch('/api/search/query', { method: 'POST', body: fd, credentials: 'same-origin' });
-        var d = await r.json();
+        var { data: d } = await api.post('/api/search/query', fd);
         var ms = Math.round(performance.now() - t0);
         if (d.error) {
           msg.textContent = '✗ ' + d.error + ' (' + ms + 'ms)';
@@ -1525,8 +1482,7 @@ async function initResearchSettings() {
   }
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (settings.research_endpoint_id) epSel.value = settings.research_endpoint_id;
     refreshModels(settings.research_model || '');
     if (settings.research_max_tokens) tokensInput.value = settings.research_max_tokens;
@@ -1588,10 +1544,7 @@ async function initResearchSettings() {
       }
     }
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await api.post('/api/auth/settings', payload);
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(showStatus, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1646,8 +1599,7 @@ async function initResearchSearchSettings() {
   }
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (settings.research_search_provider) searchSel.value = settings.research_search_provider;
     updateSearchOptions(settings);
     updateSearchLogo();
@@ -1655,10 +1607,7 @@ async function initResearchSearchSettings() {
 
   async function saveResearchSearch() {
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ research_search_provider: searchSel.value })
-      });
+      await api.post('/api/auth/settings', { research_search_provider: searchSel.value });
       msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
       setTimeout(function() { msg.textContent = ''; }, 2000);
     } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
@@ -1676,8 +1625,7 @@ async function initAgentSettings() {
   if (!toolsInput) return;
 
   try {
-    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    var settings = await res.json();
+    var { data: settings } = await api.get('/api/auth/settings');
     if (settings.agent_max_tool_calls) toolsInput.value = settings.agent_max_tool_calls;
     if (roundsInput && settings.agent_max_rounds) roundsInput.value = settings.agent_max_rounds;
     if (supInput) supInput.checked = !!settings.agent_supervisor_ladder;
@@ -1700,10 +1648,7 @@ async function initAgentSettings() {
     if (rounds != null) payload.agent_max_rounds = rounds;
     if (supInput) payload.agent_supervisor_ladder = !!supInput.checked;
     try {
-      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await api.post('/api/auth/settings', payload);
       msg.textContent = (tools > 0 ? 'Limit: ' + tools + ' tool calls' : 'Unlimited tool calls') +
         (rounds != null ? ' · ' + rounds + ' steps/message' : '') +
         (supInput && supInput.checked ? ' · supervisor on' : '');
@@ -1725,16 +1670,12 @@ async function initAgentSettings() {
   var emailConfirm = el('set-agentEmailConfirm');
   if (emailConfirm) {
     try {
-      var s = await fetch('/api/auth/settings', { credentials: 'same-origin' }).then(r => r.json());
+      var { data: s } = await api.get('/api/auth/settings');
       emailConfirm.checked = s.agent_email_confirm !== false;
     } catch (_) {}
     emailConfirm.addEventListener('change', async () => {
       try {
-        await fetch('/api/auth/settings', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ agent_email_confirm: !!emailConfirm.checked }),
-        });
+        await api.post('/api/auth/settings', { agent_email_confirm: !!emailConfirm.checked });
       } catch (_) {}
     });
   }
@@ -1956,8 +1897,7 @@ async function initShortcuts() {
   // Load saved keybinds
   let keybinds = { ...SHORTCUT_DEFAULTS };
   try {
-    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const settings = await res.json();
+    const { data: settings } = await api.get('/api/auth/settings');
     if (settings.keybinds) keybinds = { ...keybinds, ...settings.keybinds };
   } catch (e) {}
 
@@ -2116,11 +2056,7 @@ async function initShortcuts() {
 
   async function saveKeybinds() {
     try {
-      await fetch('/api/auth/settings', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keybinds }),
-      });
+      await api.post('/api/auth/settings', { keybinds });
       // Update global keybinds so they take effect immediately
       window._odysseusKeybinds = keybinds;
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
@@ -2146,8 +2082,8 @@ async function initShortcuts() {
    ═══════════════════════════════════════════ */
 function initAccount() {
   // Populate user info
-  fetch('/api/auth/status', { credentials: 'same-origin' })
-    .then(r => r.json())
+  api.get('/api/auth/status')
+    .then(r => r.data)
     .then(d => {
       const nameEl = el('settings-account-username');
       const roleEl = el('settings-account-role');
@@ -2174,12 +2110,12 @@ function initAccount() {
       if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
-        const res = await fetch('/api/auth/change-password', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ current_password: cur, new_password: nw })
-        });
-        if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed'); }
+        try {
+              await api.post('/api/auth/change-password', { current_password: cur, new_password: nw })
+            } catch (err) {
+              const d = err.response?.data || {};
+              throw new Error(d.detail || 'Failed');
+            }
         msgEl.style.color = 'var(--green)';
         msgEl.textContent = 'Password updated';
         el('settings-pw-current').value = '';
@@ -2199,8 +2135,7 @@ function initAccount() {
   if (tfaContent) {
     async function render2FA() {
       try {
-        const res = await fetch('/api/auth/2fa/status', { credentials: 'same-origin' });
-        const data = await res.json();
+        const { data: data } = await api.get('/api/auth/2fa/status');
         if (data.enabled) {
           // 2FA is ON — show disable option
           tfaContent.innerHTML = `
@@ -2218,12 +2153,12 @@ function initAccount() {
             const msg = el('tfa-msg');
             if (!pw) { msg.textContent = 'Enter your password'; msg.style.color = 'var(--red)'; return; }
             try {
-              const r = await fetch('/api/auth/2fa/disable', {
-                method: 'POST', credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password: pw })
-              });
-              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
+              try {
+              await api.post('/api/auth/2fa/disable', { password: pw })
+            } catch (err) {
+              const d = err.response?.data || {};
+              throw new Error(d.detail || 'Failed');
+            }
               render2FA();
             } catch (e) { msg.textContent = e.message; msg.style.color = 'var(--red)'; }
           });
@@ -2238,9 +2173,13 @@ function initAccount() {
           el('tfa-setup-btn').addEventListener('click', async () => {
             const msg = el('tfa-msg');
             try {
-              const r = await fetch('/api/auth/2fa/setup', { method: 'POST', credentials: 'same-origin' });
-              if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
-              const setup = await r.json();
+              let setup;
+              try {
+                ({ data: setup } = await api.post('/api/auth/2fa/setup'));
+              } catch (err) {
+                const d = err.response?.data || {};
+                throw new Error(d.detail || 'Failed');
+              }
               const qrCode = safeRasterDataUrl(setup.qr_code);
               // Show QR code + manual secret + verify input
               tfaContent.innerHTML = `
@@ -2264,13 +2203,13 @@ function initAccount() {
                 const vmsg = el('tfa-msg');
                 if (!code) { vmsg.textContent = 'Enter the code'; vmsg.style.color = 'var(--red)'; return; }
                 try {
-                  const vr = await fetch('/api/auth/2fa/confirm', {
-                    method: 'POST', credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code })
-                  });
-                  if (!vr.ok) { const d = await vr.json(); throw new Error(d.detail || 'Invalid code'); }
-                  const result = await vr.json();
+                  let result;
+        try {
+          ({ data: result } = api.post('/api/auth/2fa/confirm', { code }));
+        } catch (err) {
+          const d = err.response?.data || {};
+          throw new Error(d.detail || 'Failed');
+        };
                   // Show backup codes
                   const codes = result.backup_codes || [];
                   tfaContent.innerHTML = `
@@ -2297,7 +2236,7 @@ function initAccount() {
     logoutBtn.addEventListener('mouseenter', () => { logoutBtn.style.opacity = '1'; logoutBtn.style.borderColor = 'var(--red)'; logoutBtn.style.color = 'var(--red)'; });
     logoutBtn.addEventListener('mouseleave', () => { logoutBtn.style.opacity = ''; logoutBtn.style.borderColor = ''; logoutBtn.style.color = ''; });
     logoutBtn.addEventListener('click', async () => {
-      try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (_) {}
+      try { await api.post('/api/auth/logout'); } catch (_) {}
       // SECURITY: wipe all client-side state on logout so the next user that
       // signs in on this browser doesn't inherit the previous account's
       // session id, last-used model, draft chat input, or any cached lists.
@@ -2315,7 +2254,7 @@ function initAccount() {
         _toRemove.forEach(k => localStorage.removeItem(k));
         sessionStorage.clear();
       } catch (_) {}
-      window.location.href = '/login';
+      window.location.href = apiPath('/login');
     });
   }
 }
@@ -2364,8 +2303,7 @@ async function initReminderSettings() {
   const pubUrlMsg = el('set-app-public-url-msg');
   if (pubUrlIn) {
     try {
-      const r = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-      const s = await r.json();
+      const { data: s } = await api.get('/api/auth/settings');
       pubUrlIn.value = s.app_public_url || '';
     } catch (_) {}
     let pubDebounce;
@@ -2374,11 +2312,7 @@ async function initReminderSettings() {
       pubDebounce = setTimeout(async () => {
         try {
           const val = pubUrlIn.value.trim().replace(/\/+$/, '');
-          await fetch('/api/auth/settings', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ app_public_url: val }),
-          });
+          await api.post('/api/auth/settings', { app_public_url: val });
           if (pubUrlMsg) {
             pubUrlMsg.textContent = val ? 'Saved' : 'Cleared (deep-links disabled)';
             pubUrlMsg.style.color = 'var(--green,#50fa7b)';
@@ -2418,11 +2352,8 @@ async function initReminderSettings() {
   // configured if there's at least one account with SMTP set.
   let emailAccounts = [];
   try {
-    const res = await fetch('/api/email/accounts', { credentials: 'same-origin' });
-    if (res.ok) {
-      const d = await res.json();
-      emailAccounts = (d.accounts || []).filter(a => a.smtp_host && a.smtp_user && a.has_smtp_password);
-    }
+    const { data } = await api.get('/api/email/accounts');
+    emailAccounts = (data?.accounts || []).filter(account => account.smtp_host && account.smtp_user && account.has_smtp_password);
   } catch (_) {}
   let smtpConfigured = emailAccounts.length > 0;
 
@@ -2435,19 +2366,15 @@ async function initReminderSettings() {
   // checking if an ntfy integration was saved in settings (non-admin users).
   let ntfyConfigured = false;
   try {
-    const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      ntfyConfigured = (data.integrations || []).some(
-        i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
-      );
-    }
+    const { data } = await api.get('/api/auth/integrations');
+    ntfyConfigured = (data?.integrations || []).some(
+      integration => (integration.preset === 'ntfy' || (integration.name || '').toLowerCase() === 'ntfy') && integration.enabled !== false && integration.base_url
+    );
   } catch (_) {}
   // If admin check failed, check if ntfy was previously selected (trust the saved setting)
   if (!ntfyConfigured) {
     try {
-      const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-      const s = await res.json();
+      const { data: s } = await api.get('/api/auth/settings');
       if (s.reminder_channel === 'ntfy') ntfyConfigured = true;
     } catch (_) {}
   }
@@ -2462,12 +2389,9 @@ async function initReminderSettings() {
   let allIntegrations = [];
   let webhookConfigured = false;
   try {
-    const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      allIntegrations = (data.integrations || []).filter(i => i.base_url && i.enabled !== false);
-      webhookConfigured = allIntegrations.length > 0;
-    }
+    const { data } = await api.get('/api/auth/integrations');
+    allIntegrations = (data.integrations || []).filter(integration => integration.base_url && integration.enabled !== false);
+    webhookConfigured = allIntegrations.length > 0;
   } catch (_) {}
   if (!webhookConfigured && webhookOpt) {
     webhookOpt.disabled = true;
@@ -2522,30 +2446,23 @@ async function initReminderSettings() {
     const currentEmailAccount = emailAcctSel?.value || '';
     const currentWebhookIntg = webhookIntgSel?.value || '';
     try {
-      const res = await fetch('/api/email/accounts', { credentials: 'same-origin' });
-      if (res.ok) {
-        const d = await res.json();
-        emailAccounts = (d.accounts || []).filter(a => a.smtp_host && a.smtp_user && a.has_smtp_password);
-      }
+      const { data } = await api.get('/api/email/accounts');
+      emailAccounts = (data?.accounts || []).filter(account => account.smtp_host && account.smtp_user && account.has_smtp_password);
     } catch (_) {}
     smtpConfigured = emailAccounts.length > 0;
 
     ntfyConfigured = false;
     try {
-      const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-      if (res.ok) {
-        const data = await res.json();
-        ntfyConfigured = (data.integrations || []).some(
-          i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
-        );
-        allIntegrations = (data.integrations || []).filter(i => i.base_url && i.enabled !== false);
-        webhookConfigured = allIntegrations.length > 0;
-      }
+      const { data } = await api.get('/api/auth/integrations');
+      ntfyConfigured = (data.integrations || []).some(
+        integration => (integration.preset === 'ntfy' || (integration.name || '').toLowerCase() === 'ntfy') && integration.enabled !== false && integration.base_url
+      );
+      allIntegrations = (data.integrations || []).filter(integration => integration.base_url && integration.enabled !== false);
+      webhookConfigured = allIntegrations.length > 0;
     } catch (_) {}
     if (!ntfyConfigured) {
       try {
-        const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-        const s = await res.json();
+        const { data: s } = await api.get('/api/auth/settings');
         if (s.reminder_channel === 'ntfy') ntfyConfigured = true;
       } catch (_) {}
     }
@@ -2602,8 +2519,7 @@ async function initReminderSettings() {
   };
 
   try {
-    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    const s = await res.json();
+    const { data: s } = await api.get('/api/auth/settings');
     let savedChannel = s.reminder_channel || 'browser';
     if (savedChannel === 'email' && !smtpConfigured) savedChannel = 'browser';
     if (savedChannel === 'ntfy' && !ntfyConfigured) savedChannel = 'browser';
@@ -2671,12 +2587,7 @@ async function initReminderSettings() {
 
   async function save(patch) {
     try {
-      await fetch('/api/auth/settings', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
+      await api.post('/api/auth/settings', patch);
     } catch (e) { console.warn('Failed to save reminder settings', e); }
   }
 
@@ -2760,11 +2671,7 @@ async function initReminderSettings() {
         // Persona picker is in a different scope (Reminders init), look it up
         // by id so we can pass whatever is currently selected on screen.
         const personaSel = el('set-reminder-llm-persona');
-        const res = await fetch('/api/notes/fire-reminder', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        const { data } = await api.post('/api/notes/fire-reminder', {
             note_id: 'test-' + Date.now(),
             title: 'Test Reminder',
             body: 'This is a test reminder to verify your settings are working.',
@@ -2778,10 +2685,7 @@ async function initReminderSettings() {
               webhook_integration_id: webhookIntgSel?.value || '',
               webhook_payload_template: webhookTemplateIn?.value.trim() || '',
             } : {}),
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Server error');
+          });
         if (channelSel.value === 'email' && !data.email_sent) {
           throw new Error(data.email_error || 'Email reminder was not sent');
         }
@@ -2849,8 +2753,7 @@ async function initEmailAccountsSettings() {
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   async function fetchAccounts() {
-    const r = await fetch('/api/email/accounts', { credentials: 'same-origin' });
-    const d = await r.json();
+    const { data: d } = await api.get('/api/email/accounts');
     return d.accounts || [];
   }
 
@@ -2881,7 +2784,7 @@ async function initEmailAccountsSettings() {
       const id = row.dataset.accId;
       row.querySelector('.email-acc-default-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
-        await fetch(`/api/email/accounts/${id}/set-default`, { method: 'POST', credentials: 'same-origin' });
+        await api.post(`/api/email/accounts/${id}/set-default`);
         renderList();
       });
       row.querySelector('.email-acc-edit-btn')?.addEventListener('click', (e) => {
@@ -2891,7 +2794,7 @@ async function initEmailAccountsSettings() {
       row.querySelector('.email-acc-del-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (!await window.styledConfirm(`Delete account "${accs.find(a => a.id === id)?.name}"?`, { confirmText: 'Delete', danger: true })) return;
-        await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+        await api.delete(`/api/email/accounts/${id}`);
         renderList();
       });
     });
@@ -3029,9 +2932,7 @@ async function initEmailAccountsSettings() {
       };
       if (!body.name) { el('eaf-msg').textContent = 'Enter a Name or Email first'; el('eaf-msg').style.color = 'var(--red)'; return; }
       const url = isEdit ? `/api/email/accounts/${a.id}` : '/api/email/accounts';
-      const method = isEdit ? 'PUT' : 'POST';
-      const r = await fetch(url, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const d = await r.json();
+      const { data: d } = isEdit ? await api.put(url, body) : await api.post(url, body);
       if (!d.ok) { el('eaf-msg').textContent = d.error || 'Save failed'; el('eaf-msg').style.color = 'var(--red)'; return; }
       const accId = isEdit ? a.id : d.id;
       window.location.href = `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(accId)}`;
@@ -3082,12 +2983,7 @@ async function initEmailAccountsSettings() {
       try {
         const url = isEdit ? `/api/email/accounts/${a.id}` : '/api/email/accounts';
         const method = isEdit ? 'PUT' : 'POST';
-        const r = await fetch(url, {
-          method, credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const d = await r.json();
+        const { data: d } = method === 'PUT' ? await api.put(url, body) : await api.post(url, body);
         if (d.ok || d.id) {
           el('eaf-msg').textContent = 'Saved';
           el('eaf-msg').style.color = 'var(--green,#50fa7b)';
@@ -3113,8 +3009,7 @@ async function initEmailSettings() {
 
   // Load current email config
   try {
-    const res = await fetch('/api/email/config');
-    const cfg = await res.json();
+    const { data: cfg } = await api.get('/api/email/config');
     if (el('set-email-imap-host')) el('set-email-imap-host').value = cfg.imap_host || '';
     if (el('set-email-imap-port')) el('set-email-imap-port').value = cfg.imap_port || '';
     if (el('set-email-imap-user')) el('set-email-imap-user').value = cfg.imap_user || '';
@@ -3128,8 +3023,7 @@ async function initEmailSettings() {
 
   // Load contacts config
   try {
-    const res = await fetch('/api/contacts/config');
-    const cfg = await res.json();
+    const { data: cfg } = await api.get('/api/contacts/config');
     if (el('set-carddav-url')) el('set-carddav-url').value = cfg.url || '';
     if (el('set-carddav-user')) el('set-carddav-user').value = cfg.username || '';
     if (el('set-carddav-pass')) el('set-carddav-pass').value = '';
@@ -3137,8 +3031,7 @@ async function initEmailSettings() {
 
   // Load writing style
   try {
-    const res = await fetch('/api/email/style');
-    const data = await res.json();
+    const { data: data } = await api.get('/api/email/style');
     if (el('set-email-style')) el('set-email-style').value = data.style || '';
   } catch (_) {}
 
@@ -3160,12 +3053,7 @@ async function initEmailSettings() {
     if (imapPass) data.imap_password = imapPass;
     if (smtpPass) data.smtp_password = smtpPass;
     try {
-      const res = await fetch('/api/email/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      const result = await res.json();
+      const { data: result } = await api.put('/api/email/config', data);
       if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
@@ -3184,12 +3072,7 @@ async function initEmailSettings() {
     const pass = el('set-carddav-pass').value;
     if (pass) data.carddav_password = pass;
     try {
-      const res = await fetch('/api/contacts/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      const result = await res.json();
+      const { data: result } = await api.put('/api/contacts/config', data);
       if (msg) msg.textContent = result.success ? '✓ Saved' : (result.error || 'Failed');
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
@@ -3225,12 +3108,7 @@ async function initEmailSettings() {
       }
     }
     try {
-      const res = await fetch('/api/email/extract-style', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sample_count: 15 }),
-      });
-      const data = await res.json();
+      const { data: data } = await api.post('/api/email/extract-style', { sample_count: 15 });
       if (data.success && data.style) {
         if (el('set-email-style')) el('set-email-style').value = data.style;
         if (msg) msg.textContent = '✓ Style extracted';
@@ -3251,12 +3129,7 @@ async function initEmailSettings() {
     const msg = el('set-email-style-msg');
     if (msg) msg.textContent = 'Saving...';
     try {
-      const res = await fetch('/api/email/style', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ style: el('set-email-style').value }),
-      });
-      const result = await res.json();
+      const { data: result } = await api.put('/api/email/style', { style: el('set-email-style').value });
       if (msg) msg.textContent = result.success ? '✓ Saved' : 'Failed';
       setTimeout(() => { if (msg) msg.textContent = ''; }, 3000);
     } catch (e) {
@@ -3305,16 +3178,13 @@ async function initIntegrations() {
 
   // Load presets
   try {
-    const res = await fetch('/api/auth/integrations/presets', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      presets = data.presets || {};
-      for (const [key, preset] of Object.entries(presets)) {
-        const opt = document.createElement('option');
-        opt.value = key;
-        opt.textContent = preset.name || key;
-        presetSel.appendChild(opt);
-      }
+    const { data } = await api.get('/api/auth/integrations/presets');
+    presets = data.presets || {};
+    for (const [key, preset] of Object.entries(presets)) {
+      const opt = document.createElement('option');
+      opt.value = key;
+      opt.textContent = preset.name || key;
+      presetSel.appendChild(opt);
     }
   } catch (e) {}
 
@@ -3332,9 +3202,7 @@ async function initIntegrations() {
   // Render list
   async function renderList() {
     try {
-      const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-      if (!res.ok) { listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;">Admin access required</div>'; return; }
-      const data = await res.json();
+      const { data } = await api.get('/api/auth/integrations');
       const items = data.integrations || [];
       if (!items.length) {
         listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center;">No integrations configured</div>';
@@ -3365,8 +3233,7 @@ async function initIntegrations() {
     formTitle.textContent = 'Edit Integration';
     // Fetch full data (with unmasked key from a dedicated edit fetch — we'll just load what we have)
     try {
-      const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-      const data = await res.json();
+      const { data: data } = await api.get('/api/auth/integrations');
       const item = (data.integrations || []).find(i => i.id === id);
       if (!item) return;
       presetSel.value = item.preset || '';
@@ -3420,21 +3287,15 @@ async function initIntegrations() {
 
     try {
       const url = editingId ? `/api/auth/integrations/${editingId}` : '/api/auth/integrations';
-      const method = editingId ? 'PUT' : 'POST';
-      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), credentials: 'same-origin' });
-      if (res.ok) {
-        statusEl.textContent = 'Saved';
-        statusEl.style.color = 'var(--green, #98c379)';
-        formCard.style.display = 'none';
-        await renderList();
-        notifyIntegrationsChanged();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        statusEl.textContent = err.detail || 'Save failed';
-        statusEl.style.color = 'var(--red)';
-      }
+      await (editingId ? api.put(url, payload) : api.post(url, payload));
+      statusEl.textContent = 'Saved';
+      statusEl.style.color = 'var(--green, #98c379)';
+      formCard.style.display = 'none';
+      await renderList();
+      notifyIntegrationsChanged();
     } catch (e) {
-      statusEl.textContent = 'Error saving';
+      const detail = e.response?.data?.detail;
+      statusEl.textContent = detail || 'Save failed';
       statusEl.style.color = 'var(--red)';
     }
   });
@@ -3445,8 +3306,7 @@ async function initIntegrations() {
     statusEl.textContent = 'Testing...';
     statusEl.style.color = 'var(--fg)';
     try {
-      const res = await fetch(`/api/auth/integrations/${editingId}/test`, { method: 'POST', credentials: 'same-origin' });
-      const data = await res.json();
+      const { data: data } = await api.post(`/api/auth/integrations/${editingId}/test`);
       statusEl.textContent = data.message || (data.ok ? 'OK' : 'Failed');
       statusEl.style.color = data.ok ? 'var(--green, #98c379)' : 'var(--red)';
     } catch (e) {
@@ -3459,7 +3319,7 @@ async function initIntegrations() {
   async function doDelete(id) {
     if (!await window.styledConfirm('Delete this integration?', { confirmText: 'Delete', danger: true })) return;
     try {
-      await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+      await api.delete(`/api/auth/integrations/${id}`);
       if (editingId === id) { formCard.style.display = 'none'; editingId = null; }
       await renderList();
       notifyIntegrationsChanged();
@@ -3575,15 +3435,15 @@ async function initUnifiedIntegrations() {
 
   async function fetchAll() {
     const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, tokenRes, calendarsRes] = await Promise.all([
-      fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
-      fetch('/api/calendar/config/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
-      fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('/api/contacts/list', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { contacts: [], count: 0 }).catch(() => ({ contacts: [], count: 0 })),
-      fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
-      fetch('/api/mcp/servers', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch('/api/vault/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
-      fetch('/api/tokens', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch('/api/calendar/calendars', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { calendars: [] }).catch(() => ({ calendars: [] })),
+      api.get('/api/auth/integrations').then(r => r.data).catch(() => ({ integrations: [] })),
+      api.get('/api/calendar/config/accounts').then(r => r.data).catch(() => ({ accounts: [] })),
+      api.get('/api/contacts/config').then(r => r.data).catch(() => ({})),
+      api.get('/api/contacts/list').then(r => r.data).catch(() => ({ contacts: [], count: 0 })),
+      api.get('/api/email/accounts').then(r => r.data).catch(() => ({ accounts: [] })),
+      api.get('/api/mcp/servers').then(r => r.data).catch(() => []),
+      api.get('/api/vault/config').then(r => r.data).catch(() => ({})),
+      api.get('/api/tokens').then(r => r.data).catch(() => []),
+      api.get('/api/calendar/calendars').then(r => r.data).catch(() => ({ calendars: [] })),
     ]);
     const items = [];
     // API integrations
@@ -3706,18 +3566,18 @@ async function initUnifiedIntegrations() {
         const type = btn.dataset.intgType;
         const id = btn.dataset.intgId;
         try {
-          if (type === 'api') await fetch(`/api/auth/integrations/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-          else if (type === 'caldav') await fetch(`/api/calendar/config/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          if (type === 'api') await api.delete(`/api/auth/integrations/${id}`);
+          else if (type === 'caldav') await api.delete(`/api/calendar/config/accounts/${id}`);
           else if (type === 'contacts') {
-            await fetch('/api/contacts/clear', { method: 'DELETE', credentials: 'same-origin' });
+            await api.delete('/api/contacts/clear');
           }
           else if (type === 'carddav') {
-            await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carddav_url: '', carddav_username: '', carddav_password: '' }) });
+            await api.put('/api/contacts/config', { carddav_url: '', carddav_username: '', carddav_password: '' });
           }
-          else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-          else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-          else if (type === 'codex' || type === 'claude') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-          else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
+          else if (type === 'email') await api.delete(`/api/email/accounts/${id}`);
+          else if (type === 'mcp') await api.delete(`/api/mcp/servers/${id}`);
+          else if (type === 'codex' || type === 'claude') await api.delete(`/api/tokens/${id}`);
+          else if (type === 'vault') await api.post('/api/vault/logout');
         } catch (_) {}
         formEl.style.display = 'none';
         await renderList();
@@ -3742,8 +3602,8 @@ async function initUnifiedIntegrations() {
   async function showApiForm(editId) {
     let presets = {};
     try {
-      const r = await fetch('/api/auth/integrations/presets', { credentials: 'same-origin' });
-      if (r.ok) { const d = await r.json(); presets = d.presets || {}; }
+      const { data } = await api.get('/api/auth/integrations/presets');
+      presets = data.presets || {};
     } catch (_) {}
     const presetEntries = Object.entries(presets);
     // Same `?` hint helper as the email form. Native title tooltip,
@@ -3860,8 +3720,7 @@ async function initUnifiedIntegrations() {
     // Load existing
     if (_editId) {
       try {
-        const r = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-        const d = await r.json();
+        const { data: d } = await api.get('/api/auth/integrations');
         const item = (d.integrations || []).find(i => i.id === _editId);
         if (item) { name.value = item.name || ''; url.value = item.base_url || ''; auth.value = item.auth_type || 'none'; header.value = item.auth_header || ''; }
       } catch (_) {}
@@ -3906,11 +3765,9 @@ async function initUnifiedIntegrations() {
       const body = { name: nameValue, base_url: urlValue, auth_type: auth.value, auth_header: header.value, preset: presetKey };
       if (key.value) body.api_key = key.value;
       try {
-        const u = _editId ? `/api/auth/integrations/${_editId}` : '/api/auth/integrations';
-        const m = _editId ? 'PUT' : 'POST';
-        const r = await fetch(u, { method: m, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        if (!r.ok) throw new Error();
-        const saved = await r.json().catch(() => null);
+        const apiUrl = _editId ? `/api/auth/integrations/${_editId}` : '/api/auth/integrations';
+        const res = _editId ? await api.put(apiUrl, body) : await api.post(apiUrl, body);
+        const saved = res?.data;
         // If this was a create, capture the new ID so Test works
         // immediately without needing a form reopen. The POST response
         // shape is {ok, integration: {id, ...}} — saved.id at the top
@@ -3925,8 +3782,7 @@ async function initUnifiedIntegrations() {
     el('uf-api-test').addEventListener('click', async () => {
       if (!_editId) { el('uf-api-msg').textContent = 'Save first'; return; }
       try {
-        const r = await fetch(`/api/auth/integrations/${_editId}/test`, { method: 'POST', credentials: 'same-origin' });
-        const d = await r.json();
+        const { data: d } = await api.post(`/api/auth/integrations/${_editId}/test`);
         // Backend returns {ok: bool, message: str}
         if (d.ok) {
           el('uf-api-msg').textContent = d.message || 'Connected';
@@ -3961,8 +3817,7 @@ async function initUnifiedIntegrations() {
 
     if (!isNew) {
       try {
-        const r = await fetch('/api/calendar/config/accounts', { credentials: 'same-origin' });
-        const d = await r.json();
+        const { data: d } = await api.get('/api/calendar/config/accounts');
         const acc = (d.accounts || []).find(a => a.id === editId);
         if (acc) {
           el('uf-caldav-label').value = acc.label || '';
@@ -3982,12 +3837,8 @@ async function initUnifiedIntegrations() {
       };
       if (!isNew && !body.password) body.account_id = editId;
       try {
-        const r = await fetch('/api/calendar/test', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        return await r.json();
+        const { data } = await api.post('/api/calendar/test', body);
+        return data;
       } catch (e) {
         return { ok: false, error: 'Network error: ' + e.message };
       }
@@ -4014,24 +3865,16 @@ async function initUnifiedIntegrations() {
           username: el('uf-caldav-user').value.trim(),
           password: el('uf-caldav-pass').value,
         };
-        let resp;
-        if (isNew) {
-          resp = await fetch('/api/calendar/config/accounts', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-        } else {
-          resp = await fetch(`/api/calendar/config/accounts/${editId}`, {
-            method: 'PUT', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-        }
-        if (!resp.ok) {
-          const err = await resp.json().catch(() => ({}));
-          _setCalDavMsg(err.detail || 'Save failed', false);
-          return;
+
+        try {
+          if (isNew) {
+            await api.post('/api/calendar/config/accounts', payload);
+          } else {
+            await api.put(`/api/calendar/config/accounts/${editId}`, payload);
+          }
+        } catch(err) {
+          _setCalDavMsg(err.response?.data?.detail || 'Save failed', false);
+          return
         }
         _setCalDavMsg('Saved', true);
         formEl.style.display = 'none';
@@ -4092,7 +3935,7 @@ async function initUnifiedIntegrations() {
         <div id="cm-list" class="contacts-list"><div style="opacity:0.4;font-size:11px;padding:8px 2px;">Loading…</div></div>
       </div>`;
     try {
-      const r = await fetch('/api/contacts/config', { credentials: 'same-origin' }); const d = await r.json();
+      const { data: d } = await api.get('/api/contacts/config');
       el('uf-carddav-url').value = d.url || ''; el('uf-carddav-user').value = d.username || '';
       // Server masks the password as '***' when one is saved (or '' when
       // none). Surface that state via the input's placeholder so users
@@ -4105,7 +3948,7 @@ async function initUnifiedIntegrations() {
       const body = { carddav_url: el('uf-carddav-url').value, carddav_username: el('uf-carddav-user').value };
       if (el('uf-carddav-pass').value) body.carddav_password = el('uf-carddav-pass').value;
       try {
-        await fetch('/api/contacts/config', { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        await api.put('/api/contacts/config', body);
         el('uf-carddav-msg').textContent = 'Saved';
         el('uf-carddav-msg').style.color = 'var(--green, #50fa7b)';
         // Refresh both the sub-panel (contacts manager) AND the
@@ -4135,7 +3978,7 @@ async function initUnifiedIntegrations() {
       // name aren't useful as a contact.
       if (!name && !email) { (name ? el('cm-add-email') : el('cm-add-name')).focus(); return; }
       try {
-        await fetch('/api/contacts/add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, email, phone, address }) });
+        await api.post('/api/contacts/add', { name, email, phone, address });
       } catch (_) {}
       el('cm-add-name').value = '';
       el('cm-add-email').value = '';
@@ -4149,9 +3992,7 @@ async function initUnifiedIntegrations() {
       const orig = btn ? btn.textContent : '';
       if (btn) { btn.textContent = 'Exporting...'; btn.disabled = true; }
       try {
-        const res = await fetch(`/api/contacts/export?format=${encodeURIComponent(format)}`, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error('Export failed');
-        const blob = await res.blob();
+        const { data: blob } = await api.get('/api/contacts/export', { params: { format }, responseType: 'blob' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -4190,12 +4031,7 @@ async function initUnifiedIntegrations() {
         });
         let imported = 0, total = 0, failed = 0;
         const _postImport = async (body) => {
-          const r = await fetch('/api/contacts/import', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          });
-          const d = await r.json();
+          const { data: d } = await api.post('/api/contacts/import', body);
           if (d.error) throw new Error(d.error);
           imported += Number(d.imported || 0);
           total += Number(d.total || 0);
@@ -4224,8 +4060,7 @@ async function initUnifiedIntegrations() {
     if (!list) return;
     let contacts = [];
     try {
-      const r = await fetch('/api/contacts/list', { credentials: 'same-origin' });
-      const d = await r.json();
+      const { data: d } = await api.get('/api/contacts/list');
       contacts = d.contacts || [];
     } catch (_) {
       list.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:8px 2px;">Failed to load contacts (check CardDAV config above).</div>';
@@ -4320,7 +4155,7 @@ async function initUnifiedIntegrations() {
           address: row.querySelector('.contact-edit-address')?.value.trim() || '',
         };
         try {
-          await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+          await api.put('/api/contacts/' + encodeURIComponent(uid), body);
         } catch (_) {}
         await _renderContactsManager();
       });
@@ -4330,7 +4165,7 @@ async function initUnifiedIntegrations() {
           : window.confirm('Delete this contact?');
         if (!ok) return;
         try {
-          await fetch('/api/contacts/' + encodeURIComponent(uid), { method: 'DELETE', credentials: 'same-origin' });
+          await api.delete('/api/contacts/' + encodeURIComponent(uid));
         } catch (_) {}
         await _renderContactsManager();
       });
@@ -4346,8 +4181,7 @@ async function initUnifiedIntegrations() {
     let existing = null;
     if (isEdit) {
       try {
-        const r = await fetch('/api/email/accounts', { credentials: 'same-origin' });
-        const d = await r.json();
+        const { data: d } = await api.get('/api/email/accounts');
         existing = (d.accounts || []).find(a => a.id === editId) || null;
       } catch (_) {}
     }
@@ -4636,9 +4470,7 @@ async function initUnifiedIntegrations() {
       if (!body.name) body.name = body.from_address;
       if (!body.name) { el('uf-email-msg').textContent = 'Enter a Name or Email first'; el('uf-email-msg').style.color = 'var(--red)'; return; }
       const url = isEdit ? `/api/email/accounts/${editId}` : '/api/email/accounts';
-      const method = isEdit ? 'PUT' : 'POST';
-      const r = await fetch(url, { method, credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const d = await r.json();
+      const { data: d } = isEdit ? await api.put(url, body) : await api.post(url, body);
       if (!(d.ok || d.id)) { el('uf-email-msg').textContent = d.error || 'Save failed'; el('uf-email-msg').style.color = 'var(--red)'; return; }
       const accId = isEdit ? editId : d.id;
       window.location.href = `/api/email/oauth/google/authorize?account_id=${encodeURIComponent(accId)}`;
@@ -4759,12 +4591,7 @@ async function initUnifiedIntegrations() {
       msg.textContent = '';
       msg.style.color = '';
       try {
-        const r = await fetch('/api/email/accounts/test', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const d = await r.json();
+        const { data: d } = await api.post('/api/email/accounts/test', body);
         if (d.ok) {
           // Button becomes the indicator — green checkmark with the
           // cookbook-style halo + breathing animation. No status text;
@@ -4820,12 +4647,7 @@ async function initUnifiedIntegrations() {
       try {
         const url = isEdit ? `/api/email/accounts/${editId}` : '/api/email/accounts';
         const method = isEdit ? 'PUT' : 'POST';
-        const r = await fetch(url, {
-          method, credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        const d = await r.json();
+        const { data: d } = method === 'PUT' ? await api.put(url, body) : await api.post(url, body);
         if (!(d.ok || d.id)) {
           el('uf-email-msg').textContent = d.error || 'Failed';
           el('uf-email-msg').style.color = 'var(--red)';
@@ -4882,8 +4704,7 @@ async function initUnifiedIntegrations() {
 
     async function refreshStatus() {
       try {
-        const r = await fetch('/api/vault/config', { credentials: 'same-origin' });
-        const d = await r.json();
+        const { data: d } = await api.get('/api/vault/config');
         el('uf-vault-url').value = d.server_url || '';
         el('uf-vault-email').value = d.email || '';
         const installed = d.bw_installed;
@@ -4905,12 +4726,7 @@ async function initUnifiedIntegrations() {
     el('uf-vault-save').addEventListener('click', async () => {
       msg('Saving...');
       try {
-        const r = await fetch('/api/vault/config', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ server_url: el('uf-vault-url').value, email: el('uf-vault-email').value }),
-        });
-        const d = await r.json();
+        const { data: d } = await api.post('/api/vault/config', { server_url: el('uf-vault-url').value, email: el('uf-vault-email').value });
         if (d.ok) { msg('Saved', 'var(--green,#50fa7b)'); await refreshStatus(); await renderList(); }
         else msg(d.error || 'Failed', 'var(--red)');
       } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
@@ -4922,12 +4738,7 @@ async function initUnifiedIntegrations() {
       if (!email || !pass) { msg('Email + master password required', 'var(--red)'); return; }
       msg('Logging in...');
       try {
-        const r = await fetch('/api/vault/login', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, master_password: pass }),
-        });
-        const d = await r.json();
+        const { data: d } = await api.post('/api/vault/login', { email, master_password: pass });
         if (d.ok) {
           msg(d.already ? 'Already logged in — use Unlock' : 'Logged in', 'var(--green,#50fa7b)');
           el('uf-vault-pass').value = '';
@@ -4941,12 +4752,7 @@ async function initUnifiedIntegrations() {
       if (!pass) { msg('Master password required', 'var(--red)'); return; }
       msg('Unlocking...');
       try {
-        const r = await fetch('/api/vault/unlock', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ master_password: pass }),
-        });
-        const d = await r.json();
+        const { data: d } = await api.post('/api/vault/unlock', { master_password: pass });
         if (d.ok) {
           msg('Vault unlocked', 'var(--green,#50fa7b)');
           el('uf-vault-pass').value = '';
@@ -4958,7 +4764,7 @@ async function initUnifiedIntegrations() {
     el('uf-vault-lock').addEventListener('click', async () => {
       msg('Locking...');
       try {
-        await fetch('/api/vault/lock', { method: 'POST', credentials: 'same-origin' });
+        await api.post('/api/vault/lock');
         msg('Locked', 'var(--green,#50fa7b)');
         await refreshStatus(); await renderList();
       } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
@@ -4968,7 +4774,7 @@ async function initUnifiedIntegrations() {
       if (!await window.styledConfirm('Log out of Bitwarden CLI? You\'ll need to re-enter your master password to log back in.', { confirmText: 'Log out' })) return;
       msg('Logging out...');
       try {
-        await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
+        await api.post('/api/vault/logout');
         msg('Logged out', 'var(--green,#50fa7b)');
         await refreshStatus(); await renderList();
       } catch (e) { msg('Error: ' + e.message, 'var(--red)'); }
@@ -4999,7 +4805,7 @@ async function initUnifiedIntegrations() {
         const pf = new FormData(); pf.append('callback_url', cb);
         _setBtnLoading(pasteGo, true, 'Submitting…');
         try {
-          await fetch(`/api/mcp/oauth/exchange/${id}`, { method: 'POST', credentials: 'same-origin', body: pf });
+          await api.post(`/api/mcp/oauth/exchange/${id}`, pf);
         } finally {
           _setBtnLoading(pasteGo, false, 'Submit');
         }
@@ -5017,9 +4823,7 @@ async function initUnifiedIntegrations() {
       for (let i = 0; i < tries; i++) {
         await new Promise(res => setTimeout(res, 2000));
         try {
-          const r = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          const list = await r.json();
+          const { data: list } = await api.get('/api/mcp/servers');
           fails = 0;
           const s = Array.isArray(list) ? list.find(x => x.id === id) : null;
           if (!s) continue;
@@ -5043,8 +4847,7 @@ async function initUnifiedIntegrations() {
       // Show management view for existing server
       formEl.innerHTML = '<div class="admin-card" style="margin-top:8px"><span style="opacity:0.5;font-size:11px">Loading...</span></div>';
       try {
-        const res = await fetch('/api/mcp/servers', { credentials: 'same-origin' });
-        const servers = await res.json();
+        const { data: servers } = await api.get('/api/mcp/servers');
         const srv = servers.find(s => (s.id || s.name) === editId);
         if (!srv) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Server not found</div>'; return; }
         const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -5071,8 +4874,7 @@ async function initUnifiedIntegrations() {
         el('uf-mcp-reconnect').addEventListener('click', async () => {
           const msg = el('uf-mcp-msg'); msg.textContent = 'Reconnecting...';
           try {
-            const r = await fetch(`/api/mcp/servers/${srv.id}/reconnect`, { method: 'POST', credentials: 'same-origin' });
-            const d = await r.json();
+            const { data: d } = await api.post(`/api/mcp/servers/${srv.id}/reconnect`);
             msg.textContent = d.connected ? `Connected (${d.tool_count} tools)` : `Failed: ${d.error || 'unknown'}`;
             await renderList();
             showMcpForm(editId); // refresh this view
@@ -5081,7 +4883,7 @@ async function initUnifiedIntegrations() {
         // Toggle enable/disable
         el('uf-mcp-toggle').addEventListener('click', async () => {
           const fd = new FormData(); fd.append('is_enabled', String(!srv.is_enabled));
-          await fetch(`/api/mcp/servers/${srv.id}`, { method: 'PATCH', body: fd, credentials: 'same-origin' });
+          await api.patch(`/api/mcp/servers/${srv.id}`, fd);
           await renderList();
           showMcpForm(editId);
         });
@@ -5090,15 +4892,14 @@ async function initUnifiedIntegrations() {
         if (srv.status === 'connected' && srv.tool_count > 0) {
           const panel = el('uf-mcp-tools-panel');
           try {
-            const tr = await fetch(`/api/mcp/servers/${srv.id}/tools`, { credentials: 'same-origin' });
-            const tools = await tr.json();
+            const { data: tools } = await api.get(`/api/mcp/servers/${srv.id}/tools`);
             if (tools.length) {
               const disabled = new Set(tools.filter(t => t.is_disabled).map(t => t.name));
               panel.innerHTML = `<div class="mcp-tools-header"><span>Tools</span><span style="display:flex;gap:8px;align-items:center"><span class="mcp-tools-count">${tools.length - disabled.size}/${tools.length} enabled</span><a href="#" id="uf-mcp-all">All</a> <a href="#" id="uf-mcp-none">None</a></span></div><div class="mcp-tools-list">${tools.map(t => `<label title="${esc(t.description)}"><input type="checkbox" data-mcp-tool-name="${esc(t.name)}" ${!t.is_disabled ? 'checked' : ''}><span><strong>${esc(t.name)}</strong> <span style="opacity:0.5">— ${esc((t.description||'').slice(0,80))}</span></span></label>`).join('')}</div>`;
               const saveFn = async () => {
                 const dis = [];
                 panel.querySelectorAll('input[type=checkbox]').forEach(cb => { if (!cb.checked) dis.push(cb.dataset.mcpToolName); });
-                await fetch(`/api/mcp/servers/${srv.id}/tools`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ disabled: dis }) });
+                await api.patch(`/api/mcp/servers/${srv.id}/tools`, { disabled: dis });
                 const cnt = panel.querySelector('.mcp-tools-count');
                 if (cnt) cnt.textContent = `${tools.length - dis.length}/${tools.length} enabled`;
               };
@@ -5160,18 +4961,15 @@ async function initUnifiedIntegrations() {
         const _origLabel = saveBtn.textContent;
         _setBtnLoading(saveBtn, true, 'Saving…'); if (cancelBtn) cancelBtn.disabled = true;
         try {
-          const r = await fetch('/api/mcp/servers', { method: 'POST', credentials: 'same-origin', body: fd });
-          const data = await r.json().catch(() => ({}));
-          if (r.ok && data.needs_auth) {
+          const { data } = await api.post('/api/mcp/servers', fd);
+          if (data.needs_auth) {
             el('uf-mcp-msg').textContent = 'Preparing authorization…';
             _handleMcpAuth(data.id, data.auth_url);
-          } else if (r.ok && (data.connected || data.status === 'connected')) {
+          } else if (data.connected || data.status === 'connected') {
             el('uf-mcp-msg').textContent = `Connected (${data.tool_count || 0} tools)`;
             formEl.style.display = 'none'; await renderList();
-          } else if (r.ok) {
-            el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           } else {
-            el('uf-mcp-msg').textContent = `Failed (${r.status})`;
+            el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           }
         } catch (_) { el('uf-mcp-msg').textContent = 'Failed'; }
         finally { _setBtnLoading(saveBtn, false, _origLabel); if (cancelBtn) cancelBtn.disabled = false; }
@@ -5183,8 +4981,8 @@ async function initUnifiedIntegrations() {
     const cfg = AGENT_CONFIGS[kind] || AGENT_CONFIGS.codex;
     let tokens = [];
     try {
-      const tokRes = await fetch('/api/tokens', { credentials: 'same-origin' });
-      if (tokRes.ok) tokens = await tokRes.json();
+      const { data: tokRes } = await api.get('/api/tokens');
+      tokens = tokRes;
     } catch (_) {}
 
     const toolScopes = [
@@ -5333,12 +5131,7 @@ async function initUnifiedIntegrations() {
           const name = (renameInput.value || '').trim();
           if (!name || name === original) return;
           try {
-            const r = await fetch(`/api/tokens/${renameInput.dataset.tokenId}`, {
-              method: 'PATCH', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name }),
-            });
-            if (!r.ok) throw new Error('Save failed');
+            await api.patch(`/api/tokens/${renameInput.dataset.tokenId}`, { name });
             notifyIntegrationsChanged();
           } catch (_) { renameInput.value = original; }
         };
@@ -5352,13 +5145,7 @@ async function initUnifiedIntegrations() {
             Array.from(formEl.querySelectorAll('.uf-codex-scope:checked')).map(input => input.dataset.scope)
           );
           try {
-            const r = await fetch(`/api/tokens/${cb.dataset.tokenId}`, {
-              method: 'PATCH', credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ scopes }),
-            });
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(d.detail || 'Failed');
+            await api.patch(`/api/tokens/${cb.dataset.tokenId}`, { scopes });
             if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; setTimeout(() => { msg.textContent = ''; }, 1200); }
             notifyIntegrationsChanged();
           } catch (err) {
@@ -5393,13 +5180,7 @@ async function initUnifiedIntegrations() {
           .map(input => input.dataset.scope)
       );
       try {
-        const r = await fetch(`/api/tokens/${tokenId}`, {
-          method: 'PATCH', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ scopes }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.detail || 'Failed');
+        await api.patch(`/api/tokens/${tokenId}`, { scopes });
         if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
         await renderList();
         setTimeout(() => { formEl.style.display = 'none'; }, 350);
@@ -5419,8 +5200,7 @@ async function initUnifiedIntegrations() {
       if (!ok) return;
       const msg = el('uf-codex-msg');
       try {
-        const r = await fetch(`/api/tokens/${tokenId}`, { method: 'DELETE', credentials: 'same-origin' });
-        if (!r.ok) throw new Error('Revoke failed');
+        await api.delete(`/api/tokens/${tokenId}`);
         if (msg) { msg.textContent = 'Revoked'; msg.style.color = 'var(--color-error)'; }
         await renderList();
         setTimeout(() => { formEl.style.display = 'none'; }, 350);
@@ -5469,9 +5249,7 @@ async function initUnifiedIntegrations() {
       fd.append('name', name);
       fd.append('scopes', 'chat');
       try {
-        const r = await fetch('/api/tokens', { method: 'POST', credentials: 'same-origin', body: fd });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.detail || 'Failed');
+        const { data: d } = await api.post('/api/tokens', fd);
         if (_wp) { try { _wp.destroy(); } catch (_) {} }
         if (pending) pending.style.display = 'none';
         el('uf-codex-token').textContent = d.token || '';
@@ -5595,17 +5373,11 @@ async function initUnifiedIntegrations() {
           const msg = formEl.querySelector(`.uf-codex-scope-msg[data-token-id="${CSS.escape(tokenId)}"]`);
           const scopes = Array.from(panel.querySelectorAll('.uf-codex-scope:checked')).map(input => input.dataset.scope);
           try {
-            const r = await fetch(`/api/tokens/${tokenId}`, {
-              method: 'PATCH',
-              credentials: 'same-origin',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ scopes }),
-            });
-            const d = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(d.detail || 'Failed');
+            await api.patch(`/api/tokens/${tokenId}`, { scopes });
             if (msg) { msg.textContent = 'Saved'; msg.style.color = 'var(--green, #50fa7b)'; }
             await renderList();
           } catch (err) {
+            console.error(apiErrorMessage(err));
             cb.checked = !cb.checked;
             if (msg) { msg.textContent = err?.message || 'Failed'; msg.style.color = 'var(--red)'; }
           }

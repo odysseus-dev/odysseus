@@ -8,8 +8,7 @@
 import Storage, { KEYS } from './storage.js';
 import uiModule from './ui.js';
 import { makeWindowDraggable } from './windowDrag.js';
-
-const API_BASE = window.location.origin;
+import { api } from './axios/api.js';
 // Same folder glyph as the overflow menu item + pill (not an emoji).
 const _FOLDER_SVG = '<svg class="workspace-row-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 let _modal = null;
@@ -71,9 +70,7 @@ export function setWorkspace(path) {
  */
 export async function vetAndSetWorkspace(path) {
   try {
-    const res = await fetch(`${API_BASE}/api/workspace/vet?path=${encodeURIComponent(path)}`, { credentials: 'same-origin' });
-    if (!res.ok) return { ok: false, path: null };
-    const data = await res.json();
+    const { data } = await api.get('/api/workspace/vet', { params: { path } });
     if (data.ok && data.path) {
       setWorkspace(data.path);
       return { ok: true, path: data.path };
@@ -90,10 +87,8 @@ export function clearWorkspace() {
 }
 
 async function _load(path) {
-  const url = `${API_BASE}/api/workspace/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`;
-  const res = await fetch(url, { credentials: 'same-origin' });
-  if (!res.ok) throw new Error(`browse failed: ${res.status}`);
-  return res.json();
+  const { data } = await api.get('/api/workspace/browse', { params: path ? { path } : {} });
+  return data;
 }
 
 function _render(data) {

@@ -45,6 +45,7 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+import { api, apiPath, apiErrorMessage } from './js/axios/api.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -58,14 +59,42 @@ const _origFetch = window.fetch;
 window.fetch = async function(...args) {
   const res = await _origFetch.apply(this, args);
   if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
-    window.location.href = '/login';
+    window.location.href = apiPath('/login');
   }
   return res;
 };
 
+// Moved from index.html
+(async () => {
+  var mobile = window.matchMedia('(max-width: 768px)').matches;
+  var desktop = [
+    'Tip: Press Ctrl+K to search across all your conversations.',
+    'Tip: Press Ctrl+B to quickly toggle the sidebar.',
+    'Tip: Shift-click the sidebar toggle to swap it to the other side.',
+    'Tip: Drag and drop files onto the chat to attach them.',
+    'Tip: Right-click a session for rename, delete, and memory options.',
+  ];
+  var phone = [
+    'Tip: Long-press a session for rename, delete, and memory options.',
+    'Tip: Tap the eye icon for Nobody mode — no history saved.',
+    'Tip: Switch to Agent mode for web search and code execution.',
+    'Tip: Use Compare mode to test different models side by side.',
+    'Tip: Attach images or files using the + button next to the input.',
+  ];
+  var tips = mobile ? phone : desktop;
+  var el = document.getElementById('welcome-tip');
+  if (el) {
+    el.textContent = 'Type /setup, then choose Local models or API.';
+  }
+  (api.get('/api/version'))
+    .then(res => res.data)
+    .then(data => {
+      if (data.version) window._appVersion = data.version;
+    })
+    .catch(err => {});
+})();
+
 // Search settings
-
-
 const el = uiModule.el;
 
 // Default chat config — refreshed on every new-chat action so settings
@@ -74,11 +103,11 @@ const el = uiModule.el;
 let _defaultChat = null;
 async function _refreshDefaultChat() {
   try {
-    const d = await (await fetch('/api/default-chat')).json();
-    if (d && d.endpoint_url && d.model) {
-      _defaultChat = d;
-      try { window.__odysseusDefaultChat = d; } catch (_) {}
-      return d;
+    const { data } = await api.get('/api/default-chat');
+    if (data && data.endpoint_url && data.model) {
+      _defaultChat = data;
+      try { window.__odysseusDefaultChat = data; } catch (_) {}
+      return data;
     }
   } catch (_) {}
   return null;
@@ -380,13 +409,11 @@ function initializeEventListeners() {
         const texts = _serializeChatTranscript();
         const meta = sessionModule.getSessions().find(s => s.id === sessionId);
         const title = meta?.name || 'Untitled';
-        const res = await fetch(`${API_BASE}/api/document`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId, title, content: texts }),
+        const { data: doc } = await api.post('/api/document', {
+          session_id: sessionId,
+          title,
+          content: texts,
         });
-        if (!res.ok) throw new Error('Failed');
-        const doc = await res.json();
         if (documentModule) documentModule.loadDocument(doc.id);
         uiModule.showToast('Saved to documents');
       } catch (err) {
@@ -434,7 +461,7 @@ function initializeEventListeners() {
           if (!sid) { metaEl.textContent = newName; return; }
           const fd = new FormData();
           fd.append('name', newName);
-          await fetch(`${API_BASE}/api/session/${sid}`, { method: 'PATCH', body: fd });
+          await api.patch(`/api/session/${sid}`, fd);
           const _m = sessionModule.getSessions().find(s => s.id === sid);
           if (_m) _m.name = newName;
           metaEl.textContent = newName;
@@ -1129,15 +1156,15 @@ function initializeEventListeners() {
   }
 
   // Fetch auth status — populate user bar and show admin button if admin
-  fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })
-    .then(r => r.json())
-    .then(d => {
-      window._isAdmin = !!d.is_admin;
-      if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
+  api.get('/api/auth/status')
+    .then(r => r.data)
+    .then(data => {
+      window._isAdmin = !!data.is_admin;
+      if (data.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
-      if (userBarName && d.username) {
-        let displayName = d.username;
+      if (userBarName && data.username) {
+        let displayName = data.username;
         // Mask email addresses
         if (displayName.includes('@')) {
           const [local, domain] = displayName.split('@');
@@ -1145,12 +1172,12 @@ function initializeEventListeners() {
           displayName = local.charAt(0) + '•••@••••' + ext;
         }
         userBarName.textContent = displayName;
-        if (userBarAvatar) userBarAvatar.textContent = d.username.charAt(0).toUpperCase();
+        if (userBarAvatar) userBarAvatar.textContent = data.username.charAt(0).toUpperCase();
       }
       // Apply per-user privilege restrictions
-      if (d.privileges) {
-        window._userPrivileges = d.privileges;
-        const p = d.privileges;
+      if (data.privileges) {
+        window._userPrivileges = data.privileges;
+        const p = data.privileges;
         // Hide agent mode toggle
         if (!p.can_use_agent) {
           const modeToggle = document.getElementById('mode-toggle');
@@ -1242,10 +1269,8 @@ function initializeEventListeners() {
       wp.start();
       sortDropdown.style.display = 'none';
       try {
-        const url = `${API_BASE}/api/sessions/auto-sort${skipLlm ? '?skip_llm=true' : ''}`;
-        const res = await fetch(url, { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Auto-sort failed');
+        const url = `/api/sessions/auto-sort${skipLlm ? '?skip_llm=true' : ''}`;
+        const { data } = await api.post(url);
         if (data.status === 'ok') {
           sessionModule.setSortMode(null); // clear sort — tidy creates manual folder order
           _syncSortChecks();
@@ -1275,7 +1300,7 @@ function initializeEventListeners() {
           uiModule.showToast(data.reason || 'Nothing to sort');
         }
       } catch (e) {
-        uiModule.showError('Auto-sort: ' + e.message);
+        uiModule.showError('Auto-sort: ' + apiErrorMessage(e));
       } finally {
         wp.destroy();
         if (wpEl.parentNode) wpEl.parentNode.removeChild(wpEl);
@@ -1316,7 +1341,7 @@ function initializeEventListeners() {
   sessionStorage.removeItem('ody-prefetch-features');
   window._initFeaturesReady = (_prefetchedFeatures
     ? Promise.resolve(JSON.parse(_prefetchedFeatures))
-    : fetch(`${API_BASE}/api/auth/features`, { credentials: 'same-origin' }).then(r => r.json())
+    : api.get('/api/auth/features', { credentials: 'same-origin' }).then(res => res.data)
   ).then(features => {
       const map = {
         web_search:      ['web-toggle-btn'],
@@ -1344,7 +1369,7 @@ function initializeEventListeners() {
   sessionStorage.removeItem('ody-prefetch-settings');
   window._initSettingsReady = (_prefetchedSettings
     ? Promise.resolve(JSON.parse(_prefetchedSettings))
-    : fetch(`${API_BASE}/api/auth/settings`, { credentials: 'same-origin' }).then(r => r.json())
+    : api.get('/api/auth/settings', { credentials: 'same-origin' }).then(res => res.data)
   ).then(settings => {
       // NOTE: image_gen_enabled only governs *generating* images in chat — the
       // tool is blocked server-side (chat_routes / agent_loop). The Gallery
@@ -1398,20 +1423,14 @@ function initializeEventListeners() {
       }
       
       try {
-        const response = await fetch(`${API_BASE}/api/ai/name`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ name: newName })
-        });
-        
-        const result = await response.json();
+        const { data: result } = await api.post('/api/ai/name', { name: newName });
         if (result.success) {
           uiModule.showToast(`AI renamed to ${newName}`);
           renameAiModal.classList.add('hidden');
           aiNameInput.value = '';
         }
       } catch (e) {
-        uiModule.showError('Failed to rename AI: ' + e.message);
+        uiModule.showError('Failed to rename AI: ' + apiErrorMessage(e));
       }
     });
   }
@@ -1458,31 +1477,21 @@ function initializeEventListeners() {
       }
       
       try {
-        const response = await fetch(`${API_BASE}/api/session/${sessionModule.getCurrentSessionId()}`, {
-          method: 'PATCH',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ name: newName })
-        });
-        
-        const result = await response.json();
-        if (response.ok) {
-          uiModule.showToast(`Session renamed to ${newName}`);
-          renameSessionModal.classList.add('hidden');
-          sessionNameInput.value = '';
-          // Update the current session name in the UI
-          const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
-          if (meta) {
-            meta.name = newName;
-            const ver = window._appVersion ? ` v${window._appVersion}` : '';
-            el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`;
-          }
-          // Refresh the sessions list
-        await sessionModule.loadSessions();
-        } else {
-          throw new Error(result.detail || 'Failed to rename session');
+        await api.patch(`/api/session/${sessionModule.getCurrentSessionId()}`, { name: newName });
+        uiModule.showToast(`Session renamed to ${newName}`);
+        renameSessionModal.classList.add('hidden');
+        sessionNameInput.value = '';
+        // Update the current session name in the UI
+        const meta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
+        if (meta) {
+          meta.name = newName;
+          const ver = window._appVersion ? ` v${window._appVersion}` : '';
+          el('current-meta').textContent = `Session: ${meta.name}${meta.model ? ' ' + meta.model.split('/').pop() : ''}${meta.rag ? ' [RAG]' : ''}${ver}`;
         }
+        // Refresh the sessions list
+        await sessionModule.loadSessions();
       } catch (e) {
-        uiModule.showError('Failed to rename session: ' + e.message);
+        uiModule.showError('Failed to rename session: ' + apiErrorMessage(e));
       }
     });
   }
@@ -3097,18 +3106,14 @@ function initializeEventListeners() {
         const idx = sessions.findIndex(s => s.id === currentId);
         const nextSession = sessions.filter(s => !s.archived && s.id !== currentId)[Math.max(0, idx)] ||
                             sessions.find(s => !s.archived && s.id !== currentId);
-        const res = await fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' });
-        if (res.ok) {
-          await sessionModule.loadSessions();
-          if (nextSession) {
-            await sessionModule.selectSession(nextSession.id);
-          }
-          uiModule.showToast('Session deleted');
-        } else {
-          uiModule.showError('Failed to delete session');
+        await api.delete(`/api/session/${currentId}`);
+        await sessionModule.loadSessions();
+        if (nextSession) {
+          await sessionModule.selectSession(nextSession.id);
         }
+        uiModule.showToast('Session deleted');
       } catch (e) {
-        uiModule.showError('Failed to delete session: ' + e);
+        uiModule.showError('Failed to delete session: ' + apiErrorMessage(e));
       }
     });
   }
@@ -3162,8 +3167,7 @@ function initializeEventListeners() {
     async function fetchModels() {
       if (modelCache && Date.now() - modelCache.ts < CACHE_TTL) return modelCache.models;
       try {
-        const res = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
-        const data = await res.json();
+        const { data } = await api.get('/api/models', { credentials: 'same-origin' });
         const models = [];
         (data.items || []).forEach(ep => {
           const displayNames = ep.models_display || ep.models || [];

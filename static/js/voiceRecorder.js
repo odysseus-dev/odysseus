@@ -1,5 +1,7 @@
 // static/js/voiceRecorder.js
 
+import { api } from './axios/api.js';
+
 /**
  * Voice recording with optional Speech-to-Text transcription.
  *
@@ -28,13 +30,9 @@ let _sttProvider = 'disabled';
  */
 async function refreshSttProvider() {
   try {
-    const res = await fetch('/api/stt/stats', { credentials: 'same-origin' });
-    if (res.ok) {
-      const stats = await res.json();
-      _sttProvider = stats.provider || 'disabled';
-      // Notify the send button to update its icon
-      if (window._updateSendBtnIcon) window._updateSendBtnIcon();
-    }
+    const { data: stats } = await api.get('/api/stt/stats');
+    _sttProvider = stats.provider || 'disabled';
+    if (window._updateSendBtnIcon) window._updateSendBtnIcon();
   } catch (e) {
     console.warn('Failed to fetch STT stats:', e);
   }
@@ -112,19 +110,13 @@ async function transcribeOnServer(audioBlob) {
   const formData = new FormData();
   formData.append('file', audioBlob, 'audio.webm');
 
-  const res = await fetch('/api/stt/transcribe', {
-    method: 'POST',
-    credentials: 'same-origin',
-    body: formData,
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.message || 'Transcription failed');
+  try {
+    const { data } = await api.post('/api/stt/transcribe', formData);
+    return data.text || '';
+  } catch (e) {
+    console.error(apiErrorMessage(e));
+    throw e;
   }
-
-  const data = await res.json();
-  return data.text || '';
 }
 
 /**

@@ -1,6 +1,8 @@
 // static/js/tts-ai.js
 // AI Text-to-Speech Module — supports server TTS and browser Web Speech API
 
+import { api, apiErrorMessage } from './axios/api.js';
+
 class AITTSManager {
     constructor() {
         this.currentAudio = null;
@@ -32,8 +34,8 @@ class AITTSManager {
         try {
             // Check user setting first — if TTS is disabled in settings, don't show buttons
             try {
-                const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-                const settings = await settingsRes.json();
+                const settingsRes = await api.get('/api/auth/settings');
+                const settings = settingsRes.data;
                 if (settings.tts_enabled === false) {
                     this.available = false;
                     this._provider = 'disabled';
@@ -41,8 +43,8 @@ class AITTSManager {
                 }
             } catch {}
 
-            const response = await fetch('/api/tts/stats');
-            const stats = await response.json();
+            const response = await api.get('/api/tts/stats');
+            const stats = response.data;
             this.available = stats.available && stats.ready;
             this.playbackSpeed = stats.speed || 1;
             this._provider = stats.provider || 'disabled';
@@ -129,23 +131,12 @@ class AITTSManager {
         try {
             if (onProgress) onProgress('synthesizing');
 
-            const response = await fetch('/api/tts/synthesize', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    text: plainText,
-                    format: 'audio'
-                })
-            });
+            const response = await api.post('/api/tts/synthesize', {
+                text: plainText,
+                format: 'audio',
+            }, { responseType: 'blob' });
 
-            if (!response.ok) {
-                const error = await response.json();
-                throw new Error(error.detail?.message || 'Synthesis failed');
-            }
-
-            const audioBlob = await response.blob();
+            const audioBlob = response.data;
             const audioUrl = URL.createObjectURL(audioBlob);
 
             // Cache the result
@@ -157,7 +148,15 @@ class AITTSManager {
 
         } catch (error) {
             if (onProgress) onProgress('error');
-            throw error;
+            if (error.response?.data instanceof Blob) {
+                try {
+                    const parsed = JSON.parse(await error.response.data.text());
+                    throw new Error(parsed.detail?.message || 'Synthesis failed');
+                } catch (e) {
+                    if (e !== error && !(e instanceof SyntaxError)) throw e;
+                }
+            }
+            throw new Error(apiErrorMessage(error));
         }
     }
 

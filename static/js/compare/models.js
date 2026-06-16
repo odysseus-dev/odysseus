@@ -1,4 +1,5 @@
 // compare/models.js — model classification, fetching, display names, persistence
+import { api } from '../axios/api.js';
 import Storage from '../storage.js';
 import state from './state.js';
 import uiModule from '../ui.js';
@@ -54,8 +55,7 @@ async function fetchModels() {
   if (state._fetchModelsCache && (now - state._fetchModelsCacheTime) < MODELS_CACHE_TTL) {
     return state._fetchModelsCache;
   }
-  const res = await fetch(`${state.API_BASE}/api/models`);
-  const data = await res.json();
+  const { data } = await api.get('/api/models');
   const models = [];
   if (data.items && data.items.length > 0) {
     data.items.forEach(item => {

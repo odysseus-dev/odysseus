@@ -27,6 +27,8 @@
  */
 import { state } from './state.js';
 
+import { api } from '../axios/api.js';
+
 export function wireImport({ container, saveState, createLayer, composite, renderLayerPanel, uiModule }) {
   // Hidden <input type="file"> the topbar + File buttons both click.
   const importFileInput = document.createElement('input');
@@ -105,8 +107,7 @@ export function wireImport({ container, saveState, createLayer, composite, rende
   // thumbnail-grid picker overlay.
   document.getElementById('ge-import-gallery')?.addEventListener('click', async () => {
     try {
-      const res = await fetch('/api/gallery/library?limit=50', { credentials: 'same-origin' });
-      const data = await res.json();
+            const { data } = await api.get('/api/gallery/library?limit=50');
       const items = data.items || [];
       if (!items.length) { if (uiModule) uiModule.showToast('No images in gallery'); return; }
 

@@ -6,6 +6,7 @@
 
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { api } from './axios/api.js';
 
 let pendingFiles = [];
 let uploaded = [];
@@ -13,7 +14,6 @@ let uploaded = [];
 // uploadPending() so callers can stamp width/height onto their attachment
 // objects without changing uploadPending()'s return signature.
 let _lastUploadedMeta = [];
-let API_BASE = '';
 let _uploadSpinners = [];
 const _previewUrls = new WeakMap();
 
@@ -42,8 +42,7 @@ function _revokePreviewUrl(f) {
 /**
  * Initialize with dependencies
  */
-export function init(apiBase) {
-  API_BASE = apiBase;
+export function init(_apiBase) {
 }
 
 /**
@@ -162,26 +161,11 @@ export async function uploadPending() {
     });
   }
 
-  const fd = new FormData();
-  pendingFiles.forEach(f => fd.append('files', f, f.name || 'paste.png'));
+  const formData = new FormData();
+  pendingFiles.forEach(file => formData.append('files', file, file.name || 'paste.png'));
 
   try {
-    const res = await fetch(`${API_BASE}/api/upload`, {
-      method: 'POST',
-      body: fd
-    });
-    if (!res.ok) {
-      // Surface the failure instead of swallowing it. Previously a non-OK
-      // response (e.g. 429 rate limit, 413 too large) was ignored: the files
-      // silently vanished and the chat sent with no attachments, so the model
-      // "didn't even see them" (issue #1346). Show the server's reason and keep
-      // pendingFiles so the strip re-renders for a retry (see finally below).
-      let detail = '';
-      try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
-      _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
-      return [];
-    }
-    const data = await res.json();
+    const { data } = await api.post('/api/upload', formData);
     uploaded = (data.files || []);
     pendingFiles = [];          // clear only on success
     // Stash the full meta (incl. width/height for images) on the module so
@@ -189,6 +173,16 @@ export async function uploadPending() {
     // returned shape as `ids` for backward-compatibility with existing call sites.
     _lastUploadedMeta = uploaded;
     return uploaded.map(x => x.id);
+  } catch (err) {
+    // Surface the failure instead of swallowing it. Previously a non-OK
+    // response (e.g. 429 rate limit, 413 too large) was ignored: the files
+    // silently vanished and the chat sent with no attachments, so the model
+    // "didn't even see them" (issue #1346). Show the server's reason and keep
+    // pendingFiles so the strip re-renders for a retry (see finally below).
+    const data = err.response?.data;
+    const detail = data?.detail || data?.error || '';
+    _showToast('Upload failed' + (detail ? ': ' + detail : (err.response?.status ? ` (HTTP ${err.response.status})` : '')));
+    return [];
   } finally {
     _uploadSpinners.forEach(sp => { try { sp.stop && sp.stop(); } catch (_) {} });
     _uploadSpinners = [];

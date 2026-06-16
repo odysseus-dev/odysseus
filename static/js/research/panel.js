@@ -6,6 +6,7 @@ import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
+import { api } from '../axios/api.js';
 
 // Rotating research textarea placeholders — pick one at random each
 // time the panel is rendered so the example keeps feeling fresh.
@@ -187,9 +188,9 @@ async function _updateResearchCount() {
   const el = document.getElementById('research-stats');
   if (!el) return;
   try {
-    const res = await fetch('/api/research/library?limit=1', { credentials: 'same-origin' });
-    if (!res.ok) return;
-    const data = await res.json();
+        try {
+    const { data: data } = await api.get('/api/research/library?limit=1');
+    } catch { return; }
     const n = data.total || 0;
     el.textContent = n + (n === 1 ? ' research' : ' research');
   } catch {}
@@ -208,7 +209,6 @@ const _editIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" s
 const _chatIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 
 export function init(apiBase, markdownMod, sessionMod) {
-  _apiBase = apiBase;
   _markdownModule = markdownMod;
   _sessionModule = sessionMod;
   jobs.init(apiBase);
@@ -635,9 +635,8 @@ function _restoreSavedSettings() {
 
 async function _loadEndpoints() {
   try {
-    const res = await fetch(`${_apiBase}/api/model-endpoints`, { credentials: 'same-origin' });
-    if (!res.ok) return;
-    _endpoints = await res.json();
+    const { data: _endpointsData } = await api.get('/api/model-endpoints');
+    _endpoints = _endpointsData;
     const sel = document.getElementById('research-endpoint');
     if (!sel) return;
     _endpoints.filter(e => e.is_enabled && e.model_type === 'llm').forEach(ep => {
@@ -1026,7 +1025,7 @@ function _buildJobCard(job) {
     // stopPropagation) opens the visual report — same as the Visual Report btn.
     card.style.cursor = 'pointer';
     card.addEventListener('click', () => {
-      window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank');
+      window.open(`/api/research/report/${job.id}`, '_blank');
     });
     card.querySelector('[data-action="copy"]').addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1036,7 +1035,7 @@ function _buildJobCard(job) {
     });
     card.querySelector('[data-action="report"]').addEventListener('click', (e) => {
       e.stopPropagation();
-      window.open(`${_apiBase}/api/research/report/${job.id}`, '_blank');
+      window.open(`/api/research/report/${job.id}`, '_blank');
     });
     card.querySelector('[data-action="chat"]').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1048,7 +1047,7 @@ function _buildJobCard(job) {
         const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
         if (!ok) return;
       }
-      try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+      try { await api.delete(`/api/research/${job.id}`); } catch {}
       _animateOutThenRemove(card, () => jobs.removeJob(job.id));
     });
     card.querySelector('[data-action="dismiss"]').addEventListener('click', (e) => {
@@ -1146,11 +1145,11 @@ function _renderResult(job) {
 async function _ensureResult(job) {
   if (job.result) return;
   try {
-    const res = await fetch(`${_apiBase}/api/research/result-peek/${job.id}`, {
+        try {
+    const { data: d } = await api.get(`/api/research/result-peek/${job.id}`, {
       method: 'POST', credentials: 'same-origin',
     });
-    if (!res.ok) return;
-    const d = await res.json();
+    } catch { return; }
     job.result = d.result;
     job.sources = d.sources;
     job.findings = d.raw_findings;
@@ -1223,15 +1222,7 @@ async function _chatAboutResearch(researchId, btn) {
   const origLabel = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.innerHTML = `${_chatIcon} Creating…`; }
   try {
-    const res = await fetch(`${_apiBase}/api/research/spinoff/${researchId}`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-    if (!res.ok) {
-      let detail = '';
-      try { detail = (await res.json()).detail || ''; } catch {}
-      throw new Error(detail || `HTTP ${res.status}`);
-    }
-    const payload = await res.json();
+    const { data: payload } = await api.post(`/api/research/spinoff/${researchId}`);
     if (_sessionModule && _sessionModule.selectSession && payload.session_id) {
       if (_sessionModule.loadSessions) await _sessionModule.loadSessions().catch(() => {});
       await _sessionModule.selectSession(payload.session_id);

@@ -1,6 +1,5 @@
 // compare/state.js — shared mutable state for compare modules
 const state = {
-  API_BASE: '',
   isActive: false,
   _openingSelector: false,        // prevents duplicate compare modals on rapid re-clicks
   _streaming: false,

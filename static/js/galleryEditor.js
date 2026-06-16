@@ -108,7 +108,8 @@ import { wireTopbar, closeOtherTopbarMenus as _closeOtherTopbarMenus } from './e
 import { wireTopbarOverflow } from './editor/wire-topbar-overflow.js';
 import { wireTopbarMenus } from './editor/wire-topbar-menus.js';
 
-const API_BASE = window.location.origin;
+import { api, apiPath } from './axios/api.js';
+
 // ── State ──
 // Transform-overlay canvas — sits over the main canvas with extra margin
 // so resize / rotation handles render OUTSIDE the image edges. Pointer
@@ -803,30 +804,20 @@ async function _persistDraft() {
   };
   const doRequest = async () => {
     if (state.draftId) {
-      const res = await fetch(`/api/editor-drafts/${encodeURIComponent(state.draftId)}`, {
-        method: 'PUT', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      // 404 means our row was deleted while editing — fall through to
-      // create a fresh one so the user doesn't lose work.
-      if (res.status === 404) {
-        state.draftId = null;
-        return doRequest();
+      try {
+        const { data } = await api.put(`/api/editor-drafts/${encodeURIComponent(state.draftId)}`, body);
+        return data;
+      } catch (err) {
+        if (err.response?.status === 404) {
+          state.draftId = null;
+          return doRequest();
+        }
+        throw new Error(`PUT failed: ${err.response?.status || 'error'}`);
       }
-      if (!res.ok) throw new Error(`PUT failed: ${res.status}`);
-      return res.json();
-    } else {
-      const res = await fetch('/api/editor-drafts', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) throw new Error(`POST failed: ${res.status}`);
-      const out = await res.json();
-      if (out && out.id) state.draftId = out.id;
-      return out;
     }
+    const { data: out } = await api.post('/api/editor-drafts', body);
+    if (out && out.id) state.draftId = out.id;
+    return out;
   };
   state.persistInFlight = doRequest()
     .catch((e) => { console.warn('[ge] draft save failed', e); })
@@ -843,11 +834,11 @@ async function _persistDraft() {
 async function _loadDraftById(draftId) {
   if (!draftId) return null;
   try {
-    const res = await fetch(`/api/editor-drafts/${encodeURIComponent(draftId)}`, {
+        const outRes = await api.get(`/api/editor-drafts/${encodeURIComponent(draftId)}`, {
       credentials: 'same-origin',
-    });
-    if (!res.ok) return null;
-    const out = await res.json();
+    }).catch(() => null);
+    if (!outRes) { return null; }
+    const out = outRes.data;
     if (!out || !out.payload || !Array.isArray(out.payload.layers)) return null;
     return out;
   } catch (_) {
@@ -858,9 +849,9 @@ async function _loadDraftById(draftId) {
 async function _findDraftForImage(imageId) {
   if (!imageId) return null;
   try {
-    const res = await fetch('/api/editor-drafts', { credentials: 'same-origin' });
-    if (!res.ok) return null;
-    const out = await res.json();
+        const outRes = await api.get('/api/editor-drafts').catch(() => null);
+    if (!outRes) { return null; }
+    const out = outRes.data;
     const match = (out.drafts || []).find(d => d.source_image_id === imageId);
     if (!match) return null;
     return _loadDraftById(match.id);
@@ -872,9 +863,7 @@ async function _findDraftForImage(imageId) {
 async function _clearDraftServer(draftId) {
   if (!draftId) return;
   try {
-    await fetch(`/api/editor-drafts/${encodeURIComponent(draftId)}`, {
-      method: 'DELETE', credentials: 'same-origin',
-    });
+    await api.delete(`/api/editor-drafts/${encodeURIComponent(draftId)}`);
   } catch (_) { /* best-effort */ }
 }
 
@@ -2707,7 +2696,6 @@ function _buildEditor(container) {
   // implementation in editor/ai-models.js.
   wireAIModelSelectors({
     container,
-    apiBase: API_BASE,
     openCookbookForImg2img: () => _openCookbookForImg2img(),
   });
 
@@ -2735,14 +2723,11 @@ function _buildEditor(container) {
       });
       const fd = new FormData();
       fd.append('image', blob, `edited.${isJpeg ? 'jpg' : 'png'}`);
-      const resp = await fetch(`${API_BASE}/api/gallery/${state.imageId}/replace`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: fd,
+      const resp = await apiFetch(`/api/gallery/${state.imageId}/replace`, { method: 'POST', body: fd,
       });
       if (!resp.ok) {
         let detail = '';
-        try { const j = await resp.json(); detail = j.detail || j.error || ''; } catch {}
+        try { const j = resp.data; detail = j.detail || j.error || ''; } catch {}
         throw new Error(`HTTP ${resp.status}${detail ? `: ${detail}` : ''}`);
       }
       const totalMs = Math.round(performance.now() - t0);
@@ -2845,7 +2830,6 @@ function _buildEditor(container) {
   // Harmonize / Canvas Upscale / AI Upscale / Style Transfer +
   // Add-Empty-Layer — full implementation in editor/ai-tools-misc.js.
   const { addEmptyLayer: _addEmptyLayer } = wireAIToolsMisc({
-    apiBase: API_BASE,
     buildLayerBodyMask: _buildLayerBodyMask,
     buildSeamMask: _buildSeamMask,
     applyImageTool: _applyImageTool,
@@ -3103,10 +3087,7 @@ export async function exportToGallery() {
     const formData = new FormData();
     formData.append('file', blob, `edited.${isJpeg ? 'jpg' : 'png'}`);
 
-    const saveRes = await fetch(`${API_BASE}/api/gallery/upload`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: formData,
+    const saveRes = await apiFetch(`/api/gallery/upload`, { method: 'POST', body: formData,
     });
     if (!saveRes.ok) {
       const errBody = await saveRes.text().catch(() => '');
@@ -3203,9 +3184,9 @@ async function _checkRembgInstalled() {
     return;
   }
   try {
-    const r = await fetch('/api/cookbook/packages', { credentials: 'same-origin' });
-    if (!r.ok) throw new Error('packages query failed');
-    const data = await r.json();
+        const dataRes = await api.get('/api/cookbook/packages').catch(() => null);
+    if (!dataRes) { throw new Error('packages query failed'); }
+    const data = dataRes.data;
     const pkg = (data.packages || []).find(p => (p.name || '').toLowerCase() === 'rembg');
     state.rembgInstalledCache = pkg ? !!pkg.installed : null;
   } catch (e) {

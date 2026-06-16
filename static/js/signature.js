@@ -1,3 +1,4 @@
+import { api } from './axios/api.js';
 // static/js/signature.js
 //
 // Reusable signature module. Two entry points:
@@ -12,7 +13,6 @@
 // derived from pointer velocity (slower → thicker), which gives signatures
 // their characteristic ink-bleed feel.
 
-const API_BASE = window.location.origin;
 
 function _esc(s) {
   return String(s ?? '')
@@ -326,27 +326,24 @@ function _modal(innerHtml) {
 }
 
 async function _listSignatures() {
-  const r = await fetch(`${API_BASE}/api/signatures`);
-  if (!r.ok) return [];
-  const data = await r.json();
+    const dataRes = await api.get(`/api/signatures`).catch(() => null);
+  if (!dataRes) { return []; }
+  const data = dataRes.data;
   return data.signatures || [];
 }
 
 async function _saveSignature({ dataUrl, width, height, name }) {
-  const r = await fetch(`${API_BASE}/api/signatures`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ data: dataUrl, width, height, name }),
-  });
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error(t || r.statusText);
+  try {
+    const { data } = await api.post('/api/signatures', { data: dataUrl, width, height, name });
+    return data;
+  } catch (err) {
+    const msg = err.response?.data?.error || err.response?.data?.detail || err.message;
+    throw new Error(msg || 'Request failed');
   }
-  return await r.json();
 }
 
 async function _deleteSignature(id) {
-  await fetch(`${API_BASE}/api/signatures/${id}`, { method: 'DELETE' });
+  await api.delete(`/api/signatures/${id}`);
 }
 
 // Smoothness slider maps a single 0–10 value to the two main knobs.

@@ -6,7 +6,8 @@ import uiModule from './ui.js';
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
 
-const API_BASE = window.location.origin;
+
+import { api } from './axios/api.js';
 
 // ── Recent + Favorites persistence ──
 // Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
@@ -169,8 +170,8 @@ function _initModelPickerDropdown() {
     if (now - _localProbeFetchedAt < _LOCAL_PROBE_TTL_MS) return;
     _localProbeFetchedAt = now;
     try {
-      const r = await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' });
-      if (r.ok) _localProbe = (await r.json()) || {};
+      const { data } = await api.get('/api/model-endpoints/probe-local');
+      _localProbe = data || {};
     } catch (_) { /* leave stale data; picker still works */ }
   }
 
@@ -514,11 +515,7 @@ function _initModelPickerDropdown() {
       fd.append('endpoint_url', m.url);
       if (m.endpointId) fd.append('endpoint_id', m.endpointId);
       try {
-        const res = await fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd });
-        if (!res.ok) {
-          uiModule.showError('Failed to set model');
-          return;
-        }
+        await api.patch(`/api/session/${currentSessionId}`, fd);
         const sessions = _deps.getSessions();
         const s = sessions.find(x => x.id === currentSessionId);
         if (s) { s.model = m.mid; s.endpoint_url = m.url; }
@@ -703,7 +700,7 @@ export function updateModelPicker() {
         fd.append('model', modelId);
         fd.append('endpoint_url', first.url || '');
         if (first.endpoint_id) fd.append('endpoint_id', first.endpoint_id);
-        fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd })
+        api.patch(`/api/session/${currentSessionId}`, fd)
           .catch(() => {})
           .finally(() => { _autoSelectingDefault = false; });
       }

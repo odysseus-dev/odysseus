@@ -9,7 +9,8 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
 
-const API_BASE = window.location.origin;
+import { api } from './axios/api.js';
+
 let _open = false;
 let _tasksCascadeNext = false;   // play the domino-in entrance on the next render
 let _tasks = [];
@@ -24,8 +25,7 @@ const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'S
 
 async function _fetchTasks() {
   try {
-    const res = await fetch(`${API_BASE}/api/tasks`, { credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/tasks`);
     _tasks = data.tasks || [];
   } catch (e) {
     console.error('Failed to fetch tasks:', e);
@@ -36,49 +36,26 @@ async function _fetchTasks() {
 
 async function _runFirstOpenOnboarding() {
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/onboarding`, { credentials: 'same-origin' });
-    if (!res.ok) return;
-    const state = await res.json();
+    const { data: state } = await api.get('/api/tasks/onboarding');
     if (state.opened) return;
-
-    await fetch(`${API_BASE}/api/tasks/onboarding`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: false }),
-    });
+    await api.post('/api/tasks/onboarding', { enabled: false });
   } catch (e) {
     console.warn('Tasks onboarding failed:', e);
   }
 }
 
-async function _createTask(data) {
-  const res = await fetch(`${API_BASE}/api/tasks`, {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error('Failed to create task');
-  return await res.json();
+async function _createTask(taskData) {
+  const { data } = await api.post('/api/tasks', taskData);
+  return data;
 }
 
-async function _updateTask(id, data) {
-  const res = await fetch(`${API_BASE}/api/tasks/${id}`, {
-    method: 'PUT',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error('Failed to update task');
-  return await res.json();
+async function _updateTask(id, taskData) {
+  const { data } = await api.put(`/api/tasks/${id}`, taskData);
+  return data;
 }
 
 async function _deleteTask(id) {
-  const res = await fetch(`${API_BASE}/api/tasks/${id}`, {
-    method: 'DELETE', credentials: 'same-origin',
-  });
-  if (!res.ok) throw new Error('Failed to delete task');
+  await api.delete(`/api/tasks/${id}`);
 }
 
 function _taskCardById(id) {
@@ -97,58 +74,47 @@ function _animateTaskRemoval(ids) {
 }
 
 async function _pauseTask(id) {
-  const res = await fetch(`${API_BASE}/api/tasks/${id}/pause`, {
-    method: 'POST', credentials: 'same-origin',
-  });
-  if (!res.ok) throw new Error('Failed to pause task');
+  await api.post(`/api/tasks/${id}/pause`);
 }
 
 async function _resumeTask(id) {
-  const res = await fetch(`${API_BASE}/api/tasks/${id}/resume`, {
-    method: 'POST', credentials: 'same-origin',
-  });
-  if (!res.ok) throw new Error('Failed to resume task');
+  await api.post(`/api/tasks/${id}/resume`);
 }
 
 async function _runNow(id, force = false) {
-  const res = await fetch(`${API_BASE}/api/tasks/${id}/run${force ? '?force=true' : ''}`, {
-    method: 'POST', credentials: 'same-origin',
-  });
-  if (!res.ok) {
+  try {
+    await api.post(`/api/tasks/${id}/run${force ? '?force=true' : ''}`);
+  } catch (err) {
     // Surface the backend's actual reason — 409 means "already running",
     // 404 task missing, etc. Previously every error rendered as the same
     // generic "Failed to trigger task", which hid the cause.
-    let msg = `Failed to trigger task (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data && data.detail) msg = data.detail;
-    } catch (_) {}
-    if (res.status === 409) msg = 'Task is already running';
+    const status = err.response?.status;
+    const data = err.response?.data;
+    let msg = `Failed to trigger task (${status || 'error'})`;
+    if (data?.detail) msg = data.detail;
+    if (status === 409) msg = 'Task is already running';
     throw new Error(msg);
   }
 }
 
 async function _stopTask(id) {
-  const res = await fetch(`${API_BASE}/api/tasks/${id}/stop`, {
-    method: 'POST',
-    credentials: 'same-origin',
-  });
-  if (!res.ok) {
-    let msg = `Failed to stop task (${res.status})`;
-    try {
-      const data = await res.json();
-      if (data && data.detail) msg = data.detail;
-    } catch (_) {}
+  try {
+    await api.post(`/api/tasks/${id}/stop`);
+  } catch (err) {
+    const status = err.response?.status;
+    const data = err.response?.data;
+    let msg = `Failed to stop task (${status || 'error'})`;
+    if (data?.detail) msg = data.detail;
     throw new Error(msg);
   }
 }
 
 async function _fetchRuns(taskId, limit = 10) {
-  const res = await fetch(`${API_BASE}/api/tasks/${taskId}/runs?limit=${limit}`, {
+    const dataRes = await api.get(`/api/tasks/${taskId}/runs?limit=${limit}`, {
     credentials: 'same-origin',
-  });
-  if (!res.ok) return [];
-  const data = await res.json();
+  }).catch(() => null);
+  if (!dataRes) { return []; }
+  const data = dataRes.data;
   return data.runs || [];
 }
 
@@ -156,8 +122,7 @@ let _outputTargets = null;
 async function _fetchOutputTargets() {
   if (_outputTargets) return _outputTargets;
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/meta/output-targets`, { credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/tasks/meta/output-targets`);
     _outputTargets = data.targets || [];
   } catch (e) {
     _outputTargets = [{ value: 'session', label: 'Session' }];
@@ -169,8 +134,7 @@ let _builtinActions = null;
 async function _fetchActions() {
   if (_builtinActions) return _builtinActions;
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/meta/actions`, { credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/tasks/meta/actions`);
     _builtinActions = data.actions || [];
   } catch (e) {
     _builtinActions = [];
@@ -182,8 +146,8 @@ let _urgentEmailSettings = null;
 async function _fetchUrgentEmailSettings() {
   if (_urgentEmailSettings) return _urgentEmailSettings;
   try {
-    const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
-    _urgentEmailSettings = await res.json();
+    const res = await api.get('/api/auth/settings');
+    _urgentEmailSettings = res.data;
   } catch (e) {
     _urgentEmailSettings = { urgent_email_prompt: '' };
   }
@@ -195,22 +159,16 @@ async function _saveUrgentEmailSettings(prompt) {
     ...(_urgentEmailSettings || {}),
     urgent_email_prompt: prompt || '',
   };
-  await fetch('/api/auth/settings', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+  await api.post('/api/auth/settings', {
       urgent_email_prompt: prompt || '',
-    }),
-  });
+    });
 }
 
 let _triggerEvents = null;
 async function _fetchEvents() {
   if (_triggerEvents) return _triggerEvents;
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/meta/events`, { credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/tasks/meta/events`);
     _triggerEvents = data.events || [];
   } catch (e) {
     _triggerEvents = [];
@@ -1276,7 +1234,7 @@ function _showForm(existing, initTaskType, initTriggerType) {
       });
     } else if (triggerType === 'webhook') {
       if (existing?.webhook_token) {
-        const url = `${API_BASE}/api/tasks/${existing.id}/webhook/${existing.webhook_token}`;
+        const url = `/api/tasks/${existing.id}/webhook/${existing.webhook_token}`;
         triggerOpts.innerHTML = `
           <label class="task-form-label">Webhook URL</label>
           <div style="display:flex;gap:4px;align-items:center;">
@@ -1332,8 +1290,8 @@ function _showForm(existing, initTaskType, initTriggerType) {
   // Populate model dropdown from /api/models. Value is "endpoint_url::model"
   // so a single field encodes both the model name and which endpoint to call.
   // Blank value (option 0) = inherit session default.
-  fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' })
-    .then(r => r.json())
+  api.get(`/api/models`)
+    .then(r => r.data)
     .then(data => {
       const modelSel = document.getElementById('task-form-model');
       if (!modelSel) return;
@@ -1648,8 +1606,7 @@ async function _doRevert(id) {
     : confirm('Revert this built-in task to its default?');
   if (!ok) return;
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/${id}/revert`, { method: 'POST', credentials: 'same-origin' });
-    if (!res.ok) throw new Error('Failed to revert task');
+    await api.post(`/api/tasks/${id}/revert`);
     if (uiModule) uiModule.showToast('Reverted to default');
     await _fetchTasks();
     _renderMainView();
@@ -1662,12 +1619,8 @@ async function _doClearTaskCache(id, label = 'cache') {
     : confirm(`Clear cached ${label} for this task?`);
   if (!ok) return;
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/${encodeURIComponent(id)}/clear-cache`, {
-      method: 'POST',
-      credentials: 'same-origin',
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+    const { data } = await api.post(`/api/tasks/${encodeURIComponent(id)}/clear-cache`);
+    if (!data.ok) throw new Error(data.detail || data.error || 'Clear cache failed');
     const n = Object.values(data.cleared || {}).reduce((a, b) => a + Number(b || 0), 0) + Number(data.files || 0);
     if (uiModule) uiModule.showToast(`Cleared ${label}${n ? ` (${n})` : ''}`);
   } catch (e) {
@@ -1873,9 +1826,9 @@ async function _renderActivityView() {
   }
 
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/runs/recent?limit=100`, { credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+        const dataRes = await api.get(`/api/tasks/runs/recent?limit=100`).catch(() => null);
+    if (!dataRes) { throw new Error(`HTTP ${res.status}`); }
+    const data = dataRes.data;
     const runs = data.runs || [];
     const list = document.getElementById('tasks-activity-list');
     if (!list) return;
@@ -2037,7 +1990,7 @@ function _wireActivityRows(list) {
       e.stopPropagation();
       const idx = parseInt(row.dataset.entryIdx, 10);
       const entry = _activityEntries[idx];
-      if (entry?.researchId) window.open(`${API_BASE}/api/research/report/${encodeURIComponent(entry.researchId)}`, '_blank');
+      if (entry?.researchId) window.open(`/api/research/report/${encodeURIComponent(entry.researchId)}`, '_blank');
     });
     row.querySelector('.task-log-force-run')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -2108,8 +2061,8 @@ async function _openResultInChat(entry) {
     }
     if (!url) {
       try {
-        const dcRes = await fetch(`${API_BASE}/api/default-chat`, { credentials: 'same-origin' });
-        const dc = dcRes.ok ? await dcRes.json() : {};
+        const dcRes = await api.get(`/api/default-chat`);
+        const dc = dcRes.data || {};
         url = dc.endpoint_url || '';
         model = dc.model || model || '';
         epId = dc.endpoint_id || '';
@@ -2137,21 +2090,15 @@ async function _openResultInChat(entry) {
     if (url) fd.append('endpoint_url', url);
     if (model) fd.append('model', model);
     if (epId) fd.append('endpoint_id', epId);
-    const res = await fetch(`${API_BASE}/api/session`, { method: 'POST', credentials: 'same-origin', body: fd });
-    if (!res.ok) { uiModule.showToast(`Couldn't create chat (HTTP ${res.status})`); return; }
-    const sess = await res.json();
+    const { data: sess } = await api.post('/api/session', fd);
     const sid = sess.id || sess.session_id;
     if (!sid) { uiModule.showToast('Chat created but no session id returned'); return; }
 
     // Seed the conversation: a framing user line + the result as assistant.
-    await fetch(`${API_BASE}/api/session/${sid}/inject_messages`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages: [
+    await api.post(`/api/session/${sid}/inject_messages`, { messages: [
         { role: 'user', content: `Here is the latest run of my scheduled task "${entry.taskName}". Let's review it.` },
         { role: 'assistant', content: entry.result || '(no output)' },
-      ] }),
-    });
+      ] });
 
     closeTasks();
     if (window.sessionModule) {
@@ -2159,7 +2106,7 @@ async function _openResultInChat(entry) {
       if (window.sessionModule.selectSession) window.sessionModule.selectSession(sid);
     }
   } catch (e) {
-    uiModule.showToast(`Open in chat failed: ${e.message || e}`);
+    uiModule.showToast(`Open in chat failed: ${e.response?.data?.detail || e.message}`);
   }
 }
 
@@ -2406,12 +2353,11 @@ async function _aiDraftTask(inputEl, btnEl) {
   btnEl.appendChild(_spEl);
   _sp.start();
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/parse`, {
+        const { data } = await api.get(`/api/tasks/parse`, {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: desc }),
     });
-    const data = await res.json();
     if (!data.success || !data.draft) {
       if (uiModule) uiModule.showError(data.message || 'Could not draft task');
       return;
@@ -2680,9 +2626,9 @@ let _notifInterval = null;
 
 async function _pollTaskNotifications() {
   try {
-    const res = await fetch(`${API_BASE}/api/tasks/notifications`, { credentials: 'same-origin' });
-    if (!res.ok) return;
-    const data = await res.json();
+        try {
+    const { data: data } = await api.get(`/api/tasks/notifications`);
+    } catch { return; }
     const notes = data.notifications || [];
     for (const n of notes) {
       const ok = n.status === 'success';

@@ -5,6 +5,7 @@
 // ============================================
 
 import uiModule from './ui.js';
+import { api, apiFetch } from './axios/api.js';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 
 // Shared state/functions injected by init()
@@ -262,12 +263,7 @@ export function _wirePanelEvents(panel, model, backend) {
       const outputText = panel.querySelector('.cookbook-output-pre')?.textContent || '';
       const tmuxMatch = outputText.match(/Started tmux session: (cookbook-[a-f0-9]+)/);
       if (tmuxMatch) {
-        fetch('/api/shell/exec', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: `tmux kill-session -t ${tmuxMatch[1]} 2>/dev/null` }),
-        }).catch(() => {});
+        api.post('/api/shell/exec', { command: `tmux kill-session -t ${tmuxMatch[1]} 2>/dev/null` }).catch(() => {});
       }
       const wrap = panel.querySelector('.cookbook-output-wrap');
       if (wrap) wrap.classList.add('hidden');
@@ -366,9 +362,8 @@ export async function _runPanelCmd(panel, cmd, opts = {}) {
   if (opts.use_tmux) payload.use_tmux = true;
 
   try {
-    const res = await fetch('/api/shell/stream', {
+    const res = await apiFetch('/api/shell/stream', {
       method: 'POST',
-      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: controller.signal,
@@ -550,12 +545,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       const _sshPf = _zh ? `ssh ${_zPort && _zPort !== '22' ? `-p ${_zPort} ` : ''}${_zh} '` : '';
       const _sshSf = _zh ? `'` : '';
       const _probeCmd = `${_sshPf}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null${_sshSf}`;
-      const _r = await fetch('/api/shell/exec', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: _probeCmd, timeout: 5 }),
-      });
-      const _d = await _r.json();
+      const { data: _d } = await api.post('/api/shell/exec', { command: _probeCmd, timeout: 5 });
       if (_d.exit_code === 0) {
         // tmux still alive → not actually done. Revive + tell the user.
         const _fresh = _loadTasks();
@@ -584,19 +574,7 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   }
 
   try {
-    const res = await fetch('/api/model/download', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      // Errors carry actionable text (e.g. "tmux is required …"); keep them up
-      // long enough to read, matching the serve path's duration (issue #1355).
-      uiModule.showToast('Download failed: HTTP ' + res.status, 9000);
-      return;
-    }
-    const data = await res.json();
+    const { data } = await api.post('/api/model/download', payload);
     if (!data.ok) {
       uiModule.showToast('Download failed: ' + (data.error || ''), 9000);
       return;
@@ -604,6 +582,13 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     _addTask(data.session_id, shortName, 'download', payload);
     uiModule.showToast(`Downloading ${shortName}...`);
   } catch (e) {
+    const status = e.response?.status;
+    // Errors carry actionable text (e.g. "tmux is required …"); keep them up
+    // long enough to read, matching the serve path's duration (issue #1355).
+    if (status) {
+      uiModule.showToast('Download failed: HTTP ' + status, 9000);
+      return;
+    }
     uiModule.showToast('Download failed: ' + e.message, 9000);
   }
 }

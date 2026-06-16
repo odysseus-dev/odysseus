@@ -42,6 +42,8 @@
  */
 import { state } from './state.js';
 
+import { api } from '../axios/api.js';
+
 export function wireInpaintButtons({
   buildMergedMaskCanvas, dilateMask, applyInpaintFeather,
   getSelectedAIEndpoint, ensureActiveMaskLayer,
@@ -136,20 +138,10 @@ export function wireInpaintButtons({
       const dilatedMask = dilateMask(mergedMask, padPx);
       const imageB64 = flatCanvas.toDataURL('image/png').split(',')[1];
       const maskB64 = dilatedMask.toDataURL('image/png').split(',')[1];
-      const res = await fetch('/api/image/inpaint', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify((() => {
+      const { data } = await api.post('/api/image/inpaint', (() => {
           const sel = getSelectedAIEndpoint('inpaint');
           return { image: imageB64, mask: maskB64, prompt, width: state.imgWidth, height: state.imgHeight, strength, feather: 0, _endpoint: sel.endpoint, _model: sel.model };
-        })()),
-      });
-      if (!res.ok) {
-        let errDetail = res.statusText;
-        try { const errBody = await res.json(); errDetail = errBody.detail || errBody.error || errDetail; } catch {}
-        throw new Error(errDetail);
-      }
-      const data = await res.json();
+        })());
       if (data.error) throw new Error(data.error);
       if (!data.image) throw new Error('No image returned from inpaint endpoint');
       // Load result as a new layer and clip with the user-drawn mask

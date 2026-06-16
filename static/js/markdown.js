@@ -7,6 +7,7 @@
 import uiModule from './ui.js';
 import { splitTableRow } from './markdown/tableRow.js';
 import { replaceEmojiShortcodes, hasEmojiShortcode } from './emojiShortcodes.js';
+import { api } from './axios/api.js';
 
 var escapeHtml = uiModule.esc;
 
@@ -953,42 +954,31 @@ async function _registerEndpointFromButton(btn) {
   btn.disabled = true;
   btn.innerHTML = '<span aria-hidden="true">...</span><span>Adding</span>';
   try {
-    const existingRes = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
-    if (existingRes.ok) {
-      const endpoints = await existingRes.json();
-      const existing = Array.isArray(endpoints)
-        ? endpoints.find((ep) => String(ep.base_url || '').replace(/\/+$/, '') === baseUrl)
-        : null;
-      if (existing) {
-        btn.classList.add('added');
-        btn.innerHTML = '<span aria-hidden="true">✓</span><span>Already added</span>';
-        window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { baseUrl } }));
-        if (window.modelsModule?.refreshModels) window.modelsModule.refreshModels(true);
-        if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
-        uiModule.showToast?.(`Already in model picker: ${existing.name || _endpointNameFromUrl(baseUrl)}`);
-        return;
-      }
+    const { data: endpoints } = await api.get('/api/model-endpoints');
+    const existing = Array.isArray(endpoints)
+      ? endpoints.find((ep) => String(ep.base_url || '').replace(/\/+$/, '') === baseUrl)
+      : null;
+    if (existing) {
+      btn.classList.add('added');
+      btn.innerHTML = '<span aria-hidden="true">✓</span><span>Already added</span>';
+      window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { baseUrl } }));
+      if (window.modelsModule?.refreshModels) window.modelsModule.refreshModels(true);
+      if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
+      uiModule.showToast?.(`Already in model picker: ${existing.name || _endpointNameFromUrl(baseUrl)}`);
+      return;
     }
 
     const parsed = new URL(baseUrl, window.location.origin);
-    const fd = new FormData();
-    fd.append('base_url', baseUrl);
-    fd.append('name', _endpointNameFromUrl(baseUrl));
-    fd.append('model_type', 'llm');
-    fd.append('endpoint_kind', 'auto');
-    fd.append('skip_probe', 'true');
+    const formData = new FormData();
+    formData.append('base_url', baseUrl);
+    formData.append('name', _endpointNameFromUrl(baseUrl));
+    formData.append('model_type', 'llm');
+    formData.append('endpoint_kind', 'auto');
+    formData.append('skip_probe', 'true');
     if (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(parsed.hostname)) {
-      fd.append('container_local', 'true');
+      formData.append('container_local', 'true');
     }
-    const res = await fetch('/api/model-endpoints', {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: fd,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}${body ? ': ' + body.slice(0, 160) : ''}`);
-    }
+    await api.post('/api/model-endpoints', formData);
     btn.classList.add('added');
     btn.innerHTML = '<span aria-hidden="true">✓</span><span>Added</span>';
     window.dispatchEvent(new CustomEvent('ge:model-endpoints-updated', { detail: { baseUrl } }));

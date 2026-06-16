@@ -8,6 +8,8 @@ import * as Modals from './modalManager.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { attachColorPicker } from './colorPicker.js';
 import { bindMenuDismiss } from './escMenuStack.js';
+import { api, apiPath } from './axios/api.js';
+
 import {
   WEEKDAYS, WEEKDAYS_SUN, MONTHS, MON_SHORT,
   CAL_PALETTE, CAL_COLORS, _CAL_CUSTOM_GRADIENT, _TYPE_PALETTE,
@@ -17,7 +19,6 @@ import {
   _ds, _addDays, _shiftDT, _tzOffset, _localDateOf,
 } from './calendar/utils.js';
 
-const API_BASE = window.location.origin;
 // Open a file picker, upload the chosen image, return the URL string.
 function _pickCalBgImage() {
   return new Promise(resolve => {
@@ -34,11 +35,10 @@ function _pickCalBgImage() {
       const fd = new FormData();
       fd.append('files', file);
       try {
-        const res = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
-        const data = await res.json();
+                const { data } = await api.get(`/api/upload`, { method: 'POST', body: fd, credentials: 'same-origin' });
         const fileId = data.files?.[0]?.id;
         if (!fileId) throw new Error('Upload failed');
-        finish(`${API_BASE}/api/upload/${fileId}`);
+        finish(`/api/upload/${fileId}`);
       } catch { finish(null); }
     });
     setTimeout(() => { if (!done && !input.files?.length) finish(null); }, 30000);
@@ -119,11 +119,8 @@ async function _fetchEvents(start, end, force) {
   // Render from pool immediately if we have any cached data
   const hasCache = Object.keys(_allEvents).length > 0;
   if (hasCache) _events = _filterPool(start, end);
-  const fetchPromise = fetch(`${API_BASE}/api/calendar/events?start=${start}&end=${end}`, { credentials: 'same-origin' })
-    .then(r => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    })
+  const fetchPromise = api.get(`/api/calendar/events?start=${start}&end=${end}`)
+    .then(r => r.data)
     .then(data => {
       // On first fetch after cache load, replace pool entirely to avoid
       // stale/duplicate UIDs from a previous backend (e.g. CalDAV → SQLite)
@@ -160,11 +157,8 @@ function _prefetchAdjacent() {
   // Fire all prefetches in parallel, ignore failures
   for (const [s, e] of ranges) {
     if (_rangeIsCached(s, e)) continue;
-    fetch(`${API_BASE}/api/calendar/events?start=${s}&end=${e}`, { credentials: 'same-origin' })
-      .then(r => {
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-      })
+    api.get(`/api/calendar/events?start=${s}&end=${e}`)
+      .then(r => r.data)
       .then(d => {
         (d.events || []).forEach(ev => { _allEvents[ev.uid] = ev; });
         _fetchedRanges.push([s, e]);
@@ -181,8 +175,7 @@ let _caldavSyncedOnce = false;
 async function _fetchCalendars() {
   _calendarsError = null;
   try {
-    const res = await fetch(`${API_BASE}/api/calendar/calendars`, { credentials: 'same-origin' });
-    const data = await res.json();
+        const { data } = await api.get(`/api/calendar/calendars`);
     _calendars = data.calendars || [];
     if (data.error) _calendarsError = data.error;
     _calendars.forEach((c, i) => {
@@ -204,10 +197,7 @@ async function _fetchCalendars() {
 // no-op silently if CalDAV isn't configured.
 async function _syncCaldav(interactive) {
   try {
-    const res = await fetch(`${API_BASE}/api/calendar/sync`, {
-      method: 'POST', credentials: 'same-origin',
-    });
-    const data = await res.json().catch(() => ({}));
+    const { data: data } = await api.post(`/api/calendar/sync`).catch(() => ({}));
     if (interactive) return data;
     // Background path: if the pull actually changed anything, drop
     // local caches and re-render so new events appear.
@@ -250,13 +240,7 @@ function _optimisticEvent(data, uid) {
 async function _createEvent(data) {
   const tempUid = 'temp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
   _allEvents[tempUid] = _optimisticEvent(data, tempUid);
-  fetch(`${API_BASE}/api/calendar/events`, {
-    method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-  }).then(async r => {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }).then(d => {
+  api.post(`/api/calendar/events`, data).then(r => r.data).then(d => {
     if (d.uid) {
       delete _allEvents[tempUid];
       _allEvents[d.uid] = _optimisticEvent(data, d.uid);
@@ -280,11 +264,7 @@ async function _updateEvent(uid, data) {
   // other occurrences of the same series are stale. Wipe the cache so
   // a re-fetch picks up fresh data (next render + prefetch handles it).
   const isRecurring = uid.includes('::');
-  fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
-    method: 'PUT', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-  }).then(r => {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+  api.put(`/api/calendar/events/${encodeURIComponent(uid)}`, data).then(r => {
     if (isRecurring) {
       _fetchedRanges = [];
       localStorage.removeItem(LS_KEY);
@@ -327,21 +307,24 @@ async function _deleteEvent(uid) {
   if (_open) _render();
   _updateBadge && _updateBadge();
   const isRecurring = uid.includes('::');
-  fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(uid)}`, {
-    method: 'DELETE', credentials: 'same-origin',
-  }).then(r => {
-    // 404 = the event was already deleted by another session/device. That's
-    // exactly the state we want, so treat it as success — don't restore the
-    // row, otherwise the user can never clear stale cached events that were
-    // deleted from desktop while mobile was open (and vice versa).
-    if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+  const _onDeleteSuccess = () => {
     if (isRecurring) {
       _fetchedRanges = [];
       localStorage.removeItem(LS_KEY);
     } else {
       _saveCache && _saveCache();
     }
-  }).catch((e) => {
+  };
+  api.delete(`/api/calendar/events/${encodeURIComponent(uid)}`)
+  .then(_onDeleteSuccess).catch((e) => {
+    // 404 = the event was already deleted by another session/device. That's
+    // exactly the state we want, so treat it as success — don't restore the
+    // row, otherwise the user can never clear stale cached events that were
+    // deleted from desktop while mobile was open (and vice versa).
+    if (e?.response?.status === 404) {
+      _onDeleteSuccess();
+      return;
+    }
     // Server rejected — restore every uid we optimistically stripped.
     for (const [k, ev] of Object.entries(backups)) {
       _allEvents[k] = ev;
@@ -531,12 +514,7 @@ async function _createEventReminder(ev, dueDate) {
     event_dtstart: new Date(ev.dtstart).toISOString(),
   };
   try {
-    const res = await fetch(`/api/notes`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) throw new Error('Failed');
+    await api.post(`/api/notes`, payload);
     const fmt = dueDate.toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
     if (uiModule.showToast) uiModule.showToast(`Reminder set for ${fmt}`);
     try { window.notesModule?.refreshDueBadge?.({ force: true }); } catch {}
@@ -1965,13 +1943,7 @@ function _wireAll(body) {
       try {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
         const tzOffset = -new Date().getTimezoneOffset();
-        const res = await fetch(`${API_BASE}/api/calendar/quick-parse`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, tz, tz_offset: tzOffset }),
-        });
-        const data = await res.json().catch(() => ({}));
+        const { data: data } = await api.post(`/api/calendar/quick-parse`, { text, tz, tz_offset: tzOffset }).catch(() => ({}));
         if (!res.ok || !data.ok) {
           if (_qaStatus) _qaStatus.textContent = '';
           uiModule.showError('Quick-add: ' + (data.error || data.detail || `HTTP ${res.status}`));
@@ -2555,8 +2527,7 @@ async function _showCalSettings() {
     btn.disabled = true;
     const color = COLORS[_calendars.length % COLORS.length];
     try {
-      const r = await fetch(`${API_BASE}/api/calendar/calendars?name=${encodeURIComponent('New calendar')}&color=${encodeURIComponent(color)}`, { method: 'POST', credentials: 'same-origin' });
-      const d = await r.json().catch(() => ({}));
+      const { data: d } = await api.post(`/api/calendar/calendars?name=${encodeURIComponent('New calendar')}&color=${encodeURIComponent(color)}`).catch(() => ({}));
       if (!r.ok || !d.ok) throw new Error(d.error || 'Failed to create calendar');
       _calendars.push({ name: d.name, href: d.id, color: d.color });
       _allEvents = {}; _fetchedRanges = []; localStorage.removeItem(LS_KEY);
@@ -2588,7 +2559,7 @@ async function _showCalSettings() {
     const save = () => {
       clearTimeout(saveTimer);
       saveTimer = setTimeout(async () => {
-        await fetch(`${API_BASE}/api/calendar/calendars/${id}?name=${encodeURIComponent(nameInput.value)}&color=${encodeURIComponent(colorInput.value)}`, { method: 'PUT' });
+        await api.put(`/api/calendar/calendars/${id}?name=${encodeURIComponent(nameInput.value)}&color=${encodeURIComponent(colorInput.value)}`);
         if (uiModule?.showToast) uiModule.showToast(`Saved “${nameInput.value || 'calendar'}”`);
         // Update local calendar list
         const c = _calendars.find(c => c.href === id);
@@ -2613,7 +2584,7 @@ async function _showCalSettings() {
     delBtn.addEventListener('click', async () => {
       const name = nameInput.value;
       if (!await window.styledConfirm(`Delete calendar "${name}" and all its events?`, { confirmText: 'Delete', danger: true })) return;
-      await fetch(`${API_BASE}/api/calendar/calendars/${id}`, { method: 'DELETE' });
+      await api.delete(`/api/calendar/calendars/${id}`);
       row.remove();
       _allEvents = {}; _fetchedRanges = []; localStorage.removeItem(LS_KEY);
       _calendars = _calendars.filter(c => c.href !== id);
@@ -2630,12 +2601,12 @@ async function _showCalSettings() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${API_BASE}/api/calendar/import`, { method: 'POST', body: fd, credentials: 'same-origin' });
+      const res = await api.post(`/api/calendar/import`, fd);
       // Try JSON first; fall back to text so HTML auth-walls and bare
       // 500s surface something the user can act on instead of the
       // generic "Import failed".
       let data = null, raw = '';
-      try { data = await res.clone().json(); } catch (_) { raw = await res.text().catch(() => ''); }
+      try { data = res.data; } catch (_) { raw = await res.text().catch(() => ''); }
       if (res.ok && data && data.ok) {
         status.textContent = `${data.imported} events imported to "${data.calendar}"` + (data.skipped ? ` (${data.skipped} skipped)` : '');
         _allEvents = {}; _fetchedRanges = []; localStorage.removeItem(LS_KEY);
@@ -2657,7 +2628,7 @@ async function _showCalSettings() {
   // Export chips — one per calendar; downloads that calendar's .ics.
   overlay.querySelectorAll('.cal-s-export-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      window.open(`${API_BASE}/api/calendar/export/${chip.dataset.id}`, '_blank');
+      window.open(`/api/calendar/export/${chip.dataset.id}`, '_blank');
     });
   });
 

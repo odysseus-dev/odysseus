@@ -1,4 +1,6 @@
 // static/js/censor.js
+import { api } from './axios/api.js';
+
 /**
  * Sensitive Information Censor Module
  * Detects emails, passwords, API keys, tokens, etc. in chat responses
@@ -59,8 +61,8 @@ export function init() {
 
 function _loadState() {
   // Check admin feature flag
-  fetch('/api/auth/features', { credentials: 'same-origin' })
-    .then(r => r.json())
+  api.get('/api/auth/features')
+    .then(res => res.data)
     .then(features => {
       _enabled = features.sensitive_filter !== false && _prefEnabled();
       // Start observer after loading state

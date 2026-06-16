@@ -8,21 +8,16 @@
 import uiModule from './ui.js';
 import { selectSession } from './sessions.js';
 import { sortModelIds } from './modelSort.js';
+import { api } from './axios/api.js';
 
 const API = '/api/assistant';
 
 let _cachedSettings = null;   // most recent GET /api/assistant/settings payload
 let _modalEl = null;
 
-async function _fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { credentials: 'same-origin', ...opts });
-  if (!res.ok) throw new Error(`${url} → ${res.status}`);
-  return res.json();
-}
-
 export async function openAssistantChat() {
   try {
-    const info = await _fetchJSON(`${API}/session`);
+    const { data: info } = await api.get(`${API}/session`);
     if (!info?.session_id) {
       uiModule.showToast('Assistant session unavailable');
       return;
@@ -38,25 +33,20 @@ export async function openAssistantChat() {
 
 async function _getSettings(force = false) {
   if (!force && _cachedSettings) return _cachedSettings;
-  _cachedSettings = await _fetchJSON(`${API}/settings`);
+  const { data } = await api.get(`${API}/settings`);
+  _cachedSettings = data;
   return _cachedSettings;
 }
 
 async function _saveSettings(payload) {
-  const res = await fetch(`${API}/settings`, {
-    method: 'PATCH',
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(`PATCH ${API}/settings → ${res.status}`);
-  _cachedSettings = await res.json();
+  const { data } = await api.patch(`${API}/settings`, payload);
+  _cachedSettings = data;
   return _cachedSettings;
 }
 
 async function _listTimezones() {
   try {
-    const { timezones } = await _fetchJSON(`${API}/available-timezones`);
+    const { data: { timezones } } = await api.get(`${API}/available-timezones`);
     return timezones || ['UTC'];
   } catch {
     return ['UTC'];
@@ -65,10 +55,7 @@ async function _listTimezones() {
 
 async function _runCheckInNow(taskId) {
   try {
-    await fetch(`${API}/run/${encodeURIComponent(taskId)}`, {
-      method: 'POST',
-      credentials: 'same-origin',
-    });
+    await api.post(`${API}/run/${encodeURIComponent(taskId)}`);
     uiModule.showToast('Check-in running…');
   } catch (e) {
     console.error(e);
@@ -128,13 +115,6 @@ const TOOL_GROUPS = {
   'AI & Models': ['chat_with_model', 'second_opinion', 'ask_teacher', 'pipeline', 'list_models', 'generate_image'],
   'System': ['manage_session', 'manage_endpoints', 'manage_mcp', 'manage_settings', 'manage_skills', 'manage_webhooks', 'manage_tokens', 'manage_documents', 'create_session', 'list_sessions', 'send_to_session', 'ui_control'],
 };
-
-async function _fetchEndpoints() {
-  try {
-    const eps = await _fetchJSON('/api/model-endpoints');
-    return Array.isArray(eps) ? eps : [];
-  } catch { return []; }
-}
 
 function _renderSettingsBody(body, data, tzList) {
   const crew = data.crew || {};
@@ -231,37 +211,47 @@ function _renderSettingsBody(body, data, tzList) {
   // ── Populate model/endpoint dropdowns ──
   const epSelect = body.querySelector('#assistant-endpoint');
   const modelSelect = body.querySelector('#assistant-model');
-  _fetchEndpoints().then(endpoints => {
-    let epHTML = '<option value="">(use session default)</option>';
-    for (const ep of endpoints) {
-      if (!ep.is_enabled) continue;
-      const url = ep.base_url || '';
-      const name = ep.name || url;
-      const sel = (crew.endpoint_url && url.includes(crew.endpoint_url.replace('/v1', '').replace(/\/$/, ''))) ? ' selected' : '';
-      epHTML += `<option value="${_esc(url)}"${sel}>${_esc(name)}</option>`;
-    }
-    epSelect.innerHTML = epHTML;
-    // When endpoint changes, load its models
-    epSelect.addEventListener('change', async () => {
-      const url = epSelect.value;
-      if (!url) { modelSelect.innerHTML = '<option value="">(default)</option>'; return; }
-      const ep = endpoints.find(e => e.base_url === url);
-      if (!ep) return;
-      modelSelect.innerHTML = '<option value="">loading...</option>';
-      try {
-        const models = await _fetchJSON(`/api/model-endpoints/${ep.id}/models`);
-        let mHTML = '';
-        const modelIds = (models.models || models || []).map(m => typeof m === 'string' ? m : (m.id || m.name || '')).filter(Boolean);
-        for (const mid of sortModelIds(modelIds)) {
-          const sel = mid === crew.model ? ' selected' : '';
-          mHTML += `<option value="${_esc(mid)}"${sel}>${_esc(mid.split('/').pop())}</option>`;
+  api.get('/api/model-endpoints')
+    .then(({ data: endpoints }) => {
+      if (!Array.isArray(endpoints)) return;
+      let epHTML = '<option value="">(use session default)</option>';
+      for (const ep of endpoints) {
+        if (!ep.is_enabled) continue;
+        const url = ep.base_url || '';
+        const name = ep.name || url;
+        const sel = (crew.endpoint_url && url.includes(crew.endpoint_url.replace('/v1', '').replace(/\/$/, ''))) ? ' selected' : '';
+        epHTML += `<option value="${_esc(url)}"${sel}>${_esc(name)}</option>`;
+      }
+      epSelect.innerHTML = epHTML;
+      // When endpoint changes, load its models
+      epSelect.addEventListener('change', async () => {
+        const url = epSelect.value;
+        if (!url) {
+          modelSelect.innerHTML = '<option value="">(default)</option>';
+          return;
         }
-        modelSelect.innerHTML = mHTML || '<option value="">(no models)</option>';
-      } catch { modelSelect.innerHTML = '<option value="">(failed)</option>'; }
+        const ep = endpoints.find(e => e.base_url === url);
+        if (!ep) return;
+        modelSelect.innerHTML = '<option value="">loading...</option>';
+        try {
+          const { data: models } = await api.get(`/api/model-endpoints/${ep.id}/models`);
+          let mHTML = '';
+          const modelIds = (models.models || models || []).map(m => typeof m === 'string' ? m : (m.id || m.name || '')).filter(Boolean);
+          for (const mid of sortModelIds(modelIds)) {
+            const sel = mid === crew.model ? ' selected' : '';
+            mHTML += `<option value="${_esc(mid)}"${sel}>${_esc(mid.split('/').pop())}</option>`;
+          }
+          modelSelect.innerHTML = mHTML || '<option value="">(no models)</option>';
+        } catch {
+          modelSelect.innerHTML = '<option value="">(failed)</option>';
+        }
+      });
+      // Trigger initial model load if endpoint is pre-selected
+      if (epSelect.value) epSelect.dispatchEvent(new Event('change'));
+    })
+    .catch(() => {
+      epSelect.innerHTML = '<option value="">(use session default)</option>';
     });
-    // Trigger initial model load if endpoint is pre-selected
-    if (epSelect.value) epSelect.dispatchEvent(new Event('change'));
-  });
 
   // ── Tool toggle buttons ──
   body.querySelector('#assistant-tools-all')?.addEventListener('click', () => {
@@ -278,8 +268,8 @@ function _renderSettingsBody(body, data, tzList) {
     (async () => {
       try {
         const [presetsRaw, templates] = await Promise.all([
-          _fetchJSON('/api/presets').catch(() => ({})),
-          _fetchJSON('/api/presets/templates').catch(() => []),
+          api.get('/api/presets').then(res => res.data).catch(() => ({})),
+          api.get('/api/presets/templates').then(res => res.data).catch(() => []),
         ]);
         // Presets API returns a dict keyed by preset ID, not an array
         const allPresets = [];
@@ -380,9 +370,7 @@ function _renderSettingsBody(body, data, tzList) {
       const sid = _cachedSettings?.crew?.session_id;
       const _poll = setInterval(async () => {
         try {
-          const res = await fetch(`${API}/run-status/${encodeURIComponent(taskId)}`, { credentials: 'same-origin' });
-          if (!res.ok) return;
-          const data = await res.json();
+          const { data } = await api.get(`${API}/run-status/${encodeURIComponent(taskId)}`);
           if (data.status === 'done' || data.status === 'error') {
             clearInterval(_poll);
             // Hard navigate to force full reload of the session

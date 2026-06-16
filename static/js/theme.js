@@ -7,6 +7,7 @@ import { initColorPickers, attachColorPicker } from './colorPicker.js';
 import { hexToRgb } from './color/hex.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
+import { api, apiPath } from './axios/api.js';
 
 export const THEMES = {
   dark:       { bg:'#282c34', fg:'#9cdef2', panel:'#111111', border:'#355a66', red:'#e06c75' },
@@ -81,8 +82,23 @@ const THEME_DEFAULT_FROSTED = {
 };
 
 // ── Custom theme persistence ──
+function _isValidThemeColors(c) {
+  return c && typeof c === 'object' && c.bg && c.fg && c.panel && c.red;
+}
 function _loadCustomThemes() {
-  return Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  const raw = Storage.getJSON(CUSTOM_THEMES_KEY, {});
+  if (!raw || typeof raw !== 'object') return {};
+  const cleaned = {};
+  let changed = false;
+  for (const [name, colors] of Object.entries(raw)) {
+    if (typeof name === 'string' && name && _isValidThemeColors(colors)) {
+      cleaned[name] = colors;
+    } else {
+      changed = true;
+    }
+  }
+  if (changed) _saveCustomThemes(cleaned);
+  return cleaned;
 }
 function _saveCustomThemes(obj) {
   Storage.setJSON(CUSTOM_THEMES_KEY, obj);
@@ -118,12 +134,8 @@ export function deleteCustomTheme(name) {
 }
 function _syncCustomThemesToServer(ct) {
   try {
-    fetch('/api/prefs/custom-themes', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ value: ct }),
-    }).catch(e => console.warn('Theme sync (custom) failed:', e));
+    api.put('/api/prefs/custom-themes', { value: ct }, { credentials: 'same-origin' })
+      .catch(e => console.warn('Theme sync (custom) failed:', e));
   } catch (e) { console.warn('Theme sync (custom) error:', e); }
 }
 
@@ -465,21 +477,14 @@ export function save(name, colors, opts) {
 }
 
 function _syncToServer(obj) {
-  try {
-    fetch('/api/prefs/theme', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ value: obj }),
-    }).catch(e => console.warn('Theme sync failed:', e));
-  } catch (e) { console.warn('Theme sync error:', e); }
+    api.put('/api/prefs/theme', { value: obj }, { credentials: 'same-origin' })
+      .catch(err => console.warn('Theme sync failed:', err));
 }
 
 async function _loadFromServer() {
   try {
-    const res = await fetch('/api/prefs/theme', { credentials: 'same-origin' });
-    const data = await res.json();
-    return data.value || null;
+    const res = await api.get('/api/prefs/theme', { credentials: 'same-origin' });
+    return res.data?.value || null;
   } catch { return null; }
 }
 
@@ -637,7 +642,7 @@ export function initThemeUI() {
   // Render custom theme swatches into separate card
   const userGrid = document.getElementById('themeUserGrid');
   const userCard = document.getElementById('themeUserCard');
-  const customEntries = Object.entries(customThemes);
+  const customEntries = Object.entries(customThemes).filter(([, c]) => _isValidThemeColors(c));
   if (customEntries.length > 0 && userGrid && userCard) {
     userCard.style.display = '';
     userGrid.innerHTML = customEntries.map(([name, c]) => `
@@ -1105,8 +1110,8 @@ export function initThemeUI() {
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
     // Fetch custom fonts from local folder and populate dropdown
-    fetch('/api/fonts/custom', { credentials: 'same-origin' })
-      .then(r => r.json())
+    api.get('/api/fonts/custom')
+      .then(res => res.data)
       .then(data => {
         _customFonts = data.fonts || {};
         const families = Object.keys(_customFonts);
@@ -2064,14 +2069,14 @@ async function _initWithSync() {
   }
   // Also sync custom themes from server
   try {
-    const res = await fetch('/api/prefs/custom-themes', { credentials: 'same-origin' });
-    const data = await res.json();
-    if (data.value && typeof data.value === 'object') {
+    const { data } = await api.get('/api/prefs/custom-themes', { credentials: 'same-origin' });
+    const customThemes = data?.value;
+    if (customThemes && typeof customThemes === 'object') {
       const local = _loadCustomThemes();
       // Merge: server themes fill in missing local ones
       let changed = false;
-      for (const [name, colors] of Object.entries(data.value)) {
-        if (!local[name]) { local[name] = colors; changed = true; }
+      for (const [name, colors] of Object.entries(customThemes)) {
+        if (!local[name] && _isValidThemeColors(colors)) { local[name] = colors; changed = true; }
       }
       if (changed) _saveCustomThemes(local);
     }

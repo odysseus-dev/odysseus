@@ -16,6 +16,8 @@
 // BUILTIN_ACTIONS + src/cookbook_serve_lifecycle.py + its
 // registration line in app.py.
 
+import { api } from './axios/api.js';
+
 try { (function () {
   function _safe(fn) {
     return function () {
@@ -274,17 +276,23 @@ try { (function () {
       saveBtn.disabled = true;
       saveBtn.textContent = "Saving…";
       try {
-        const r = await fetch("/api/tasks", {
-          method: "POST", credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const data = await r.json();
-        if (!r.ok || data.error) {
-          fail(data.error || data.detail || `HTTP ${r.status}`);
+        let data;
+        try {
+          ({ data } = await api.post('/api/tasks', payload));
+        } catch (err) {
+          const errBody = err.response?.data || {};
+          const errMsg = errBody.error || errBody.detail || err.message || `HTTP ${err.response?.status || 'error'}`;
+          fail(errMsg);
           saveBtn.disabled = false;
-          saveBtn.textContent = "Save schedule";
-          toast(`Schedule save failed: ${data.error || data.detail || r.status}`);
+          saveBtn.textContent = 'Save schedule';
+          toast(`Schedule save failed: ${errMsg}`);
+          return;
+        }
+        if (data.error) {
+          fail(data.error || data.detail || 'unknown');
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'Save schedule';
+          toast(`Schedule save failed: ${data.error || data.detail || 'unknown'}`);
           return;
         }
         if (mirrorToCalendar) {
@@ -293,20 +301,19 @@ try { (function () {
           // Best-effort: if anything here fails, we still consider the
           // task creation a success (the task itself works regardless).
           try {
-            const calsRes = await fetch("/api/calendar/calendars", { credentials: "same-origin" });
-            const calsBody = calsRes.ok ? await calsRes.json() : {};
-            let cookbookCal = (calsBody.calendars || []).find(c => (c.name || "").toLowerCase() === "cookbook");
+            let calsBody = {};
+            try {
+              ({ data: calsBody } = await api.get('/api/calendar/calendars'));
+            } catch (_) {}
+            let cookbookCal = (calsBody.calendars || []).find(c => (c.name || '').toLowerCase() === 'cookbook');
             if (!cookbookCal) {
-              const mk = await fetch("/api/calendar/calendars?name=Cookbook&color=%233b82f6", {
-                method: "POST", credentials: "same-origin",
-              });
-              if (mk.ok) {
-                const mkData = await mk.json();
+              try {
+                const { data: mkData } = await api.post('/api/calendar/calendars?name=Cookbook&color=%233b82f6');
                 // The create endpoint returns {ok, id, name, color}; the
                 // list endpoint returns {href, name, color}. The two map
                 // 1:1 (href === id) so we synthesize the same shape.
                 cookbookCal = { href: mkData.id, name: mkData.name, color: mkData.color };
-              }
+              } catch (_) {}
             }
             // The `cookbook_task_id:` marker on its own line lets
             // calendar.js's event-form code detect that this event was
@@ -328,12 +335,10 @@ try { (function () {
               color: "#3b82f6",
             };
             if (cookbookCal?.href) evBody.calendar_href = cookbookCal.href;
-            const evRes = await fetch("/api/calendar/events", {
-              method: "POST", credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(evBody),
-            });
-            const evData = evRes.ok ? await evRes.json() : null;
+            let evData = null;
+            try {
+              ({ data: evData } = await api.post('/api/calendar/events', evBody));
+            } catch (_) {}
             // Stash the event uid + calendar href on the task's prompt
             // JSON so the task-delete hook can cascade the calendar
             // cleanup. PATCH the task with an updated prompt.
@@ -350,11 +355,7 @@ try { (function () {
                 // the task never got the cookbook_event_uid marker and the
                 // server-side delete-cascade had nothing to follow when the
                 // user later deleted the task.
-                await fetch(`/api/tasks/${encodeURIComponent(data.id)}`, {
-                  method: "PUT", credentials: "same-origin",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ prompt: updatedPrompt }),
-                });
+                await api.put(`/api/tasks/${encodeURIComponent(data.id)}`, { prompt: updatedPrompt });
               } catch (_) {}
             }
           } catch (_) {}

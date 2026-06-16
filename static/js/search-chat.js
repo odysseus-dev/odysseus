@@ -2,8 +2,8 @@
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
+import { api } from './axios/api.js';
 
-let API_BASE = '';
 let debounceTimer = null;
 let selectedIndex = -1;
 let results = [];
@@ -163,9 +163,7 @@ function handleInput(e) {
 
   debounceTimer = setTimeout(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}&limit=20`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const { data } = await api.get('/api/search', { params: { q: query, limit: 20 } });
       renderResults(data, query);
     } catch (err) {
       console.error('Search error:', err);
@@ -173,9 +171,7 @@ function handleInput(e) {
   }, 300);
 }
 
-export function init(apiBase) {
-  API_BASE = apiBase || '';
-
+export function init(_apiBase) {
   const input = el('search-input');
   if (input) {
     input.addEventListener('input', handleInput);

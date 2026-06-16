@@ -1,6 +1,7 @@
 // static/js/codeRunner.js
 
 import * as uiModule from './ui.js';
+import { api } from './axios/api.js';
 
 /**
  * In-browser code runner for Python (Pyodide), JavaScript, and HTML
@@ -321,13 +322,7 @@ export async function runServer(code, panel, lang) {
     command = `python3 -c "import base64, subprocess, sys; sys.exit(subprocess.run(['bash','-c',base64.b64decode('${b64}').decode('utf-8')]).returncode)"`;
   }
   try {
-    var res = await fetch('/api/shell/exec', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: command }),
-    });
-    var data = await res.json();
+    var { data } = await api.post('/api/shell/exec', { command: command });
     panel.innerHTML = '';
     if (data.stderr && data.stderr.trim()) {
       showOutput(panel, data.stderr, true);

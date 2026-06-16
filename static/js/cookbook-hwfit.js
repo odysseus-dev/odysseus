@@ -31,6 +31,7 @@ import {
 } from './cookbook.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
+import { api, apiHttpErrorMessage } from './axios/api.js';
 import { _loadTasks, _tmuxGracefulKill } from './cookbookRunning.js';
 import { openCookbookDependencies } from './cookbook-diagnosis.js';
 
@@ -52,9 +53,8 @@ async function _ensureBackendInstalled(runBackend, host, port, envPath, modelNam
       if (port) params.set('ssh_port', String(port));
       if (envPath) params.set('venv', envPath);
     }
-    const r = await fetch('/api/cookbook/packages' + (params.toString() ? '?' + params : ''));
-    const d = await r.json();
-    const pkg = (d.packages || []).find(p => p.name === pkgName);
+    const { data } = await api.get('/api/cookbook/packages' + (params.toString() ? '?' + params.toString() : ''));
+    const pkg = (data.packages || []).find(p => p.name === pkgName);
     if (pkg && pkg.installed) return true;
   } catch (_) {
     // If we can't tell, don't block — the server's own serve route will
@@ -489,8 +489,7 @@ let _ollamaLibCache = null;
 async function _ensureOllamaLib() {
   if (_ollamaLibCache) return _ollamaLibCache;
   try {
-    const res = await fetch('/api/cookbook/ollama/library');
-    const data = await res.json();
+    const { data } = await api.get('/api/cookbook/ollama/library');
     _ollamaLibCache = Array.isArray(data?.models) ? data.models : [];
   } catch { _ollamaLibCache = []; }
   return _ollamaLibCache;
@@ -615,9 +614,8 @@ export async function _hwfitFetch(fresh = false) {
       if (_cachePort) _cacheParams.set('ssh_port', _cachePort);
       if (_cacheSrv?.platform) _cacheParams.set('platform', _cacheSrv.platform);
     }
-    fetch(`/api/model/cached?${_cacheParams}`, { credentials: 'same-origin' })
-      .then(r => r.json())
-      .then(d => {
+    api.get(`/api/model/cached?${_cacheParams}`)
+      .then(({ data: d }) => {
         // Exclude stalled (download-shell) entries — a 12 KB README-only
         // folder shouldn't count as "downloaded" in the Scan/Download list.
         _cachedModelIds = new Set((d.models || []).filter(m => m.status !== 'stalled').map(m => m.repo_id));
@@ -678,37 +676,22 @@ export async function _hwfitFetch(fresh = false) {
       if (_fitOnly) params.set('fit_only', '1');
     }
     const endpoint = isImageMode ? `/api/hwfit/image-models?${params}` : `/api/hwfit/models?${params}`;
-    const res = await fetch(endpoint);
+    let { data } = await api.get(endpoint);
     // A newer scan started while this one was in flight (user switched servers
     // mid-probe) — drop this stale response so it can't clobber the new one.
-    if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      let msg = '';
-      try {
-        const payload = JSON.parse(body);
-        msg = payload && (payload.detail || payload.error || payload.message);
-      } catch {
-        msg = body;
-      }
-      msg = typeof msg === 'string' ? msg.trim() : '';
-      throw new Error(`HTTP ${res.status} ${res.statusText}${msg ? `: ${msg}` : ''}`);
-    }
-    let data = await res.json();
     if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
     if (!isImageMode && quantPref && !data.error && Array.isArray(data.models) && data.models.length === 0) {
       const fallbackParams = new URLSearchParams(params);
       fallbackParams.delete('quant');
-      const fallbackRes = await fetch(`/api/hwfit/models?${fallbackParams}`);
-      if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
-      if (fallbackRes.ok) {
-        const fallbackData = await fallbackRes.json();
+      try {
+        const { data: fallbackData } = await api.get(`/api/hwfit/models?${fallbackParams}`);
+        if (_tk !== _hwfitFetchToken) { try { wp.destroy(); } catch {} return; }
         if (!fallbackData.error && Array.isArray(fallbackData.models) && fallbackData.models.length > 0) {
           data = fallbackData;
           const quantSel = document.getElementById('hwfit-quant');
           if (quantSel) quantSel.value = '';
         }
-      }
+      } catch {}
     }
     // Normalize image model fields to match LLM renderer expectations
     if (isImageMode && data.models) {
@@ -810,7 +793,7 @@ export async function _hwfitFetch(fresh = false) {
     wp.destroy();
     // Same stale-while-revalidate rule: only surface the error if we have nothing
     // already on screen from the cache.
-    if (!_cached) _hwfitShowError(list, remoteHost, e.message);
+    if (!_cached) _hwfitShowError(list, remoteHost, apiHttpErrorMessage(e));
   }
 }
 
@@ -1733,12 +1716,7 @@ export function _expandModelRow(row, modelData) {
       };
 
       try {
-        const res = await fetch('/api/model/serve', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
+        const { data } = await api.post('/api/model/serve', payload);
         if (data.ok) {
           const shortName = modelData.name.split('/').pop();
           _addTask(data.session_id, shortName, 'serve', { _cmd: cmd, model: modelData.name, backend: runBackend, remote_host: host });
@@ -1968,12 +1946,7 @@ export function _hwfitInit() {
     const cmd = `ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ${pf}${host} "echo ok"`;
     const t0 = Date.now();
     try {
-      const res = await fetch('/api/shell/exec', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd, timeout: 8 }),
-      });
-      const data = await res.json();
+      const { data } = await api.post('/api/shell/exec', { command: cmd, timeout: 8 });
       const ms = Date.now() - t0;
       const out = (data.stdout || '').trim();
       if (data.exit_code === 0 && out.startsWith('ok')) {
@@ -2011,11 +1984,9 @@ export function _hwfitInit() {
   }
 
   async function _fetchCookbookSshKey(generate = false) {
-    const res = await fetch('/api/cookbook/ssh-key', {
-      method: generate ? 'POST' : 'GET',
-      credentials: 'same-origin',
-    });
-    const data = await res.json();
+    const { data } = generate
+      ? await api.post('/api/cookbook/ssh-key')
+      : await api.get('/api/cookbook/ssh-key');
     if (generate && !data.ok) throw new Error(data.error || 'Failed to generate SSH key');
     return (data.public_key || '').trim();
   }
@@ -2246,12 +2217,7 @@ export function _hwfitInit() {
         const origText = setupBtn.textContent;
         setupBtn.textContent = 'Installing...';
         try {
-          const res = await fetch('/api/cookbook/setup', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ host, ssh_port: port || undefined }),
-          });
-          const data = await res.json();
+          const { data } = await api.post('/api/cookbook/setup', { host, ssh_port: port || undefined });
           if (data.ok) {
             setupBtn.textContent = '\u2713 Done';
             setupBtn.style.color = '#50fa7b';

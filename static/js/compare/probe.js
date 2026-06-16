@@ -1,4 +1,5 @@
 // compare/probe.js — model probe/check system
+import { api } from '../axios/api.js';
 import state from './state.js';
 import { WAVE_FRAMES } from './icons.js';
 import uiModule from '../ui.js';
@@ -42,12 +43,9 @@ async function _checkUnprobed() {
         ok++;
         continue;
       }
-      const res = await fetch(`${state.API_BASE}/api/probe-selected`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ models: [{ endpoint_id: m.endpointId || '', model: m.model, endpoint: m.endpoint || '' }] }),
+      const { data } = await api.post('/api/probe-selected', {
+        models: [{ endpoint_id: m.endpointId || '', model: m.model, endpoint: m.endpoint || '' }],
       });
-      const data = await res.json();
       const result = (data.results || [])[0];
       if (result && result.status === 'ok') {
         state._probed.add(m.model);

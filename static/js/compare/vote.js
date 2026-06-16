@@ -1,4 +1,5 @@
 // compare/vote.js — voting, revealing, confetti
+import { api } from '../axios/api.js';
 import Storage from '../storage.js';
 import state from './state.js';
 import { _modelDisplayNames } from './models.js';
@@ -127,15 +128,11 @@ function _saveVote(winnerIdx) {
 
   // Fire-and-forget POST to backend
   try {
-    fetch(`${state.API_BASE}/api/compare/record`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt: state._lastPrompt,
-        models: modelNames,
-        winner: winner,
-        is_blind: state._blindMode,
-      }),
+    api.post('/api/compare/record', {
+      prompt: state._lastPrompt,
+      models: modelNames,
+      winner: winner,
+      is_blind: state._blindMode,
     }).catch(() => {});   // silently ignore errors
   } catch (_) {}
 }

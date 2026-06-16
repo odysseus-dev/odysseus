@@ -42,7 +42,7 @@ from datetime import datetime
 from typing import Dict
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, APIRouter
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -102,6 +102,15 @@ except Exception as e:
 
 logger = logging.getLogger(__name__)
 
+def get_base_path() -> str:
+    """URL prefix when served behind a reverse proxy (empty string at root)."""
+    raw = os.environ.get("BASE_PATH", "")
+    if not raw or raw == "/":
+        return ""
+    return raw.rstrip("/")
+
+BASE_PATH = get_base_path()
+
 # ========= APP =========
 # Lifespan is defined below (after all helpers it references are in scope)
 # and passed to FastAPI so we can use the modern context-manager lifecycle
@@ -111,6 +120,16 @@ app = FastAPI(
     description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
     version="1.0.0",
 )
+
+# ========= SEPARATE ROUTER SETUP =========
+api_router = APIRouter(prefix=f"{BASE_PATH}", tags=["api"]) # to add "/api" prefix once all routes files get updated
+base_router = APIRouter(prefix=f"{BASE_PATH}", tags=["base"])
+
+# if BASE_PATH is not empty, have root redirect to BASE_PATH
+if BASE_PATH:
+    @app.get("/", name="root")
+    async def root(request: Request):
+        return RedirectResponse(url=request.url_for("index"), status_code=302)
 
 # ========= CORS =========
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
@@ -143,8 +162,7 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # ========= SECURITY HEADERS MIDDLEWARE =========
-app.add_middleware(SecurityHeadersMiddleware)
-
+# app.add_middleware(SecurityHeadersMiddleware)
 
 # ========= REQUEST TIMEOUT (FALLBACK FOR HUNG HANDLERS) =========
 # If a single request takes longer than REQUEST_HARD_TIMEOUT, abort it and
@@ -158,18 +176,17 @@ from starlette.responses import JSONResponse as _JSONResponse
 
 REQUEST_HARD_TIMEOUT = float(os.getenv("REQUEST_HARD_TIMEOUT", "45"))
 _TIMEOUT_EXEMPT_PREFIXES = (
-    "/api/chat",            # streaming
-    "/api/shell/stream",    # SSE
-    "/api/research",        # multi-minute jobs
-    "/api/model/download",  # tmux setup may run pip installs
-    "/api/model/probe",     # SSE; iterates models with up to 8s timeout each
-    "/api/model-endpoints", # /probe sub-route also iterates models
-    "/api/cookbook/setup",  # remote pacman/apt installs
-    "/api/upload",          # large files
-    "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
-    "/api/memory/audit",    # retains own 120s LLM inactivity timeout
+    f"{BASE_PATH}/api/chat",            # streaming
+    f"{BASE_PATH}/api/shell/stream",    # SSE
+    f"{BASE_PATH}/api/research",        # multi-minute jobs
+    f"{BASE_PATH}/api/model/download",  # tmux setup may run pip installs
+    f"{BASE_PATH}/api/model/probe",     # SSE; iterates models with up to 8s timeout each
+    f"{BASE_PATH}/api/model-endpoints", # /probe sub-route also iterates models
+    f"{BASE_PATH}/api/cookbook/setup",  # remote pacman/apt installs
+    f"{BASE_PATH}/api/upload",          # large files
+    f"{BASE_PATH}/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    f"{BASE_PATH}/api/memory/audit",    # retains own 120s LLM inactivity timeout
 )
-
 
 class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
@@ -183,7 +200,6 @@ class _RequestTimeoutMiddleware(_BaseHTTPMiddleware):
                 {"detail": f"Request exceeded {REQUEST_HARD_TIMEOUT:.0f}s timeout"},
                 status_code=504,
             )
-
 
 app.add_middleware(_RequestTimeoutMiddleware)
 
@@ -199,19 +215,19 @@ if LOCALHOST_BYPASS:
 
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
-        "/api/auth/setup",
-        "/api/auth/signup",
-        "/api/auth/login",
-        "/api/auth/logout",
-        "/api/auth/status",
-        "/api/auth/features",
-        "/api/auth/settings",
-        "/api/auth/integrations/presets",
-        "/api/health",
-        "/api/version",
-        "/login",
+        f"{BASE_PATH}/api/auth/setup",
+        f"{BASE_PATH}/api/auth/signup",
+        f"{BASE_PATH}/api/auth/login",
+        f"{BASE_PATH}/api/auth/logout",
+        f"{BASE_PATH}/api/auth/status",
+        f"{BASE_PATH}/api/auth/features",
+        f"{BASE_PATH}/api/auth/settings",
+        f"{BASE_PATH}/api/auth/integrations/presets",
+        f"{BASE_PATH}/api/health",
+        f"{BASE_PATH}/api/version",
+        f"{BASE_PATH}/login",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    AUTH_EXEMPT_PREFIXES = [f"{BASE_PATH}/static"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -342,8 +358,8 @@ if AUTH_ENABLED:
                 return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
-                if not path.startswith("/api/"):
-                    return RedirectResponse(url="/login", status_code=302)
+                if not path.startswith(f"{BASE_PATH}/api/"):
+                    return RedirectResponse(url=request.url_for("login"), status_code=302)
                 return JSONResponse(status_code=401, content={"error": "Setup required"})
 
             # --- Bearer token auth (API tokens for external integrations) ---
@@ -403,9 +419,9 @@ if AUTH_ENABLED:
             # --- Cookie-based session auth ---
             token = request.cookies.get(SESSION_COOKIE)
             if not auth_manager.validate_token(token):
-                if path.startswith("/api/"):
+                if path.startswith(f"{BASE_PATH}/api/"):
                     return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-                return RedirectResponse(url="/login", status_code=302)
+                return RedirectResponse(url=request.url_for("login"), status_code=302)
 
             # Attach current username to request state for downstream routes
             request.state.current_user = auth_manager.get_username_for_token(token)
@@ -419,7 +435,6 @@ else:
 
 # ========= STATIC FILES =========
 os.makedirs(STATIC_DIR, exist_ok=True)
-
 
 class _RevalidatingStatic(StaticFiles):
     """Serve static assets normally, but force the browser to REVALIDATE
@@ -436,11 +451,19 @@ class _RevalidatingStatic(StaticFiles):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
+# # add new route for /static/style.css and /static/style-login.css to replace BASE_PATH like .html
+# @app.get("/static/style.css")
+# async def serve_style_css(request: Request):
+#     return FileResponse(path="static/style.css", media_type="text/css")
+# @app.get("/static/style-login.css")
+# async def serve_style_login_css(request: Request):
+#     return FileResponse(path="static/style-login.css", media_type="text/css")
 
-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+# mount static to base FastAPI app with custom BASE_PATH as it doesn't work through APIRouter
+app.mount(f"{BASE_PATH}/static", _RevalidatingStatic(directory="static"), name="static")
 
 # ========= GENERATED IMAGES =========
-@app.get("/api/generated-image/{filename}")
+@api_router.get("/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
     img_path = resolve_generated_image_path(filename)
@@ -565,41 +588,40 @@ from src.webhook_manager import WebhookManager
 webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 
 # ========= INCLUDE ROUTERS =========
-
 # Auth
 auth_router = setup_auth_routes(auth_manager)
-app.include_router(auth_router)
+api_router.include_router(auth_router)
 
 # Uploads
 from routes.upload_routes import setup_upload_routes
 upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
-app.include_router(upload_router)
+api_router.include_router(upload_router)
 upload_cleanup_task = None
 
 # Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
-app.include_router(setup_emoji_routes())
+api_router.include_router(setup_emoji_routes())
 
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
+api_router.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
-app.include_router(setup_admin_wipe_routes(session_manager))
+api_router.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
 from routes.memory_routes import setup_memory_routes
 memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
-app.include_router(memory_router)
+api_router.include_router(memory_router)
 from routes.skills_routes import setup_skills_routes
-app.include_router(setup_skills_routes(skills_manager))
+api_router.include_router(setup_skills_routes(skills_manager))
 
 # Chat
 from routes.chat_routes import setup_chat_routes
-app.include_router(setup_chat_routes(
+api_router.include_router(setup_chat_routes(
     session_manager, chat_handler, chat_processor,
     memory_manager, research_handler, upload_handler,
     memory_vector=memory_vector,
@@ -609,75 +631,75 @@ app.include_router(setup_chat_routes(
 
 # Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
-app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
+api_router.include_router(setup_research_routes(research_handler, session_manager=session_manager))
 
 # History
 from routes.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager))
+api_router.include_router(setup_history_routes(session_manager))
 
 # Search
 from routes.search_routes import setup_search_routes
-app.include_router(setup_search_routes(config))
+api_router.include_router(setup_search_routes(config))
 
 # Presets
 from routes.preset_routes import setup_preset_routes
-app.include_router(setup_preset_routes(preset_manager))
+api_router.include_router(setup_preset_routes(preset_manager))
 
 # Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler, memory_vector))
+api_router.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler, memory_vector))
 
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
-app.include_router(setup_cleanup_routes(session_manager))
+api_router.include_router(setup_cleanup_routes(session_manager))
 
 # Personal docs
 from routes.personal_routes import setup_personal_routes
-app.include_router(setup_personal_routes(personal_docs_mgr, rag_manager, rag_available))
+api_router.include_router(setup_personal_routes(personal_docs_mgr, rag_manager, rag_available))
 
 # Embedding model management
 from routes.embedding_routes import setup_embedding_routes
-app.include_router(setup_embedding_routes())
+api_router.include_router(setup_embedding_routes())
 
 # Models
 from routes.model_routes import setup_model_routes
-app.include_router(setup_model_routes(model_discovery))
+api_router.include_router(setup_model_routes(model_discovery))
 
 # GitHub Copilot device-flow login
 from routes.copilot_routes import setup_copilot_routes
-app.include_router(setup_copilot_routes())
+api_router.include_router(setup_copilot_routes())
 
 # ChatGPT Subscription device-flow login
 from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
-app.include_router(setup_chatgpt_subscription_routes())
+api_router.include_router(setup_chatgpt_subscription_routes())
 
 # TTS
 from routes.tts_routes import setup_tts_routes
-app.include_router(setup_tts_routes(tts_service))
+api_router.include_router(setup_tts_routes(tts_service))
 
 # STT
 from services.stt import get_stt_service
 stt_service = get_stt_service()
 from routes.stt_routes import setup_stt_routes
-app.include_router(setup_stt_routes(stt_service))
+api_router.include_router(setup_stt_routes(stt_service))
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
 from routes.document_routes import setup_document_routes
 document_router = setup_document_routes(session_manager, upload_handler)
-app.include_router(document_router)
+api_router.include_router(document_router)
 
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
-app.include_router(setup_signature_routes())
+api_router.include_router(setup_signature_routes())
 
 # Gallery (image library)
 from routes.gallery_routes import setup_gallery_routes
-app.include_router(setup_gallery_routes())
+api_router.include_router(setup_gallery_routes())
 
 # Persisted image-editor drafts (server-backed projects)
 from routes.editor_draft_routes import setup_editor_draft_routes
-app.include_router(setup_editor_draft_routes())
+api_router.include_router(setup_editor_draft_routes())
 
 # Scheduled tasks + event bus
 from src.task_scheduler import TaskScheduler
@@ -685,45 +707,45 @@ task_scheduler = TaskScheduler(session_manager)
 from src.event_bus import set_task_scheduler
 set_task_scheduler(task_scheduler)
 from routes.task_routes import setup_task_routes
-app.include_router(setup_task_routes(task_scheduler))
+api_router.include_router(setup_task_routes(task_scheduler))
 
 from routes.assistant_routes import setup_assistant_routes
-app.include_router(setup_assistant_routes(task_scheduler))
+api_router.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
 calendar_router = setup_calendar_routes()
-app.include_router(calendar_router)
+api_router.include_router(calendar_router)
 
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
-app.include_router(setup_shell_routes())
+api_router.include_router(setup_shell_routes())
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
-app.include_router(setup_cookbook_routes())
+api_router.include_router(setup_cookbook_routes())
 
 from routes.workspace_routes import setup_workspace_routes
-app.include_router(setup_workspace_routes())
+api_router.include_router(setup_workspace_routes())
 
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
-app.include_router(setup_hwfit_routes())
+api_router.include_router(setup_hwfit_routes())
 
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
-app.include_router(setup_compare_routes(session_manager))
+api_router.include_router(setup_compare_routes(session_manager))
 
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
-app.include_router(setup_prefs_routes())
+api_router.include_router(setup_prefs_routes())
 
 # Backup (export/import user data)
 from routes.backup_routes import setup_backup_routes
-app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))
+api_router.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))
 
 from routes.font_routes import setup_font_routes
-app.include_router(setup_font_routes())
+api_router.include_router(setup_font_routes())
 
 
 # MCP (Model Context Protocol)
@@ -733,7 +755,7 @@ from routes.mcp_routes import setup_mcp_routes
 
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
-app.include_router(setup_mcp_routes(mcp_manager))
+api_router.include_router(setup_mcp_routes(mcp_manager))
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
@@ -745,22 +767,22 @@ logger.info("AI interaction tools initialized (session, memory, RAG, UI control)
 
 # Webhooks
 from routes.webhook_routes import setup_webhook_routes
-app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_manager, api_key_manager))
+api_router.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_manager, api_key_manager))
 
 # API Tokens
 from routes.api_token_routes import setup_api_token_routes
-app.include_router(setup_api_token_routes())
+api_router.include_router(setup_api_token_routes())
 
 logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-app.include_router(setup_note_routes(task_scheduler))
+api_router.include_router(setup_note_routes(task_scheduler))
 
 # Email
 from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()
-app.include_router(email_router)
+api_router.include_router(email_router)
 
 # Codex integration — HTTP surface for the Codex plugin/MCP bridge. Reuses
 # api_token scopes (todos:read|write, email:read|draft|send) so external
@@ -768,35 +790,37 @@ app.include_router(email_router)
 # AFTER email so the codex_routes can borrow the email router for shared
 # search/threading helpers.
 from routes.codex_routes import setup_codex_routes, setup_claude_routes
-app.include_router(setup_codex_routes(
+api_router.include_router(setup_codex_routes(
     email_router=email_router,
     memory_router=memory_router,
     calendar_router=calendar_router,
     document_router=document_router,
 ))
-app.include_router(setup_claude_routes())
+api_router.include_router(setup_claude_routes())
 
 from routes.vault_routes import setup_vault_routes
-app.include_router(setup_vault_routes())
+api_router.include_router(setup_vault_routes())
 
 # Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
-app.include_router(setup_contacts_routes())
+api_router.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
-app.include_router(setup_companion_routes())
+api_router.include_router(setup_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
+# ========= BASE ROUTES =========
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     """Read an HTML file and inject the CSP nonce into inline <script> tags."""
     with open(file_path, "r", encoding="utf-8") as f:
         html = f.read()
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
+    html = html.replace("{{BASE_PATH}}", BASE_PATH)
     return HTMLResponse(html)
 
-@app.get("/")
+@base_router.get("/", name="index")
 async def serve_index(request: Request):
     static_path = abs_join(BASE_DIR, "static/index.html")
     if os.path.exists(static_path):
@@ -806,11 +830,17 @@ async def serve_index(request: Request):
         return _serve_html_with_nonce(request, root_path)
     raise HTTPException(404, "index.html not found")
 
-@app.get("/notes")
+@base_router.get("/login", name="login")
+async def serve_login(request: Request):
+    if not AUTH_ENABLED:
+        return RedirectResponse(url=request.url_for("index"), status_code=302)
+    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+
+@base_router.get("/notes")
 async def serve_notes(request: Request):
     return await serve_index(request)
 
-@app.get("/calendar")
+@base_router.get("/calendar")
 async def serve_calendar(request: Request):
     return await serve_index(request)
 
@@ -818,51 +848,47 @@ async def serve_calendar(request: Request):
 # the matching modal based on window.location.pathname. Each route also
 # gets a unique favicon + page title via inline script in index.html so
 # bookmarks render with tool-specific icons.
-@app.get("/cookbook")
+@base_router.get("/cookbook")
 async def serve_cookbook(request: Request):
     return await serve_index(request)
 
-@app.get("/email")
+@base_router.get("/email")
 async def serve_email(request: Request):
     return await serve_index(request)
 
-@app.get("/memory")
+@base_router.get("/memory")
 async def serve_memory(request: Request):
     return await serve_index(request)
 
-@app.get("/gallery")
+@base_router.get("/gallery")
 async def serve_gallery(request: Request):
     return await serve_index(request)
 
-@app.get("/tasks")
+@base_router.get("/tasks")
 async def serve_tasks(request: Request):
     return await serve_index(request)
 
-@app.get("/library")
+@base_router.get("/library")
 async def serve_library(request: Request):
     return await serve_index(request)
 
-@app.get("/backgrounds")
+@base_router.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
 
-@app.get("/login")
-async def serve_login(request: Request):
-    if not AUTH_ENABLED:
-        return RedirectResponse(url="/", status_code=302)
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+# ========= API ROUTES =========
 
-@app.get("/api/version")
+@api_router.get("/api/version")
 async def get_version():
     from core.constants import APP_VERSION
     return {"version": APP_VERSION}
 
-@app.get("/api/health")
+@api_router.get("/api/health")
 async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
-@app.get("/api/ready")
+@api_router.get("/api/ready")
 async def readiness_check() -> JSONResponse:
     """Readiness / integrity self-check — DB, data dir, local-first storage.
 
@@ -873,7 +899,7 @@ async def readiness_check() -> JSONResponse:
     result = check_readiness()
     return JSONResponse(status_code=200 if result.get("ready") else 503, content=result)
 
-@app.get("/api/runtime")
+@api_router.get("/api/runtime")
 async def runtime_info() -> Dict[str, object]:
     in_docker = os.path.exists("/.dockerenv")
     if not in_docker:
@@ -892,6 +918,10 @@ async def runtime_info() -> Dict[str, object]:
         "in_docker": in_docker,
         "ollama_base_url": ollama_url,
     }
+
+# ========= INCLUDE ROUTERS TO APP =========
+app.include_router(base_router)
+app.include_router(api_router)
 
 # ========= LIFECYCLE =========
 

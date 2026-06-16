@@ -31,8 +31,9 @@
  */
 import { state } from './state.js';
 
-export function wireAIToolsMisc({
-  apiBase, buildLayerBodyMask, buildSeamMask, applyImageTool,
+import { api } from '../axios/api.js';
+
+export function wireAIToolsMisc({ buildLayerBodyMask, buildSeamMask, applyImageTool,
   flatten, saveState, fitZoom, composite, createLayer, renderLayerPanel,
   spinnerModule, uiModule,
 }) {
@@ -117,13 +118,13 @@ export function wireAIToolsMisc({
     try {
       const flat = flatten();
       const imageB64 = flat.toDataURL('image/png').split(',')[1];
-      const res = await fetch('/api/image/upscale-local', {
+            const dataRes = await api.get('/api/image/upscale-local', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image: imageB64, scale: 2 }),
-      });
-      if (!res.ok) throw new Error('Server returned ' + res.status);
-      const data = await res.json();
+      }).catch(() => null);
+      if (!dataRes) { throw new Error('Server returned ' + res.status); }
+      const data = dataRes.data;
       if (data.image) {
         const img = new Image();
         img.onload = () => {
@@ -173,9 +174,9 @@ export function wireAIToolsMisc({
       fd.append('image', blob, 'style.png');
       fd.append('prompt', prompt);
       fd.append('strength', String(strength));
-      const res = await fetch(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd });
-      if (!res.ok) throw new Error('Server returned ' + res.status);
-      const data = await res.json();
+            const dataRes = await api.get(`${apiBase}/api/gallery/style-transfer`, { method: 'POST', credentials: 'same-origin', body: fd }).catch(() => null);
+      if (!dataRes) { throw new Error('Server returned ' + res.status); }
+      const data = dataRes.data;
       if (data.image) {
         const img = new Image();
         img.onload = () => {

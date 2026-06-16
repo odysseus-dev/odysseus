@@ -1,3 +1,4 @@
+import { api, apiPath } from '../axios/api.js';
 /**
  * Research job queue — add, start, monitor, cancel research jobs.
  */
@@ -29,7 +30,6 @@ function _markDismissed(ids) {
 let _activePollInterval = null;
 
 export function init(apiBase) {
-  _apiBase = apiBase;
   _reconnectActive();
   // Poll for active sessions periodically so research started elsewhere
   // (e.g. by the agent via trigger_research) gets adopted into the
@@ -49,9 +49,9 @@ export function adoptSession(sessionId) {
 async function _reconnectActive() {
   try {
     // Reconnect to running tasks
-    const res = await fetch(`${_apiBase}/api/research/active`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
+    const res = await api.get(`/api/research/active`);
+    if (res.data) {
+      const data = res.data;
       for (const task of (data.active || [])) {
         if (_jobs.some(j => j.id === task.session_id)) continue;
         const job = {
@@ -69,9 +69,9 @@ async function _reconnectActive() {
     }
 
     // Load recent completed research from disk
-    const libRes = await fetch(`${_apiBase}/api/research/library?sort=recent&limit=20`, { credentials: 'same-origin' });
-    if (libRes.ok) {
-      const libData = await libRes.json();
+    const libRes = await api.get(`/api/research/library?sort=recent&limit=20`);
+    if (libRes.data) {
+      const libData = libRes.data;
       const dismissed = _loadDismissed();
       for (const item of (libData.research || [])) {
         if (item.status !== 'done') continue;
@@ -161,7 +161,7 @@ export async function cancelJob(id) {
   const job = _jobs.find(j => j.id === id);
   if (!job) return;
   if (job.status === 'queued') { job.status = 'cancelled'; _notify(); return; }
-  try { await fetch(`${_apiBase}/api/research/cancel/${id}`, { method: 'POST', credentials: 'same-origin' }); } catch {}
+  try { await api.post(`/api/research/cancel/${id}`); } catch {}
   _finishJob(job, 'cancelled');
 }
 
@@ -226,19 +226,8 @@ async function _launchJob(job) {
   const body = { query: job.query, ...job.settings };
   let data;
   try {
-    const res = await fetch(`${_apiBase}/api/research/start`, {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      try { job.errorMsg = JSON.parse(txt).detail || txt; } catch { job.errorMsg = txt; }
-      job.status = 'error';
-      _notify();
-      return;
-    }
-    data = await res.json();
+    const { data: startData } = await api.post('/api/research/start', body);
+    data = startData;
   } catch (e) {
     job.errorMsg = e.message;
     job.status = 'error';
@@ -258,7 +247,7 @@ function _connectStream(job) {
     _notify();
   }, 1000);
 
-  const es = new EventSource(`${_apiBase}/api/research/stream/${job.id}`);
+  const es = new EventSource(apiPath(`/api/research/stream/${job.id}`));
   job._es = es;
 
   es.onmessage = (evt) => {
@@ -286,9 +275,9 @@ function _connectStream(job) {
 async function _pollFallback(job) {
   if (job.status !== 'running') return;
   try {
-    const res = await fetch(`${_apiBase}/api/research/status/${job.id}`, { credentials: 'same-origin' });
-    if (!res.ok) { _finishJob(job, 'error'); return; }
-    const d = await res.json();
+        const dRes = await api.get(`/api/research/status/${job.id}`).catch(() => null);
+    if (!dRes) { { _finishJob(job, 'error'); return; } }
+    const d = dRes.data;
     job.progress = d.progress || {};
     if (d.avg_duration) job.avgDuration = d.avg_duration;
     if (d.status !== 'running') {
@@ -319,11 +308,11 @@ export function onComplete(cb) { _onCompleteCb = cb; }
 
 async function _fetchResult(job) {
   try {
-    const res = await fetch(`${_apiBase}/api/research/result-peek/${job.id}`, {
+        try {
+    const { data: d } = await api.get(`/api/research/result-peek/${job.id}`, {
       method: 'POST', credentials: 'same-origin',
     });
-    if (!res.ok) return;
-    const d = await res.json();
+    } catch { return; }
     job.result = d.result;
     job.sources = d.sources;
     job.findings = d.raw_findings;
