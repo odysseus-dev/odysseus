@@ -15,6 +15,10 @@
 import * as Modals from './modalManager.js';
 import { mdToHtml } from './markdown.js';
 import { showToast, showError, styledPrompt } from './ui.js';
+import { makeWindowDraggable } from './windowDrag.js';
+
+// Width (px) the graph panel adds to the dialog when docked open.
+const GRAPH_PANEL_W = 460;
 
 // Notes under this folder act as reusable templates (Obsidian convention).
 const TEMPLATE_DIR = 'templates/';
@@ -61,16 +65,25 @@ function _buildModal() {
   _modal.style.display = 'none';
   _modal.innerHTML = `
     <style>
-      #atlas-modal .modal-content { width: min(1200px, 96vw); height: 88vh; display:flex; flex-direction:column; transition: width .18s ease; }
-      #atlas-modal .modal-content.with-graph { width: min(1660px, 98vw); }
+      #atlas-modal .modal-content { width: min(1200px, 96vw); height: 88vh; display:flex; flex-direction:column; }
       #atlas-modal .atlas-head { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--bubble-border,#333); }
       #atlas-modal .atlas-head .grow { flex:1; }
-      #atlas-modal .atlas-body { flex:1; display:flex; min-height:0; }
+      #atlas-modal .atlas-body { flex:1; display:flex; min-height:0; overflow:hidden; }
       #atlas-modal .atlas-left { width:240px; border-right:1px solid var(--bubble-border,#333); display:flex; flex-direction:column; min-height:0; }
-      #atlas-modal .atlas-list { overflow:auto; flex:1; }
-      #atlas-modal .atlas-note-item { padding:6px 10px; cursor:pointer; font-size:13px; border-bottom:1px solid rgba(127,127,127,.08); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-      #atlas-modal .atlas-note-item:hover { background:rgba(127,127,127,.12); }
-      #atlas-modal .atlas-note-item.active { background:var(--section-accent,rgba(120,140,255,.18)); }
+      #atlas-modal .atlas-list { overflow:auto; flex:1; padding:2px 0; }
+      #atlas-modal .atlas-row { display:flex; align-items:center; gap:4px; padding:4px 8px; cursor:pointer; font-size:13px; white-space:nowrap; overflow:hidden; border-radius:5px; }
+      #atlas-modal .atlas-row:hover { background:rgba(127,127,127,.12); }
+      #atlas-modal .atlas-row.active { background:var(--section-accent,rgba(120,140,255,.18)); }
+      #atlas-modal .atlas-row.folder { opacity:.85; font-weight:500; }
+      #atlas-modal .atlas-row.drop-target { outline:1px dashed var(--brand-color,#48f); outline-offset:-1px; }
+      #atlas-modal .atlas-row .twisty { width:12px; flex:0 0 auto; opacity:.6; font-size:10px; }
+      #atlas-modal .atlas-row .label { overflow:hidden; text-overflow:ellipsis; flex:1; }
+      #atlas-modal .atlas-row .base-badge { font-size:9px; opacity:.55; border:1px solid currentColor; border-radius:3px; padding:0 3px; letter-spacing:.5px; }
+      #atlas-modal .atlas-menu { position:absolute; z-index:30; background:var(--input-bg,#222); border:1px solid var(--input-border,#444); border-radius:8px; padding:4px; min-width:170px; box-shadow:0 6px 20px rgba(0,0,0,.4); }
+      #atlas-modal .atlas-menu div { padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; }
+      #atlas-modal .atlas-menu div:hover { background:rgba(127,127,127,.18); }
+      #atlas-modal .atlas-preview a.atlas-tag { color:var(--brand-color,#6cf); background:rgba(110,140,255,.14); border-radius:10px; padding:0 7px; font-size:.9em; text-decoration:none; white-space:nowrap; }
+      #atlas-modal .atlas-preview a.atlas-tag:hover { background:rgba(110,140,255,.28); }
       #atlas-modal .atlas-center { flex:1; display:flex; min-height:0; }
       #atlas-modal .atlas-editor, #atlas-modal .atlas-preview { flex:1; overflow:auto; padding:14px; min-width:0; }
       #atlas-modal .atlas-editor { display:flex; flex-direction:column; border-right:1px solid var(--bubble-border,#333); }
@@ -81,7 +94,7 @@ function _buildModal() {
       #atlas-modal .atlas-right h4 { margin:6px 0; font-size:11px; text-transform:uppercase; opacity:.6; }
       #atlas-modal .atlas-bl { padding:4px 6px; cursor:pointer; border-radius:5px; }
       #atlas-modal .atlas-bl:hover { background:rgba(127,127,127,.15); }
-      #atlas-modal .atlas-graph-wrap { width:460px; border-left:1px solid var(--bubble-border,#333); position:relative; display:flex; flex-direction:column; }
+      #atlas-modal .atlas-graph-wrap { width:460px; flex:0 0 460px; border-left:1px solid var(--bubble-border,#333); position:relative; display:flex; flex-direction:column; overflow:hidden; }
       #atlas-modal .atlas-graph-bar { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--bubble-border,#333); font-size:11px; text-transform:uppercase; opacity:.7; }
       #atlas-modal canvas.atlas-graph { flex:1; width:100%; display:block; cursor:grab; }
       #atlas-modal .atlas-ed-bar { display:flex; align-items:center; gap:8px; padding:6px 12px 8px; }
@@ -119,8 +132,6 @@ function _buildModal() {
           <div class="atlas-editor">
             <div class="atlas-ed-bar">
               <span class="atlas-status" data-el="path">No note open</span>
-              <span style="flex:1"></span>
-              <button class="atlas-btn" data-act="template" title="Insert a template from your templates/ folder">Template</button>
             </div>
             <textarea spellcheck="false" placeholder="# Write markdown…  link with [[Other note]]"></textarea>
           </div>
@@ -141,10 +152,9 @@ function _buildModal() {
 
   // header actions
   _modal.querySelector('#atlas-close').onclick = closeAtlas;
-  _modal.querySelector('[data-act="new"]').onclick = () => _newNote();
+  _modal.querySelector('[data-act="new"]').onclick = (e) => _openPlusMenu(e.currentTarget);
   _modal.querySelector('[data-act="graph-toggle"]').onclick = () => _toggleGraph();
   _modal.querySelector('[data-act="graph-close"]').onclick = () => _toggleGraph(false);
-  _modal.querySelector('[data-act="template"]').onclick = _insertTemplate;
   _modal.querySelector('[data-act="export"]').onclick = () => {
     window.open(API + '/export', '_blank');
   };
@@ -166,6 +176,14 @@ function _buildModal() {
 
   // preview: clicking a [[wikilink]] navigates
   _modal.querySelector('.atlas-preview').addEventListener('click', (e) => {
+    const tag = e.target.closest('a.atlas-tag');
+    if (tag) {
+      e.preventDefault();
+      const search = _modal.querySelector('.atlas-search');
+      search.value = '#' + tag.dataset.tag;
+      _runSearch(search.value);
+      return;
+    }
     const a = e.target.closest('a.atlas-wikilink');
     if (!a) return;
     e.preventDefault();
@@ -189,8 +207,18 @@ async function openAtlas() {
     closeFn: () => _doClose(),
     restoreFn: () => {},
   });
+  // Hook into Odysseus window management: one call gives drag, edge/corner
+  // resize, and tile/dock-snap — same as Gallery/Calendar. Bound once.
+  if (!_modal._dragWired) {
+    const content = _modal.querySelector('.modal-content');
+    const header = _modal.querySelector('.atlas-head');
+    makeWindowDraggable(_modal, { content, header, minWidth: 720, minHeight: 420 });
+    _modal._dragWired = true;
+  }
   document.addEventListener('keydown', _escHandler);
   await _reloadNotes();
+  // Restart the graph sim if the panel was left open from a previous session.
+  if (_graphOpen) _openGraph();
 }
 
 function _escHandler(e) { if (e.key === 'Escape' && _open) closeAtlas(); }
@@ -213,6 +241,38 @@ async function _reloadNotes() {
   _renderList(_notes);
 }
 
+// Folder collapse state + the folder the user last clicked (drives the
+// default location for "New note" / "New folder").
+const _collapsed = new Set();
+// Just-created folders that are still empty — the /notes API only lists files,
+// so without this a new empty folder would vanish until it holds a note.
+const _emptyFolders = new Set();
+let _selectedFolder = '';
+
+function _ensureDir(root, dirPath) {
+  let node = root;
+  const parts = dirPath.split('/');
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i];
+    if (!node.dirs.has(seg)) node.dirs.set(seg, { dirs: new Map(), files: [], path: parts.slice(0, i + 1).join('/') });
+    node = node.dirs.get(seg);
+  }
+  return node;
+}
+
+// Build a nested tree { dirs: Map<name, node>, files: [item] } from flat paths.
+function _buildTree(items) {
+  const root = { dirs: new Map(), files: [] };
+  for (const it of items) {
+    const parts = it.path.split('/');
+    const dir = parts.slice(0, -1).join('/');
+    const node = dir ? _ensureDir(root, dir) : root;
+    node.files.push(it);
+  }
+  for (const f of _emptyFolders) if (f) _ensureDir(root, f);
+  return root;
+}
+
 function _renderList(items) {
   const list = _modal.querySelector('.atlas-list');
   list.innerHTML = '';
@@ -220,14 +280,64 @@ function _renderList(items) {
     list.innerHTML = '<div style="padding:14px; opacity:.5; font-size:12px;">No notes yet. Click + to create one.</div>';
     return;
   }
-  for (const n of items) {
-    const div = document.createElement('div');
-    div.className = 'atlas-note-item' + (n.path === _current ? ' active' : '');
-    div.textContent = n.title || n.path;
-    div.title = n.path;
-    div.onclick = () => openNote(n.path);
-    list.appendChild(div);
+  const tree = _buildTree(items);
+  _renderTreeLevel(list, tree, 0);
+  // Dropping on empty list space moves a note to the vault root.
+  _wireDropTarget(list, '');
+}
+
+function _renderTreeLevel(container, node, depth) {
+  // Folders first (alphabetical), then files.
+  const folders = [...node.dirs.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [name, child] of folders) {
+    const collapsed = _collapsed.has(child.path);
+    const row = document.createElement('div');
+    row.className = 'atlas-row folder' + (_selectedFolder === child.path ? ' active' : '');
+    row.style.paddingLeft = (8 + depth * 12) + 'px';
+    row.innerHTML = `<span class="twisty">${collapsed ? '▸' : '▾'}</span><span class="label"></span>`;
+    row.querySelector('.label').textContent = name;
+    row.onclick = () => {
+      _selectedFolder = (_selectedFolder === child.path && !collapsed) ? child.path : child.path;
+      if (collapsed) _collapsed.delete(child.path); else _collapsed.add(child.path);
+      _renderList(_notes);
+    };
+    _wireDropTarget(row, child.path);
+    container.appendChild(row);
+    if (!collapsed) _renderTreeLevel(container, child, depth + 1);
   }
+  for (const it of node.files.sort((a, b) => (a.title || a.path).localeCompare(b.title || b.path))) {
+    const row = document.createElement('div');
+    const isBase = it.path.endsWith('.base');
+    row.className = 'atlas-row' + (it.path === _current ? ' active' : '');
+    row.style.paddingLeft = (8 + depth * 12 + 14) + 'px';
+    row.draggable = true;
+    row.innerHTML = `<span class="label"></span>${isBase ? '<span class="base-badge">BASE</span>' : ''}`;
+    row.querySelector('.label').textContent = it.title || it.path.split('/').pop();
+    row.title = it.path;
+    row.onclick = () => openNote(it.path);
+    row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/atlas-path', it.path); });
+    container.appendChild(row);
+  }
+}
+
+// Make `el` accept a dropped note, moving it into `folder` via /rename.
+function _wireDropTarget(el, folder) {
+  el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drop-target'); });
+  el.addEventListener('dragleave', () => el.classList.remove('drop-target'));
+  el.addEventListener('drop', async (e) => {
+    e.preventDefault(); e.stopPropagation();
+    el.classList.remove('drop-target');
+    const src = e.dataTransfer.getData('text/atlas-path');
+    if (!src) return;
+    const base = src.split('/').pop();
+    const dest = folder ? `${folder}/${base}` : base;
+    if (dest === src) return;
+    try {
+      const res = await apiSend('/rename', 'POST', { path: src, new_path: dest });
+      if (_current === src) _current = res.path;
+      await _reloadNotes();
+    } catch (err) { showError('Move failed: ' + err.message); }
+  });
 }
 
 async function _runSearch(q) {
@@ -245,6 +355,7 @@ async function openNote(path) {
   try {
     const data = await apiGet('/note', { path });
     _current = data.path;
+    _selectedFolder = data.path.includes('/') ? data.path.slice(0, data.path.lastIndexOf('/')) : '';
     _dirty = false;
     _modal.querySelector('textarea').value = data.content || '';
     _modal.querySelector('[data-el="path"]').textContent = data.path;
@@ -254,8 +365,35 @@ async function openNote(path) {
   } catch (e) { console.error('openNote', e); }
 }
 
+// The "+" button: a small menu so creating a note no longer demands you
+// decide its folder up front, and template insertion lives here too.
+function _openPlusMenu(anchor) {
+  const existing = _modal.querySelector('.atlas-menu');
+  if (existing) { existing.remove(); return; }
+  const menu = document.createElement('div');
+  menu.className = 'atlas-menu';
+  const here = _selectedFolder ? ` (in ${_selectedFolder}/)` : '';
+  menu.innerHTML = `
+    <div data-m="note">New note${here}</div>
+    <div data-m="folder">New folder${here}</div>
+    <div data-m="template">Insert template…</div>`;
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = (r.bottom + 4) + 'px';
+  menu.style.left = Math.max(8, r.right - 175) + 'px';
+  _modal.appendChild(menu);
+  const close = () => { menu.remove(); document.removeEventListener('click', onDoc, true); };
+  const onDoc = (e) => { if (!menu.contains(e.target) && e.target !== anchor) close(); };
+  setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+  menu.querySelector('[data-m="note"]').onclick = () => { close(); _newNote(); };
+  menu.querySelector('[data-m="folder"]').onclick = () => { close(); _newFolder(); };
+  menu.querySelector('[data-m="template"]').onclick = () => { close(); _insertTemplate(); };
+}
+
+// New note: default into the selected folder so there's no "which folder?"
+// friction — the prompt is pre-filled and you can still edit the subpath.
 async function _newNote(name) {
-  const def = typeof name === 'string' ? name : '';
+  const folder = _selectedFolder ? _selectedFolder + '/' : '';
+  const def = typeof name === 'string' && name ? name : folder;
   const path = await styledPrompt('', {
     title: 'New note',
     defaultValue: def,
@@ -263,12 +401,31 @@ async function _newNote(name) {
     confirmText: 'Create',
     maxLength: 200,
   });
-  if (!path) return;
+  if (!path || !path.replace(/\/+$/, '')) return;
   try {
     const res = await apiSend('/note', 'PUT', { path, content: `# ${path.split('/').pop()}\n\n` });
     await _reloadNotes();
     openNote(res.path);
   } catch (e) { showError('Could not create note: ' + e.message); }
+}
+
+async function _newFolder() {
+  const folder = _selectedFolder ? _selectedFolder + '/' : '';
+  const path = await styledPrompt('', {
+    title: 'New folder',
+    defaultValue: folder,
+    placeholder: 'e.g. Projects/2026',
+    confirmText: 'Create',
+    maxLength: 200,
+  });
+  if (!path || !path.replace(/\/+$/, '')) return;
+  try {
+    const res = await apiSend('/folder', 'POST', { path });
+    _selectedFolder = res.path;
+    _collapsed.delete(res.path);
+    _emptyFolders.add(res.path);
+    await _reloadNotes();
+  } catch (e) { showError('Could not create folder: ' + e.message); }
 }
 
 async function _saveCurrent() {
@@ -292,7 +449,7 @@ function _renderPreview(src, outlinks) {
     _outlinkMap = {};
     for (const o of outlinks) _outlinkMap[o.target] = o.resolved;
   }
-  const prepared = _preprocessWikilinks(src || '');
+  const prepared = _preprocessMarkdown(src || '');
   const box = _modal.querySelector('.atlas-preview');
   box.innerHTML = mdToHtml(prepared, { sanitize: true });
   // mdToHtml turns [label](#atlas-link-<target>) into a normal <a>. Tag those
@@ -305,9 +462,23 @@ function _renderPreview(src, outlinks) {
     a.dataset.target = target;
     a.dataset.resolved = resolved;
   });
+  // #tag anchors → pills.
+  box.querySelectorAll('a[href^="#atlas-tag-"]').forEach((a) => {
+    a.classList.add('atlas-tag');
+    a.dataset.tag = decodeURIComponent(a.getAttribute('href').slice('#atlas-tag-'.length));
+  });
 }
 
-function _preprocessWikilinks(src) {
+// Mirror of src/atlas_links: a fenced/inline code span we must NOT scan for
+// links or tags (so `# heading` and example snippets stay literal).
+const _CODE_SPAN = /```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`/g;
+
+function _preprocessMarkdown(src) {
+  // Protect code spans from the link/tag passes by stashing them behind
+  // placeholders, then restoring verbatim at the end.
+  const stash = [];
+  src = src.replace(_CODE_SPAN, (m) => { stash.push(m); return ` ${stash.length - 1} `; });
+
   // Image embeds: ![[pic.png]] → markdown image served from the raw endpoint.
   src = src.replace(/!\[\[([^\]|#]+?)\]\]/g, (m, target) => {
     const t = target.trim();
@@ -325,7 +496,16 @@ function _preprocessWikilinks(src) {
     const label = (alias || left).trim().replace(/[[\]]/g, '');
     return `[${label}](#atlas-link-${encodeURIComponent(target)})`;
   });
-  return src;
+  // #tag / #parent/child → a pill link. Anchored to line-start or whitespace
+  // (so `# Heading` and `url#frag` are skipped) and not purely numeric — same
+  // rules as the Python parser.
+  src = src.replace(/(^|\s)#([A-Za-z0-9_][\w/-]*)/g, (m, pre, raw) => {
+    const tag = raw.replace(/\/+$/, '');
+    if (!tag || tag.replace(/\//g, '').match(/^\d+$/)) return m;
+    return `${pre}[#${tag}](#atlas-tag-${encodeURIComponent(tag)})`;
+  });
+
+  return src.replace(/ (\d+) /g, (m, i) => stash[+i]);
 }
 
 function _renderBacklinks(list) {
@@ -343,15 +523,24 @@ function _renderBacklinks(list) {
 }
 
 // ── graph: a dockable panel on the right that widens the dialog ───────────────
+// Width is adjusted in JS (not via a CSS class) so it composes with the inline
+// width the resize handles set — the dialog grows by the panel width on open
+// and shrinks back on close, capped to the viewport.
 function _toggleGraph(force) {
   _graphOpen = (typeof force === 'boolean') ? force : !_graphOpen;
   const wrap = _modal.querySelector('.atlas-graph-wrap');
   const content = _modal.querySelector('.modal-content');
-  wrap.style.display = _graphOpen ? '' : 'none';
-  content.classList.toggle('with-graph', _graphOpen);
+  const w = content.getBoundingClientRect().width;
+  if (_graphOpen) {
+    content.style.width = Math.min(window.innerWidth * 0.98, w + GRAPH_PANEL_W) + 'px';
+    wrap.style.display = '';
+    _openGraph();
+  } else {
+    wrap.style.display = 'none';
+    content.style.width = Math.max(720, w - GRAPH_PANEL_W) + 'px';
+    if (_graph) _graph.stop();
+  }
   _modal.querySelector('[data-act="graph-toggle"]').classList.toggle('active', _graphOpen);
-  if (_graphOpen) _openGraph();
-  else if (_graph) _graph.stop();
 }
 
 async function _openGraph() {
