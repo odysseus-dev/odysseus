@@ -573,16 +573,20 @@ class AuthManager:
             return None
         return self.create_session_trusted(username)
 
-    def create_session_trusted(self, username: str) -> str:
+    def create_session_trusted(self, username: str) -> Optional[str]:
         """Issue a session token for an already-verified user.
         Call only after verify_password (and TOTP if enabled) have passed."""
         username = username.strip().lower()
         token = secrets.token_hex(32)
-        with self._sessions_lock:
-            self._sessions[token] = {
-                "username": username,
-                "expiry": time.time() + TOKEN_TTL,
-            }
+        with self._config_lock:
+            if username not in self.users:
+                logger.warning("Refused to issue session for missing user '%s'", username)
+                return None
+            with self._sessions_lock:
+                self._sessions[token] = {
+                    "username": username,
+                    "expiry": time.time() + TOKEN_TTL,
+                }
         self._save_sessions()
         return token
 

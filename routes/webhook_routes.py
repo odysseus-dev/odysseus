@@ -1,6 +1,5 @@
 """Webhook, API Token, and sync chat routes."""
 
-import asyncio
 import uuid
 import logging
 from typing import Optional
@@ -385,10 +384,10 @@ def setup_webhook_routes(
         sess.add_message(ChatMessage("assistant", reply))
         session_manager.save_sessions()
 
-        asyncio.create_task(webhook_manager.fire("chat.completed", {
+        webhook_manager.fire_and_forget("chat.completed", {
             "session_id": session_id, "model": sess.model,
             "user_message": message[:2000], "response": reply[:2000],
-        }))
+        })
 
         return {"response": reply, "session_id": session_id, "model": sess.model}
 

@@ -41,8 +41,10 @@ def _seed(tmp_path):
 
 
 def test_file_kept_when_commit_fails(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     SessionLocal = _seed(tmp_path)
+    # GALLERY_IMAGE_DIR is an absolute path fixed at import, so a chdir can't
+    # redirect the delete; point the resolver at the seeded tmp dir directly.
+    monkeypatch.setattr(gallery_routes, "GALLERY_IMAGE_DIR", tmp_path / "data" / "generated_images")
     monkeypatch.setattr(gallery_routes, "get_current_user", lambda r: "alice")
 
     # A session whose commit always fails, to simulate a DB error mid-delete.
@@ -67,8 +69,8 @@ def test_file_kept_when_commit_fails(tmp_path, monkeypatch):
 
 
 def test_file_removed_on_successful_delete(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
     SessionLocal = _seed(tmp_path)
+    monkeypatch.setattr(gallery_routes, "GALLERY_IMAGE_DIR", tmp_path / "data" / "generated_images")
     monkeypatch.setattr(gallery_routes, "get_current_user", lambda r: "alice")
     monkeypatch.setattr(gallery_routes, "SessionLocal", SessionLocal)
 

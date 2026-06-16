@@ -792,6 +792,19 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         try { await documentModule.saveDocument({ silent: true }); } catch (_e) { /* best-effort */ }
         fd.append('active_doc_id', documentModule.getCurrentDocId());
       }
+      // Active email context — when an email reader is open, pass its
+      // uid/folder/account so "reply", "summarize", "what does this say"
+      // resolve to the email the user is actually looking at instead of
+      // making the agent invent a new markdown draft with fake headers.
+      try {
+        const getEmailCtx = window.__odysseusGetActiveEmailContext;
+        const emCtx = typeof getEmailCtx === 'function' ? getEmailCtx() : null;
+        if (emCtx && emCtx.uid) {
+          fd.append('active_email_uid', String(emCtx.uid));
+          fd.append('active_email_folder', String(emCtx.folder || 'INBOX'));
+          if (emCtx.account) fd.append('active_email_account', String(emCtx.account));
+        }
+      } catch (_e) { /* best-effort */ }
       // Web toggle: pre-search in Chat mode, tool permission in Agent mode
       const toggleState = Storage.loadToggleState();
       let isAgentMode = (toggleState.mode || 'chat') === 'agent';

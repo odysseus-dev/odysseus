@@ -676,7 +676,7 @@ def setup_cookbook_routes() -> APIRouter:
             _spf = f"-p {_port} " if _port and _port != "22" else ""
             setup_cmd = (
                 f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
+                f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
             )
         else:
             # Local: run hf download in the background (tmux on POSIX, a detached
@@ -708,7 +708,7 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 wrapper_script.chmod(0o755)
-            setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            setup_cmd = None if IS_WINDOWS else f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (backend={'ollama' if is_ollama_download else 'hf'}, include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
@@ -984,9 +984,9 @@ def setup_cookbook_routes() -> APIRouter:
             ssh_args = ["ssh"]
             if ssh_port and ssh_port != "22":
                 ssh_args.extend(["-p", str(ssh_port)])
-            capture_cmd = ssh_args + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-200"]
+            capture_cmd = ssh_args + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-2000"]
         else:
-            capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-200"]
+            capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-2000"]
 
         _exit_re = re.compile(r"=== Process exited with code (-?\d+) ===")
         for wait_s in _waits:
@@ -1284,6 +1284,11 @@ def setup_cookbook_routes() -> APIRouter:
         # LOCAL execution on a native-Windows host never uses tmux (detached
         # process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
+        if is_windows and remote and "diffusion_server.py" in req.cmd:
+            raise HTTPException(
+                400,
+                "Remote Windows Diffusers serving is not supported yet; use local Windows or a Linux remote server.",
+            )
 
         if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
@@ -1577,10 +1582,10 @@ def setup_cookbook_routes() -> APIRouter:
                 setup_cmd = (
                     f"{scp_extras}"
                     f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                    f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
+                    f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
                 )
             else:
-                setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
+                setup_cmd = f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
 
         if setup_cmd is None:
             # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
@@ -2624,6 +2629,193 @@ def setup_cookbook_routes() -> APIRouter:
             "fetched_at": _ollama_library_cache["fetched_at"],
             "error": _ollama_library_cache["error"],
         }
+
+    # ── vLLM recipe scraper ─────────────────────────────────────────────
+    # Fetches the official YAML recipe for a model from vllm-project/recipes
+    # and normalizes it into a small JSON the frontend can consume. Cached
+    # per-repo so the GitHub raw endpoint isn't hammered.
+    _vllm_recipe_cache: dict[str, tuple[float, dict | None]] = {}
+    # Manifest of all <org>/<model> ids that have a recipe in the upstream
+    # repo. Cheap to fetch (one Git Tree API call), so we cache the whole
+    # set for ~12h. Per-row "does this model have a recipe?" lookups hit
+    # this set instead of doing 912 individual recipe fetches.
+    _vllm_recipe_manifest: dict = {"fetched_at": 0.0, "models": set(), "error": ""}
+
+    @router.get("/api/cookbook/vllm-recipe-manifest")
+    async def vllm_recipe_manifest(refresh: int = 0):
+        """Return the set of <org>/<model> ids known to have a vLLM recipe.
+        One GitHub Tree API call, 12h cache. The frontend uses this to badge
+        rows in the model list before the user expands them."""
+        import time as _time
+        import httpx as _httpx
+        TTL = 12 * 3600.0
+        now = _time.time()
+        if (
+            refresh
+            or (now - _vllm_recipe_manifest["fetched_at"]) > TTL
+            or not _vllm_recipe_manifest["models"]
+        ):
+            url = (
+                "https://api.github.com/repos/vllm-project/recipes/"
+                "git/trees/main?recursive=1"
+            )
+            def _fetch_sync() -> tuple[int, dict | None, str]:
+                try:
+                    headers = {"Accept": "application/vnd.github+json"}
+                    with _httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                        r = client.get(url, headers=headers)
+                        if r.status_code != 200:
+                            return r.status_code, None, r.text[:200]
+                        return 200, r.json(), ""
+                except Exception as e:
+                    return 0, None, f"fetch error: {e}"
+            status, data, err = await asyncio.to_thread(_fetch_sync)
+            if status == 200 and isinstance(data, dict):
+                models: set[str] = set()
+                for entry in data.get("tree") or []:
+                    path = (entry or {}).get("path") or ""
+                    if not path.startswith("models/") or not path.endswith(".yaml"):
+                        continue
+                    # path = "models/<org>/<model>.yaml" → "<org>/<model>"
+                    body = path[len("models/"):-len(".yaml")]
+                    if "/" in body:
+                        models.add(body)
+                _vllm_recipe_manifest["models"] = models
+                _vllm_recipe_manifest["fetched_at"] = now
+                _vllm_recipe_manifest["error"] = ""
+            else:
+                _vllm_recipe_manifest["error"] = (
+                    f"HTTP {status}: {err}" if status else err
+                )
+                # Don't clobber a stale-but-usable list on transient failures.
+                if not _vllm_recipe_manifest["models"]:
+                    return {
+                        "models": [],
+                        "count": 0,
+                        "error": _vllm_recipe_manifest["error"],
+                    }
+        return {
+            "models": sorted(_vllm_recipe_manifest["models"]),
+            "count": len(_vllm_recipe_manifest["models"]),
+            "fetched_at": _vllm_recipe_manifest["fetched_at"],
+            "error": _vllm_recipe_manifest["error"],
+        }
+
+    @router.get("/api/cookbook/vllm-recipe")
+    async def vllm_recipe(repo: str, refresh: int = 0):
+        """Return the vLLM official recipe for a HuggingFace repo, if one
+        exists at vllm-project/recipes. `repo` is the full HF id like
+        'MiniMaxAI/MiniMax-M2'. Cached 6h."""
+        import time as _time
+        import httpx as _httpx
+        import yaml as _yaml
+
+        TTL = 6 * 3600.0
+        now = _time.time()
+        repo = (repo or "").strip().strip("/")
+        if "/" not in repo:
+            return {"exists": False, "error": "repo must be <org>/<model>"}
+
+        cached = _vllm_recipe_cache.get(repo)
+        if cached and not refresh and (now - cached[0]) < TTL:
+            return cached[1] or {"exists": False, "cached": True}
+
+        url = (
+            f"https://raw.githubusercontent.com/vllm-project/recipes/"
+            f"main/models/{repo}.yaml"
+        )
+
+        def _fetch_sync() -> tuple[int, str]:
+            try:
+                with _httpx.Client(timeout=8.0, follow_redirects=True) as client:
+                    r = client.get(url)
+                    return r.status_code, r.text
+            except Exception as e:
+                return 0, f"fetch error: {e}"
+
+        status, text = await asyncio.to_thread(_fetch_sync)
+        if status == 404:
+            _vllm_recipe_cache[repo] = (now, {"exists": False})
+            return {"exists": False}
+        if status != 200:
+            return {"exists": False, "error": f"HTTP {status}", "transient": True}
+
+        try:
+            doc = _yaml.safe_load(text) or {}
+        except Exception as e:
+            return {"exists": False, "error": f"yaml parse: {e}"}
+
+        meta = doc.get("meta") or {}
+        model = doc.get("model") or {}
+        features = doc.get("features") or {}
+        deps = doc.get("dependencies") or []
+        variants = doc.get("variants") or {}
+        hw_overrides = doc.get("hardware_overrides") or {}
+        strat_overrides = doc.get("strategy_overrides") or {}
+
+        # Tool-call + reasoning parsers, as flat arg arrays, so the frontend
+        # can drop them straight into the launch command.
+        tool_calling = features.get("tool_calling") or {}
+        reasoning = features.get("reasoning") or {}
+
+        normalized = {
+            "exists": True,
+            "source_url": url,
+            "title": meta.get("title") or "",
+            "provider": meta.get("provider") or "",
+            "description": meta.get("description") or "",
+            "date_updated": str(meta.get("date_updated") or ""),
+            "hardware_support": meta.get("hardware") or {},
+            "model_id": model.get("model_id") or repo,
+            "min_vllm_version": model.get("min_vllm_version") or "",
+            "architecture": model.get("architecture") or "",
+            "parameter_count": model.get("parameter_count") or "",
+            "active_parameters": model.get("active_parameters") or "",
+            "context_length": model.get("context_length") or 0,
+            "base_args": list(model.get("base_args") or []),
+            "base_env": dict(model.get("base_env") or {}),
+            "tool_calling": {
+                "description": tool_calling.get("description") or "",
+                "args": list(tool_calling.get("args") or []),
+            } if tool_calling else None,
+            "reasoning": {
+                "description": reasoning.get("description") or "",
+                "args": list(reasoning.get("args") or []),
+            } if reasoning else None,
+            "dependencies": [
+                {
+                    "note": (d.get("note") or "").strip(),
+                    "command": (d.get("command") or "").strip(),
+                    "optional": bool(d.get("optional", False)),
+                }
+                for d in deps if isinstance(d, dict)
+            ],
+            "variants": {
+                k: {
+                    "model_id": v.get("model_id") or model.get("model_id") or repo,
+                    "precision": v.get("precision") or "",
+                    "vram_minimum_gb": v.get("vram_minimum_gb") or 0,
+                    "description": v.get("description") or "",
+                    "extra_args": list(v.get("extra_args") or []),
+                    "extra_env": dict(v.get("extra_env") or {}),
+                }
+                for k, v in variants.items() if isinstance(v, dict)
+            },
+            "hardware_overrides": {
+                hw: {
+                    "extra_args": list((ov or {}).get("extra_args") or []),
+                    "extra_env": dict((ov or {}).get("extra_env") or {}),
+                }
+                for hw, ov in hw_overrides.items() if isinstance(ov, dict)
+            },
+            "strategy_overrides": {
+                strat: dict(ov or {})
+                for strat, ov in strat_overrides.items() if isinstance(ov, dict)
+            },
+            "compatible_strategies": list(doc.get("compatible_strategies") or []),
+        }
+        _vllm_recipe_cache[repo] = (now, normalized)
+        return normalized
 
     @router.get("/api/cookbook/tasks/status")
     async def cookbook_tasks_status(request: Request):

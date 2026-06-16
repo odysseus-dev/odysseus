@@ -19,6 +19,40 @@ from core.constants import internal_api_base
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Active email state
+# ---------------------------------------------------------------------------
+
+# When the user has an email reader window open, the frontend tells the
+# backend about it on each chat submit. Email tools can resolve "this email"
+# without guessing a UID. Cleared between requests by chat_routes.
+_active_email_ref: Optional[Dict[str, str]] = None
+
+
+def set_active_email(uid: Optional[str], folder: Optional[str] = None, account: Optional[str] = None,
+                     subject: Optional[str] = None, sender: Optional[str] = None) -> None:
+    """Stash the email currently open in the UI. None clears it."""
+    global _active_email_ref
+    if not uid:
+        _active_email_ref = None
+        return
+    _active_email_ref = {
+        "uid": str(uid),
+        "folder": str(folder or "INBOX"),
+        "account": str(account or ""),
+        "subject": str(subject or ""),
+        "from": str(sender or ""),
+    }
+
+
+def get_active_email() -> Optional[Dict[str, str]]:
+    return _active_email_ref
+
+
+def clear_active_email() -> None:
+    global _active_email_ref
+    _active_email_ref = None
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
@@ -1545,10 +1579,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         text = str(raw).strip().lower()
         if text in {"none", "no", "off", "false"}:
             return None
-        m = re.search(r"(\d+)\s*(?:m|min|minute|minutes)\b", text)
+        m = re.search(r"(\d+)\s*(?:minutes?|mins?|m)\b", text)
         if m:
             return max(0, int(m.group(1)))
-        m = re.search(r"(\d+)\s*(?:h|hr|hour|hours)\b", text)
+        m = re.search(r"(\d+)\s*(?:hours?|hrs?|h)\b", text)
         if m:
             return max(0, int(m.group(1)) * 60)
         if text.isdigit():
@@ -1561,7 +1595,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             return desc
         reminder_only = re.compile(
             r"^\s*(?:remind(?:er)?|alarm)\s*:?\s*\d+\s*"
-            r"(?:m|min|minute|minutes|h|hr|hour|hours)\b.*$",
+            r"(?:minutes?|mins?|m|hours?|hrs?|h)\b.*$",
             re.I,
         )
         return "" if reminder_only.match(desc) else desc
@@ -3763,7 +3797,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     if not name:
         return {"error": "name is required", "exit_code": 1}
 
-    contacts = {}  # email -> {name, source}
+    contacts = {}  # email_or_phone -> {name, source, phone?}
 
     # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
     # server-side httpx GET to /api/contacts/search carries no session
@@ -3778,10 +3812,18 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
             match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
             if not match:
                 continue
+            has_email = False
             for email in (c.get("emails") or []):
                 email = (email or "").strip().lower()
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+                    has_email = True
+            # Fall back to phone numbers when the contact has no email address
+            if not has_email:
+                for phone in (c.get("phones") or []):
+                    phone = (phone or "").strip()
+                    if phone:
+                        contacts[phone] = {"name": c.get("name") or phone, "source": "contacts", "phone": phone}
     except Exception:
         pass
 
@@ -3801,8 +3843,11 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
         return {"output": f"No contacts found matching '{name}'.", "exit_code": 0}
 
     lines = [f"Contacts matching '{name}':"]
-    for email, info in contacts.items():
-        lines.append(f"- {info['name']} <{email}> ({info['source']})")
+    for key, info in contacts.items():
+        if info.get("phone"):
+            lines.append(f"- {info['name']} — phone: {info['phone']} ({info['source']})")
+        else:
+            lines.append(f"- {info['name']} <{key}> ({info['source']})")
     return {"output": "\n".join(lines), "exit_code": 0}
 
 
