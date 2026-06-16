@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
-from core.auth import AuthManager
+from core.auth import AuthManager, SetAdminResult
 from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, SKILLS_DIR
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
@@ -72,6 +72,11 @@ class DeleteUserRequest(BaseModel):
 
 class RenameUserRequest(BaseModel):
     username: str
+
+
+class SetAdminRequest(BaseModel):
+    is_admin: bool
+
 
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
@@ -305,6 +310,19 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if not ok:
             raise HTTPException(400, "Cannot rename user")
 
+        def _rollback_auth_rename() -> bool:
+            # On self-rename the admin session has already moved to the new
+            # username, so the rollback must authenticate as the new user.
+            rollback_user = new_username if user == old_username else user
+            try:
+                return bool(auth_manager.rename_user(new_username, old_username, rollback_user))
+            except Exception as rollback_err:
+                logger.error(
+                    "Failed to roll back auth rename %s -> %s after owner migration failure: %s",
+                    new_username, old_username, rollback_err,
+                )
+                return False
+
         # Usernames are ownership keys for user data. Rename the common
         # owner-scoped DB rows so the account keeps access to its sessions,
         # docs, email accounts, tasks, etc.
@@ -330,6 +348,11 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 db.close()
         except Exception as e:
             logger.error("Failed to rename owner references %s -> %s: %s", old_username, new_username, e)
+            if not _rollback_auth_rename():
+                logger.error(
+                    "Auth rename %s -> %s could not be rolled back after owner migration failure",
+                    old_username, new_username,
+                )
             raise HTTPException(500, "Failed to rename user data")
 
         # Per-user prefs are JSON-backed, not SQL-backed.
@@ -348,6 +371,20 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     _save_prefs(prefs)
         except Exception as e:
             logger.warning("Failed to rename user prefs %s -> %s: %s", old_username, new_username, e)
+
+        # In-flight deep-research tasks live in the process-local
+        # ResearchHandler registry. They are not covered by the persisted JSON
+        # migration above, but the research routes filter and cancel by this
+        # owner field while the job is running. Do this before sweeping
+        # completed JSON files so a job that finishes during the rename saves
+        # with the new owner or is caught by the disk sweep below.
+        try:
+            rh = getattr(request.app.state, "research_handler", None)
+            rename_owner = getattr(rh, "rename_owner", None)
+            if callable(rename_owner):
+                rename_owner(old_username, new_username)
+        except Exception as e:
+            logger.warning("Failed to rename active research tasks %s -> %s: %s", old_username, new_username, e)
 
         # deep_research: each completed report is a standalone JSON file with
         # an `owner` field. research_routes filters by d.get("owner") == user,
@@ -384,6 +421,17 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         except Exception as e:
             logger.warning("Failed to rename memory.json owner references %s -> %s: %s", old_username, new_username, e)
 
+        # uploads.json: upload rows use owner metadata for access checks and
+        # owner-prefixed index keys for dedupe. Rename both so attachments keep
+        # resolving after the account username changes.
+        try:
+            upload_handler = getattr(request.app.state, "upload_handler", None)
+            rename_owner = getattr(upload_handler, "rename_owner", None)
+            if callable(rename_owner):
+                rename_owner(old_username, new_username)
+        except Exception as e:
+            logger.warning("Failed to rename upload owner references %s -> %s: %s", old_username, new_username, e)
+
         # skills: SKILL.md frontmatter carries owner: <username>; the usage
         # sidecar (_usage.json) keys entries as owner::skill-name. Both must
         # be updated or the renamed user's Skills panel goes empty.
@@ -391,7 +439,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             skills_root = Path(SKILLS_DIR)
             if skills_root.is_dir():
                 _owner_re = re.compile(
-                    r'(?m)^(owner:\s*)' + re.escape(old_username) + r'\s*$'
+                    r'(?m)^(owner:\s*)' + re.escape(old_username) + r'\s*$',
+                    re.IGNORECASE,
                 )
                 for p in skills_root.rglob("SKILL.md"):
                     try:
@@ -406,12 +455,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                     try:
                         usage = json.loads(usage_path.read_text(encoding="utf-8"))
                         if isinstance(usage, dict):
-                            prefix = old_username + "::"
                             new_usage = {}
                             changed = False
                             for k, v in usage.items():
-                                if k.startswith(prefix):
-                                    new_usage[new_username + "::" + k[len(prefix):]] = v
+                                owner_part, sep, skill_part = k.partition("::")
+                                if sep and owner_part.lower() == old_username:
+                                    new_usage[new_username + "::" + skill_part] = v
                                     changed = True
                                 else:
                                     new_usage[k] = v
@@ -443,6 +492,31 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             invalidator()
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
 
+    @router.put("/users/{username}/admin")
+    async def set_user_admin(username: str, body: SetAdminRequest, request: Request):
+        """Promote/demote a user to/from admin. Admin only.
+
+        The last remaining admin can't be demoted (no lockout). Self-demotion
+        is allowed while another admin exists; the `self` flag tells the UI to
+        reload the acting user into the normal-user view.
+        """
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        result = auth_manager.set_admin(username, body.is_admin, user)
+        if result is SetAdminResult.USER_NOT_FOUND:
+            raise HTTPException(404, "User not found")
+        if result is SetAdminResult.NOT_AUTHORIZED:
+            raise HTTPException(403, "Admin only")
+        if result is SetAdminResult.LAST_ADMIN:
+            raise HTTPException(400, "Cannot demote the last admin")
+        target = (username or "").strip().lower()
+        return {
+            "ok": True,
+            "is_admin": body.is_admin,
+            "self": target == (user or "").strip().lower(),
+        }
+
     @router.post("/signup-toggle", deprecated=True)
     async def toggle_signup(request: Request):
         """
@@ -473,7 +547,23 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        ok = auth_manager.delete_user(body.username, user)
+
+        def _invalidate_api_token_cache():
+            try:
+                invalidator = getattr(request.app.state, "invalidate_token_cache", None)
+                if invalidator:
+                    invalidator()
+            except Exception:
+                pass
+
+        try:
+            ok = auth_manager.delete_user(body.username, user)
+        except Exception:
+            # delete_user can touch ApiToken rows before a later auth-store write
+            # fails. Dirty the bearer cache anyway so a partial token purge does
+            # not leave already-cached tokens authenticating until restart.
+            _invalidate_api_token_cache()
+            raise
         if not ok:
             raise HTTPException(400, "Cannot delete user")
         # delete_user removes the user's ApiToken rows, but the bearer-auth
@@ -481,12 +571,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         # rebuilds when flagged dirty. Without this, a deleted user's already
         # cached token keeps authenticating until some other token op or a
         # restart clears the cache. Mirror what the token routes do.
-        try:
-            invalidator = getattr(request.app.state, "invalidate_token_cache", None)
-            if invalidator:
-                invalidator()
-        except Exception:
-            pass
+        _invalidate_api_token_cache()
         return {"ok": True}
 
     # ---- Feature visibility (admin-managed) ----

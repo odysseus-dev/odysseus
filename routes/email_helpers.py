@@ -13,6 +13,8 @@ and `email_pollers.py` (the background loops):
 """
 
 import os
+import base64
+import time
 import imaplib
 import smtplib
 import email as email_mod
@@ -38,6 +40,106 @@ from src.secret_storage import decrypt as _decrypt
 logger = logging.getLogger(__name__)
 
 
+def _xoauth2_raw(user: str, access_token: str) -> str:
+    """The SASL XOAUTH2 initial-response string (unencoded).
+
+    Both smtplib.SMTP.auth() and imaplib.IMAP4.authenticate() base64-encode
+    the value their callback returns, so callers pass this raw form — never
+    pre-encoded — to avoid double base64.
+    """
+    return f"user={user}\x01auth=Bearer {access_token}\x01\x01"
+
+
+def _xoauth2_bytes(user: str, access_token: str) -> bytes:
+    """Raw XOAUTH2 bytes for imaplib's authenticate() callback."""
+    return _xoauth2_raw(user, access_token).encode()
+
+
+def make_oauth_state(account_id: str, owner: str) -> str:
+    """Return an HMAC-signed, base64-encoded OAuth state token.
+
+    Encodes account_id + owner + a random nonce, signed with the app secret
+    so the callback can validate that the flow was initiated by an
+    authenticated, owning user (CSRF / state-forgery protection).
+    """
+    import hmac as _hmac, hashlib as _hl, secrets as _sec
+    from src.secret_storage import _load_or_create_key
+    nonce = _sec.token_hex(16)
+    payload = json.dumps({"a": account_id, "o": owner, "n": nonce}, separators=(",", ":"))
+    sig = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}|{sig}".encode()).decode()
+
+
+def verify_oauth_state(state: str) -> dict | None:
+    """Verify an OAuth state token's HMAC signature.
+
+    Returns the decoded payload dict ({"a", "o", "n"}) on success, or None if
+    the token is malformed, tampered, or signed with a different key.
+    """
+    import hmac as _hmac, hashlib as _hl
+    from src.secret_storage import _load_or_create_key
+    try:
+        decoded = base64.urlsafe_b64decode(state.encode()).decode()
+        payload, sig = decoded.rsplit("|", 1)
+        expected = _hmac.new(_load_or_create_key(), payload.encode(), _hl.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            return None
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
+def _refresh_google_token(account_id: str) -> str | None:
+    """Exchange the stored refresh token for a new access token and persist it."""
+    import httpx
+    from core.database import SessionLocal as _SL, EmailAccount as _EA
+    from src.secret_storage import encrypt as _enc, decrypt as _dec
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        return None
+    db = _SL()
+    try:
+        row = db.get(_EA, account_id)
+        if not row or not row.oauth_refresh_token:
+            return None
+        refresh_token = _dec(row.oauth_refresh_token or "")
+        if not refresh_token:
+            return None
+        resp = httpx.post("https://oauth2.googleapis.com/token", data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        access_token = data["access_token"]
+        row.oauth_access_token = _enc(access_token)
+        row.oauth_token_expiry = str(int(time.time()) + data.get("expires_in", 3600))
+        db.commit()
+        return access_token
+    except Exception:
+        logger.warning(f"Google token refresh failed for account {account_id}")
+        return None
+    finally:
+        db.close()
+
+
+def _get_valid_google_token(account_id: str, cfg: dict) -> str | None:
+    """Return a valid Google access token, refreshing if expired or missing."""
+    from src.secret_storage import decrypt as _dec
+    access_token = _dec(cfg.get("oauth_access_token") or "")
+    expiry_str = cfg.get("oauth_token_expiry") or ""
+    if access_token and expiry_str:
+        try:
+            if int(expiry_str) - 60 > time.time():
+                return access_token
+        except (ValueError, TypeError):
+            pass
+    return _refresh_google_token(account_id)
+
+
 def _smtp_security_mode(cfg: dict) -> str:
     raw = str(cfg.get("smtp_security") or "").strip().lower()
     if raw in {"ssl", "starttls", "none"}:
@@ -54,20 +156,29 @@ def _send_smtp_message(cfg: dict, from_addr: str, recipients: list[str], message
     port = int(cfg.get("smtp_port") or 465)
     user = cfg.get("smtp_user") or ""
     password = cfg.get("smtp_password") or ""
+
+    def _auth_smtp(smtp):
+        if cfg.get("oauth_provider") == "google":
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account")
+            smtp.ehlo()
+            smtp.auth("XOAUTH2", lambda challenge=None: _xoauth2_raw(user, token), initial_response_ok=True)
+        elif user and password:
+            smtp.login(user, password)
+
     security = _smtp_security_mode(cfg)
 
     if security == "ssl":
         with smtplib.SMTP_SSL(host, port, timeout=timeout) as smtp:
-            if user and password:
-                smtp.login(user, password)
+            _auth_smtp(smtp)
             smtp.sendmail(from_addr, recipients, message)
         return
 
     with smtplib.SMTP(host, port, timeout=timeout) as smtp:
         if security == "starttls":
             smtp.starttls()
-        if user and password:
-            smtp.login(user, password)
+        _auth_smtp(smtp)
         smtp.sendmail(from_addr, recipients, message)
 
 
@@ -304,6 +415,7 @@ OWNER_SCOPED_EMAIL_CACHE_TABLES = {
     "email_ai_replies",
     "email_calendar_extractions",
     "email_urgency_alerts",
+    "sender_signatures",
 }
 
 
@@ -339,6 +451,55 @@ def _ensure_owner_scoped_email_cache_table(conn, table: str, create_sql: str, co
     except Exception as _mig_e:
         import logging as _lg
         _lg.getLogger(__name__).warning(f"{table} owner-migration skipped: {_mig_e}")
+
+
+def _ensure_sender_signatures_table(conn):
+    """Create/migrate learned sender signatures to an owner-scoped cache."""
+    create_sql = """
+        CREATE TABLE IF NOT EXISTS sender_signatures (
+            from_address TEXT,
+            owner TEXT DEFAULT '',
+            signature_text TEXT,
+            sample_count INTEGER,
+            last_built_at TEXT NOT NULL,
+            model_used TEXT,
+            source TEXT,
+            PRIMARY KEY (from_address, owner)
+        )
+    """
+    conn.execute(create_sql)
+    try:
+        info = conn.execute("PRAGMA table_info(sender_signatures)").fetchall()
+        cols = [r[1] for r in info]
+        pk_cols = [r[1] for r in sorted((r for r in info if r[5]), key=lambda r: r[5])]
+        if "owner" in cols and pk_cols == ["from_address", "owner"]:
+            return
+
+        conn.execute("ALTER TABLE sender_signatures RENAME TO sender_signatures__old")
+        conn.execute(create_sql)
+        old_cols = [r[1] for r in conn.execute("PRAGMA table_info(sender_signatures__old)").fetchall()]
+        copy_cols = [
+            c for c in (
+                "from_address",
+                "signature_text",
+                "sample_count",
+                "last_built_at",
+                "model_used",
+                "source",
+            )
+            if c in old_cols
+        ]
+        source_owner = "COALESCE(owner, '')" if "owner" in old_cols else "''"
+        conn.execute(
+            f"INSERT OR IGNORE INTO sender_signatures "
+            f"({', '.join([*copy_cols, 'owner'])}) "
+            f"SELECT {', '.join([*copy_cols, source_owner])} "
+            f"FROM sender_signatures__old"
+        )
+        conn.execute("DROP TABLE sender_signatures__old")
+    except Exception as _mig_e:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(f"sender_signatures owner-migration skipped: {_mig_e}")
 
 
 def attachment_extract_dir(folder: str, uid: str) -> Path:
@@ -559,20 +720,10 @@ def _init_scheduled_db():
             conn.execute("ALTER TABLE email_boundaries ADD COLUMN turns_json TEXT")
     except Exception:
         pass
-    # Per-sender signature cache. Populated by `learn_sender_signatures`
-    # action: the LLM extracts the common trailing block across N emails
-    # from each sender; the renderer folds it consistently for every
-    # future email from that address.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS sender_signatures (
-            from_address TEXT PRIMARY KEY,
-            signature_text TEXT,
-            sample_count INTEGER,
-            last_built_at TEXT NOT NULL,
-            model_used TEXT,
-            source TEXT
-        )
-    """)
+    # Per-sender signature cache. Populated by `learn_sender_signatures`.
+    # Message sender addresses are global, so signatures must be scoped to the
+    # mailbox owner before `/read` returns them to the renderer.
+    _ensure_sender_signatures_table(conn)
     conn.commit()
     conn.close()
 
@@ -661,10 +812,16 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "imap_password": _decrypt(row.imap_password or ""),
                     "imap_starttls": bool(row.imap_starttls),
                     "from_address": row.from_address or row.imap_user or "",
+                    "oauth_provider": row.oauth_provider or "",
+                    "oauth_access_token": row.oauth_access_token or "",
+                    "oauth_refresh_token": row.oauth_refresh_token or "",
+                    "oauth_token_expiry": row.oauth_token_expiry or "",
+                    "display_name": row.display_name or "",
                 }
-                if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
+                is_oauth = bool(cfg.get("oauth_provider"))
+                if not is_oauth and not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
                     logger.warning(f"SMTP not configured for account {row.name!r}")
-                if not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
+                if not is_oauth and not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
                     logger.warning(f"IMAP not configured for account {row.name!r}")
                 return cfg
         finally:
@@ -785,12 +942,19 @@ def _imap_connect(account_id: str | None = None, owner: str = "",
         timeout=timeout,
     )
     try:
-        conn.login(cfg["imap_user"], cfg["imap_password"])
+        if cfg.get("oauth_provider") == "google":
+            token = _get_valid_google_token(cfg.get("account_id"), cfg)
+            if not token:
+                raise RuntimeError("Google OAuth token unavailable — reconnect the account in Settings → Integrations")
+            conn.authenticate("XOAUTH2", lambda x: _xoauth2_bytes(cfg["imap_user"], token))
+        else:
+            conn.login(cfg["imap_user"], cfg["imap_password"])
     except Exception:
         # A failed AUTHENTICATE (e.g. an Office 365 app password on an
-        # MFA-enabled tenant, #3174) otherwise orphans the already-connected
-        # socket; close it before propagating so a misconfigured account
-        # can't leak one descriptor per retry / background poller pass.
+        # MFA-enabled tenant, #3174, or an expired/revoked OAuth token)
+        # otherwise orphans the already-connected socket; close it before
+        # propagating so a misconfigured account can't leak one descriptor
+        # per retry / background poller pass.
         try:
             conn.shutdown()
         except Exception:

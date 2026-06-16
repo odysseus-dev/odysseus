@@ -18,6 +18,80 @@ let selectedIds = new Set();
 
 const MEMORY_CATEGORIES = ['fact', 'identity', 'preference', 'contact', 'project', 'goal', 'task'];
 
+// Sort-option icons for the custom Memory sort picker (and Skills picker
+// once it reuses the same markup). Each value maps to a 13px Feather-style
+// SVG so the icon visually distinguishes Newest / Oldest / A-Z / Most used.
+const _MEMORY_SORT_ICONS = {
+  newest: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  oldest: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 16 14"/></svg>',
+  alpha:  '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h6"/><path d="M3 10h6"/><path d="M3 16h4"/><path d="M14 4l4 12"/><path d="M16 12h4"/><polyline points="17 18 21 14 17 10"/><line x1="21" y1="14" x2="13" y2="14"/></svg>',
+  uses:   '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>',
+};
+
+function _memorySortIcon(value) {
+  return _MEMORY_SORT_ICONS[value] || _MEMORY_SORT_ICONS.newest;
+}
+
+function _renderMemorySortPickerCurrent() {
+  const sel = document.getElementById('memory-sort');
+  const btn = document.getElementById('memory-sort-btn');
+  if (!sel || !btn) return;
+  const value = sel.value || 'newest';
+  const opt = sel.querySelector(`option[value="${CSS.escape(value)}"]`);
+  const label = opt ? opt.textContent : value;
+  const iconWrap = btn.querySelector('.memory-sort-icon-cur');
+  const labelEl = btn.querySelector('.memory-sort-label');
+  if (iconWrap) iconWrap.innerHTML = _memorySortIcon(value);
+  if (labelEl) labelEl.textContent = label;
+}
+
+function _initMemorySortPicker() {
+  const sel = document.getElementById('memory-sort');
+  const picker = document.getElementById('memory-sort-picker');
+  const btn = document.getElementById('memory-sort-btn');
+  const menu = document.getElementById('memory-sort-menu');
+  if (!sel || !picker || !btn || !menu || picker._wired) return;
+  picker._wired = true;
+
+  const items = Array.from(sel.children)
+    .filter(o => o.tagName === 'OPTION')
+    .map(o => ({ value: o.value, label: o.textContent }));
+
+  menu.innerHTML = items.map(it => `
+    <button type="button" role="option" class="memory-sort-item" data-value="${it.value}">
+      <span class="memory-sort-item-icon">${_memorySortIcon(it.value)}</span>
+      <span class="memory-sort-item-label">${it.label}</span>
+    </button>
+  `).join('');
+
+  const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  const open  = () => { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (menu.hidden) open(); else close();
+  });
+  menu.addEventListener('click', (e) => {
+    const item = e.target.closest('.memory-sort-item');
+    if (!item) return;
+    sel.value = item.dataset.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    _renderMemorySortPickerCurrent();
+    close();
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.hidden && !picker.contains(e.target)) close();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menu.hidden) {
+      e.stopPropagation();
+      close();
+    }
+  }, { capture: true });
+
+  _renderMemorySortPickerCurrent();
+}
+
 function _ensureNewMemoryCategorySelect() {
   const sel = document.getElementById('new-memory-category');
   if (!sel || sel.dataset.wired === '1') return;
@@ -334,13 +408,16 @@ export async function loadMemories() {
 
 // ---- Bulk select mode ----
 
+const _SELECT_BTN_DOT_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/></svg>';
+const _SELECT_BTN_X_SVG = '<svg class="memory-select-btn-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-2px;margin-right:3px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
 function enterSelectMode() {
   selectMode = true;
   selectedIds.clear();
   const bulkBar = document.getElementById('memory-bulk-bar');
   const selectBtn = document.getElementById('memory-select-btn');
   if (bulkBar) bulkBar.classList.remove('hidden');
-  if (selectBtn) { selectBtn.classList.add('active'); selectBtn.textContent = 'Cancel'; }
+  if (selectBtn) { selectBtn.classList.add('active'); selectBtn.innerHTML = _SELECT_BTN_X_SVG + 'Cancel'; }
   updateBulkCount();
   renderMemoryList();
 }
@@ -352,7 +429,7 @@ function exitSelectMode() {
   const selectBtn = document.getElementById('memory-select-btn');
   const selectAll = document.getElementById('memory-select-all');
   if (bulkBar) bulkBar.classList.add('hidden');
-  if (selectBtn) { selectBtn.classList.remove('active'); selectBtn.textContent = 'Select'; }
+  if (selectBtn) { selectBtn.classList.remove('active'); selectBtn.innerHTML = _SELECT_BTN_DOT_SVG + 'Select'; }
   if (selectAll) selectAll.checked = false;
   renderMemoryList();
 }
@@ -449,7 +526,7 @@ export async function tidyMemories() {
     const data = await res.json();
     if ((data.removed || 0) === 0) {
       if (tidySpinner) tidySpinner.destroy();
-      if (tidyBtn) { tidyBtn.disabled = false; tidyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy'; }
+      if (tidyBtn) { tidyBtn.disabled = false; tidyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;color:var(--accent, var(--red));"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy'; }
       showToast('Already clean');
       return;
     }
@@ -492,7 +569,7 @@ export async function tidyMemories() {
       tidyBtn.disabled = false;
       tidyBtn.style.border = '';
       tidyBtn.style.background = '';
-      tidyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy';
+      tidyBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:2px;color:var(--accent, var(--red));"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg> Tidy';
     }
   }
 }
@@ -1387,6 +1464,7 @@ document.addEventListener('DOMContentLoaded', () => {
       renderMemoryList();
     });
   }
+  _initMemorySortPicker();
 
   const tidyBtn = document.getElementById('memory-tidy-btn');
   if (tidyBtn) tidyBtn.addEventListener('click', tidyMemories);

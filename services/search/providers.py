@@ -9,13 +9,11 @@ from urllib.parse import urljoin, urlparse, parse_qs
 import httpx
 from bs4 import BeautifulSoup
 
-from src.constants import SEARXNG_INSTANCE
+from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 
 logger = logging.getLogger(__name__)
-
-REQUEST_TIMEOUT = 20
 
 # Provider registry — maps setting value to (label, needs_key, needs_url)
 PROVIDER_INFO = {
@@ -417,7 +415,7 @@ def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Opti
             return []
 
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError:
         logger.warning("duckduckgo-search package not installed; using HTML fallback")
         return _html_fallback()

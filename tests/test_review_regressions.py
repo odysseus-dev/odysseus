@@ -647,6 +647,88 @@ def test_public_agent_policy_hides_sensitive_tools(monkeypatch):
     assert "manage_tasks" in blocked
 
 
+def test_presetup_does_not_grant_admin_tools_when_auth_enabled(monkeypatch):
+    """Pre-setup window: auth is enabled but no admin user exists yet.
+
+    This must NOT be treated as single-user/admin at the tool layer — the
+    server-execution tools (bash/python) stay blocked as defense-in-depth so
+    an unauthenticated caller that slips past the auth middleware (e.g. via a
+    loopback bypass) can't reach an RCE before setup completes.
+    """
+    monkeypatch.delenv("AUTH_ENABLED", raising=False)  # default: enabled
+    auth_mod = _install_core_auth_stub(monkeypatch)
+
+    class FakeAuth:
+        is_configured = False
+
+        def is_admin(self, username):
+            return False
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+
+    from src.tool_security import (
+        blocked_tools_for_owner,
+        owner_is_admin_or_single_user,
+    )
+
+    assert owner_is_admin_or_single_user(None) is False
+    blocked = blocked_tools_for_owner(None)
+    assert "bash" in blocked
+    assert "python" in blocked
+
+
+def test_single_user_mode_keeps_full_tool_access_when_auth_disabled(monkeypatch):
+    """Intentional single-user mode (AUTH_ENABLED=false) keeps full tool
+    access even with no admin user — this is the default local/self-host UX
+    and must not regress."""
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    auth_mod = _install_core_auth_stub(monkeypatch)
+
+    class FakeAuth:
+        is_configured = False
+
+        def is_admin(self, username):
+            return False
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+
+    from src.tool_security import (
+        blocked_tools_for_owner,
+        owner_is_admin_or_single_user,
+    )
+
+    assert owner_is_admin_or_single_user(None) is True
+    assert blocked_tools_for_owner(None) == set()
+
+
+def test_auth_disabled_configured_mode_keeps_full_tool_access(monkeypatch):
+    """AUTH_ENABLED=false is still intentional single-user mode after setup.
+
+    Once an admin account exists, AuthManager.is_configured becomes true. The
+    tool gate must still honor explicit auth-disabled mode before requiring an
+    owner/admin match, otherwise agent mode hides email/MCP/local tools from the
+    operator.
+    """
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    auth_mod = _install_core_auth_stub(monkeypatch)
+
+    class FakeAuth:
+        is_configured = True
+
+        def is_admin(self, username):
+            return False
+
+    monkeypatch.setattr(auth_mod, "AuthManager", lambda: FakeAuth())
+
+    from src.tool_security import (
+        blocked_tools_for_owner,
+        owner_is_admin_or_single_user,
+    )
+
+    assert owner_is_admin_or_single_user(None) is True
+    assert blocked_tools_for_owner(None) == set()
+
+
 @pytest.mark.asyncio
 async def test_webhook_tool_reuses_private_url_validation():
     class FakeDb:

@@ -31,6 +31,7 @@ ALLOWED_SCOPES = {
 TOKEN_PROFILES = {
     "chat": ["chat"],
     "codex_todos": ["todos:read", "todos:write"],
+    "codex_documents": ["documents:read", "documents:write"],
     "codex_email_drafts": ["email:read", "email:draft", "documents:read", "documents:write"],
 }
 
@@ -154,14 +155,19 @@ def setup_api_token_routes() -> APIRouter:
     @router.patch("/tokens/{token_id}")
     async def update_token(request: Request, token_id: str):
         require_admin(request)
+        current_user = get_current_user(request)
         try:
             payload = await request.json()
         except Exception:
+            payload = {}
+        if not isinstance(payload, dict):
             payload = {}
         with get_db_session() as db:
             token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
             if not token:
                 raise HTTPException(404, "Token not found")
+            if current_user and token.owner != current_user:
+                raise HTTPException(403, "Not your token")
             if isinstance(payload.get("name"), str) and payload["name"].strip():
                 token.name = payload["name"].strip()[:MAX_NAME_LEN]
             # Only touch scopes when the caller actually sent them. A partial
@@ -189,10 +195,14 @@ def setup_api_token_routes() -> APIRouter:
     @router.delete("/tokens/{token_id}")
     def delete_token(request: Request, token_id: str):
         require_admin(request)
+        current_user = get_current_user(request)
         with get_db_session() as db:
-            deleted = db.query(ApiToken).filter(ApiToken.id == token_id).delete()
-            if not deleted:
+            token = db.query(ApiToken).filter(ApiToken.id == token_id).first()
+            if not token:
                 raise HTTPException(404, "Token not found")
+            if current_user and token.owner != current_user:
+                raise HTTPException(403, "Not your token")
+            db.delete(token)
         _invalidate_cache(request)
         return {"status": "deleted"}
 
