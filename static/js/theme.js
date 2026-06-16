@@ -29,9 +29,22 @@ export const THEMES = {
                             inputBg: '#2f2f2f' } },
   claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
+  // Codex — OpenAI Codex App look: near-black monochrome surfaces, near-white
+  // text, translucent sidebar, near-white primary controls. Accent kept
+  // neutral (like the gpt preset) so green/red stay reserved for diffs/git.
+  codex:      { bg:'#191919', fg:'#e3e3e3', panel:'#1e1e1e', border:'#2f2f2f', red:'#3183d8',
+                advanced: { userBubbleBg:'#282828', aiBubbleBg:'#191919', bubbleBorder:'#2f2f2f',
+                            sidebarBg:'#1e1e1e', brandColor:'#ededed',
+                            inputBg:'#282828', inputBorder:'#333333',
+                            sendBtnBg:'#ececec', sendBtnHover:'#ffffff', toggleActive:'#3183d8' } },
+  'codex-light': { bg:'#ffffff', fg:'#0d0d0d', panel:'#f7f7f7', border:'#e6e6e6', red:'#3183d8',
+                advanced: { userBubbleBg:'#f2f2f2', aiBubbleBg:'#ffffff', bubbleBorder:'#e6e6e6',
+                            sidebarBg:'#f7f7f7', brandColor:'#0d0d0d',
+                            inputBg:'#f2f2f2', inputBorder:'#e0e0e0',
+                            sendBtnBg:'#0d0d0d', sendBtnHover:'#000000', toggleActive:'#3183d8' } },
 };
 
-const DEFAULT_THEME = 'dark';
+const DEFAULT_THEME = 'codex';
 const LS_KEY = 'odysseus-theme';
 const CUSTOM_THEMES_KEY = 'odysseus-custom-themes';
 
@@ -46,6 +59,8 @@ const MAX_CUSTOM_THEMES = 8;
 
 // Default background patterns for built-in themes
 const THEME_DEFAULT_PATTERN = {
+  codex:      'none',
+  'codex-light': 'none',
   dark:       'none',
   light:      'dots',
   midnight:   'rain',
@@ -159,7 +174,7 @@ function hslToHex(h, s, l) {
 function deriveSyntaxColors(colors) {
   const [fgH, fgS, fgL] = hexToHSL(colors.fg);
   const [bgH, bgS, bgL] = hexToHSL(colors.bg);
-  const [redH, redS, redL] = hexToHSL(colors.red || '#e06c75');
+  const [redH, redS, redL] = hexToHSL(colors.red || '#3183d8');
   const isDark = bgL < 50;
   const codeBgL = isDark ? Math.max(bgL - 4, 0) : Math.min(bgL + 4, 100);
   return {
@@ -196,7 +211,7 @@ const ADV_KEYS = [
 
 function computeAdvancedDefaults(colors) {
   const syn = deriveSyntaxColors(colors);
-  const red = colors.red || '#e06c75';
+  const red = colors.red || '#3183d8';
   return {
     userBubbleBg: colors.bg,
     aiBubbleBg: colors.panel,
@@ -285,7 +300,7 @@ export function applyColors(colors) {
   }
 
   // Update favicon to match theme accent color
-  _updateFavicon(colors.red || '#e06c75');
+  _updateFavicon(colors.red || '#3183d8');
 }
 
 // Per-route SVG shape registry — kept in sync with the inline favicon
@@ -461,6 +476,9 @@ export function save(name, colors, opts) {
     if (opts.frosted) obj.frosted = true;
   }
   Storage.setJSON(LS_KEY, obj);
+  // Keep the structural-CSS scope (codex.css is scoped to [data-theme]) in sync
+  // with the active theme so switching themes swaps layout + palette together.
+  try { document.documentElement.dataset.theme = name; } catch (_) {}
   _syncToServer(obj);
 }
 
@@ -619,6 +637,7 @@ export function initThemeUI() {
 
   const saved = getSaved();
   const activeName = saved ? saved.name : DEFAULT_THEME;
+  try { document.documentElement.dataset.theme = activeName; } catch (_) {}
   const customThemes = _loadCustomThemes();
 
   // Render preset swatches
@@ -630,7 +649,7 @@ export function initThemeUI() {
         <span style="background:${c.fg}"></span>
         <span style="background:${c.red}"></span>
       </div>
-      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : name)}
+      ${name === 'dark' ? 'original' : (name === 'gpt' ? 'GPT' : (name === 'codex' ? 'Codex' : (name === 'codex-light' ? 'Codex Light' : name)))}
     </div>
   `).join('');
 
@@ -930,8 +949,13 @@ export function initThemeUI() {
       if (ds) ds.value = DEFAULT_DENSITY;
       if (ps) ps.value = 'none';
       grid.querySelectorAll('.theme-swatch').forEach(s => s.classList.remove('active'));
-      const darkSwatch = grid.querySelector('[data-theme="dark"]');
-      if (darkSwatch) darkSwatch.classList.add('active');
+      // Highlight the actual default theme's swatch (not a hard-coded 'dark') so
+      // the selection matches the palette Reset just applied.
+      const defSwatch = grid.querySelector(`[data-theme="${DEFAULT_THEME}"]`);
+      if (defSwatch) defSwatch.classList.add('active');
+      // Keep the structural-CSS scope (codex.css is gated on [data-theme]) in sync
+      // with the reset palette so layout and colors don't diverge until reload.
+      try { document.documentElement.dataset.theme = DEFAULT_THEME; } catch (_) {}
     });
   }
 
@@ -1190,7 +1214,7 @@ export function initThemeUI() {
   // Keep the hex display chip in sync with whatever the picker reports.
   const _harmonyHex = document.getElementById('harmony-accent-hex');
   if (harmonyAccentEl && _harmonyHex) {
-    _harmonyHex.textContent = harmonyAccentEl.value || '#e06c75';
+    _harmonyHex.textContent = harmonyAccentEl.value || '#3183d8';
     harmonyAccentEl.addEventListener('input', () => {
       _harmonyHex.textContent = harmonyAccentEl.value;
     });

@@ -24,6 +24,12 @@ requirements.lock
 secrets.env.*
 !secrets.env.example
 
+# Local, host-specific deployment overrides — stay machine-local, never committed.
+# docker-compose.override.yml is auto-merged by `docker compose`; the tailscale
+# serve dumps are ad-hoc snapshots of this host's config.
+docker-compose.override.yml
+.tailscale-serve-*.json
+
 # Data — all user data stays local
 data/
 !services/hwfit/data/

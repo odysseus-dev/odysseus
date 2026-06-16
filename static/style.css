@@ -16,12 +16,12 @@
  */
 
 :root {
-  /* Core palette */
-  --bg: #282c34;
-  --fg: #9cdef2;
-  --panel: #111;
-  --border: #355a66;
-  --red: #e06c75;
+  /* Core palette — Codex App default (overridden per-theme at runtime by JS) */
+  --bg: #191919;
+  --fg: #ededed;
+  --panel: #1e1e1e;
+  --border: #2f2f2f;
+  --red: #3183d8;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).
@@ -6208,7 +6208,7 @@ body.bg-pattern-sparkles {
     }
 /* SYNTAX HIGHLIGHTING — uses theme vars from style.css, no hardcoded overrides */
 .hljs { color: var(--hl-fg, #9cdef2); background: none !important; }
-pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
+pre { background: var(--code-bg, var(--hl-bg, #191919)) !important; }
 
     /* ---------- Search overlay (Ctrl+K command palette) ---------- */
     .search-overlay {
@@ -18430,7 +18430,7 @@ body.gallery-selecting .gallery-dl-btn,
 .cookbook-serve-preset-launch {
   background: none;
   border: none;
-  color: #50fa7b;
+  color: var(--green);
   cursor: pointer;
   font-size: 10px;
   opacity: 0.6;

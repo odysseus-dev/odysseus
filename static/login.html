@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="codex">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
 <title>Odysseus — Login</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%233183d8'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%233183d8' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%233183d8' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 <script nonce="{{CSP_NONCE}}">
@@ -23,7 +23,24 @@
   };
   var THEME_DEFAULT_INTENSITY = { midnight:0.5, terminal:0.8, organs:0.65 };
   try {
+    // Codex App default — mirror the one-time flip in index.html so the login
+    // screen matches the rest of the app (and so a fresh browser that lands on
+    // /login first still gets the Codex palette).
+    var CODEX = { name:'codex', font:'sans', frosted:false, colors:{
+      bg:'#191919', fg:'#e3e3e3', panel:'#1e1e1e', border:'#2f2f2f', red:'#3183d8',
+      advanced:{ userBubbleBg:'#282828', aiBubbleBg:'#191919', bubbleBorder:'#2f2f2f',
+                 sidebarBg:'#1e1e1e', brandColor:'#ededed', inputBg:'#282828',
+                 inputBorder:'#333333', sendBtnBg:'#ececec', sendBtnHover:'#ffffff',
+                 toggleActive:'#3183d8' } } };
     var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+    if (localStorage.getItem('odysseus-codex-v3') !== '1' || !t || !t.colors) {
+      t = CODEX;
+      try {
+        localStorage.setItem('odysseus-theme', JSON.stringify(CODEX));
+        localStorage.setItem('odysseus-codex-v3', '1');
+      } catch(_){}
+    }
+    document.documentElement.dataset.theme = (t && t.name) ? t.name : 'codex';
     var s = document.documentElement.style;
     if (t && t.colors) {
       var c = t.colors;
@@ -63,9 +80,10 @@
     // bgEffectColor/Intensity defaults still apply so the random
     // pattern picks up theme-appropriate tinting.
     var name = (t && t.name) || '';
+    // Codex keeps a clean, flat backdrop (no animated pattern).
     // perlin-flow excluded — too visually intense for a login screen.
     var PATTERNS = ['dots','synapse','rain','constellations','petals','sparkles','embers'];
-    var pattern = PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
+    var pattern = (name === 'codex' || name === 'codex-light') ? 'none' : PATTERNS[Math.floor(Math.random() * PATTERNS.length)];
     var effColor = (t && t.bgEffectColor) || THEME_DEFAULT_EFFECT_COLOR[name] || '';
     var effInt = (t && t.bgEffectIntensity !== undefined)
       ? t.bgEffectIntensity
@@ -92,8 +110,8 @@
      localStorage — renders the login page in the same palette as the rest
      of the app instead of a different greys+offwhite scheme. */
   :root {
-    --bg: #282c34; --fg: #9cdef2; --panel: #111; --border: #355a66;
-    --red: #e06c75; --green: #50fa7b;
+    --bg: #191919; --fg: #ededed; --panel: #1e1e1e; --border: #2f2f2f;
+    --red: #3183d8; --green: #339076;
     --bg-effect-intensity: 1;
   }
   /* Background patterns — mirrors static/style.css "Background Patterns"
@@ -248,6 +266,51 @@
     vertical-align: -3px;
   }
   @keyframes login-spin { to { transform: rotate(360deg); } }
+
+  /* ── Codex App look ── */
+  :root[data-theme="codex"] body {
+    font-family: 'OpenAI Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  :root[data-theme="codex"] .card {
+    background: #171717;
+    border: 1px solid #2a2a2a;
+    border-radius: 18px;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  }
+  :root[data-theme="codex"] .logo span {
+    font-family: 'OpenAI Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
+    letter-spacing: -0.01em;
+    /* Solid near-white wordmark — no gradient. */
+    background: none;
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+    -webkit-text-fill-color: #ececec;
+    color: #ececec;
+  }
+  :root[data-theme="codex"] .logo-boat { color: #ececec; }
+  :root[data-theme="codex"] label {
+    font-family: 'OpenAI Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
+  }
+  :root[data-theme="codex"] input:not(.remember-check) {
+    background: #1d1d1d;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    font-family: 'OpenAI Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
+  }
+  :root[data-theme="codex"] input:focus { border-color: color-mix(in srgb, #ececec 32%, transparent); }
+  /* Near-white primary button with dark label — the Codex primary action. */
+  :root[data-theme="codex"] button[type="submit"],
+  :root[data-theme="codex"] #submitBtn {
+    background: #ececec;
+    color: #161616;
+    border-radius: 10px;
+    font-family: 'OpenAI Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
+  }
+  :root[data-theme="codex"] button[type="submit"]:hover,
+  :root[data-theme="codex"] #submitBtn:hover { background: #ffffff; }
+  :root[data-theme="codex"] .login-spinner { border-top-color: #161616; }
+  :root[data-theme="codex"] .toggle a { color: #b8b8c0; }
 </style>
 </head>
 <body>

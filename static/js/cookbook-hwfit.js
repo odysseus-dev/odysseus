@@ -1089,7 +1089,7 @@ function _wireManualHardwareControls(el) {
   syncMode();
 }
 
-export const _fitColors = { perfect: 'var(--green, #50fa7b)', good: 'var(--yellow, #f1fa8c)', marginal: 'var(--orange, #ffb86c)', too_tight: 'var(--red, #ff5555)' };
+export const _fitColors = { perfect: 'var(--green, #50fa7b)', good: 'var(--yellow, #f1fa8c)', marginal: 'var(--orange, #ffb86c)', too_tight: 'var(--cdx-red, #b5594f)' };
 
 function _requiresAcceleratorBackend(model) {
   const q = String(model?.quant || model?.quantization || '').toUpperCase();

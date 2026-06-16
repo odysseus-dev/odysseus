@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="codex">
 <head>
   <meta charset="UTF-8" />
-  <title>Odysseus Chat</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <title>Chat — Odysseus</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%233183d8'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%233183d8' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%233183d8' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
-  <meta name="theme-color" content="#282c34">
+  <meta name="theme-color" content="#111111">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <!-- Disable iOS / Android auto-linkifying of numbers (phone/date/address)
@@ -17,7 +17,31 @@
   window._odysseusLoadTime = Date.now();
   (function(){
     try {
+      // Codex App default. One-time flip to the Codex theme (and the default for
+      // any fresh browser) so the whole experience matches the Codex App out of
+      // the box. After the first flip the `odysseus-codex-v3` flag is set, so the
+      // theme switcher stays fully usable — switching away is respected on later
+      // loads. (Bump the vN suffix to force a one-time re-theme of all clients.)
+      var CODEX = { name:'codex', font:'sans', frosted:false, colors:{
+        bg:'#191919', fg:'#e3e3e3', panel:'#1e1e1e', border:'#2f2f2f', red:'#3183d8',
+        advanced:{ userBubbleBg:'#282828', aiBubbleBg:'#191919', bubbleBorder:'#2f2f2f',
+                   sidebarBg:'#1e1e1e', brandColor:'#ededed', inputBg:'#282828',
+                   inputBorder:'#333333', sendBtnBg:'#ececec', sendBtnHover:'#ffffff',
+                   toggleActive:'#3183d8' } } };
       var t = JSON.parse(localStorage.getItem('odysseus-theme'));
+      if (localStorage.getItem('odysseus-codex-v3') !== '1' || !t || !t.colors) {
+        t = CODEX;
+        try {
+          localStorage.setItem('odysseus-theme', JSON.stringify(CODEX));
+          localStorage.setItem('odysseus-codex-v3', '1');
+        } catch(_){}
+      }
+      document.documentElement.dataset.theme = (t && t.name) ? t.name : 'codex';
+      if (t && t.frosted) {
+        document.addEventListener('DOMContentLoaded', function(){
+          document.body.classList.add('theme-frosted');
+        }, {once:true});
+      }
       if (t && t.colors) {
         var s = document.documentElement.style;
         var c = t.colors;
@@ -38,7 +62,7 @@
         var mtc = document.querySelector('meta[name="theme-color"]');
         if (mtc && c.bg) mtc.setAttribute('content', c.bg);
         // Update favicon to match accent color
-        var ac = c.red || '#e06c75';
+        var ac = c.red || '#3183d8';
         var fav = document.querySelector("link[rel='icon']");
         if (fav) fav.href = 'data:image/svg+xml,' + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 4L16 22L6 22Z' fill='" + ac + "'/><path d='M16 8L16 22L24 22Z' fill='" + ac + "' opacity='0.6'/><path d='M4 24Q10 20 16 24Q22 28 28 24' stroke='" + ac + "' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>");
         // Derive syntax highlighting colors from theme
@@ -55,7 +79,7 @@
           function th(v){return Math.round(v*255).toString(16).padStart(2,'0')}
           return'#'+th(f(0))+th(f(8))+th(f(4));
         }
-        var fH=h2hsl(c.fg),bH=h2hsl(c.bg),rH=h2hsl(c.red||'#e06c75');
+        var fH=h2hsl(c.fg),bH=h2hsl(c.bg),rH=h2hsl(c.red||'#3183d8');
         var dk=bH[2]<50;
         s.setProperty('--hl-bg', hsl2h(bH[0],bH[1],dk?Math.max(bH[2]-4,0):Math.min(bH[2]+4,100)));
         s.setProperty('--hl-fg', c.fg);
@@ -101,7 +125,7 @@
     try {
       var path = (window.location.pathname || '').toLowerCase();
       var theme = (function(){ try { return JSON.parse(localStorage.getItem('odysseus-theme')); } catch(_) { return null; } })();
-      var ac = (theme && (theme.red || theme.colors && theme.colors.red)) || '#e06c75';
+      var ac = (theme && (theme.red || theme.colors && theme.colors.red)) || '#3183d8';
       // Shapes are line-stroke SVGs (no emoji glyphs). Each entry returns
       // the inner SVG markup rendered against currentColor=`ac`.
       var SHAPES = {
@@ -214,6 +238,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/codex.css">
+  <script src="/static/codex.js" defer nonce="{{CSP_NONCE}}"></script>
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -223,8 +249,8 @@
 </head>
 <body>
   <!-- Loading overlay — hides all flashing until app is ready -->
-  <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#282c34);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
-    <div id="loader-wave" style="color:var(--brand-color,var(--red,#e06c75));font-family:monospace;font-size:11px;opacity:.5">▁▂▃</div>
+  <div id="app-loader" style="position:fixed;inset:0;z-index:99999;background:var(--bg,#191919);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;transition:opacity .3s">
+    <div id="loader-wave" style="color:var(--brand-color,var(--red,#3183d8));font-family:monospace;font-size:11px;opacity:.5">▁▂▃</div>
   </div>
   <script nonce="{{CSP_NONCE}}">
   (function(){
@@ -544,8 +570,8 @@
           <div class="theme-fd-group">
             <label class="theme-fd-label">Accent Color</label>
             <div class="color-row" style="justify-content:flex-start;gap:8px;">
-              <input type="color" id="harmony-accent" value="#e06c75">
-              <span id="harmony-accent-hex" style="font-size:11px;opacity:0.65;font-family:ui-monospace,monospace;letter-spacing:0.02em;">#e06c75</span>
+              <input type="color" id="harmony-accent" value="#3183d8">
+              <span id="harmony-accent-hex" style="font-size:11px;opacity:0.65;font-family:ui-monospace,monospace;letter-spacing:0.02em;">#3183d8</span>
             </div>
           </div>
           <div class="theme-fd-group">

@@ -1,0 +1,1816 @@
+/* ============================================================================
+   codex.css — Clone the OpenAI Codex App UI for Odysseus (dark + light).
+
+   Loaded AFTER style.css. Variable-driven: one stylesheet, two modes.
+   • [data-theme="codex"]        → dark  palette (bg #191919, accent #3183d8)
+   • [data-theme="codex-light"]  → light palette (bg #ffffff, accent #3183d8)
+   • [data-theme^="codex"]       → all structural/component rules (use --cdx-* +
+     the theme's own --fg/--bg/--panel which theme.js sets per palette)
+   Only restyles existing Odysseus UI — no fabricated features.
+   ========================================================================== */
+
+/* NOTE: the Codex *base* palette (bg/fg/panel/border/accent) is intentionally
+   duplicated for pre-paint theming. Keep these in sync when re-branding:
+     • static/index.html   — inline CODEX bootstrap object
+     • static/login.html   — inline CODEX object + :root block + Codex CSS block
+     • static/js/theme.js   — THEMES.codex / THEMES['codex-light']
+     • static/style.css     — :root default palette
+     • static/codex.css     — the --cdx-* tokens below
+   The --cdx-* tokens here are the single source for all structural Codex rules. */
+
+/* ─────────────────────────────── DARK palette ───────────────────────────── */
+:root[data-theme="codex"] {
+  --cdx-surface-1: #1e1e1e;   /* sidebar / modal shell            */
+  --cdx-surface-2: #212121;   /* settings content                 */
+  --cdx-surface-3: #282828;   /* composer, cards, pills, popovers  */
+  --cdx-surface-4: #2f2f2f;   /* raised (active segment)           */
+  --cdx-hover:  rgba(255, 255, 255, 0.055);
+  --cdx-active: #2b2b2b;             /* flat selected pill (sampled cx10) */
+  --cdx-border:      #2f2f2f;
+  --cdx-border-soft: rgba(255, 255, 255, 0.07);
+  --cdx-muted: #7d7d7d;
+  --cdx-faint: #636363;
+  --cdx-accent: #3183d8;
+  --cdx-accent-hover: #4a93e2;
+  --cdx-green: #339076;
+  --cdx-red:   #b5594f;
+  --cdx-diff-add: #273833;
+  --cdx-diff-rem: #422520;
+  --cdx-diff-add-fg: #4ec9b0;   /* sampled cx08 +stat teal (AA on diff-add) */
+  --cdx-diff-rem-fg: #fa6f68;   /* sampled cx08 -stat red  (AA on diff-rem) */
+  /* Codex-sampled extras (dark) */
+  --cdx-fg-strong:   #fafafa;   /* profile name / true titles */
+  --cdx-icon:        #959595;   /* flat icon stroke           */
+  --cdx-item-fg:     #bdbdbc;   /* sidebar item text          */
+  --cdx-section-fg:  #707070;   /* sidebar section labels     */
+  --cdx-time-fg:     #757574;   /* relative timestamps        */
+  --cdx-border-composer: #303030;
+  --cdx-popover:        #272727; /* menu/popover fill (cx02/06/08) */
+  --cdx-popover-border: #1e1e1e;
+  --cdx-popover-hover:  #333333;
+  --cdx-divider:        #343434;
+  --cdx-toggle-off:     #393939;
+  --cdx-cite-ring:      #99c8ff;
+  --cdx-code-inline-bg: #2c2c2c;
+  --cdx-code-inline-fg: #d9d9d8;
+  --cdx-scroll: rgba(255, 255, 255, 0.16);
+  --cdx-scroll-hover: rgba(255, 255, 255, 0.30);
+  --cdx-primary-bg: #ececec;        /* primary button (send) bg     */
+  --cdx-primary-bg-hover: #ffffff;
+  --cdx-primary-fg: #161616;        /* primary button glyph         */
+  --cdx-input-bg: color-mix(in srgb, #ffffff 4%, var(--bg));
+  --cdx-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  --cdx-shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+/* ─────────────────────────────── LIGHT palette ──────────────────────────── */
+:root[data-theme="codex-light"] {
+  --cdx-surface-1: #f7f7f7;
+  --cdx-surface-2: #fbfbfb;
+  --cdx-surface-3: #f2f2f2;
+  --cdx-surface-4: #ffffff;
+  --cdx-hover:  rgba(0, 0, 0, 0.05);
+  --cdx-active: rgba(0, 0, 0, 0.08);
+  --cdx-border:      #e6e6e6;
+  --cdx-border-soft: rgba(0, 0, 0, 0.09);
+  --cdx-muted: #6b6b6b;
+  --cdx-faint: #8c8c8c;
+  --cdx-accent: #3183d8;
+  --cdx-accent-hover: #2a72c0;
+  --cdx-green: #1a7f5e;
+  --cdx-red:   #c0392b;
+  --cdx-diff-add: #e6f4ec;
+  --cdx-diff-rem: #fdecea;
+  --cdx-diff-add-fg: #0f6b49;   /* AA on diff-add bg (5.8:1) — old #1a7f5e was 4.37 */
+  --cdx-diff-rem-fg: #b3331f;   /* AA on diff-rem bg (5.4:1)                         */
+  /* Codex extras (light — DERIVED/proportional, no light reference exists) */
+  --cdx-fg-strong:   #0d0d0d;
+  --cdx-icon:        #8a8a8a;
+  --cdx-item-fg:     #3a3a3a;
+  --cdx-section-fg:  #8a8a8a;
+  --cdx-time-fg:     #9a9a9a;
+  --cdx-border-composer: #e6e6e6;
+  --cdx-popover:        #ffffff;
+  --cdx-popover-border: #e6e6e6;
+  --cdx-popover-hover:  rgba(0, 0, 0, 0.06);
+  --cdx-divider:        #ececec;
+  --cdx-toggle-off:     #c7c7c7;
+  --cdx-cite-ring:      #3183d8;
+  --cdx-code-inline-bg: #ececec;
+  --cdx-code-inline-fg: #1a1a1a;
+  --cdx-scroll: rgba(0, 0, 0, 0.18);
+  --cdx-scroll-hover: rgba(0, 0, 0, 0.32);
+  --cdx-primary-bg: #0d0d0d;
+  --cdx-primary-bg-hover: #000000;
+  --cdx-primary-fg: #ffffff;
+  --cdx-input-bg: #ffffff;
+  --cdx-shadow: 0 6px 20px rgba(0, 0, 0, 0.10);
+  --cdx-shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+/* ─────────────────────────── shared tokens (both) ───────────────────────── */
+:root[data-theme^="codex"] {
+  /* 'OpenAI Sans' is proprietary / not bundled; 'Inter' IS bundled (@font-face in
+     index.html) so it leads the fallback for consistent Codex fidelity across OSes. */
+  --font-ui: 'OpenAI Sans', 'Inter', ui-sans-serif, system-ui, -apple-system,
+             'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'Fira Code', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo,
+               Consolas, monospace;
+  --green: var(--cdx-green);
+  --color-success: var(--cdx-green);
+  --color-accent: var(--cdx-accent);
+  --color-link-hover: var(--cdx-accent-hover);
+  scrollbar-color: var(--cdx-scroll) transparent;
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] body {
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.006em;   /* Codex UI runs tighter than default Inter */
+}
+:root[data-theme^="codex"] pre,
+:root[data-theme^="codex"] code,
+:root[data-theme^="codex"] kbd,
+:root[data-theme^="codex"] samp,
+:root[data-theme^="codex"] tt,
+:root[data-theme^="codex"] .hljs,
+:root[data-theme^="codex"] .code-block,
+:root[data-theme^="codex"] .mono { font-family: var(--font-mono); }
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] ::-webkit-scrollbar-thumb {
+  background-color: var(--cdx-scroll);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background-clip: padding-box;
+}
+:root[data-theme^="codex"] ::-webkit-scrollbar-thumb:hover { background-color: var(--cdx-scroll-hover); }
+:root[data-theme^="codex"] ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Links ───────────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] a:not(.list-item):not(.theme-swatch):not(.btn) {
+  color: var(--cdx-accent);
+  text-decoration: none;
+}
+:root[data-theme^="codex"] a:not(.list-item):not(.theme-swatch):not(.btn):hover {
+  color: var(--cdx-accent-hover);
+  text-decoration: underline;
+}
+
+/* ── Headings/titles use --fg (accent is reserved for controls/links) ─────── */
+:root[data-theme^="codex"] h1,
+:root[data-theme^="codex"] h2,
+:root[data-theme^="codex"] h3,
+:root[data-theme^="codex"] h4,
+:root[data-theme^="codex"] .modal-header h4,
+:root[data-theme^="codex"] .modal-title,
+:root[data-theme^="codex"] .pane-title,
+:root[data-theme^="codex"] .pane-header h4,
+:root[data-theme^="codex"] .settings-modal-content h4 {
+  color: var(--cdx-fg-strong);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:root[data-theme^="codex"] .settings-nav .list-item.active,
+:root[data-theme^="codex"] .settings-nav-item.active,
+:root[data-theme^="codex"] .settings-nav .list-item.active *,
+:root[data-theme^="codex"] .settings-nav-item.active * { color: var(--fg) !important; }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] .sidebar {
+  background: var(--cdx-surface-1) !important;
+  border-right: 1px solid var(--cdx-border-soft);
+}
+:root[data-theme^="codex"] .sidebar-header,
+:root[data-theme^="codex"] .sidebar-user-bar { background: transparent; }
+:root[data-theme^="codex"] .sidebar-brand-title {
+  color: var(--fg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+:root[data-theme^="codex"] .list-item {
+  color: var(--cdx-item-fg);
+  font-size: 13px; padding: 4px 8px; min-height: 28px; line-height: 1.3;
+  border-radius: 6px; margin: 0 4px;
+  transition: background .12s ease, color .12s ease;
+}
+:root[data-theme^="codex"] .list-item:hover { background: var(--cdx-hover); }
+:root[data-theme^="codex"] .list-item.active,
+:root[data-theme^="codex"] .list-item.selected,
+:root[data-theme^="codex"] .list-item[aria-current="true"],
+:root[data-theme^="codex"] .list-item.active-session,
+:root[data-theme^="codex"] .session-item.active {
+  background: var(--cdx-active);
+  color: var(--fg);
+  border-color: transparent;   /* base .active-session tints border var(--red)=accent — flatten to the neutral Codex pill */
+}
+:root[data-theme^="codex"] .section-title,
+:root[data-theme^="codex"] .section-title-label {
+  color: var(--cdx-section-fg);   /* Codex de-emphasized group labels (fidelity over strict AA) */
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+:root[data-theme^="codex"] .sidebar-action-icon,
+:root[data-theme^="codex"] .section-icon,
+:root[data-theme^="codex"] .session-icon {
+  color: var(--cdx-icon) !important;
+  stroke: var(--cdx-icon) !important;
+  opacity: 1;
+}
+:root[data-theme^="codex"] .user-bar-left:hover { background: var(--cdx-hover); }
+
+/* ── Top bar ─────────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] .chat-top-bar {
+  border-bottom: 1px solid var(--cdx-border-soft);
+  min-height: 42px;
+  padding: 6px 14px 0;
+}
+:root[data-theme^="codex"] #current-meta { font-weight: 600; color: var(--fg); }
+:root[data-theme^="codex"] .chat-meta-count,
+:root[data-theme^="codex"] .chat-meta { color: var(--cdx-muted); }
+
+/* ── Welcome / home — single centered prompt ─────────────────────────────── */
+:root[data-theme^="codex"] #welcome-screen .welcome-name {
+  background: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  font-weight: 400;
+  font-size: 1.375rem;
+  letter-spacing: -0.01em;
+  display: block;
+}
+:root[data-theme="codex"] #welcome-screen .welcome-name { -webkit-text-fill-color: #d9d9d8 !important; color: #d9d9d8 !important; }
+:root[data-theme="codex-light"] #welcome-screen .welcome-name { -webkit-text-fill-color: #3a3a3a !important; color: #3a3a3a !important; }
+:root[data-theme^="codex"] #welcome-screen .welcome-name svg,
+:root[data-theme^="codex"] #welcome-screen .welcome-tip,
+:root[data-theme^="codex"] #welcome-screen .welcome-sub,
+:root[data-theme^="codex"] #welcome-screen .welcome-version,
+:root[data-theme^="codex"] #welcome-screen .welcome-presence,
+:root[data-theme^="codex"] #welcome-screen .incognito-btn { display: none !important; }
+/* center heading + composer as one group */
+:root[data-theme^="codex"] .chat-container.welcome-active { justify-content: center; }
+:root[data-theme^="codex"] .chat-container.welcome-active #chat-history { flex: 0 0 auto; min-height: 0; margin: 0; }
+:root[data-theme^="codex"] .chat-container.welcome-active #welcome-screen {
+  position: static; transform: none; top: auto; left: auto;
+  margin: 0 auto 22px; pointer-events: auto; animation: none;
+}
+:root[data-theme^="codex"] .chat-container.welcome-active .chat-input-bar {
+  margin-top: 0 !important; margin-bottom: 0 !important;
+}
+
+/* ── Chat messages — user pill, bubble-less assistant, monochrome labels ──── */
+:root[data-theme^="codex"] .msg-user {
+  background: var(--cdx-surface-3);
+  border: none;
+  border-radius: 18px;
+  padding: 10px 16px;
+}
+:root[data-theme^="codex"] .msg-ai {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0;
+  padding: 2px 2px;
+}
+:root[data-theme^="codex"] .msg .role { color: var(--cdx-muted) !important; font-weight: 600; letter-spacing: 0.01em; }
+:root[data-theme^="codex"] .msg-ai .role { font-weight: 500; font-size: 12.5px; color: var(--cdx-faint) !important; }
+:root[data-theme^="codex"] .msg .role::before { background: color-mix(in srgb, var(--fg) 30%, transparent) !important; }
+:root[data-theme^="codex"] .role-provider-logo svg { color: var(--cdx-muted); }
+
+/* ── Composer — Codex card + control row ─────────────────────────────────── */
+:root[data-theme^="codex"] .chat-input-bar {
+  background: var(--cdx-surface-3);
+  border: 1px solid var(--cdx-border-composer);
+  border-radius: 22px;
+  padding: 16px 16px 12px;
+  box-shadow: var(--cdx-shadow);
+}
+:root[data-theme^="codex"] .chat-input-bar textarea#message { font-size: 15px; padding: 2px 4px; }
+/* Composer focus affordance — subtle border brighten + ring when the textarea
+   is focused (matches Codex; the base bar has no :focus-within state). */
+:root[data-theme^="codex"] .chat-input-bar:focus-within {
+  border-color: color-mix(in srgb, var(--cdx-accent) 45%, var(--cdx-border-composer));
+  box-shadow: var(--cdx-shadow), 0 0 0 1px color-mix(in srgb, var(--cdx-accent) 30%, transparent);
+}
+:root[data-theme="codex"] .chat-input-bar textarea#message::placeholder { color: #6e6e6e; }
+:root[data-theme="codex-light"] .chat-input-bar textarea#message::placeholder { color: color-mix(in srgb, var(--fg) 36%, transparent); }
+:root[data-theme^="codex"] .chat-input-bottom { margin-top: 6px; }
+:root[data-theme^="codex"] .chat-input-left,
+:root[data-theme^="codex"] .chat-input-right { gap: 6px; align-items: center; }
+
+:root[data-theme^="codex"] .input-icon-btn {
+  width: 30px; height: 30px; min-width: 30px;
+  border-radius: 999px; background: transparent; border: none;
+  color: var(--cdx-muted);
+  opacity: 1;   /* base .input-icon-btn is opacity:0.5 (style.css L2372); codex manages strength via --cdx-muted color, so reset to full */
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s, opacity .12s;
+}
+:root[data-theme^="codex"] .input-icon-btn:hover { background: var(--cdx-hover); color: var(--fg); }
+:root[data-theme^="codex"] .input-icon-btn.active { background: var(--cdx-active); color: var(--fg); }
+:root[data-theme^="codex"] .input-icon-btn svg { width: 16px; height: 16px; }
+
+:root[data-theme^="codex"] #model-picker-wrap,
+:root[data-theme^="codex"] #model-picker-wrap.model-picker-autohide {
+  /* `relative` (not `static`) so the wrap stays the containing block for its
+     absolutely-positioned .model-picker-menu — otherwise the dropdown anchors to
+     the whole composer bar (which is a container-type containing block) instead of
+     the picker button. Inline placement comes from the codex.js move + flex row. */
+  position: relative !important; transform: none !important; opacity: 1 !important; pointer-events: auto !important;
+}
+:root[data-theme^="codex"] .model-picker-btn {
+  background: transparent; border: none; border-radius: 999px;
+  padding: 6px 10px; color: var(--cdx-muted); font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: background .12s, color .12s;
+}
+:root[data-theme^="codex"] .model-picker-btn:hover { background: var(--cdx-hover); color: var(--fg); }
+:root[data-theme^="codex"] .model-picker-btn #model-picker-label { color: var(--fg); font-weight: 500; }
+
+:root[data-theme^="codex"] .mode-toggle {
+  background: var(--cdx-hover);
+  border: none;                 /* drop the base 1px solid var(--border) hard ring */
+  border-radius: 999px; padding: 2px; height: 30px; display: inline-flex; align-items: center; gap: 2px;
+}
+/* The codex active state is the button's own .active fill — hide the base sliding
+   ::before pill so we don't stack two indicators with mismatched 9px/999px radii. */
+:root[data-theme^="codex"] .mode-toggle::before { display: none; }
+:root[data-theme^="codex"] .mode-toggle-btn {
+  border-radius: 999px; padding: 5px 12px; color: var(--cdx-muted);
+  font-size: 13px; background: transparent; transition: background .12s, color .12s;
+}
+:root[data-theme^="codex"] .mode-toggle-btn.active { background: var(--cdx-surface-4); color: var(--fg); }
+
+:root[data-theme^="codex"] .send-btn {
+  background: var(--cdx-primary-bg);
+  color: var(--cdx-primary-fg);
+  border-radius: 999px; width: 30px; height: 30px !important; min-width: 30px;
+}
+:root[data-theme^="codex"] .send-btn:hover { background: var(--cdx-primary-bg-hover); }
+:root[data-theme^="codex"] .send-btn svg { stroke: var(--cdx-primary-fg); color: var(--cdx-primary-fg); }
+/* Mic (voice) state — base style.css blends var(--red 30%, --panel) into a muddy
+   blue disc with a stray --border ring. Snap it to the same neutral idle disc as
+   data-mode="idle" so the resting composer button is consistent across states. */
+:root[data-theme^="codex"] .send-btn.mic-mode {
+  background: var(--cdx-surface-3);
+  border: 1px solid var(--cdx-border);
+  color: var(--cdx-icon);
+}
+:root[data-theme^="codex"] .send-btn.mic-mode:hover {
+  background: var(--cdx-popover-hover);
+  color: var(--fg);
+}
+:root[data-theme^="codex"] .send-btn.mic-mode svg { stroke: var(--cdx-icon); color: var(--cdx-icon); }
+:root[data-theme^="codex"] .send-btn.mic-mode:hover svg { stroke: var(--fg); color: var(--fg); }
+
+
+/* ── Dropdowns / popovers / menus ────────────────────────────────────────── */
+:root[data-theme^="codex"] .export-dropdown-menu,
+:root[data-theme^="codex"] .model-picker-dropdown,
+:root[data-theme^="codex"] .model-picker-menu,
+:root[data-theme^="codex"] .dropdown-menu,
+:root[data-theme^="codex"] [class*="dropdown-menu"],
+:root[data-theme^="codex"] [role="menu"],
+:root[data-theme^="codex"] [role="listbox"],
+:root[data-theme^="codex"] .context-menu,
+:root[data-theme^="codex"] .popover {
+  background: var(--cdx-popover);
+  border: 1px solid var(--cdx-popover-border);
+  border-radius: 10px;
+  box-shadow: var(--cdx-shadow-pop);
+  padding: 4px;
+}
+:root[data-theme^="codex"] .export-dropdown-item:hover,
+:root[data-theme^="codex"] [role="menuitem"]:hover,
+:root[data-theme^="codex"] [role="option"]:hover,
+:root[data-theme^="codex"] .model-picker-list .model-switch-item:hover,
+:root[data-theme^="codex"] .model-picker-list .model-switch-item.kb-active,
+:root[data-theme^="codex"] .dropdown-item:hover { background: var(--cdx-popover-hover); border-radius: 7px; }
+/* menu section labels + dividers (real .mp-section-label / provider header only) */
+:root[data-theme^="codex"] .model-picker-list .mp-section-label,
+:root[data-theme^="codex"] [role="menu"] .menu-section-label {
+  color: var(--cdx-muted); font-size: 11px; font-weight: 500; letter-spacing: .01em; padding: 6px 10px 2px;
+}
+:root[data-theme^="codex"] .model-picker-menu hr,
+:root[data-theme^="codex"] [role="menu"] hr,
+:root[data-theme^="codex"] .dropdown-divider,
+:root[data-theme^="codex"] [role="menu"] [role="separator"] {
+  border: none; height: 1px; background: var(--cdx-divider); margin: 4px 0;
+}
+
+/* ── Surfaces: modals, panes, cards ──────────────────────────────────────── */
+:root[data-theme^="codex"] .modal-content,
+:root[data-theme^="codex"] .settings-modal-content,
+:root[data-theme^="codex"] .doclib-modal-content,
+:root[data-theme^="codex"] .gallery-modal-content,
+:root[data-theme^="codex"] .notes-pane,
+:root[data-theme^="codex"] .calendar-pane,
+:root[data-theme^="codex"] .cookbook-pane,
+:root[data-theme^="codex"] .research-pane,
+:root[data-theme^="codex"] .doc-pane,
+:root[data-theme^="codex"] .doc-pane-floating {
+  background: var(--cdx-surface-1);
+  border: 1px solid var(--cdx-border);
+  border-radius: 16px;
+}
+:root[data-theme^="codex"] .admin-card,
+:root[data-theme^="codex"] .card,
+:root[data-theme^="codex"] .panel-card,
+:root[data-theme^="codex"] .settings-card {
+  background: var(--cdx-surface-2);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 12px;
+}
+:root[data-theme^="codex"] .admin-card h2 { border-bottom: 1px solid var(--cdx-divider); font-weight: 600; letter-spacing: -.01em; }
+
+/* ── Settings ────────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] .settings-modal-content { background: var(--cdx-surface-1); }
+:root[data-theme^="codex"] .settings-nav,
+:root[data-theme^="codex"] .settings-sidebar {
+  background: color-mix(in srgb, #000 28%, var(--cdx-surface-1));
+  border-right: 1px solid var(--cdx-border-soft);
+}
+/* Light: 28% black recess inverts to a muddy mid-gray rail — nest only a hair below the panel. */
+:root[data-theme="codex-light"] .settings-nav,
+:root[data-theme="codex-light"] .settings-sidebar {
+  background: color-mix(in srgb, #000 4%, var(--cdx-surface-1));
+}
+:root[data-theme^="codex"] .settings-nav .list-item.active,
+:root[data-theme^="codex"] .settings-nav-item.active { background: var(--cdx-active); color: var(--fg); }
+:root[data-theme^="codex"] .settings-nav-item.active svg { color: var(--fg); opacity: .9; }
+:root[data-theme^="codex"] .settings-nav-item:hover { background: var(--cdx-hover); color: var(--fg); }
+:root[data-theme^="codex"] .settings-sidebar-label {
+  font-size: 11px; letter-spacing: .01em; text-transform: none; opacity: 1;
+  color: var(--cdx-muted); font-weight: 500; padding: 8px 10px 3px;
+}
+:root[data-theme^="codex"] .settings-row,
+:root[data-theme^="codex"] .settings-fallback-row { border-color: var(--cdx-border-soft); }
+
+/* ── Toggles — blue when on (real .admin-switch component + legacy) ───────── */
+:root[data-theme^="codex"] .toggle input:checked + .slider,
+:root[data-theme^="codex"] .toggle-switch input:checked + .toggle-slider { background: var(--cdx-accent); }
+:root[data-theme^="codex"] .admin-slider { background: var(--cdx-toggle-off); }
+:root[data-theme^="codex"] .admin-switch input:checked + .admin-slider { background: var(--cdx-accent); }
+:root[data-theme^="codex"] .admin-slider::before { background: #ffffff; }
+
+/* ── Form controls ───────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] input[type="text"],
+:root[data-theme^="codex"] input[type="search"],
+:root[data-theme^="codex"] input[type="password"],
+:root[data-theme^="codex"] input[type="email"],
+:root[data-theme^="codex"] input[type="url"],
+:root[data-theme^="codex"] input[type="number"],
+:root[data-theme^="codex"] input:not([type]),
+:root[data-theme^="codex"] select,
+:root[data-theme^="codex"] textarea:not(#message) {
+  background: var(--cdx-input-bg);
+  border: 1px solid var(--cdx-border);
+  border-radius: 10px;
+  color: var(--fg);
+}
+:root[data-theme^="codex"] input[type="text"]:focus,
+:root[data-theme^="codex"] input[type="search"]:focus,
+:root[data-theme^="codex"] input[type="password"]:focus,
+:root[data-theme^="codex"] input[type="email"]:focus,
+:root[data-theme^="codex"] input[type="url"]:focus,
+:root[data-theme^="codex"] input[type="number"]:focus,
+:root[data-theme^="codex"] input:not([type]):focus,
+:root[data-theme^="codex"] select:focus,
+:root[data-theme^="codex"] textarea:not(#message):focus {
+  border-color: var(--cdx-accent);
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cdx-accent) 45%, transparent);
+}
+
+/* ── Code blocks ─────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] pre,
+:root[data-theme^="codex"] pre code,
+:root[data-theme^="codex"] .hljs { background: var(--cdx-surface-3); }
+:root[data-theme^="codex"] pre { border: 1px solid var(--cdx-border-soft); border-radius: 12px; }
+
+/* ── Diffs / git ─────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] .diff-add,
+:root[data-theme^="codex"] .diff-added,
+:root[data-theme^="codex"] .addition,
+:root[data-theme^="codex"] ins,
+:root[data-theme^="codex"] .hljs-addition { background: var(--cdx-diff-add); color: var(--cdx-diff-add-fg); text-decoration: none; }
+:root[data-theme^="codex"] .diff-remove,
+:root[data-theme^="codex"] .diff-removed,
+:root[data-theme^="codex"] .deletion,
+:root[data-theme^="codex"] del,
+:root[data-theme^="codex"] .hljs-deletion { background: var(--cdx-diff-rem); color: var(--cdx-diff-rem-fg); text-decoration: none; }
+/* Real renderer diff-line classes (.diff-add/.diff-del) + inline code chips + summary stats */
+:root[data-theme^="codex"] .msg code:not(pre code) {
+  color: var(--cdx-code-inline-fg); background: var(--cdx-code-inline-bg);
+  padding: 1px 6px; border-radius: 5px; font-size: 0.86em;
+}
+:root[data-theme^="codex"] .diff-pre .diff-add,
+:root[data-theme^="codex"] .diff-add { background: var(--cdx-diff-add); color: var(--cdx-diff-add-fg); }
+:root[data-theme^="codex"] .diff-pre .diff-del,
+:root[data-theme^="codex"] .diff-del { background: var(--cdx-diff-rem); color: var(--cdx-diff-rem-fg); text-decoration: none; }
+:root[data-theme^="codex"] .diff-pre .diff-hunk { color: var(--cdx-muted); opacity: 1; }
+:root[data-theme^="codex"] .agent-tool-diff .diff-summary-stats .diff-stat-add { color: var(--cdx-diff-add-fg); }
+:root[data-theme^="codex"] .agent-tool-diff .diff-summary-stats .diff-stat-del { color: var(--cdx-diff-rem-fg); }
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+:root[data-theme^="codex"] table { border-color: var(--cdx-border-soft); }
+:root[data-theme^="codex"] th { color: var(--cdx-muted); font-weight: 600; }
+:root[data-theme^="codex"] th,
+:root[data-theme^="codex"] td { border-color: var(--cdx-border-soft); }
+
+/* ── Compare mode toggles — monochrome ───────────────────────────────────── */
+:root[data-theme^="codex"] .compare-blind-toggle.active,
+:root[data-theme^="codex"] .compare-parallel-toggle,
+:root[data-theme^="codex"] .compare-parallel-toggle.active {
+  color: var(--fg);
+  border-color: color-mix(in srgb, var(--fg) 40%, transparent);
+  background: var(--cdx-hover);
+}
+
+/* ── Modal header controls — subtle ghost buttons ────────────────────────── */
+:root[data-theme^="codex"] .modal-close,
+:root[data-theme^="codex"] .modal-minimize-btn,
+:root[data-theme^="codex"] .minimize-btn,
+:root[data-theme^="codex"] .close-btn {
+  background: transparent; border: none; color: var(--cdx-muted);
+}
+:root[data-theme^="codex"] .modal-close:hover,
+:root[data-theme^="codex"] .modal-minimize-btn:hover,
+:root[data-theme^="codex"] .minimize-btn:hover,
+:root[data-theme^="codex"] .close-btn:hover { background: var(--cdx-hover); color: var(--fg); }
+
+/* ── Conversation — reasoning expander as a subtle Codex collapsible ──────── */
+:root[data-theme^="codex"] .thinking-section { border: 1px solid var(--cdx-border-soft); background: transparent; border-radius: 12px; }
+:root[data-theme^="codex"] .thinking-header { background: transparent; border-bottom: none; color: var(--cdx-muted); }
+:root[data-theme^="codex"] .thinking-header:hover { background: var(--cdx-hover); }
+:root[data-theme^="codex"] .thinking-header-left span { color: var(--cdx-muted); font-size: 13px; font-weight: 500; }
+:root[data-theme^="codex"] .thinking-section:has(.thinking-content.expanded) { border-color: color-mix(in srgb, var(--cdx-cite-ring) 55%, transparent); }
+
+/* ── Conversation — citations/sources expander: same quiet Codex collapsible as
+   .thinking-section (base style.css L8605-8666 hard-codes --red, which theme.js
+   maps to the accent blue under codex → the sources box reads as a loud blue
+   panel, inconsistent with the neutralized reasoning expander above it). ─────── */
+:root[data-theme^="codex"] .sources-section { border: 1px solid var(--cdx-border-soft); border-radius: 12px; }
+:root[data-theme^="codex"] .sources-header { background: transparent; border-bottom: none; }
+:root[data-theme^="codex"] .sources-header:hover { background: var(--cdx-hover); }
+:root[data-theme^="codex"] .sources-header-left,
+:root[data-theme^="codex"] .sources-header-left svg,
+:root[data-theme^="codex"] .sources-toggle { color: var(--cdx-muted); opacity: 1; }
+:root[data-theme^="codex"] .sources-content.expanded { border-top: 1px solid var(--cdx-border-soft); }
+:root[data-theme^="codex"] .source-link { background: var(--cdx-surface-3); }
+:root[data-theme^="codex"] .source-link:hover { background: var(--cdx-surface-4); }
+:root[data-theme^="codex"] .source-num { background: var(--cdx-hover); color: var(--cdx-item-fg); }
+:root[data-theme^="codex"] .source-domain { color: var(--cdx-faint); opacity: 1; }
+
+/* ── Misc ghost buttons ──────────────────────────────────────────────────── */
+:root[data-theme^="codex"] .icon-btn:hover,
+:root[data-theme^="codex"] .tool-btn:hover { background: var(--cdx-hover); }
+
+/* ════════════════════════ LAYOUT — match Codex structure ═══════════════════ */
+/* Codex sidebar has no brand wordmark: traffic lights (injected at .sidebar top)
+   then the nav directly. Hide Odysseus's brand header. */
+:root[data-theme^="codex"] .sidebar-header { display: none !important; }
+:root[data-theme^="codex"] .sidebar-inner { padding-top: 6px; }
+
+/* Sidebar width + item sizing to Codex proportions */
+:root[data-theme^="codex"] .sidebar { width: 220px; min-width: 220px; }
+:root[data-theme^="codex"] #tools-section .list-item,
+:root[data-theme^="codex"] #sidebar-new-chat-btn,
+:root[data-theme^="codex"] #sidebar-search-btn { padding: 4px 8px; }
+:root[data-theme^="codex"] .list-item .sidebar-action-icon,
+:root[data-theme^="codex"] .list-item svg { width: 16px; height: 16px; }
+/* Section spacing: add the group gap on the section CONTAINER, not the centered
+   label span inside the fixed-height flex header (margin-top there shoved the
+   label below its sibling sort/manage buttons + notif-dot). */
+:root[data-theme^="codex"] .section { margin-top: 12px; }
+:root[data-theme^="codex"] .section-title { margin-top: 0; }
+/* Section-header hover: base uses color-mix(var(--red) 8%) → blue tint in Codex
+   (--red is remapped to the accent). Match the neutral row hover used everywhere
+   else in the sidebar. */
+:root[data-theme^="codex"] .section-header-flex:hover { background: var(--cdx-hover); }
+
+/* NOTE: there are NO injected "traffic lights" in the CSS/JS — that comment was
+   stale. The in-sidebar #sidebar-toggle-btn is already hidden by the base rule
+   (.sidebar-hamburger { display:none !important } in style.css:541-542, since the
+   external #hamburger-btn is the only toggle), so this override is redundant but
+   harmless. The element that actually overlapped #sidebar-new-chat-btn is the
+   GLOBAL fixed #hamburger-btn — handled by the .sidebar-inner padding-top:44px
+   rule (see "Polish v4" block below). */
+:root[data-theme^="codex"] #sidebar-toggle-btn { display: none !important; }
+
+/* Project/chat folder headers read as normal rows, not bold mini-headings */
+:root[data-theme^="codex"] .session-folder-header {
+  font-size: 13px; font-weight: 400; color: var(--cdx-item-fg);
+  padding: 4px 8px; border-radius: 6px; gap: 8px;
+}
+:root[data-theme^="codex"] .session-folder-header:hover { background: var(--cdx-hover); color: var(--fg); }
+:root[data-theme^="codex"] .folder-toggle { color: var(--cdx-section-fg); }
+:root[data-theme^="codex"] .session-folder-content .list-item { padding-left: 24px; border-bottom: none; }
+
+/* Relative timestamps on session rows (node wired in sessions.js; inert if absent),
+   and reveal the row menu only on hover (Codex behaviour) */
+:root[data-theme^="codex"] .session-time {
+  margin-left: auto; font-size: 11px; color: var(--cdx-time-fg); flex: 0 0 auto; padding-left: 8px;
+}
+:root[data-theme^="codex"] .session-item .session-menu-btn { opacity: 0; }
+:root[data-theme^="codex"] .session-item:hover .session-menu-btn { opacity: 1; }
+
+/* Composer — Codex width (~720px) */
+:root[data-theme^="codex"] .chat-input-bar { max-width: 720px; }
+:root[data-theme^="codex"] .chat-history { --chat-max: 760px; }
+
+/* Subtle radial vignette behind the welcome composer (dark only) */
+:root[data-theme="codex"] .chat-container.welcome-active {
+  background: radial-gradient(120% 80% at 50% 42%, #1e1e1e 0%, #191919 70%);
+}
+
+/* User bar at sidebar bottom — Codex "Settings" row sizing */
+:root[data-theme^="codex"] .sidebar-user-bar { padding: 6px 8px; min-height: 40px; border-top: none; }
+:root[data-theme^="codex"] .user-bar-name { font-size: 13px; color: var(--cdx-item-fg); }
+:root[data-theme^="codex"] .user-bar-btn { color: var(--cdx-icon); opacity: 1; }
+:root[data-theme^="codex"] .user-bar-btn:hover { color: var(--fg); background: var(--cdx-hover); opacity: 1; }
+:root[data-theme^="codex"] .user-bar-btn svg { width: 16px; height: 16px; }
+
+/* Collapsed icon-rail: base .icon-rail-btn paints icons in var(--accent) (blue).
+   Match the expanded sidebar's neutral grey icons; keep the accent-tint hover/active
+   bg from the base rule for the affordance. */
+:root[data-theme^="codex"] .icon-rail-btn { color: var(--cdx-icon); }
+:root[data-theme^="codex"] .icon-rail-btn:hover { color: var(--fg); }
+:root[data-theme^="codex"] .icon-rail-btn.active-section { color: var(--fg); }
+
+/* Codex home: the top bar is empty on a new chat (chat title appears only once
+   a conversation exists) — hide the centered "New Chat" meta on welcome. */
+:root[data-theme^="codex"] .chat-container.welcome-active .chat-top-bar { display: none !important; }
+/* Slightly looser sidebar rhythm to match Codex */
+:root[data-theme^="codex"] .sidebar-inner { gap: 1px; }
+:root[data-theme^="codex"] .list-item { min-height: 32px; }
+
+
+/* ===================================================================
+   CODEX DESIGN SYSTEM (v3) — appended; tokens + primitive coverage for
+   modals/tabs/lists/badges/chips/settings/menus/tooltips/conversation.
+   Source-verified selectors; see codex-design-system workflow.
+   =================================================================== */
+
+/* ── NEW Codex design-system tokens — DARK (append to :root[data-theme="codex"]) ── */
+:root[data-theme="codex"] {
+  /* status: restrained warm gold (no --orange is defined anywhere, so the
+     paused badge currently falls back to Dracula #ffb86c). */
+  --cdx-amber:      #caa05a;
+  --cdx-amber-soft: rgba(202, 160, 90, 0.14);
+  /* settings secondary button + active pill */
+  --cdx-btn-secondary-bg:    var(--cdx-surface-3);
+  --cdx-btn-secondary-hover: var(--cdx-surface-4);
+  --cdx-badge-bg: color-mix(in srgb, var(--cdx-accent) 18%, transparent);
+  /* tooltip chip — one tier above popover (#272727) so it floats over menus */
+  --cdx-tooltip-bg:     #2a2a2a;
+  --cdx-tooltip-fg:     #e9e9e9;
+  --cdx-tooltip-border: #191919;
+  /* conversation: recessed code card + neutral blockquote bar */
+  --cdx-code-block-bg: #1c1c1c;
+  --cdx-quote-bar:     rgba(255, 255, 255, 0.16);
+}
+
+/* ── NEW Codex design-system tokens — LIGHT (DERIVED; append to :root[data-theme="codex-light"]) ── */
+:root[data-theme="codex-light"] {
+  --cdx-amber:      #9a6a1c;
+  --cdx-amber-soft: rgba(154, 106, 28, 0.12);
+  --cdx-btn-secondary-bg:    #ffffff;
+  --cdx-btn-secondary-hover: rgba(0, 0, 0, 0.05);
+  --cdx-badge-bg: color-mix(in srgb, var(--cdx-accent) 14%, transparent);
+  --cdx-tooltip-bg:     #ffffff;
+  --cdx-tooltip-fg:     #1a1a1a;
+  --cdx-tooltip-border: #e2e2e2;
+  --cdx-code-block-bg: #f6f6f6;
+  --cdx-quote-bar:     rgba(0, 0, 0, 0.16);
+}
+
+/* ── Status alias remaps — append to shared :root[data-theme^="codex"] block ── */
+:root[data-theme^="codex"] {
+  --orange:        var(--cdx-amber);   /* feeds .task-paused-badge + .task-builtin-badge.modified */
+  --warn:          var(--cdx-amber);
+  --color-warning: var(--cdx-amber);
+  /* --accent / --accent-primary are never set by theme.js (only --red is) and
+     codex.css defines only --color-accent. Many base/skills.js card rules read
+     var(--accent, #4ade80) (off-palette green) or bare var(--accent) (invalid →
+     .doclib-card-lang loses its fill). Alias both to the codex blue so the
+     verified ✓, .skill-audit-active glow, published pill and lang chip stay on-palette. */
+  --accent:         var(--cdx-accent);
+  --accent-primary: var(--cdx-accent);
+}
+
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+   ║  CODEX DESIGN SYSTEM — modal/pane chrome · lists/badges/chips ·            ║
+   ║  settings forms · menus/tooltips/toggles · conversation                    ║
+   ║  All scoped to [data-theme^="codex"]; reuses --cdx-* tokens.               ║
+   ║  Radius scale: 6 (rows) · 7 (menu/tab-stop) · 8 (segment/btn) ·            ║
+   ║  9 (search) · 10 (cards/popover/list-row) · 12 (recess) · 16 (shell) ·     ║
+   ║  999 (pills/chips). Spacing on a 2/4px grid. Surfaces 1→4 as defined.      ║
+   ╚══════════════════════════════════════════════════════════════════════════╝ */
+
+/* ════════════════════════ SURFACES · MODALS · TABS ═════════════════════════ */
+
+/* Modal SHELL polish — soft shadow + clipped corners so the header hairline and
+   tab underline meet the 16px corner cleanly. Extends the L386 surface rule;
+   does NOT redefine background/border already set there. */
+:root[data-theme^="codex"] .modal-content,
+:root[data-theme^="codex"] .settings-modal-content,
+:root[data-theme^="codex"] .doclib-modal-content,
+:root[data-theme^="codex"] .gallery-modal-content,
+:root[data-theme^="codex"] .research-pane {
+  box-shadow: var(--cdx-shadow-pop);
+  overflow: hidden;
+}
+/* dimmed scrim behind centered modals — skip side-docked tool windows,
+   which coexist with a readable chat (matches base .modal background:none
+   intent and the docked .notes-pane-backdrop transparent pattern). */
+:root[data-theme^="codex"] .modal:not(.hidden):not(.modal-right-docked):not(.modal-left-docked) {
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+}
+
+/* Modal/pane HEADER bar — quiet Codex chrome: hairline divider, tight padding. */
+:root[data-theme^="codex"] .modal-header,
+:root[data-theme^="codex"] .research-pane-header,
+:root[data-theme^="codex"] .notes-pane-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--cdx-border-soft);
+  background: transparent;
+  min-height: 0;
+}
+:root[data-theme^="codex"] .modal-header h4,
+:root[data-theme^="codex"] .research-pane-header h4,
+:root[data-theme^="codex"] .notes-pane-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+}
+/* subtitle counts ("0 photos", "2 documents") read as quiet metadata */
+:root[data-theme^="codex"] .modal-header h4 .memory-count,
+:root[data-theme^="codex"] .research-pane-header h4 .memory-count,
+:root[data-theme^="codex"] .memory-count {
+  color: var(--cdx-faint);
+  font-weight: 400;
+  opacity: 1;
+  letter-spacing: 0;
+}
+/* header action cluster sits flush-right with even spacing */
+:root[data-theme^="codex"] .research-pane-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* In-pane TAB BAR — Codex quiet underline tabs (Brain/Tasks/Gallery/Cookbook/Library).
+   CONFLICT RESOLVED: the native markup (style.css L10108) gives every *-tab a
+   `border-bottom: 2px solid transparent` whose color becomes accent on .active.
+   The modal-pane spec proposed a SECOND ::after underline → would double-line.
+   We adopt the native border-bottom mechanism (one underline), unify all four
+   families, and override the base `opacity:0.5`. */
+:root[data-theme^="codex"] .memory-tabs,
+:root[data-theme^="codex"] .gallery-tabs,
+:root[data-theme^="codex"] .cookbook-tabs,
+:root[data-theme^="codex"] .lib-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--cdx-border-soft);
+  background: transparent;
+}
+:root[data-theme^="codex"] .memory-tab,
+:root[data-theme^="codex"] .gallery-tab,
+:root[data-theme^="codex"] .cookbook-tab,
+:root[data-theme^="codex"] .lib-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 10px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;   /* the active underline track */
+  border-radius: 0;
+  color: var(--cdx-muted);
+  opacity: 1;                              /* override .memory-tab base opacity:0.5 */
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow: none;
+  transition: color .12s ease, border-color .12s ease;
+}
+:root[data-theme^="codex"] .memory-tab:hover,
+:root[data-theme^="codex"] .gallery-tab:hover,
+:root[data-theme^="codex"] .cookbook-tab:hover,
+:root[data-theme^="codex"] .lib-tab:hover {
+  color: var(--cdx-item-fg);
+  opacity: 1;
+  background: transparent;                 /* drop the base fg-5% hover fill */
+}
+:root[data-theme^="codex"] .memory-tab.active,
+:root[data-theme^="codex"] .gallery-tab.active,
+:root[data-theme^="codex"] .cookbook-tab.active,
+:root[data-theme^="codex"] .lib-tab.active {
+  color: var(--cdx-accent);
+  opacity: 1;
+  background: transparent;
+  border-bottom-color: var(--cdx-accent);
+}
+/* tab icons inherit the muted/accent label color (not hard white) */
+:root[data-theme^="codex"] .gallery-tab .gallery-tab-icon svg,
+:root[data-theme^="codex"] .memory-tab svg,
+:root[data-theme^="codex"] .cookbook-tab svg,
+:root[data-theme^="codex"] .lib-tab svg { opacity: .9; }
+/* in-tab badges (counts / error dots) stay subtle */
+:root[data-theme^="codex"] .cookbook-tab .cookbook-tab-count,
+:root[data-theme^="codex"] .memory-tab .memory-count { color: var(--cdx-faint); font-weight: 400; }
+/* gallery Edit-tab close affordance — quiet ghost */
+:root[data-theme^="codex"] .gallery-tab-close { color: var(--cdx-faint); border-radius: 4px; }
+:root[data-theme^="codex"] .gallery-tab-close:hover { color: var(--fg); background: var(--cdx-hover); }
+
+/* Calendar view-toggle — Codex segmented control (shared surface-3 track,
+   raised surface-4 active segment). */
+:root[data-theme^="codex"] .cal-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--cdx-surface-3);
+  border: 1px solid var(--cdx-border-soft);
+}
+:root[data-theme^="codex"] .cal-view-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--cdx-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+:root[data-theme^="codex"] .cal-view-btn:hover { color: var(--cdx-item-fg); }
+:root[data-theme^="codex"] .cal-view-btn.active {
+  background: var(--cdx-surface-4);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* Pane section descriptions + admin-card seams — quiet body text. */
+:root[data-theme^="codex"] .memory-desc,
+:root[data-theme^="codex"] .doclib-desc {
+  color: var(--cdx-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+:root[data-theme^="codex"] .memory-desc a,
+:root[data-theme^="codex"] .doclib-desc a { color: var(--cdx-accent); text-decoration: none; }
+:root[data-theme^="codex"] .memory-desc a:hover,
+:root[data-theme^="codex"] .doclib-desc a:hover { text-decoration: underline; }
+
+
+/* ═════════════ LISTS · ROWS · BADGES · CHIPS · SEARCH ════════════════════ */
+
+/* Search fields — softer rounded field, subtle fill, calm accent focus ring.
+   .memory-search-input = Tasks/Notes/Chats-library/Doclib; .gallery-search = Gallery. */
+:root[data-theme^="codex"] .memory-search-input,
+:root[data-theme^="codex"] .gallery-search {
+  background: var(--cdx-input-bg);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 9px;
+  color: var(--fg);
+  transition: border-color .14s ease, box-shadow .14s ease, background .14s ease;
+}
+:root[data-theme^="codex"] .memory-search-input::placeholder,
+:root[data-theme^="codex"] .gallery-search::placeholder { color: var(--cdx-faint); }
+:root[data-theme^="codex"] .memory-search-input:hover,
+:root[data-theme^="codex"] .gallery-search:hover { border-color: var(--cdx-border); }
+:root[data-theme^="codex"] .memory-search-input:focus,
+:root[data-theme^="codex"] .gallery-search:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--cdx-accent) 60%, var(--cdx-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cdx-accent) 18%, transparent);
+}
+:root[data-theme^="codex"] .gallery-search-wrap { overflow: visible; }
+
+/* Filter CHIPS — flat, fully-rounded, muted idle; active = accent-tint fill +
+   hairline accent border. CONFLICT RESOLVED: modal-pane gave .memory-cat-chip a
+   surface-3 idle fill, lists gave transparent. We adopt TRANSPARENT idle so the
+   chip matches its siblings .gallery-chip / .notes-label-chip, and fold in the
+   modal-pane 4px-11px padding + .research-cat / .research-category-row grouping. */
+:root[data-theme^="codex"] .research-category-row { display: flex; gap: 4px; flex-wrap: wrap; }
+:root[data-theme^="codex"] .memory-cat-chip,
+:root[data-theme^="codex"] .research-cat,
+:root[data-theme^="codex"] .gallery-chip {
+  padding: 4px 11px;
+  background: transparent;
+  border: 1px solid var(--cdx-border-soft);
+  color: var(--cdx-muted);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+:root[data-theme^="codex"] .memory-cat-chip:hover,
+:root[data-theme^="codex"] .research-cat:hover,
+:root[data-theme^="codex"] .gallery-chip:hover {
+  background: var(--cdx-hover);
+  border-color: var(--cdx-border);
+  color: var(--cdx-item-fg);
+}
+:root[data-theme^="codex"] .memory-cat-chip.active,
+:root[data-theme^="codex"] .research-cat.active,
+:root[data-theme^="codex"] .gallery-chip.active {
+  background: color-mix(in srgb, var(--cdx-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-accent) 45%, transparent);
+  color: color-mix(in srgb, var(--cdx-accent) 78%, var(--fg));
+  font-weight: 550;
+}
+/* Favorites heart chip + active-tag indicator — same accent-tint family. */
+:root[data-theme^="codex"] .gallery-chip-fav { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .gallery-chip-fav.active {
+  color: color-mix(in srgb, var(--cdx-accent) 78%, var(--fg));
+  background: color-mix(in srgb, var(--cdx-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-accent) 45%, transparent);
+}
+:root[data-theme^="codex"] .gallery-chip-active-album {
+  background: color-mix(in srgb, var(--cdx-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-accent) 40%, transparent);
+}
+/* Notes label chips inherit the same pill system. */
+:root[data-theme^="codex"] .notes-label-chip {
+  border: 1px solid var(--cdx-border-soft);
+  color: var(--cdx-muted);
+  border-radius: 999px;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+:root[data-theme^="codex"] .notes-label-chip:hover {
+  color: var(--cdx-item-fg);
+  background: var(--cdx-hover);
+  border-color: color-mix(in srgb, var(--cdx-accent) 35%, var(--cdx-border));
+}
+/* chip-row rhythm on the 4/6px grid */
+:root[data-theme^="codex"] .memory-category-filters,
+:root[data-theme^="codex"] .tasks-activity-filters { gap: 6px; }
+
+/* List ROWS — surface-3 tier, hairline soft border, quiet hover lift (no hue shift).
+   .memory-item covers .task-card; .doclib-card covers Chats/Documents/Research/Archive. */
+:root[data-theme^="codex"] .memory-item,
+:root[data-theme^="codex"] .doclib-card {
+  background: var(--cdx-surface-3);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 10px;
+  transition: background .14s ease, border-color .14s ease;
+}
+:root[data-theme^="codex"] .memory-item:hover,
+:root[data-theme^="codex"] .doclib-card:hover {
+  background: var(--cdx-surface-4);
+  border-color: var(--cdx-border);
+}
+/* Paused task rows: Codex dims rather than stripes — kill the barber-pole. */
+:root[data-theme^="codex"] .memory-item.task-paused {
+  background: var(--cdx-surface-2) !important;
+  filter: none;
+  opacity: 0.6 !important;
+}
+:root[data-theme^="codex"] .memory-item.task-paused:hover { opacity: 0.9 !important; }
+/* Gallery tiles: hairline border + accent ring on hover. */
+:root[data-theme^="codex"] .gallery-card {
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 10px;
+}
+:root[data-theme^="codex"] .gallery-card:hover {
+  border-color: color-mix(in srgb, var(--cdx-accent) 45%, var(--cdx-border));
+  /* neutralize the base blue glow (box-shadow uses var(--red)=accent) so gallery
+     tiles hover as quietly as the other codex cards; keep a faint neutral lift */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* Status BADGES — restrained colors: active=teal, paused=amber, built-in/run-now=accent. */
+:root[data-theme^="codex"] .task-status-badge,
+:root[data-theme^="codex"] .task-builtin-badge {
+  border-radius: 6px;
+  letter-spacing: 0.4px;
+  font-family: var(--font-mono);
+}
+:root[data-theme^="codex"] .task-active-badge {
+  color: var(--cdx-green);
+  background: color-mix(in srgb, var(--cdx-green) 16%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-green) 38%, transparent);
+}
+:root[data-theme^="codex"] .task-active-badge:hover {
+  background: color-mix(in srgb, var(--cdx-green) 24%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-green) 52%, transparent);
+}
+:root[data-theme^="codex"] .task-paused-badge {
+  color: var(--cdx-amber);
+  background: var(--cdx-amber-soft);
+  border-color: color-mix(in srgb, var(--cdx-amber) 38%, transparent);
+}
+:root[data-theme^="codex"] .task-paused-badge:hover {
+  background: color-mix(in srgb, var(--cdx-amber) 26%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-amber) 52%, transparent);
+}
+:root[data-theme^="codex"] .task-builtin-badge {
+  color: color-mix(in srgb, var(--cdx-accent) 85%, var(--fg));
+  background: color-mix(in srgb, var(--cdx-accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-accent) 42%, transparent);
+}
+:root[data-theme^="codex"] .task-builtin-badge.modified {
+  color: var(--cdx-amber);
+  background: var(--cdx-amber-soft);
+  border-color: color-mix(in srgb, var(--cdx-amber) 42%, transparent);
+}
+:root[data-theme^="codex"] .task-run-now-badge {
+  color: color-mix(in srgb, var(--cdx-accent) 88%, var(--fg));
+  background: color-mix(in srgb, var(--cdx-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-accent) 40%, transparent);
+}
+:root[data-theme^="codex"] .task-run-now-badge:hover {
+  background: color-mix(in srgb, var(--cdx-accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-accent) 55%, transparent);
+}
+
+/* Toolbar SEGMENT / Select toggle buttons — soft border, muted label, accent-tint
+   when toggled. CONFLICT RESOLVED: modal-pane (14%/42%) vs lists (16%/45%) active
+   tint → unified to 16%/45% (matches the chip active state above). */
+:root[data-theme^="codex"] .memory-toolbar-btn,
+:root[data-theme^="codex"] .gallery-select-btn {
+  background: var(--cdx-surface-3);
+  border: 1px solid var(--cdx-border-soft);
+  color: var(--cdx-muted);
+  border-radius: 8px;
+  opacity: 1;
+  font-size: 12px;
+  font-weight: 500;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+:root[data-theme^="codex"] .memory-toolbar-btn:hover,
+:root[data-theme^="codex"] .gallery-select-btn:hover {
+  background: var(--cdx-surface-4);
+  border-color: var(--cdx-border);
+  color: var(--cdx-item-fg);
+  opacity: 1;
+}
+:root[data-theme^="codex"] .memory-toolbar-btn.active,
+:root[data-theme^="codex"] .gallery-select-btn.active {
+  background: color-mix(in srgb, var(--cdx-accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--cdx-accent) 45%, transparent);
+  color: color-mix(in srgb, var(--cdx-accent) 80%, var(--fg));
+  font-weight: 550;
+}
+
+
+/* ═══════════ SETTINGS · FORMS · TABLES · BUTTONS · INPUTS ════════════════ */
+
+/* Settings cards — extend the L400 .admin-card rule with rhythm + header weight.
+   CONFLICT RESOLVED: both this cluster and modal-pane styled .admin-card h2;
+   merged into one h2 rule (hairline seam + 13–14px heading + fg-strong). */
+:root[data-theme^="codex"] .admin-card {
+  padding: 16px;
+  margin-bottom: 12px;
+}
+:root[data-theme^="codex"] .admin-card h2 {
+  font-size: 14px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom-color: var(--cdx-border-soft);
+  color: var(--cdx-fg-strong);
+}
+:root[data-theme^="codex"] .admin-card > h2 > svg { opacity: 0.6; color: var(--cdx-icon); }
+:root[data-theme^="codex"] .admin-toggle-sub { color: var(--cdx-muted); font-size: 11.5px; }
+:root[data-theme^="codex"] .admin-toggle-label { color: var(--fg); font-weight: 500; }
+:root[data-theme^="codex"] .admin-card.admin-danger-card {
+  border-color: color-mix(in srgb, var(--cdx-red) 38%, transparent);
+}
+:root[data-theme^="codex"] .adm-ep-section-head { color: var(--cdx-muted); opacity: 1; letter-spacing: 0.05em; }
+
+/* Form rows + labels + selects/inputs (AI Defaults, Search, Reminders, Add-Models). */
+:root[data-theme^="codex"] .settings-label { color: var(--cdx-muted); font-weight: 500; }
+:root[data-theme^="codex"] .settings-select,
+:root[data-theme^="codex"] .admin-model-form input,
+:root[data-theme^="codex"] .admin-model-form select,
+:root[data-theme^="codex"] .admin-add-form input {
+  background: var(--cdx-input-bg);
+  border: 1px solid var(--cdx-border);
+  border-radius: 8px;
+  color: var(--fg);
+}
+:root[data-theme^="codex"] .settings-select:focus,
+:root[data-theme^="codex"] .admin-model-form input:focus,
+:root[data-theme^="codex"] .admin-model-form select:focus,
+:root[data-theme^="codex"] .admin-add-form input:focus {
+  border-color: var(--cdx-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cdx-accent) 45%, transparent);
+  outline: none;
+}
+/* native select caret → Codex chevron (selects use appearance:none) */
+:root[data-theme^="codex"] .settings-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d7d7d' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 26px;
+}
+:root[data-theme^="codex"] .adm-fused-group > select { border-radius: 8px 0 0 8px; }
+:root[data-theme^="codex"] .adm-fused-group > input  { border-radius: 0 8px 8px 0; }
+
+/* Provider combo picker (Add API Models). */
+:root[data-theme^="codex"] .adm-provider-btn {
+  background: var(--cdx-input-bg);
+  border: 1px solid var(--cdx-border);
+  border-radius: 8px;
+  color: var(--fg);
+}
+:root[data-theme^="codex"] .adm-provider-combo .adm-provider-btn { border-radius: 8px 0 0 8px; }
+:root[data-theme^="codex"] .adm-provider-btn:hover { border-color: var(--cdx-accent); background: var(--cdx-hover); }
+:root[data-theme^="codex"] .adm-provider-name { color: var(--fg); }
+:root[data-theme^="codex"] .adm-provider-menu {
+  background: var(--cdx-popover);
+  border: 1px solid var(--cdx-popover-border);
+  border-radius: 10px;
+  box-shadow: var(--cdx-shadow-pop);
+}
+
+/* Buttons — primary (accent) / secondary (neutral chip) / danger (red ghost). */
+:root[data-theme^="codex"] .admin-btn-add,
+:root[data-theme^="codex"] .confirm-btn-primary {
+  background: var(--cdx-accent);
+  border: 1px solid var(--cdx-accent);
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+}
+:root[data-theme^="codex"] .admin-btn-add:hover,
+:root[data-theme^="codex"] .confirm-btn-primary:hover {
+  background: var(--cdx-accent-hover);
+  border-color: var(--cdx-accent-hover);
+  filter: none;
+}
+:root[data-theme^="codex"] .admin-btn-add:disabled { opacity: 0.45; }
+:root[data-theme^="codex"] .admin-btn-sm,
+:root[data-theme^="codex"] .confirm-btn-secondary {
+  background: var(--cdx-btn-secondary-bg);
+  border: 1px solid var(--cdx-border-soft);
+  color: var(--cdx-item-fg);
+  border-radius: 8px;
+}
+:root[data-theme^="codex"] .admin-btn-sm:hover,
+:root[data-theme^="codex"] .confirm-btn-secondary:hover {
+  background: var(--cdx-btn-secondary-hover);
+  border-color: var(--cdx-border);
+  color: var(--fg);
+}
+:root[data-theme^="codex"] .admin-btn-sm.adm-more-item { background: none; border: 0; color: var(--cdx-item-fg); }
+:root[data-theme^="codex"] .admin-btn-sm.adm-more-item:hover { background: var(--cdx-popover-hover); border: 0; }
+:root[data-theme^="codex"] .admin-btn-delete,
+:root[data-theme^="codex"] .confirm-btn-danger {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--cdx-red) 45%, transparent);
+  color: var(--cdx-red);
+  border-radius: 8px;
+}
+:root[data-theme^="codex"] .admin-btn-delete:hover,
+:root[data-theme^="codex"] .confirm-btn-danger:hover {
+  background: var(--cdx-red);
+  border-color: var(--cdx-red);
+  color: #fff;
+}
+:root[data-theme^="codex"] .settings-fallback-add {
+  border: 1px dashed var(--cdx-border);
+  border-radius: 8px;
+  color: var(--cdx-muted);
+  background: transparent;
+}
+:root[data-theme^="codex"] .settings-fallback-add:hover { border-color: var(--cdx-accent); color: var(--cdx-accent); }
+:root[data-theme^="codex"] .adm-section-toggle {
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 8px;
+  background: var(--cdx-surface-3);
+}
+:root[data-theme^="codex"] .adm-section-toggle:hover { border-color: var(--cdx-accent); background: var(--cdx-hover); }
+
+/* Pills/badges (ADMIN, LOCAL/API, "N/N models enabled", disabled). */
+:root[data-theme^="codex"] .admin-badge {
+  background: var(--cdx-badge-bg);
+  color: var(--cdx-accent);
+  border-radius: 6px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+:root[data-theme^="codex"] .admin-badge.admin-badge-off {
+  background: color-mix(in srgb, var(--cdx-red) 20%, transparent);
+  color: var(--cdx-red);
+}
+
+/* User rows + endpoint rows (both use .admin-user-row). */
+:root[data-theme^="codex"] .admin-user-row {
+  background: var(--cdx-surface-3);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+:root[data-theme^="codex"] .admin-user-row:hover {
+  border-color: color-mix(in srgb, var(--cdx-accent) 40%, var(--cdx-border));
+}
+:root[data-theme^="codex"] .admin-user-name,
+:root[data-theme^="codex"] .admin-ep-name { color: var(--fg); font-weight: 500; }
+:root[data-theme^="codex"] .admin-ep-detail { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .admin-user-chevron { color: var(--cdx-icon); }
+:root[data-theme^="codex"] .admin-ep-copy-btn { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .admin-ep-copy-btn:hover { color: var(--fg); }
+:root[data-theme^="codex"] .admin-empty { color: var(--cdx-faint); }
+:root[data-theme^="codex"] .adm-ep-inline-msg { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .admin-switch-inline { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .admin-toggle-state { color: var(--cdx-muted); font-size: 11px; }
+:root[data-theme^="codex"] .admin-user-row.admin-ep-disabled { opacity: 0.55; }
+
+
+/* ═══════════════ MENUS · TOOLTIPS · TOGGLES · CONTROLS ═══════════════════ */
+
+/* First-open coachmark chip (.tour-hint family). */
+:root[data-theme^="codex"] .tour-hint {
+  background: var(--cdx-tooltip-bg);
+  color: var(--cdx-tooltip-fg);
+  border: 1px solid var(--cdx-tooltip-border);
+  border-radius: 10px;
+  padding: 11px 13px 9px;
+  width: 248px;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  box-shadow: var(--cdx-shadow-pop);
+}
+:root[data-theme^="codex"] .tour-hint-text { opacity: 1; color: var(--cdx-item-fg); }
+:root[data-theme^="codex"] .tour-hint-text b { color: var(--cdx-accent); font-weight: 600; }
+:root[data-theme^="codex"] .tour-hint-visual { color: var(--cdx-accent); }
+:root[data-theme^="codex"] .tour-hint-dismiss {
+  background: var(--cdx-surface-4);
+  border: 1px solid var(--cdx-border-soft);
+  color: var(--cdx-item-fg);
+  border-radius: 7px;
+  padding: 4px 13px;
+  font-size: 0.72rem;
+  opacity: 1;
+  transition: background .12s, color .12s;
+}
+:root[data-theme^="codex"] .tour-hint-dismiss:hover { background: var(--cdx-popover-hover); color: var(--fg); }
+
+/* Guided-tour stepper tooltip (#tour-tooltip + arrow + nav). id+theme specificity
+   overrides the inline <style id="tour-styles"> injected by slashCommands.js. */
+:root[data-theme^="codex"] #tour-tooltip {
+  background: var(--cdx-tooltip-bg);
+  color: var(--cdx-tooltip-fg);
+  border: 1px solid var(--cdx-tooltip-border);
+  border-radius: 10px;
+  padding: 11px 13px;
+  max-width: 280px;
+  font-size: 0.8rem;
+  box-shadow: var(--cdx-shadow-pop);
+}
+:root[data-theme^="codex"] #tour-tooltip .tour-text { opacity: 1; color: var(--cdx-item-fg); }
+:root[data-theme^="codex"] #tour-tooltip .tour-text b { color: var(--cdx-accent); font-weight: 600; }
+:root[data-theme^="codex"] .tour-arrow {
+  background: var(--cdx-tooltip-bg);
+  border: 1px solid var(--cdx-tooltip-border);
+}
+:root[data-theme^="codex"] .tour-nav button {
+  border: 1px solid var(--cdx-border-soft);
+  color: var(--cdx-item-fg);
+  border-radius: 7px;
+  transition: background .12s, color .12s, border-color .12s;
+}
+:root[data-theme^="codex"] .tour-nav button:hover { background: var(--cdx-popover-hover); color: var(--fg); }
+:root[data-theme^="codex"] .tour-btn-skip { color: var(--cdx-faint); }
+:root[data-theme^="codex"] .tour-btn-skip:hover { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .tour-btn-arrow { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .tour-btn-arrow:hover { color: var(--fg); }
+:root[data-theme^="codex"] .tour-btn-arrow-pulse { color: var(--cdx-accent); border-color: var(--cdx-accent); }
+
+/* Model-picker dropdown list polish (cx02). The popover shell + hover are already
+   styled at L352/L370; this only fixes row radius, section-label casing, search row. */
+:root[data-theme^="codex"] .model-picker-list .model-switch-item {
+  border-radius: 7px;
+  padding: 6px 9px;
+  color: var(--cdx-item-fg);
+}
+:root[data-theme^="codex"] .model-picker-list .mp-section-label {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 1;
+  color: var(--cdx-muted);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 7px 9px 3px;
+}
+:root[data-theme^="codex"] .model-picker-list .model-switch-item .model-switch-ep { color: var(--cdx-faint); opacity: 1; }
+:root[data-theme^="codex"] .model-picker-list .mp-provider-header { border-radius: 7px; }
+:root[data-theme^="codex"] .model-picker-list .mp-provider-header:hover { background: var(--cdx-popover-hover); }
+:root[data-theme^="codex"] .model-picker-list .mp-provider-chevron { color: var(--cdx-faint); }
+:root[data-theme^="codex"] .model-picker-search-row input,
+:root[data-theme^="codex"] #model-picker-search {
+  background: var(--cdx-input-bg);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 8px;
+  color: var(--fg);
+  padding: 7px 9px;
+}
+:root[data-theme^="codex"] .model-picker-search-row input::placeholder { color: var(--cdx-faint); }
+:root[data-theme^="codex"] .model-picker-search-row input:focus,
+:root[data-theme^="codex"] #model-picker-search:focus { border-color: var(--cdx-accent); outline: none; }
+:root[data-theme^="codex"] .model-picker-action-btn {
+  background: var(--cdx-surface-4);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 8px;
+  color: var(--cdx-muted);
+  transition: background .12s, color .12s, border-color .12s;
+}
+:root[data-theme^="codex"] .model-picker-action-btn:hover { background: var(--cdx-popover-hover); color: var(--fg); border-color: var(--cdx-divider); }
+:root[data-theme^="codex"] .model-picker-action-btn.primary:hover { color: var(--cdx-accent); }
+
+/* Composer overflow "+" menu — no ARIA role, so it falls through the generic
+   [role=menu] popover rule; give it the Codex shell explicitly. */
+:root[data-theme^="codex"] .overflow-menu {
+  background: var(--cdx-popover);
+  border: 1px solid var(--cdx-popover-border);
+  border-radius: 10px;
+  box-shadow: var(--cdx-shadow-pop);
+  padding: 4px;
+}
+:root[data-theme^="codex"] .overflow-menu-item {
+  border-radius: 7px;
+  padding: 7px 9px;
+  color: var(--cdx-item-fg);
+  gap: 9px;
+  transition: background .12s, color .12s;
+}
+:root[data-theme^="codex"] .overflow-menu-item:hover { background: var(--cdx-popover-hover); color: var(--fg); }
+:root[data-theme^="codex"] .overflow-menu-item svg { color: var(--cdx-icon); }
+:root[data-theme^="codex"] .overflow-menu-item .overflow-active-dot { background: var(--cdx-accent); }
+
+/* Composer control row. NOTE: .mode-toggle / .mode-toggle-btn.active are already
+   set at L323/L331; this ADDS only the active box-shadow + letter-spacing and the
+   .send-btn.newchat-mode variant (which style.css re-tints blue) → snap it back to
+   the Codex primary chip. */
+:root[data-theme^="codex"] .mode-toggle-btn { font-weight: 500; letter-spacing: -0.01em; }
+:root[data-theme^="codex"] .mode-toggle-btn.active { box-shadow: 0 1px 2px rgba(0, 0, 0, .28); }
+:root[data-theme="codex-light"] .mode-toggle-btn.active { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+:root[data-theme^="codex"] .send-btn.newchat-mode {
+  background: var(--cdx-primary-bg);
+  color: var(--cdx-primary-fg);
+  border: none;
+}
+:root[data-theme^="codex"] .send-btn.newchat-mode:hover { background: var(--cdx-primary-bg-hover); color: var(--cdx-primary-fg); }
+:root[data-theme^="codex"] .send-btn.newchat-mode svg { stroke: var(--cdx-primary-fg); }
+:root[data-theme^="codex"] .send-btn-label { font-weight: 500; letter-spacing: 0.2px; color: var(--cdx-primary-fg); }
+
+
+/* ═══════════════════════════ CONVERSATION ═══════════════════════════════ */
+
+/* Assistant reading rhythm — comfortable line-height, restrained heading scale. */
+:root[data-theme^="codex"] .msg-ai .body {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--fg);
+}
+:root[data-theme^="codex"] .msg-ai .body > * { margin-top: 12px; margin-bottom: 12px; }
+:root[data-theme^="codex"] .msg-ai .body > *:first-child { margin-top: 0; }
+:root[data-theme^="codex"] .msg-ai .body > *:last-child { margin-bottom: 0; }
+:root[data-theme^="codex"] .msg-ai .body h1,
+:root[data-theme^="codex"] .msg-ai .body h2,
+:root[data-theme^="codex"] .msg-ai .body h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  margin-top: 20px;
+  margin-bottom: 8px;
+}
+:root[data-theme^="codex"] .msg-ai .body h1 { font-size: 1.4em; }
+:root[data-theme^="codex"] .msg-ai .body h2 { font-size: 1.22em; }
+:root[data-theme^="codex"] .msg-ai .body h3 { font-size: 1.08em; }
+:root[data-theme^="codex"] .msg-ai .body p { margin: 12px 0; }
+:root[data-theme^="codex"] .msg-user .body { font-size: 15px; line-height: 1.5; }
+
+/* Lists + rules — muted markers instead of the app's blue. */
+:root[data-theme^="codex"] .msg ul,
+:root[data-theme^="codex"] .msg ol { margin: 8px 0 8px 1.4em; }
+:root[data-theme^="codex"] .msg li { margin: 4px 0; }
+:root[data-theme^="codex"] .msg li::marker { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .msg hr { background: var(--cdx-border-soft); height: 1px; margin: 20px 0; border: 0; }
+
+/* Blockquote — neutral Codex bar (was app default blue --hl-function). */
+:root[data-theme^="codex"] .msg blockquote {
+  border-left: 2px solid var(--cdx-quote-bar);
+  background: transparent;
+  color: var(--cdx-muted);
+  border-radius: 0;
+  padding: 2px 0 2px 14px;
+  margin: 12px 0;
+}
+:root[data-theme^="codex"] .msg blockquote p { margin: 4px 0; }
+
+/* Code blocks in conversation — recessed dark card. Refines the generic L465-468
+   pre rule for the in-message context (darker recessed surface + 10px radius). */
+:root[data-theme^="codex"] .msg pre {
+  background: var(--cdx-code-block-bg);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 12px 0;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-x: auto;
+}
+:root[data-theme^="codex"] .msg pre code { background: transparent; padding: 0; font-size: inherit; }
+:root[data-theme^="codex"] .msg pre::-webkit-scrollbar { height: 8px; }
+:root[data-theme^="codex"] .msg pre::-webkit-scrollbar-thumb { background: var(--cdx-scroll); border-radius: 8px; }
+:root[data-theme^="codex"] .msg pre::-webkit-scrollbar-track { background: transparent; }
+
+/* Code-block action buttons (.copy-code/.run-code/.edit-code, absolutely positioned
+   inside <pre> by markdown.js). */
+:root[data-theme^="codex"] .msg pre .copy-code,
+:root[data-theme^="codex"] .msg pre .run-code,
+:root[data-theme^="codex"] .msg pre .edit-code {
+  background: var(--cdx-surface-4);
+  border: 1px solid var(--cdx-border-soft);
+  color: var(--cdx-icon);
+  border-radius: 7px;
+  width: 26px;
+  height: 26px;
+}
+:root[data-theme^="codex"] .msg pre:hover .copy-code,
+:root[data-theme^="codex"] .msg pre:hover .run-code,
+:root[data-theme^="codex"] .msg pre:hover .edit-code { opacity: 0.85; }
+:root[data-theme^="codex"] .msg pre .copy-code:hover,
+:root[data-theme^="codex"] .msg pre .run-code:hover,
+:root[data-theme^="codex"] .msg pre .edit-code:hover {
+  opacity: 1;
+  background: var(--cdx-popover-hover);
+  color: var(--fg);
+  border-color: var(--cdx-border);
+}
+
+/* Reasoning block residual accents (section+header already styled at L521-526). */
+:root[data-theme^="codex"] .thinking-toggle,
+:root[data-theme^="codex"] .thinking-icon { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .thinking-content.expanded {
+  background: transparent;
+  border-top: 1px solid var(--cdx-border-soft);
+}
+:root[data-theme^="codex"] .thinking-content-inner {
+  color: var(--cdx-muted);
+  opacity: 1;
+  font-size: 13px;
+  line-height: 1.6;
+}
+:root[data-theme^="codex"] .thinking-content.expanded::-webkit-scrollbar { width: 8px; }
+:root[data-theme^="codex"] .thinking-content.expanded::-webkit-scrollbar-thumb { background: var(--cdx-scroll); border-radius: 8px; }
+
+/* Agent tool-call output — same recessed code surface as .msg pre. */
+:root[data-theme^="codex"] .agent-thread-cmd,
+:root[data-theme^="codex"] .agent-tool-output pre {
+  background: var(--cdx-code-block-bg);
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+:root[data-theme^="codex"] .agent-thread-tool { color: var(--cdx-item-fg); font-weight: 500; }
+
+/* Message footer + hover actions. */
+:root[data-theme^="codex"] .msg-footer .timestamp,
+:root[data-theme^="codex"] .msg-footer .response-metrics { color: var(--cdx-faint); font-size: 12px; }
+:root[data-theme^="codex"] .msg-footer .response-metrics:hover { color: var(--cdx-muted); }
+:root[data-theme^="codex"] .msg-action-btn {
+  color: var(--cdx-icon);
+  border-radius: 7px;
+  background: transparent;
+  border: none;
+}
+:root[data-theme^="codex"] .msg-action-btn:hover { background: var(--cdx-hover); color: var(--fg); }
+
+/* In-message tables — soft grid, muted header, rounded frame. Complements the
+   generic table border rule at L495-498 by SCOPING to .msg (no global table reflow). */
+:root[data-theme^="codex"] .msg table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--cdx-border-soft);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 13px;
+  margin: 12px 0;
+}
+:root[data-theme^="codex"] .msg th {
+  background: var(--cdx-surface-3);
+  color: var(--cdx-muted);
+  font-weight: 600;
+  text-align: left;
+}
+:root[data-theme^="codex"] .msg th,
+:root[data-theme^="codex"] .msg td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--cdx-border-soft);
+}
+:root[data-theme^="codex"] .msg tr:last-child td { border-bottom: none; }
+
+
+/* ═══════════ DERIVED — codex-light legibility nudges (no light Codex ref) ═══ */
+:root[data-theme="codex-light"] .memory-cat-chip.active,
+:root[data-theme="codex-light"] .research-cat.active,
+:root[data-theme="codex-light"] .gallery-chip.active,
+:root[data-theme="codex-light"] .memory-toolbar-btn.active,
+:root[data-theme="codex-light"] .gallery-select-btn.active {
+  background: color-mix(in srgb, var(--cdx-accent) 12%, #ffffff);
+  color: var(--cdx-accent);
+}
+:root[data-theme="codex-light"] .cal-view-btn.active { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+
+/* ── Conversation polish — cleanest thread experience ── */
+/* Bold inherits text color — Odysseus tints <strong>/<b> teal; Codex = weight only. */
+:root[data-theme^="codex"] .msg strong,
+:root[data-theme^="codex"] .msg b { color: inherit; font-weight: 600; }
+/* User turn: content-width right-aligned pill (short messages stay tight), no "You" label. */
+:root[data-theme^="codex"] .msg-user {
+  width: fit-content;
+  max-width: 76%;
+  margin-left: auto;
+  padding: 9px 15px;
+}
+:root[data-theme^="codex"] .msg-user .role { display: none; }
+/* User-turn action icons (edit/delete/…) on hover only — keeps the resting bubble tight. */
+:root[data-theme^="codex"] .msg-user .msg-footer { display: none; }
+:root[data-theme^="codex"] .msg-user:hover .msg-footer { display: flex; justify-content: flex-end; gap: 2px; }
+/* Comfortable rhythm between turns + tighter assistant role→body. */
+:root[data-theme^="codex"] .msg + .msg { margin-top: 18px; }
+:root[data-theme^="codex"] .msg-ai .role { margin-bottom: 5px; }
+:root[data-theme^="codex"] .msg-action-btn { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* ── Polish v4 (user-flagged) ── */
+/* The codex theme removes .sidebar-header (L526), which in the base layout
+   reserved top/left room for the GLOBAL fixed hamburger (#hamburger-btn:
+   position:fixed; top:12px; left:9px; 30x30 -> bottom edge ~y=42, style.css:607).
+   With only 8px of top padding the first nav row (#sidebar-new-chat-btn
+   "New Chat") slid up underneath that hamburger. Reserve ~44px so it clears.
+   (Collapsed rail already pads 48px via .icon-rail; mobile uses @media rules.) */
+:root[data-theme^="codex"] .sidebar-inner { padding-top: 44px; }
+/* Composer must not sit flush against the bottom edge in a conversation
+   (welcome state keeps margin-bottom:0 via the .welcome-active rule). */
+:root[data-theme^="codex"] .chat-input-bar { margin-bottom: 14px; }
+/* Agent/Chat segment text vertically centered (was display:block, baseline-aligned). */
+:root[data-theme^="codex"] .mode-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+}
+/* Sidebar labels inherit the item's 13px (kill any sub-em shrink for consistent sizing). */
+:root[data-theme^="codex"] .list-item .grow { font-size: inherit; font-weight: inherit; }
+/* Long chat/session titles ellipsize instead of hard-clipping mid-glyph
+   (base .grow uses text-overflow:clip). */
+:root[data-theme^="codex"] .list-item .grow { text-overflow: ellipsis; }
+
+
+/* ============================================================
+   CODEX SKIN — CONSOLIDATED POLISH (append to end)
+   ============================================================ */
+
+/* ---- CORE CHROME ---------------------------------------- */
+
+/* Welcome hero: bump weight/size to match Codex. EDIT IN PLACE at
+   codex.css L238-240 (font-weight:400→500, font-size:1.375rem→1.625rem);
+   appending here works too ONLY because this block is AFTER L242. */
+:root[data-theme^="codex"] #welcome-screen .welcome-name {
+  font-size: 1.625rem;
+  font-weight: 500;
+  line-height: 1.25;
+  margin-bottom: 0;
+}
+
+/* Composer control row: cluster left controls, push right cluster to edge.
+   Supersedes the space-between gap from style.css .chat-input-bottom (L2314). */
+:root[data-theme^="codex"] .chat-input-left  { flex: 0 1 auto; }
+:root[data-theme^="codex"] .chat-input-bottom{ justify-content: flex-start; gap: 8px; }
+:root[data-theme^="codex"] .chat-input-right { margin-left: auto; }
+
+/* Composer overflow trigger: swap up-chevron glyph for a "+" via mask. */
+:root[data-theme^="codex"] .overflow-plus-btn svg { display: none; }
+:root[data-theme^="codex"] .overflow-plus-btn::before {
+  content: ""; width: 16px; height: 16px; color: var(--cdx-muted);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center/16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E") center/16px no-repeat;
+  background: currentColor;
+}
+
+/* Send button: mute the idle disc; bright tint only for the real "+ New" action.
+   SUPERSEDES the blanket rule at codex.css L1292 (.send-btn.newchat-mode bright).
+   Replace L1292's body with these data-mode-scoped rules. */
+:root[data-theme^="codex"] .send-btn.newchat-mode[data-mode="newchat"] {
+  background: var(--cdx-primary-bg); color: var(--cdx-primary-fg); border: none;
+}
+:root[data-theme^="codex"] .send-btn.newchat-mode[data-mode="newchat"]:hover {
+  background: var(--cdx-primary-bg-hover); color: var(--cdx-primary-fg);
+}
+:root[data-theme^="codex"] .send-btn.newchat-mode[data-mode="newchat"] svg { stroke: var(--cdx-primary-fg); }
+:root[data-theme^="codex"] .send-btn.newchat-mode[data-mode="idle"] {
+  background: var(--cdx-surface-3); border: 1px solid var(--cdx-border);
+}
+:root[data-theme^="codex"] .send-btn.newchat-mode[data-mode="idle"] svg {
+  stroke: var(--cdx-icon); color: var(--cdx-icon);
+}
+
+/* Sidebar rows: one uniform 8px icon→label gap; kill per-row pixel nudges. */
+:root[data-theme^="codex"] .list-item { gap: 8px; }
+:root[data-theme^="codex"] .list-item .sidebar-action-icon,
+:root[data-theme^="codex"] .list-item .grow { left: 0 !important; }
+
+/* Sidebar notif dot: force codex accent over inline urgency reds; kill the pulse glow. */
+:root[data-theme^="codex"] .sidebar-notif-dot { background: var(--cdx-accent) !important; box-shadow: none; }
+:root[data-theme^="codex"] #email-unread-dot.sidebar-notif-dot { animation: none; box-shadow: none; }
+
+/* ---- PANES (tool windows) ------------------------------- */
+
+/* Search magnifier: kill the baked coral #e06c75 glyph on EVERY search field.
+   ID-scoped variants = (1,3,0) beat style.css (1,1,0); attr variants = (0,4,0)
+   beat source (0,2,0) and codex.css L813 (0,3,0). Gray = #959595 / #8a8a8a. */
+:root[data-theme="codex"] #doclib-panel-chats .memory-search-input,
+:root[data-theme="codex"] #doclib-panel-archive .memory-search-input,
+:root[data-theme="codex"] #doclib-panel-research .memory-search-input,
+:root[data-theme="codex"] [data-doclib-panel="documents"] .memory-search-input,
+:root[data-theme="codex"] #memory-modal .memory-search-input,
+:root[data-theme="codex"] #tasks-modal .memory-search-input,
+:root[data-theme="codex"] .notes-search-bar .memory-search-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23959595' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat; background-position: 9px center; padding-left: 28px;
+}
+:root[data-theme="codex-light"] #doclib-panel-chats .memory-search-input,
+:root[data-theme="codex-light"] #doclib-panel-archive .memory-search-input,
+:root[data-theme="codex-light"] #doclib-panel-research .memory-search-input,
+:root[data-theme="codex-light"] [data-doclib-panel="documents"] .memory-search-input,
+:root[data-theme="codex-light"] #memory-modal .memory-search-input,
+:root[data-theme="codex-light"] #tasks-modal .memory-search-input,
+:root[data-theme="codex-light"] .notes-search-bar .memory-search-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='8'/><line x1='21' y1='21' x2='16.65' y2='16.65'/></svg>");
+  background-repeat: no-repeat; background-position: 9px center; padding-left: 28px;
+}
+
+/* Calendar weekday header row: was opacity:0.4 (style.css L34885) → invisible. */
+:root[data-theme^="codex"] .cal-weekday {
+  opacity: 1; color: var(--cdx-section-fg); background: var(--cdx-surface-3);
+  font-weight: 600; letter-spacing: .04em;
+}
+
+/* Calendar bare var(--accent) (undefined) → real focus ring + hover border. */
+:root[data-theme^="codex"] .cal-search-input:focus {
+  border-color: var(--cdx-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cdx-accent) 18%, transparent);
+}
+:root[data-theme^="codex"] button.cal-add-btn.cal-add-btn-text:hover {
+  border-color: color-mix(in srgb, var(--cdx-accent) 55%, var(--cdx-border));
+}
+
+/* Memory/Research section-heading icons: quiet grey (handled CSS-side, no inline edits). */
+:root[data-theme^="codex"] .admin-card > h2 > svg[style] { color: var(--cdx-icon) !important; }
+:root[data-theme^="codex"] .research-new-job > div > h2 > svg { stroke: var(--cdx-icon) !important; opacity: .6; }
+
+/* Compare/Cookbook primary CTAs: skin button radius/weight (color already #3183d8). */
+:root[data-theme^="codex"] .research-start-btn,
+:root[data-theme^="codex"] .cookbook-dl-btn { background: var(--cdx-accent); border-radius: 8px; font-weight: 600; }
+:root[data-theme^="codex"] .research-start-btn:hover,
+:root[data-theme^="codex"] .cookbook-dl-btn:hover { background: var(--cdx-accent-hover); opacity: 1; }
+
+/* Deep-Research selects: native OS arrow → codex chevron. */
+:root[data-theme^="codex"] .research-setting select {
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d7d7d' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center; padding-right: 26px;
+}
+
+/* Compare timeout input + Scoreboard button: skin tokens over inline 4px/raw --bg. */
+:root[data-theme^="codex"] #compare-model-overlay input[type="number"] {
+  background: var(--cdx-input-bg) !important; border: 1px solid var(--cdx-border) !important; border-radius: 10px !important;
+}
+:root[data-theme^="codex"] #compare-model-overlay .modal-body > div > button[type="button"] { border-radius: 8px !important; }
+
+/* Compare MODE/TYPE controls → segmented track (matches .cal-view-toggle). */
+:root[data-theme^="codex"] .compare-mode-tabs,
+:root[data-theme^="codex"] .compare-section > div:has(> .compare-blind-toggle) {
+  background: var(--cdx-surface-3); border: 1px solid var(--cdx-border-soft);
+  border-radius: 8px; padding: 2px; gap: 2px !important; flex-wrap: nowrap;
+}
+:root[data-theme^="codex"] .compare-blind-toggle,
+:root[data-theme^="codex"] .compare-parallel-toggle,
+:root[data-theme^="codex"] .compare-dice-toggle,
+:root[data-theme^="codex"] .compare-save-toggle,
+:root[data-theme^="codex"] .compare-reset-toggle,
+:root[data-theme^="codex"] .compare-mode-tab { border: none; border-radius: 6px; background: transparent; }
+:root[data-theme^="codex"] .compare-mode-tab.active,
+:root[data-theme^="codex"] .compare-blind-toggle.active,
+:root[data-theme^="codex"] .compare-parallel-toggle.active,
+:root[data-theme^="codex"] .compare-save-toggle.active,
+:root[data-theme^="codex"] .compare-dice-toggle.active {
+  background: var(--cdx-surface-4); color: var(--fg); border: none; box-shadow: 0 1px 2px rgba(0,0,0,.25); opacity: 1;
+}
+:root[data-theme="codex-light"] .compare-mode-tab.active,
+:root[data-theme="codex-light"] .compare-blind-toggle.active,
+:root[data-theme="codex-light"] .compare-parallel-toggle.active,
+:root[data-theme="codex-light"] .compare-save-toggle.active,
+:root[data-theme="codex-light"] .compare-dice-toggle.active { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+
+/* Notes to-do composer: calm hairline at rest, accent on focus only.
+   SUPERSEDES the always-on 35% blue border from style.css .notes-quick-add (L32090). */
+:root[data-theme^="codex"] .notes-quick-add { background: var(--cdx-input-bg); border-color: var(--cdx-border-soft); animation: none; }
+:root[data-theme^="codex"] .notes-quick-add:hover { border-color: var(--cdx-border); box-shadow: none; }
+:root[data-theme^="codex"] .notes-quick-add:focus-within {
+  border-color: color-mix(in srgb, var(--cdx-accent) 55%, var(--cdx-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cdx-accent) 18%, transparent);
+}
+:root[data-theme^="codex"] .notes-quick-add::before { color: var(--cdx-faint); animation: none; opacity: .6; }
+:root[data-theme^="codex"] .notes-quick-input { caret-color: var(--cdx-accent); }
+
+/* Notes Note/To-do segmented toggle: codex raised-thumb track. */
+:root[data-theme^="codex"] .notes-quick-type-seg { border-color: var(--cdx-border-soft); background: var(--cdx-surface-3); }
+:root[data-theme^="codex"] .notes-quick-type-seg::before { background: var(--cdx-surface-4); }
+
+/* ---- SETTINGS / MENUS ----------------------------------- */
+
+/* Theme dialog tabs (.admin-tabs/.admin-tab) → unified in-pane tab spec.
+   PREFER editing the existing tab-bar lists at codex.css L705-760 to add these
+   selectors; this standalone block reproduces the same metrics if appended. */
+:root[data-theme^="codex"] .admin-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--cdx-border-soft); }
+:root[data-theme^="codex"] .admin-tab {
+  font-size: 13px; padding: 9px 10px; letter-spacing: -0.01em; opacity: 1; color: var(--cdx-muted);
+}
+:root[data-theme^="codex"] .admin-tab:hover { color: var(--fg); }
+:root[data-theme^="codex"] .admin-tab.active { color: var(--cdx-accent); }
+:root[data-theme^="codex"] .admin-tab svg { width: 14px; height: 14px; }
+
+/* Settings nav rail: 12px → 13px, preserve compact narrow-mode. */
+:root[data-theme^="codex"] .settings-nav-item { font-size: 13px; padding: 7px 10px; gap: 9px; }
+@container settings-modal (max-width: 620px) {
+  :root[data-theme^="codex"] .settings-nav-item { font-size: 11px; padding: 6px 10px; gap: 8px; }
+}
+
+/* Settings cards: firmer #2f2f2f edge for separation; keep danger-card red edge. */
+:root[data-theme^="codex"] .settings-panels .admin-card:not(.admin-danger-card) { border-color: var(--cdx-border); }
+
+/* Settings sidebar divider: softer, shorter inset. */
+:root[data-theme^="codex"] .settings-sidebar-divider { background: var(--cdx-border-soft); margin: 6px 10px; }
+
+/* Modal close glyph weight: lighten heavy ✖ until SVG swap lands (see §3 note). */
+:root[data-theme^="codex"] .close-btn { font-size: 13px; font-weight: 300; }
+
+/* ---- CONVERSATION --------------------------------------- */
+
+/* User pill max-width 76% → 68%. EDIT IN PLACE at codex.css L1469 (max-width)
+   rather than appending — L1467-1472 already defines .msg-user. */
+:root[data-theme^="codex"] .msg-user { max-width: 68%; }
+
+/* Assistant prose line-height 1.65 → 1.55 (do NOT touch p margins). */
+:root[data-theme^="codex"] .msg-ai .body { line-height: 1.55; }
+
+/* Code block radius 10px → 8px to match tool-output pre / tables. */
+:root[data-theme^="codex"] .msg pre { border-radius: 8px; }
+
+/* status-alias additions (Cookbook FIT good, Logout danger, error surfaces) */
+:root[data-theme^="codex"] {
+  --yellow:            var(--cdx-amber);   /* Cookbook FIT 'good' + .hwfit-panel-note */
+  --color-danger:      var(--cdx-red);
+  --color-error:       var(--cdx-red);
+  --color-error-light: var(--cdx-diff-rem-fg);
+}
+
+/* ---- EMPTY-STATE PLACEHOLDERS -------------------------------------------
+   Base .memory-empty / .doclib-empty / .gallery-empty inherit
+   color:color-mix(--fg 35%) + font-style:italic. At 35% the dark text is
+   ~2.4:1 (below AA) and the italic drifts from the Codex flat-sans look.
+   Re-scope to the quiet --cdx-faint token (legible, on-palette) and drop the
+   italic — a legibility + fidelity improvement (still short of strict AA). */
+:root[data-theme^="codex"] .memory-empty,
+:root[data-theme^="codex"] .doclib-empty,
+:root[data-theme^="codex"] .gallery-empty {
+  color: var(--cdx-faint);
+  font-style: normal;
+}
+
+/* ---- COMPOSER — mobile touch targets ----------------------
+   The codex .send-btn / .input-icon-btn / .mode-toggle sizing is declared
+   OUTSIDE any media query, and codex.css loads AFTER style.css, so it defeats
+   the base @media(max-width:768px) enlargements (style.css L4096/4281/4388),
+   collapsing the send button to 30px (< 44px min touch target) on phones.
+   Re-apply Codex-scoped phone sizing so the controls stay tappable. */
+@media (max-width: 768px) {
+  :root[data-theme^="codex"] .send-btn {
+    width: 44px; min-width: 44px; height: 44px !important; border-radius: 999px;
+  }
+  :root[data-theme^="codex"] .send-btn svg { width: 20px; height: 20px; }
+  :root[data-theme^="codex"] .input-icon-btn {
+    width: 40px; height: 40px; min-width: 40px;
+  }
+  :root[data-theme^="codex"] .mode-toggle { height: 38px; }
+  :root[data-theme^="codex"] .mode-toggle-btn { padding: 0 14px; font-size: 12px; }
+}
