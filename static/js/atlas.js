@@ -36,6 +36,11 @@ let _saveTimer = null;
 let _graphOpen = false;   // graph docked as a right-side panel
 let _graph = null;        // GraphView instance (lazy)
 let _docked = false;      // edge-docked to the right (reserves chat space)
+let _resizeObs = null;    // watches modal width to toggle narrow layout
+let _activePane = 'editor'; // narrow mode: which single pane is visible
+// Below this modal-content width we switch to the phone/narrow single-pane
+// layout (covers real phones AND a docked/pinched panel on desktop).
+const NARROW_WIDTH = 680;
 
 // ── tiny fetch helpers ──────────────────────────────────────────────────
 async function apiGet(path, params) {
@@ -142,6 +147,37 @@ function _buildModal() {
       #atlas-modal .atlas-btn.active { background:var(--brand-color,#48f); color:#fff; border-color:transparent; }
       #atlas-modal input.atlas-search { width:100%; box-sizing:border-box; background:var(--input-bg,#222); border:1px solid var(--input-border,#444); color:inherit; border-radius:6px; padding:5px 8px; font-size:12px; }
       #atlas-modal .atlas-status { font-size:11px; opacity:.6; padding:0 12px 6px; }
+
+      /* Base view shown via a class on .atlas-center (not inline display) so it
+         composes with the responsive pane rules below instead of fighting them. */
+      #atlas-modal .atlas-base-view { display:none; }
+      #atlas-modal .atlas-center.show-base .atlas-editor,
+      #atlas-modal .atlas-center.show-base .atlas-preview { display:none; }
+      #atlas-modal .atlas-center.show-base .atlas-base-view { display:flex; }
+
+      /* Segmented switcher — hidden on wide, shown when the panel is narrow. */
+      #atlas-modal .atlas-tabs { display:none; }
+      #atlas-modal .atlas-tabs button { flex:1; background:none; border:0; border-bottom:2px solid transparent; color:inherit; opacity:.6; padding:9px 4px; font-size:12px; cursor:pointer; }
+      #atlas-modal .atlas-tabs button.active { opacity:1; border-bottom-color:var(--brand-color,#48f); }
+      #atlas-modal .atlas-head [data-act="overflow"] { display:none; }
+
+      /* ── Narrow / phone layout: one full-width pane at a time, graph stacks below ── */
+      #atlas-modal.atlas-narrow .atlas-tabs { display:flex; border-bottom:1px solid var(--bubble-border,#333); }
+      #atlas-modal.atlas-narrow .atlas-body { flex-direction:column; }
+      #atlas-modal.atlas-narrow .atlas-left,
+      #atlas-modal.atlas-narrow .atlas-center,
+      #atlas-modal.atlas-narrow .atlas-right { display:none; width:auto; flex:1 1 auto; border-right:none; border-left:none; }
+      #atlas-modal.atlas-narrow[data-pane="files"]   .atlas-left { display:flex; }
+      #atlas-modal.atlas-narrow[data-pane="links"]   .atlas-right { display:block; }
+      #atlas-modal.atlas-narrow[data-pane="editor"]  .atlas-center,
+      #atlas-modal.atlas-narrow[data-pane="preview"] .atlas-center { display:flex; }
+      #atlas-modal.atlas-narrow[data-pane="editor"]  .atlas-preview { display:none; }
+      #atlas-modal.atlas-narrow[data-pane="preview"] .atlas-editor { display:none; }
+      #atlas-modal.atlas-narrow .atlas-editor { border-right:none; }
+      #atlas-modal.atlas-narrow .atlas-graph-wrap { width:auto; flex:0 0 45%; border-left:none; border-top:1px solid var(--bubble-border,#333); }
+      #atlas-modal.atlas-narrow .atlas-head [data-act="import"],
+      #atlas-modal.atlas-narrow .atlas-head [data-act="export"] { display:none; }
+      #atlas-modal.atlas-narrow .atlas-head [data-act="overflow"] { display:inline-block; }
     </style>
     <div class="modal-content">
       <div class="atlas-head">
@@ -151,7 +187,14 @@ function _buildModal() {
         <button class="atlas-btn" data-act="graph-toggle" title="Show the link graph alongside your note">Graph</button>
         <button class="atlas-btn" data-act="import">Import</button>
         <button class="atlas-btn" data-act="export">Export</button>
+        <button class="atlas-btn" data-act="overflow" title="More">&#x22EF;</button>
         <button class="atlas-btn" id="atlas-close" title="Close">&#x2715;</button>
+      </div>
+      <div class="atlas-tabs">
+        <button data-pane="files">Files</button>
+        <button data-pane="editor">Editor</button>
+        <button data-pane="preview">Preview</button>
+        <button data-pane="links">Links</button>
       </div>
       <div class="atlas-body">
         <div class="atlas-left">
@@ -169,7 +212,7 @@ function _buildModal() {
             <textarea spellcheck="false" placeholder="# Write markdown…  link with [[Other note]]"></textarea>
           </div>
           <div class="atlas-preview"></div>
-          <div class="atlas-base-view" style="display:none;"></div>
+          <div class="atlas-base-view"></div>
         </div>
         <div class="atlas-right">
           <h4>Backlinks</h4>
@@ -194,6 +237,17 @@ function _buildModal() {
     window.open(API + '/export', '_blank');
   };
   _modal.querySelector('[data-act="import"]').onclick = _openImportDialog;
+  _modal.querySelector('[data-act="overflow"]').onclick = (e) => _openOverflowMenu(e.currentTarget);
+
+  // Segmented switcher (narrow mode): each tab shows one full-width pane.
+  _modal.querySelectorAll('.atlas-tabs button').forEach((b) => {
+    b.onclick = () => _setPane(b.dataset.pane);
+  });
+
+  // Track the modal's own width (not just the viewport) so the layout also
+  // adapts when the panel is docked/pinched narrow on desktop, per the design.
+  _resizeObs = new ResizeObserver(() => _applyResponsive());
+  _resizeObs.observe(_modal.querySelector('.modal-content'));
 
   // search
   const search = _modal.querySelector('.atlas-search');
@@ -252,6 +306,7 @@ async function openAtlas() {
   }
   document.addEventListener('keydown', _escHandler);
   window.addEventListener('atlas-refresh', _onExternalRefresh);
+  _applyResponsive();   // set narrow/wide layout for the current size
   await _reloadNotes();
   // Restart the graph sim if the panel was left open from a previous session.
   if (_graphOpen) _openGraph();
@@ -264,6 +319,9 @@ async function openAtlas() {
 // an overlay. Idempotent.
 async function openAtlasDocked() {
   if (!_open) await openAtlas();
+  // On a phone the modal is already a full-screen sheet — right-docking would
+  // just reserve a gutter on a chat you can't see. Skip docking when narrow.
+  if (_modal.classList.contains('atlas-narrow')) return;
   // Mark docked synchronously (not inside the rAF) so that if the panel is
   // closed in the same frame, _doClose still releases the reserved
   // --right-dock-w gutter instead of leaving a permanent blank strip.
@@ -454,10 +512,35 @@ async function _runSearch(q) {
 
 // Swap the centre pane between the note editor/preview and the Bases view.
 function _showCenter(mode) {
-  const note = mode !== 'base';
-  _modal.querySelector('.atlas-editor').style.display = note ? '' : 'none';
-  _modal.querySelector('.atlas-preview').style.display = note ? '' : 'none';
-  _modal.querySelector('.atlas-base-view').style.display = note ? 'none' : '';
+  // Toggle a class (not inline display) so it composes with the responsive
+  // single-pane rules instead of overriding them with inline styles.
+  _modal.querySelector('.atlas-center').classList.toggle('show-base', mode === 'base');
+}
+
+// ── responsive: narrow single-pane layout ────────────────────────────────────
+function _applyResponsive() {
+  if (!_modal) return;
+  const content = _modal.querySelector('.modal-content');
+  const w = content ? content.getBoundingClientRect().width : 9999;
+  const narrow = w > 0 && w < NARROW_WIDTH;
+  if (narrow === _modal.classList.contains('atlas-narrow')) return; // no change
+  _modal.classList.toggle('atlas-narrow', narrow);
+  if (narrow) {
+    _setPane(_current || _base ? 'editor' : 'files');
+    // The desktop right-dock/widen doesn't apply on a narrow sheet; clear any
+    // inline width so the panel fills the screen and the graph stacks below.
+    if (content) content.style.width = '';
+  }
+}
+
+// Show exactly one pane in narrow mode (Files / Editor / Preview / Links).
+function _setPane(name) {
+  _activePane = name;
+  _modal.dataset.pane = name;
+  _modal.querySelectorAll('.atlas-tabs button').forEach((b) =>
+    b.classList.toggle('active', b.dataset.pane === name));
+  // Recompute graph canvas size if it just became visible alongside a pane.
+  if (_graphOpen && _graph) requestAnimationFrame(() => _graph.start());
 }
 
 // ── open / edit / save a note ───────────────────────────────────────────────
@@ -469,6 +552,9 @@ async function openNote(path) {
     _selectedFolder = data.path.includes('/') ? data.path.slice(0, data.path.lastIndexOf('/')) : '';
     _dirty = false;
     _showCenter('note');
+    // On a phone, opening a note (from the file list, a wikilink, or a chat
+    // link) should bring the editor forward rather than leave you on Files.
+    if (_modal.classList.contains('atlas-narrow') && _activePane === 'files') _setPane('editor');
     _modal.querySelector('textarea').value = data.content || '';
     _modal.querySelector('[data-el="path"]').textContent = data.path;
     _renderPreview(data.content || '', data.outlinks);
@@ -505,6 +591,29 @@ function _openPlusMenu(anchor) {
   menu.querySelector('[data-m="folder"]').onclick = () => { close(); _newFolder(); };
   menu.querySelector('[data-m="base"]').onclick = () => { close(); _newBase(); };
   menu.querySelector('[data-m="template"]').onclick = () => { close(); _insertTemplate(); };
+}
+
+// Header "⋯" menu — holds Import/Export/Refresh, which are folded out of the
+// header on narrow widths to keep it uncluttered (same body-level menu pattern).
+function _openOverflowMenu(anchor) {
+  const existing = document.querySelector('.atlas-menu');
+  if (existing) { existing.remove(); return; }
+  const menu = document.createElement('div');
+  menu.className = 'atlas-menu';
+  menu.innerHTML = `
+    <div data-m="import">Import…</div>
+    <div data-m="export">Export</div>
+    <div data-m="refresh">Refresh</div>`;
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = (r.bottom + 4) + 'px';
+  menu.style.left = Math.max(8, r.right - 175) + 'px';
+  document.body.appendChild(menu);
+  const close = () => { menu.remove(); document.removeEventListener('click', onDoc, true); };
+  const onDoc = (e) => { if (!menu.contains(e.target) && e.target !== anchor) close(); };
+  setTimeout(() => document.addEventListener('click', onDoc, true), 0);
+  menu.querySelector('[data-m="import"]').onclick = () => { close(); _openImportDialog(); };
+  menu.querySelector('[data-m="export"]').onclick = () => { close(); window.open(API + '/export', '_blank'); };
+  menu.querySelector('[data-m="refresh"]').onclick = () => { close(); _refresh(); };
 }
 
 // New note: default into the selected folder so there's no "which folder?"
@@ -595,7 +704,7 @@ function _preprocessMarkdown(src) {
   // Protect code spans from the link/tag passes by stashing them behind
   // placeholders, then restoring verbatim at the end.
   const stash = [];
-  src = src.replace(_CODE_SPAN, (m) => { stash.push(m); return ` ${stash.length - 1} `; });
+  src = src.replace(_CODE_SPAN, (m) => { stash.push(m); return `\x00${stash.length - 1}\x00`; });
 
   // Image embeds: ![[pic.png]] → markdown image served from the raw endpoint.
   src = src.replace(/!\[\[([^\]|#]+?)\]\]/g, (m, target) => {
@@ -623,7 +732,7 @@ function _preprocessMarkdown(src) {
     return `${pre}[#${tag}](#atlas-tag-${encodeURIComponent(tag)})`;
   });
 
-  return src.replace(/ (\d+) /g, (m, i) => stash[+i]);
+  return src.replace(/\x00(\d+)\x00/g, (m, i) => stash[+i]);
 }
 
 function _renderBacklinks(list) {
@@ -648,14 +757,22 @@ function _toggleGraph(force) {
   _graphOpen = (typeof force === 'boolean') ? force : !_graphOpen;
   const wrap = _modal.querySelector('.atlas-graph-wrap');
   const content = _modal.querySelector('.modal-content');
-  const w = content.getBoundingClientRect().width;
+  const narrow = _modal.classList.contains('atlas-narrow');
   if (_graphOpen) {
-    content.style.width = Math.min(window.innerWidth * 0.98, w + GRAPH_PANEL_W) + 'px';
     wrap.style.display = '';
+    // Narrow: the graph stacks vertically below the active pane (CSS handles
+    // layout) — don't widen the sheet. Wide: grow the dialog by the panel width.
+    if (!narrow) {
+      const w = content.getBoundingClientRect().width;
+      content.style.width = Math.min(window.innerWidth * 0.98, w + GRAPH_PANEL_W) + 'px';
+    }
     _openGraph();
   } else {
     wrap.style.display = 'none';
-    content.style.width = Math.max(720, w - GRAPH_PANEL_W) + 'px';
+    if (!narrow) {
+      const w = content.getBoundingClientRect().width;
+      content.style.width = Math.max(720, w - GRAPH_PANEL_W) + 'px';
+    }
     if (_graph) _graph.stop();
   }
   _modal.querySelector('[data-act="graph-toggle"]').classList.toggle('active', _graphOpen);
