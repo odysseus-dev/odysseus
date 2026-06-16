@@ -208,11 +208,7 @@ class McpManager:
             elif transport == "sse":
                 res = await self._connect_sse(server_id, name, url, headers=merged_headers or None)
             elif transport == "http":
-                # NOTE: _start_http_connect doesn't accept a `headers` arg today
-                # (it uses OAuth via `auth=provider` for transport auth). If/when
-                # it grows a headers path, merge them in here alongside the stdio
-                # and sse branches above.
-                res = await self._start_http_connect(server_id, name, url)
+                res = await self._start_http_connect(server_id, name, url, headers=merged_headers or None)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -354,13 +350,19 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
+    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0, headers: Optional[Dict[str, str]] = None) -> bool:
         """Begin a Streamable HTTP connect in the background. Returns within
         `wait` seconds: True if it connected (cached-token path), otherwise the
-        flow is awaiting browser authorization and status becomes 'needs_auth'."""
+        flow is awaiting browser authorization and status becomes 'needs_auth'.
+
+        `headers` are forwarded to the streamablehttp_client so pre-shared-secret
+        auth (e.g. an internal API gateway) works without going through OAuth.
+        When `headers` are provided, the OAuth flow is bypassed entirely —
+        the server either accepts the headers (success) or rejects with 401
+        (no automatic discovery / DCR / browser flow)."""
         import asyncio
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
-        task = asyncio.create_task(self._connect_http(server_id, name, url))
+        task = asyncio.create_task(self._connect_http(server_id, name, url, headers=headers))
         self._connect_tasks[server_id] = task
         done, _ = await asyncio.wait({task}, timeout=wait)
         if task in done:
@@ -381,8 +383,15 @@ class McpManager:
             }
         return False
 
-    async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
-        """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
+    async def _connect_http(self, server_id: str, name: str, url: str, headers: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to a Streamable HTTP MCP server (with automatic OAuth).
+
+        When `headers` is provided, OAuth is bypassed — we trust the
+        caller's pre-shared-secret auth and let the server respond 401
+        if it disagrees. The OAuth provider is still constructed (it's
+        cheap and side-effect-free) so a future call without `headers=`
+        can fall through to the discovery flow.
+        """
         try:
             from mcp import ClientSession
             from mcp.client.streamable_http import streamablehttp_client
@@ -399,7 +408,19 @@ class McpManager:
 
             provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+            # When the caller supplied pre-shared-secret headers, pass them
+            # through to streamablehttp_client. The OAuth `auth` parameter is
+            # only consulted by the SDK when a 401 is observed, so providing
+            # both is safe — successful auth via headers short-circuits the
+            # OAuth path entirely.
+            if headers:
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url, headers=headers, auth=provider)
+                )
+            else:
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url, auth=provider)
+                )
             read_stream, write_stream, _get_session_id = transport
             session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
