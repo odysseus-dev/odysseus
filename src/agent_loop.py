@@ -524,7 +524,7 @@ def get_builtin_overrides() -> dict:
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
     except Exception as e:
-        logger.warning('Failed to load builtin tool overrides: %s', e)
+        logger.warning("Failed to load builtin tool overrides, using defaults", exc_info=e)
         return {}
 
 
@@ -929,8 +929,8 @@ def _build_system_prompt(
     try:
         from src.user_time import current_datetime_context_message
         _datetime_message = current_datetime_context_message()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to build datetime context message", exc_info=e)
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -973,8 +973,8 @@ def _build_system_prompt(
             try:
                 from src.pdf_form_doc import find_source_upload_id
                 _is_form_backed = bool(find_source_upload_id(active_document.current_content or ""))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to detect if document is form-backed, assuming plain", exc_info=e)
 
             if _is_form_backed:
                 doc_ctx = (

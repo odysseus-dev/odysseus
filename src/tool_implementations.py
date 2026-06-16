@@ -1579,10 +1579,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         text = str(raw).strip().lower()
         if text in {"none", "no", "off", "false"}:
             return None
-        m = re.search(r"(\d+)\s*(?:m|min|minute|minutes)\b", text)
+        m = re.search(r"(\d+)\s*(?:minutes?|mins?|m)\b", text)
         if m:
             return max(0, int(m.group(1)))
-        m = re.search(r"(\d+)\s*(?:h|hr|hour|hours)\b", text)
+        m = re.search(r"(\d+)\s*(?:hours?|hrs?|h)\b", text)
         if m:
             return max(0, int(m.group(1)) * 60)
         if text.isdigit():
@@ -1595,7 +1595,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             return desc
         reminder_only = re.compile(
             r"^\s*(?:remind(?:er)?|alarm)\s*:?\s*\d+\s*"
-            r"(?:m|min|minute|minutes|h|hr|hour|hours)\b.*$",
+            r"(?:minutes?|mins?|m|hours?|hrs?|h)\b.*$",
             re.I,
         )
         return "" if reminder_only.match(desc) else desc

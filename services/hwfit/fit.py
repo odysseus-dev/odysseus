@@ -19,6 +19,10 @@ GPU_BANDWIDTH = {
     "6950 xt": 576, "6900 xt": 512, "6800 xt": 512, "6800": 512, "6700 xt": 384, "6600 xt": 256, "6600": 224,
     "mi300x": 5300, "mi300": 5300, "mi250x": 3277, "mi250": 3277, "mi210": 1638, "mi100": 1229,
     "9070 xt": 624, "9070": 488, "9060 xt": 322, "9060": 322,
+    # NVIDIA GB10 Grace-Blackwell superchip (DGX Spark). Unified LPDDR5X memory,
+    # not Apple Silicon, so it lives in the generic GPU table — the Apple-only
+    # lookup never matches it (its name carries no "apple").
+    "gb10": 273,
 }
 
 # Pre-sort keys by length descending for correct substring matching
