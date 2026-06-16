@@ -29,8 +29,10 @@ class ManageAtlasTool:
             write_note,
             read_all_notes,
             invalidate_cache,
+            notes_for_query,
             _note_meta,
         )
+        from src.atlas_query import run_query
         from src.atlas_links import (
             parse_links,
             resolve_link,
@@ -178,6 +180,30 @@ class ManageAtlasTool:
                     "graph": g,
                     "exit_code": 0,
                 }
+
+            if action == "query":
+                # Bases-style structured query (the same shape the UI builds and
+                # the atlas MCP server accepts). Answers questions like "todo
+                # sections where status is open".
+                q = args.get("query") or args.get("where")
+                if isinstance(q, str):
+                    import json as _json
+                    try:
+                        q = _json.loads(q)
+                    except (ValueError, TypeError):
+                        return {"error": "query must be a JSON object", "exit_code": 1}
+                if not isinstance(q, dict):
+                    return {"error": "Need a 'query' object", "exit_code": 1}
+                # Allow a bare filter list / where-block to be passed directly.
+                if "where" not in q and ("filters" in q or "join" in q):
+                    q = {"where": q}
+                result = run_query(q, notes_for_query(owner))
+                rows = result["rows"]
+                lines = [f"{result['count']} row(s) [{', '.join(result['columns'])}]:"]
+                for row in rows[:30]:
+                    cells = " · ".join(f"{c}={row.get(c)}" for c in result["columns"])
+                    lines.append(f"- `{row.get('file.path')}` {cells}")
+                return {"response": "\n".join(lines), **result, "exit_code": 0}
 
             return {"error": f"Unknown action '{action}'", "exit_code": 1}
 

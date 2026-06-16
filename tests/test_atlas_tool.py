@@ -74,6 +74,26 @@ def test_confinement_and_owner_scope(tool):
     assert listing["notes"] == []
 
 
+def test_query_action(tool):
+    _call(tool, "alice", action="write", path="daily",
+          content="---\nstatus: open\n---\n# Daily\n## Todo\nx")
+    _call(tool, "alice", action="write", path="done",
+          content="---\nstatus: closed\n---\n# Done\n## Todo\ny")
+    out = _call(tool, "alice", action="query", query={
+        "from": "sections", "where": {"join": "and", "filters": [
+            {"field": "section.heading", "op": "eq", "value": "todo"},
+            {"field": "prop.status", "op": "eq", "value": "open"}]}})
+    assert out["exit_code"] == 0
+    assert [r["file.path"] for r in out["rows"]] == ["daily.md"]
+
+
+def test_query_action_accepts_bare_where(tool):
+    _call(tool, "alice", action="write", path="n", content="---\nstatus: open\n---\n# N")
+    out = _call(tool, "alice", action="query",
+                query={"filters": [{"field": "prop.status", "op": "eq", "value": "open"}]})
+    assert [r["file.path"] for r in out["rows"]] == ["n.md"]
+
+
 def test_invalid_json(tool):
     out = _run(tool("{not json", {"owner": "alice"}))
     assert out["exit_code"] == 1
