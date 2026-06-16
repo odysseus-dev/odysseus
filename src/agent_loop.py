@@ -758,6 +758,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
     is_short_reply = has_prior_assistant and len(text) < 40
     continuation = is_short_reply or _assistant_requested_followup(messages)
     retrieval_query = _recent_context_for_retrieval(messages) if continuation else text
+    q = retrieval_query.lower()
 
     if not text or bool(_LOW_SIGNAL_RE.match(text)):
         return {
@@ -768,9 +769,54 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
             "retrieval_query": text,
         }
 
-    # Vague exploration queries still trigger readonly execution, but they now
-    # flow through normal tool retrieval so the model can see the full catalog.
-    if not continuation and bool(_EXPLORATORY_TURN_RE.match(text)):
+    # Deterministic keyword/regex domain detection. This is a fallback layer
+    # underneath the semantic reverse-mapping done later in stream_agent_loop:
+    # it guarantees domain tool packs (e.g. contacts -> resolve_contact /
+    # manage_contact) are seeded even when the semantic RAG index misses,
+    # and keeps low_signal accurate for prompts that clearly target a domain.
+    domains: Set[str] = set()
+
+    def has(*patterns: str) -> bool:
+        return any(re.search(p, q) for p in patterns)
+
+    if has(r"\b(cookbook|serve|serving|served|launch|start|preset|vllm|sglang|llama\.?cpp|ollama|download|downloading|pull|cached models?|running models?|model servers?|models? (?:are )?running|what models?|model picker|gpu box|kierkegaard|odysseus|ajax|qwen|gemma|llama|mistral|minimax)\b"):
+        domains.add("cookbook")
+    if has(r"\b(emails?|mails?|gmail|inbox|reply|forward|cc|bcc|send email|compose email|draft email|message chris|message him|message her)\b"):
+        domains.add("email")
+    if has(r"\b(note|todo|to-do|checklist|task list|remind me|reminder|buy|pickup|pick up)\b"):
+        domains.add("notes_calendar_tasks")
+    if has(r"\b(every day|every morning|every evening|recurring|automatically|cron|scheduled task|background task)\b"):
+        domains.add("notes_calendar_tasks")
+    if has(r"\b(calendar|event|meeting|appointment|schedule)\b"):
+        domains.add("notes_calendar_tasks")
+    if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
+        domains.add("documents")
+    if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
+        domains.add("documents")
+    if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
+        domains.add("web")
+    if has(
+        r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
+        r"\b(sprawd[zź]|znajd[zź])\b.*\b(internet|internecie|online|web)\b",
+        r"\b(aktualn\w*|bieżąc\w*|biezac\w*|dzisiaj|teraz)\b.*\b(pogod\w*|temperatur\w*)\b",
+    ):
+        domains.add("web")
+    if has(r"\b(research|deep dive|investigate|look into)\b"):
+        domains.add("web")
+    if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
+        domains.add("ui")
+    if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
+        domains.add("sessions")
+    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
+        domains.add("files")
+    if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
+        domains.add("settings")
+    if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
+        domains.add("contacts")
+
+    # Vague exploration queries (no domain detected) trigger readonly execution
+    # but flow through normal tool retrieval so the model sees the full catalog.
+    if not continuation and not domains and bool(_EXPLORATORY_TURN_RE.match(text)):
         return {
             "low_signal": False,
             "exploratory_turn": True,
@@ -783,7 +829,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         "low_signal": False,
         "exploratory_turn": False,
         "continuation": continuation,
-        "domains": set(),
+        "domains": domains,
         "retrieval_query": retrieval_query,
     }
 
