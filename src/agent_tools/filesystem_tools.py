@@ -379,6 +379,93 @@ class GrepTool:
             out += f"\n... [capped at {max_hits} matches]"
         return {"output": _truncate(out), "exit_code": 0}
 
+class DownloadFileTool:
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import _resolve_tool_path
+        import urllib.parse
+        args = {}
+        _s = (content or "").strip()
+        if _s.startswith("{"):
+            try:
+                args = json.loads(_s)
+            except json.JSONDecodeError:
+                args = {}
+        else:
+            lines = _s.split("\n", 1)
+            args = {"url": lines[0].strip()}
+            if len(lines) > 1 and lines[1].strip():
+                args["path"] = lines[1].strip()
+        url = str(args.get("url", "")).strip()
+        if not url:
+            return {"error": "download_file: url required", "exit_code": 1}
+        if not url.startswith(("http://", "https://")):
+            return {"error": "download_file: only http/https URLs are supported", "exit_code": 1}
+        raw_dest = str(args.get("path", "")).strip()
+        if not raw_dest:
+            raw_dest = os.path.basename(urllib.parse.urlparse(url).path) or "download"
+        try:
+            dest = _resolve_tool_path(raw_dest)
+        except ValueError as e:
+            return {"error": f"download_file: {e}", "exit_code": 1}
+        try:
+            import httpx
+            async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    d = os.path.dirname(dest)
+                    if d:
+                        os.makedirs(d, exist_ok=True)
+                    size = 0
+                    with open(dest, "wb") as f:
+                        async for chunk in response.aiter_bytes(chunk_size=65536):
+                            f.write(chunk)
+                            size += len(chunk)
+        except httpx.HTTPStatusError as e:
+            return {"error": f"download_file: HTTP {e.response.status_code} - {url}", "exit_code": 1}
+        except httpx.RequestError as e:
+            return {"error": f"download_file: request failed - {e}", "exit_code": 1}
+        except PermissionError:
+            return {"error": f"download_file: {dest}: permission denied", "exit_code": 1}
+        except OSError as e:
+            return {"error": f"download_file: {e}", "exit_code": 1}
+        return {"output": f"Downloaded {size:,} bytes to {dest}", "exit_code": 0}
+
+class DeleteFileTool:
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import _resolve_tool_path
+        raw_path = ""
+        _s = (content or "").strip()
+        if _s.startswith("{"):
+            try:
+                raw_path = str(json.loads(_s).get("path", "")).strip()
+            except json.JSONDecodeError:
+                raw_path = _s
+        else:
+            raw_path = _s.split("\n", 1)[0].strip()
+        if not raw_path:
+            return {"error": "delete_file: path required", "exit_code": 1}
+        try:
+            path = _resolve_tool_path(raw_path)
+        except ValueError as e:
+            return {"error": f"delete_file: {e}", "exit_code": 1}
+        try:
+            def _delete():
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                    return "dir"
+                os.remove(path)
+                return "file"
+            kind = await asyncio.to_thread(_delete)
+        except FileNotFoundError:
+            return {"error": f"delete_file: {path}: not found", "exit_code": 1}
+        except PermissionError:
+            return {"error": f"delete_file: {path}: permission denied", "exit_code": 1}
+        except OSError as e:
+            return {"error": f"delete_file: {path}: {e}", "exit_code": 1}
+        label = "Directory" if kind == "dir" else "File"
+        return {"output": f"{label} deleted: {path}", "exit_code": 0}
+
+
 class GetWorkspaceTool:
     """Report the active workspace folder (no args). File tools are confined to
     it; the shell starts there (cwd) but is NOT sandboxed."""
@@ -396,3 +483,4 @@ class GetWorkspaceTool:
                       "resolve paths from the user or use absolute paths.",
             "exit_code": 0,
         }
+

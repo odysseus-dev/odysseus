@@ -354,6 +354,9 @@ def setup_chat_routes(
         use_research = chat_request.use_research
         time_filter = chat_request.time_filter
         preset_id = chat_request.preset_id
+        if not preset_id:
+            from src.settings import get_setting
+            preset_id = get_setting("default_preset", "") or None
 
         # Verify the caller owns this session before loading it.
         # Without this, any authenticated user can post into another user's chat.
@@ -477,6 +480,9 @@ def setup_chat_routes(
         use_research = form_data.get("use_research")
         time_filter = form_data.get("time_filter")
         preset_id = form_data.get("preset_id")
+        if not preset_id:
+            from src.settings import get_setting
+            preset_id = get_setting("default_preset", "") or None
         # Issue #3229: API callers send JSON, not FormData.  Read from the
         # JSON body as fallback so callers who send {"allow_bash": true}
         # actually get bash enabled.
@@ -973,6 +979,20 @@ def setup_chat_routes(
                             logger.info(f"Research result persisted to DB for session {_sid}")
                         except Exception as _e:
                             logger.error(f"Failed to persist research to DB: {_e}")
+                        try:
+                            _clean_res_brain = clean_thinking_for_save(_result, {})[0]
+                            _snippet = _clean_res_brain[:500].strip()
+                            _mem_text = f"Research on: {_research_query}\n\n{_snippet}"
+                            _mem_entries = memory_manager.load(owner=_user)
+                            if not memory_manager.find_duplicates(_mem_text, _mem_entries):
+                                _new_mem = memory_manager.add_entry(
+                                    _mem_text, source="research", category="research", owner=_user
+                                )
+                                _mem_entries.append(_new_mem)
+                                memory_manager.save(_mem_entries)
+                                logger.info(f"Research saved to brain for session {_sid}")
+                        except Exception as _mem_err:
+                            logger.warning(f"Failed to save research to brain: {_mem_err}")
 
                     # Check for prior research to continue from
                     _prior_report = ""

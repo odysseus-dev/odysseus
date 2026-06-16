@@ -326,6 +326,7 @@ class Skill:
     platforms: List[str] = field(default_factory=list)
     requires_toolsets: List[str] = field(default_factory=list)
     fallback_for_toolsets: List[str] = field(default_factory=list)
+    tier: str = "common"                               # common | extra | unique | ultimate
     status: str = "draft"                              # draft | published
     confidence: float = 0.8
     source: str = "learned"
@@ -358,6 +359,7 @@ class Skill:
         if self.platforms:             fm["platforms"] = list(self.platforms)
         if self.requires_toolsets:     fm["requires_toolsets"] = list(self.requires_toolsets)
         if self.fallback_for_toolsets: fm["fallback_for_toolsets"] = list(self.fallback_for_toolsets)
+        fm["tier"] = self.tier or "common"
         fm["status"] = self.status
         fm["confidence"] = round(float(self.confidence), 3)
         fm["source"] = self.source
@@ -377,6 +379,7 @@ class Skill:
             "platforms": list(self.platforms),
             "requires_toolsets": list(self.requires_toolsets),
             "fallback_for_toolsets": list(self.fallback_for_toolsets),
+            "tier": self.tier or "common",
             "status": self.status,
             "confidence": round(float(self.confidence), 3),
             "source": self.source,
@@ -414,6 +417,7 @@ class Skill:
             platforms=_as_list(fm.get("platforms")),
             requires_toolsets=_as_list(fm.get("requires_toolsets")),
             fallback_for_toolsets=_as_list(fm.get("fallback_for_toolsets")),
+            tier=str(fm.get("tier", "common") or "common"),
             status=str(fm.get("status", "draft") or "draft"),
             confidence=_as_float(fm.get("confidence", 0.8), 0.8),
             source=str(fm.get("source", "learned") or "learned"),

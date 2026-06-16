@@ -34,6 +34,8 @@ _COMMON_TOOL_NAMES = {
     "download_model",
     "edit_document",
     "edit_file",
+    "delete_file",
+    "download_file",
     "edit_image",
     "generate_image",
     "glob",
@@ -55,6 +57,8 @@ _COMMON_TOOL_NAMES = {
     "manage_memory",
     "manage_notes",
     "manage_research",
+    "save_research_to_brain",
+    "raphael",
     "manage_session",
     "manage_settings",
     "manage_skills",
@@ -69,6 +73,7 @@ _COMMON_TOOL_NAMES = {
     "reply_to_email",
     "resolve_contact",
     "search_chats",
+    "search_emails",
     "search_hf_models",
     "send_email",
     "send_to_session",
@@ -207,3 +212,4 @@ def build_effective_tool_policy(
         hidden_tools=frozenset(hidden),
         reasons=MappingProxyType(dict(reasons)),
     )
+

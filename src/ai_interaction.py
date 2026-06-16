@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 AI_CHAT_TIMEOUT = 120  # seconds for a single LLM call
 MAX_DEBATE_ROUNDS = 5
 MAX_PIPELINE_STEPS = 10
+# Cap on concurrent LLM calls for bulk evolve operations (skill evolve_all,
+# memory_evolve_all). Free-tier models share a strict per-minute rate limit;
+# firing every item's call at once reliably exceeds it. A small cap spreads
+# the requests out instead of bursting them.
+_BULK_EVOLVE_CONCURRENCY = 3
 
 # ---------------------------------------------------------------------------
 # Global managers (set from app.py, same pattern as _mcp_manager)
@@ -51,6 +56,48 @@ def set_memory_manager(mgr, vector=None):
     global _memory_manager, _memory_vector
     _memory_manager = mgr
     _memory_vector = vector
+
+
+def _ensure_memory_manager():
+    """Return the shared MemoryManager, constructing one on first use.
+
+    app.py's startup normally calls set_memory_manager() before any of this
+    runs. But raphael.py (the CLI wrapper) invokes do_raphael()/do_manage_memory()
+    in a standalone subprocess that never runs app.py's startup, leaving
+    _memory_manager None and every memory_* action silently returning "no
+    memories found"/"manager not available" despite memory.json being full.
+    Lazily building one here (reading the same data/memory.json) fixes the
+    CLI path without changing behaviour when the global is already set.
+    """
+    global _memory_manager
+    if _memory_manager is None:
+        from src.memory import MemoryManager
+        from src.constants import DATA_DIR
+        _memory_manager = MemoryManager(DATA_DIR)
+    return _memory_manager
+
+
+async def _retry_on_rate_limit(coro_fn, max_attempts: int = 3, wait_seconds: float = 65):
+    """Retry a call specifically on HTTP 429, waiting long enough to clear a
+    per-minute quota window.
+
+    llm_call_async has its own retry loop, but its delay (0.5s) is sized for
+    transient blips (502/503/connection hiccups), not for waiting out a
+    per-minute rate limit -- retrying that fast just burns the same exhausted
+    window again. Used by bulk evolve operations where actually finishing
+    matters more than finishing fast.
+    """
+    import asyncio
+    from fastapi import HTTPException
+
+    for attempt in range(max_attempts):
+        try:
+            return await coro_fn()
+        except HTTPException as e:
+            if e.status_code == 429 and attempt < max_attempts - 1:
+                await asyncio.sleep(wait_seconds)
+                continue
+            raise
 
 
 def set_rag_manager(rag_mgr, personal_docs_mgr=None):
@@ -943,10 +990,10 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
 # ---------------------------------------------------------------------------
 
 async def do_manage_memory(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
-    """Manage memories: list, add, edit, delete, search.
+    """Manage memories: list, add, edit, delete, search, pin, audit.
 
     Content format:
-      Line 1: action (list|add|edit|delete|search)
+      Line 1: action (list|add|edit|delete|search|pin|audit)
       Line 2+: action-specific params
 
     Actions:
@@ -955,9 +1002,10 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
       edit                    — line 2: memory_id, line 3: new text
       delete                  — line 2: memory_id
       search                  — line 2: query
+      pin                     — line 2: memory_id  (sets category=identity, shows as [PINNED])
+      audit                   — scan all memories, flag duplicates/stale/vague entries
     """
-    if not _memory_manager:
-        return {"error": "Memory manager not available"}
+    _ensure_memory_manager()
 
     lines = content.strip().split("\n")
     if not lines:
@@ -1100,8 +1148,817 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             result_lines.append(f"- [{cat}] `{mid}` — {text}")
         return {"results": "\n".join(result_lines)}
 
+    elif action == "pin":
+        if len(lines) < 2:
+            return {"error": "Pin needs line 2: memory_id"}
+        memory_id = lines[1].strip()
+        memories = _memory_manager.load_all()
+        found = False
+        for m in memories:
+            if m.get("id", "").startswith(memory_id):
+                if owner and m.get("owner") != owner:
+                    return {"error": f"Memory '{memory_id}' not found"}
+                m["category"] = "identity"
+                m["pinned"] = True
+                found = True
+                pinned_text = m.get("text", "")[:80]
+                break
+        if not found:
+            return {"error": f"Memory '{memory_id}' not found"}
+        _memory_manager.save(memories)
+        return {"action": "pin", "memory_id": memory_id,
+                "results": f"Memory pinned (always-load): {pinned_text}"}
+
+    elif action == "audit":
+        import time as _time
+        memories = _memory_manager.load(owner=owner)
+        if not memories:
+            return {"results": "No memories found."}
+
+        try:
+            from src.memory import AUTO_PIN_THRESHOLD as _APT
+        except Exception:
+            _APT = 10
+
+        now = _time.time()
+        seen_texts: dict = {}
+        flags: dict = {}
+
+        for m in memories:
+            mid = m.get("id", "?")[:8]
+            text = m.get("text", "").strip()
+            uses = int(m.get("uses", 0) or 0)
+            age_days = (now - int(m.get("timestamp", now) or now)) / 86400
+
+            # duplicate detection on first 60 normalised chars
+            text_key = " ".join(text.lower().split())[:60]
+            if text_key in seen_texts:
+                flags.setdefault(mid, []).append(f"DUPLICATE of {seen_texts[text_key]}")
+                flags.setdefault(seen_texts[text_key], []).append(f"DUPLICATE (see {mid})")
+            else:
+                seen_texts[text_key] = mid
+
+            if len(text) < 15:
+                flags.setdefault(mid, []).append("VAGUE (too short)")
+
+            stale_kw = ["is researching", "researching", "studying", "looking into", "investigating", "for a project"]
+            if any(kw in text.lower() for kw in stale_kw):
+                flags.setdefault(mid, []).append("POSSIBLY STALE (project/research reference)")
+
+            if uses == 0 and age_days > 7:
+                flags.setdefault(mid, []).append(f"NEVER USED ({int(age_days)}d old — consider deleting)")
+
+        flagged_ids = set(flags.keys())
+        dirty = [(m, flags[m.get("id", "?")[:8]]) for m in memories if m.get("id", "?")[:8] in flagged_ids]
+        clean = [m for m in memories if m.get("id", "?")[:8] not in flagged_ids]
+
+        # sort clean: pinned first, then by uses desc
+        clean_sorted = sorted(clean, key=lambda m: (-int(m.get("pinned", False)), -int(m.get("uses", 0) or 0)))
+
+        out = [f"## Memory Audit — {len(memories)} entries (auto-pin at {_APT} uses)\n"]
+
+        if dirty:
+            out.append(f"### Flagged ({len(dirty)})\n")
+            for m, issues in dirty:
+                mid = m.get("id", "?")[:8]
+                cat = m.get("category", "fact")
+                uses = int(m.get("uses", 0) or 0)
+                text = m.get("text", "")[:100]
+                out.append(f"- `{mid}` [{cat}] ×{uses} {text}")
+                for issue in issues:
+                    out.append(f"  ⚠ {issue}")
+            out.append("")
+
+        out.append(f"### Clean ({len(clean_sorted)})\n")
+        for m in clean_sorted:
+            mid = m.get("id", "?")[:8]
+            cat = m.get("category", "fact")
+            uses = int(m.get("uses", 0) or 0)
+            pinned = m.get("pinned") or cat == "identity"
+            pin_tag = " [PINNED]" if pinned else ""
+            near_tag = f" ⬆ {_APT - uses} uses to auto-pin" if not pinned and uses >= (_APT // 2) else ""
+            text = m.get("text", "")[:100]
+            out.append(f"- `{mid}` [{cat}]{pin_tag} ×{uses}{near_tag} {text}")
+
+        out.append("\n---")
+        out.append("To pin:    beelzebub → pin memory <id>")
+        out.append("To delete: beelzebub → delete memory <id>")
+
+        return {"results": "\n".join(out)}
+
     else:
-        return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search"}
+        return {"error": f"Unknown action '{action}'. Use: list, add, edit, delete, search, pin, audit"}
+
+
+# ---------------------------------------------------------------------------
+# Save research to brain tool
+# ---------------------------------------------------------------------------
+
+async def do_save_research_to_brain(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Extract key facts from a deep research report and save them to brain.
+
+    Args (JSON): {"id": "<research_id>", "max_facts": 5}
+    Omit id to use the most recent research for the owner.
+    """
+    import json as _json
+    import re as _re
+    from pathlib import Path as _Path
+    from src.constants import DEEP_RESEARCH_DIR
+    from src.settings import get_setting
+    from src.llm_core import llm_call_async
+
+    _ensure_memory_manager()
+
+    args = {}
+    stripped = (content or "").strip()
+    if stripped.startswith("{"):
+        try:
+            args = _json.loads(stripped)
+        except Exception:
+            pass
+
+    rid = (args.get("id") or args.get("session_id") or "").strip()
+    try:
+        max_facts = max(1, min(10, int(args.get("max_facts", 5))))
+    except (TypeError, ValueError):
+        max_facts = 5
+
+    data_dir = _Path(DEEP_RESEARCH_DIR)
+
+    # Find the research file
+    if rid:
+        if not _re.fullmatch(r"[A-Za-z0-9_-]+", rid):
+            return {"error": "Invalid research id."}
+        p = data_dir / f"{rid}.json"
+        if not p.exists():
+            return {"error": f"Research '{rid}' not found."}
+        d = _json.loads(p.read_text(encoding="utf-8"))
+    else:
+        items = []
+        if data_dir.exists():
+            for fp in data_dir.glob("*.json"):
+                try:
+                    dat = _json.loads(fp.read_text(encoding="utf-8"))
+                    if owner and dat.get("owner") and dat.get("owner") != owner:
+                        continue
+                    items.append((dat.get("completed_at", 0) or 0, fp, dat))
+                except Exception:
+                    continue
+        if not items:
+            return {"error": "No research found. Run a research first, or provide a research id."}
+        items.sort(reverse=True)
+        _, p, d = items[0]
+        rid = p.stem
+
+    query = d.get("query", "(untitled)")
+    report = d.get("result") or d.get("raw_report") or ""
+    if not report:
+        return {"error": f"No report content in research '{rid}'."}
+
+    # Use LLM to extract key facts
+    facts = []
+    try:
+        model_spec = get_setting("research_model", "").strip()
+        if model_spec:
+            url, model, headers = _resolve_model(model_spec, owner=owner)
+        else:
+            from src.database import SessionLocal, ModelEndpoint
+            from src.endpoint_resolver import build_chat_url, build_headers, resolve_endpoint_runtime
+            from src.auth_helpers import owner_filter as _owner_filter
+            db = SessionLocal()
+            try:
+                q = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)  # noqa: E712
+                if owner:
+                    q = _owner_filter(q, ModelEndpoint, owner)
+                ep = q.first()
+                if not ep:
+                    raise ValueError("No enabled endpoint found")
+                base, api_key = resolve_endpoint_runtime(ep, owner=owner)
+                models = _json.loads(ep.cached_models or "[]")
+                model = models[0] if models and isinstance(models[0], str) else (models[0].get("id", "") if models else "")
+                if not model:
+                    raise ValueError("No cached model on endpoint")
+                url, headers = build_chat_url(base), build_headers(api_key, base)
+            finally:
+                db.close()
+
+        prompt = (
+            f"Extract the {max_facts} most important facts or findings from this research report.\n"
+            f"Research question: {query}\n\n"
+            f"Report:\n{report[:6000]}\n\n"
+            f"Return ONLY a JSON array of {max_facts} concise strings. "
+            f"Each = one key finding. Be specific; include numbers, names, dates where relevant."
+        )
+        response = await llm_call_async(
+            url, model,
+            [{"role": "user", "content": prompt}],
+            headers=headers,
+            temperature=0.1,
+            max_tokens=1024,
+            timeout=45,
+            max_retries=1,
+        )
+        clean = response.strip()
+        if clean.startswith("```"):
+            clean = _re.sub(r'^```(?:json)?\s*', '', clean)
+            clean = _re.sub(r'\s*```$', '', clean)
+        match = _re.search(r'\[[\s\S]*\]', clean)
+        if match:
+            parsed = _json.loads(match.group())
+            if isinstance(parsed, list):
+                facts = [f.strip() for f in parsed if isinstance(f, str) and f.strip()]
+    except Exception as e:
+        logger.warning(f"save_research_to_brain: LLM extraction failed: {e}")
+        facts = []
+
+    if not facts:
+        facts = [f"Research on '{query}': {report[:600].strip()}"]
+
+    # Save to brain — single load, derive owner slice from it
+    all_entries = _memory_manager.load_all()
+    owner_entries = [e for e in all_entries if not owner or e.get("owner") == owner]
+    saved = []
+    for fact in facts:
+        if not fact:
+            continue
+        if _memory_manager.find_duplicates(fact, owner_entries):
+            continue
+        entry = _memory_manager.add_entry(fact, source="research", category="research", owner=owner)
+        all_entries.append(entry)
+        owner_entries.append(entry)
+        saved.append((entry["id"], fact))
+
+    if saved:
+        _memory_manager.save(all_entries)
+        if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
+            for mid, text in saved:
+                try:
+                    _memory_vector.add(mid, text)
+                except Exception:
+                    pass
+        try:
+            from src.event_bus import fire_event
+            fire_event("memory_added", owner)
+        except Exception:
+            pass
+
+    if not saved:
+        return {"output": "All extracted facts already exist in brain — nothing new saved.", "exit_code": 0}
+
+    lines = "\n".join(f"- {f}" for _, f in saved)
+    return {
+        "output": f"Saved {len(saved)} fact(s) from '{query}' to brain:\n{lines}",
+        "exit_code": 0,
+    }
+
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Auto-evolve helper — rewrites a single memory after it gets auto-pinned
+# ---------------------------------------------------------------------------
+
+async def auto_evolve_memory(memory_id: str, old_text: str, owner: Optional[str] = None) -> None:
+    """Rewrite a memory entry after it crosses the auto-pin threshold.
+
+    Accepts old_text directly (caller already has it) to skip a load_all scan.
+    Fires as asyncio.ensure_future so it never blocks the triggering chat response.
+    """
+    if not old_text.strip():
+        return
+    _ensure_memory_manager()
+    try:
+        from src.llm_core import llm_call_async
+        from src.settings import get_setting
+        prompt = (
+            "Rewrite this memory entry to be more concise, precise, and useful as a persistent fact.\n"
+            "Keep all key information. Remove filler words. Target: under 120 characters if possible.\n"
+            f"Return ONLY the rewritten memory text, nothing else.\n\nMemory: {old_text}"
+        )
+        model_spec = get_setting("research_model", "").strip() or get_setting("default_model", "").strip()
+        url, model, headers = _resolve_model(model_spec, owner=owner)
+        response = await llm_call_async(
+            url, model, [{"role": "user", "content": prompt}],
+            headers=headers, max_tokens=150, timeout=45, max_retries=3,
+        )
+        new_text = response.strip().strip('"').strip("'")
+        if not new_text or new_text == old_text:
+            return
+        # Load all entries once to apply the update and save
+        memories = _memory_manager.load_all()
+        target = next((m for m in memories if m.get("id") == memory_id), None)
+        if target:
+            target["text"] = new_text
+            _memory_manager.save(memories)
+            logger.info("Auto-evolved memory %s: %r → %r", memory_id[:8], old_text[:60], new_text[:60])
+    except Exception as e:
+        logger.warning("auto_evolve_memory failed for %s: %s", memory_id[:8], e)
+
+
+# Raphael -- skill auditor / merger
+# ---------------------------------------------------------------------------
+
+async def do_raphael(content: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
+    """Audit, merge, or delete Odysseus skills."""
+    import json as _json
+    import re as _re
+    import shutil as _shutil
+    from pathlib import Path as _Path
+
+    from src.constants import DATA_DIR as _DATA_DIR
+    SKILLS_ROOT = _Path(_DATA_DIR) / "skills"
+
+    args = {}
+    stripped = (content or "").strip()
+    if stripped.startswith("{"):
+        try:
+            args = _json.loads(stripped)
+        except Exception as _e:
+            return {"error": f"Invalid JSON: {_e}", "exit_code": 1}
+
+    action = (args.get("action") or "audit").lower()
+    dry_run = bool(args.get("dry_run", False))
+
+    def _find_skill(slug: str):
+        if not slug or ".." in slug or "/" in slug or "\\" in slug:
+            return None, None
+        for cat_dir in SKILLS_ROOT.iterdir():
+            if not cat_dir.is_dir():
+                continue
+            md = cat_dir / slug / "SKILL.md"
+            if md.exists():
+                return md, cat_dir.name
+        return None, None
+
+    def _read_skill(md_path) -> dict:
+        try:
+            text = md_path.read_text(encoding="utf-8")
+            name_m = _re.search(r"^name:\s*(.+)$", text, _re.MULTILINE)
+            desc_m = _re.search(r'^description:\s*["\']?(.+?)["\']?\s*$', text, _re.MULTILINE)
+            stat_m = _re.search(r"^status:\s*(.+)$", text, _re.MULTILINE)
+            return {
+                "path": md_path,
+                "slug": md_path.parent.name,
+                "category": md_path.parent.parent.name,
+                "name": name_m.group(1).strip() if name_m else md_path.parent.name,
+                "description": desc_m.group(1).strip().strip('"\'') if desc_m else "",
+                "status": stat_m.group(1).strip() if stat_m else "unknown",
+                "raw": text,
+            }
+        except Exception as e:
+            return {
+                "path": md_path, "slug": md_path.parent.name,
+                "category": md_path.parent.parent.name, "name": md_path.parent.name,
+                "description": f"(read error: {e})", "status": "unknown", "raw": "",
+            }
+
+    _TIER_ORDER = ["common", "extra", "unique", "ultimate"]
+    _THRESHOLDS = {"common": 10, "extra": 50, "unique": 150}
+
+    # audit
+    if action == "audit":
+        from services.memory.skills import SkillsManager
+        from src.constants import DATA_DIR as _DATA_DIR
+        _sm = SkillsManager(str(_DATA_DIR))
+        skills = _sm.load(owner=owner) if owner else _sm.load_all()
+        if not skills:
+            return {"output": "No skills found.", "exit_code": 0}
+        by_cat: dict = {}
+        for s in skills:
+            by_cat.setdefault(s.get("category", "general"), []).append(s)
+        lines = [f"## Skill Audit -- {len(skills)} skills\n"]
+        # Evolution-ready section
+        evo_ready = []
+        for s in skills:
+            t = s.get("tier", "common")
+            u = int(s.get("uses", 0))
+            if t in _THRESHOLDS and u >= _THRESHOLDS[t]:
+                nxt = _TIER_ORDER[_TIER_ORDER.index(t) + 1]
+                evo_ready.append((s["name"], t, nxt, u))
+        if evo_ready:
+            lines.append("### ⬆ Ready to Evolve\n")
+            for slug, cur, nxt, u in evo_ready:
+                lines.append(f"- **{slug}**: {cur} → {nxt} ({u} uses)")
+            lines.append("")
+        for cat, cat_skills in sorted(by_cat.items()):
+            lines.append(f"### {cat} ({len(cat_skills)})")
+            for s in cat_skills:
+                tier = (s.get("tier") or "common").upper()
+                uses = int(s.get("uses", 0))
+                flag = ""
+                if s.get("status") == "draft":
+                    flag = " [DRAFT]"
+                elif not s.get("description") or len(s.get("description", "")) < 10:
+                    flag = " [NO DESCRIPTION]"
+                lines.append(f"- **{s['name']}** [{tier}] ×{uses}{flag}: {s.get('description','')[:100]}")
+            lines.append("")
+        # Suggestions section
+        lines.append("---")
+        lines.append("## 🎯 Suggested Actions\n")
+        # Top evolve suggestions
+        evo_sorted = sorted(evo_ready, key=lambda x: x[3], reverse=True)
+        if evo_sorted:
+            lines.append("**Evolve these skills (highest use → next tier):**")
+            for slug, cur, nxt, u in evo_sorted[:3]:
+                lines.append(f'- `raphael {{"action":"evolve","target":"{slug}"}}` — {cur}→{nxt} ({u} uses)')
+            lines.append("")
+        # Dead skills (0 uses, not system)
+        dead = [s for s in skills if int(s.get("uses", 0)) == 0 and s.get("category") not in ("system",) and s["name"] not in ("raphael",)]
+        if dead:
+            lines.append("**Delete unused skills (0 uses):**")
+            for s in dead[:5]:
+                lines.append(f'- `raphael {{"action":"delete","target":"{s["name"]}"}}`')
+            lines.append("")
+        # Top used skills not yet evolved
+        top_used = sorted([s for s in skills if int(s.get("uses", 0)) > 0 and s["name"] not in [x[0] for x in evo_ready]], key=lambda x: x.get("uses", 0), reverse=True)
+        if top_used:
+            lines.append("**Most-used skills (not yet evolution-ready):**")
+            for s in top_used[:3]:
+                t = s.get("tier", "common")
+                thresh = _THRESHOLDS.get(t, "?")
+                lines.append(f'- **{s["name"]}** ×{s.get("uses",0)} (needs {thresh} for next tier)')
+            lines.append("")
+        lines.append("---")
+        lines.append('Actions: raphael {"action":"evolve","target":"slug"} | {"action":"merge","skills":["a","b"],"target":"c","category":"cat"} | {"action":"delete","target":"slug"} | {"action":"absorb","content":"..."}')
+        lines.append('Add "dry_run":true to preview without writing.')
+        return {"output": "\n".join(lines), "exit_code": 0}
+
+    # merge
+    if action == "merge":
+        skill_slugs = args.get("skills", [])
+        target_slug = (args.get("target") or (skill_slugs[0] if skill_slugs else "")).strip()
+        target_cat = (args.get("category") or "general").strip()
+        if not skill_slugs or len(skill_slugs) < 2:
+            return {"error": "merge requires at least 2 skill slugs in 'skills'.", "exit_code": 1}
+        if not target_slug:
+            return {"error": "merge requires 'target' slug.", "exit_code": 1}
+        sources = []
+        missing = []
+        for slug in skill_slugs:
+            md_path, _ = _find_skill(slug)
+            if md_path:
+                sources.append(_read_skill(md_path))
+            else:
+                missing.append(slug)
+        if missing:
+            return {"error": f"Skills not found: {missing}", "exit_code": 1}
+        combined_raw = "\n\n---\n\n".join(
+            f"# Source: {s['slug']} ({s['category']}/)\n{s['raw']}" for s in sources
+        )
+        prompt = (
+            f"Merge {len(sources)} Odysseus skill files into one comprehensive master skill.\n"
+            f"Target slug: {target_slug}, category: {target_cat}\n\n"
+            f"Rules:\n"
+            f"- Preserve ALL useful procedures from every source -- nothing valuable is lost\n"
+            f"- Write a single clean SKILL.md with proper YAML frontmatter\n"
+            f"- The merged skill must be more complete than any individual source\n"
+            f"- Output ONLY the raw SKILL.md content, no explanation\n\n"
+            f"Sources:\n{combined_raw[:8000]}"
+        )
+        merged_content = None
+        try:
+            from src.settings import get_setting
+            from src.llm_core import llm_call_async
+            model_spec = get_setting("research_model", "").strip() or get_setting("default_model", "").strip()
+            url, model, headers = _resolve_model(model_spec, owner=owner)
+            response = await llm_call_async(
+                url, model,
+                [{"role": "user", "content": prompt}],
+                headers=headers, temperature=0.2, max_tokens=4096, timeout=60, max_retries=1,
+            )
+            clean = response.strip()
+            if clean.startswith("```"):
+                clean = _re.sub(r"^```(?:markdown)?\s*", "", clean)
+                clean = _re.sub(r"\s*```$", "", clean)
+            merged_content = clean.strip()
+        except Exception as e:
+            logger.warning(f"do_raphael merge: LLM failed: {e}")
+            merged_content = (
+                f"---\nname: {target_slug}\ndescription: Merged skill combining "
+                + ", ".join(s["slug"] for s in sources)
+                + f"\nversion: 1.0.0\ncategory: {target_cat}\nstatus: published\n---\n\n"
+                + "\n\n".join(s["raw"] for s in sources)
+            )
+        if dry_run:
+            return {"output": f"DRY RUN -- merged preview:\n\n{merged_content[:3000]}", "exit_code": 0}
+        target_dir = SKILLS_ROOT / target_cat / target_slug
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / "SKILL.md").write_text(merged_content, encoding="utf-8")
+        deleted = []
+        for s in sources:
+            if s["slug"] == target_slug and s["category"] == target_cat:
+                continue
+            try:
+                _shutil.rmtree(s["path"].parent)
+                deleted.append(f"{s['category']}/{s['slug']}")
+            except Exception as e:
+                logger.warning(f"do_raphael: could not delete {s['slug']}: {e}")
+        out = f"Merged {len(sources)} skills into {target_cat}/{target_slug}."
+        if deleted:
+            out += f"\nAbsorbed and removed: {deleted}"
+        return {"output": out, "exit_code": 0}
+
+    # delete
+    if action == "delete":
+        target = (args.get("target") or "").strip()
+        if not target:
+            return {"error": "delete requires 'target' slug.", "exit_code": 1}
+        md_path, cat = _find_skill(target)
+        if not md_path:
+            return {"error": f"Skill '{target}' not found.", "exit_code": 1}
+        if dry_run:
+            return {"output": f"DRY RUN -- would delete {cat}/{target}", "exit_code": 0}
+        _shutil.rmtree(md_path.parent)
+        return {"output": f"Deleted {cat}/{target}.", "exit_code": 0}
+
+    # evolve — rewrite a skill at the next tier using the LLM
+    # evolve_all — evolve every ready skill in one pass
+    if action == "evolve_all":
+        import asyncio as _asyncio
+        from services.memory.skills import SkillsManager
+        from src.constants import DATA_DIR as _DATA_DIR
+        _sm = SkillsManager(str(_DATA_DIR))
+        skills = _sm.load(owner=owner) if owner else _sm.load_all()
+        ready = [
+            s for s in skills
+            if s.get("tier", "common") in _THRESHOLDS
+            and int(s.get("uses", 0)) >= _THRESHOLDS[s.get("tier", "common")]
+        ]
+        if not ready:
+            return {"output": "No skills are ready to evolve.", "exit_code": 0}
+
+        # Cap concurrent LLM calls -- firing all of them at once reliably blows
+        # through free-tier OpenRouter's per-minute rate limit (each item then
+        # permanently fails with no retry budget left). Capping concurrency
+        # spreads the requests out instead of bursting them.
+        _evolve_sem = _asyncio.Semaphore(_BULK_EVOLVE_CONCURRENCY)
+
+        async def _evolve_one(slug: str) -> str:
+            async with _evolve_sem:
+                r = await do_raphael(
+                    f'{{"action":"evolve","target":"{slug}"}}',
+                    session_id=session_id, owner=owner,
+                )
+            status = r.get("output") or r.get("error") or "?"
+            return f"- **{slug}**: {status[:120]}"
+
+        results = list(await _asyncio.gather(*[_evolve_one(s["name"]) for s in ready]))
+        return {"output": f"evolve_all: {len(ready)} skills processed\n" + "\n".join(results), "exit_code": 0}
+
+    if action == "evolve":
+        from services.memory.skills import SkillsManager
+        from src.constants import DATA_DIR as _DATA_DIR
+        from src.settings import get_setting
+        from src.llm_core import llm_call_async
+
+        target_slug = (args.get("target") or "").strip()
+        force = bool(args.get("force", False))
+        if not target_slug:
+            return {"error": "evolve requires 'target' (skill slug).", "exit_code": 1}
+
+        _sm = SkillsManager(str(_DATA_DIR))
+        skill_dicts = _sm.load(owner=owner) if owner else _sm.load_all()
+        skill_data = next((s for s in skill_dicts if s["name"] == target_slug), None)
+        if not skill_data:
+            return {"error": f"Skill '{target_slug}' not found.", "exit_code": 1}
+
+        current_tier = (skill_data.get("tier") or "common")
+        if current_tier not in _TIER_ORDER:
+            current_tier = "common"
+        tier_idx = _TIER_ORDER.index(current_tier)
+        if tier_idx >= len(_TIER_ORDER) - 1:
+            return {"output": f"'{target_slug}' is already at ultimate tier — highest possible.", "exit_code": 0}
+        next_tier = _TIER_ORDER[tier_idx + 1]
+
+        uses = int(skill_data.get("uses", 0))
+        threshold = _THRESHOLDS.get(current_tier, 9999)
+        if uses < threshold and not force:
+            return {
+                "output": (
+                    f"'{target_slug}' not ready to evolve yet.\n"
+                    f"  Tier: {current_tier} → {next_tier}\n"
+                    f"  Uses: {uses}/{threshold}\n"
+                    f"  Add force:true to evolve anyway."
+                ),
+                "exit_code": 0,
+            }
+
+        md_path, _ = _find_skill(target_slug)
+        if not md_path:
+            return {"error": f"Skill file for '{target_slug}' not found on disk.", "exit_code": 1}
+        raw = md_path.read_text(encoding="utf-8")
+
+        if dry_run:
+            return {
+                "output": (
+                    f"[DRY RUN] Would evolve '{target_slug}': {current_tier} → {next_tier}\n"
+                    f"Uses: {uses}/{threshold}"
+                ),
+                "exit_code": 0,
+            }
+
+        tier_desc = {
+            "extra":    "proven and reliable — more detailed steps, handles common edge cases",
+            "unique":   "comprehensive and battle-tested — covers all known failure modes, full verification",
+            "ultimate": "mastered and exhaustive — authoritative, injected into the agent's core context, always followed",
+        }
+        prompt = (
+            f"You are evolving an Odysseus skill file from tier '{current_tier}' to '{next_tier}'.\n"
+            f"This skill has been applied {uses} times and earned elevation.\n\n"
+            f"Target tier '{next_tier}' means: {tier_desc.get(next_tier, next_tier)}\n\n"
+            f"Rules:\n"
+            f"- Make the skill MORE comprehensive than the current version\n"
+            f"- Expand procedure steps to be more precise and complete\n"
+            f"- Add more pitfalls based on real-world failure modes\n"
+            f"- Set tier: {next_tier} in frontmatter\n"
+            f"- Bump version (increment minor number)\n"
+            f"- Set confidence: {0.97 if next_tier in ('unique','ultimate') else 0.93}\n"
+            f"- Output ONLY the raw SKILL.md content, no explanation\n\n"
+            f"Current SKILL.md:\n{raw[:6000]}"
+        )
+        try:
+            model_spec = get_setting("research_model", "").strip() or get_setting("default_model", "").strip()
+            url, model, headers = _resolve_model(model_spec, owner=owner)
+            response = await _retry_on_rate_limit(lambda: llm_call_async(
+                url, model,
+                [{"role": "user", "content": prompt}],
+                headers=headers, temperature=0.3, max_tokens=4096, timeout=60, max_retries=1,
+            ))
+            evolved = response.strip()
+            if evolved.startswith("```"):
+                evolved = _re.sub(r"^```(?:markdown)?\s*", "", evolved)
+                evolved = _re.sub(r"\n```\s*$", "", evolved)
+            evolved = evolved.strip()
+        except Exception as e:
+            return {"error": f"LLM call failed during evolve: {e}", "exit_code": 1}
+
+        md_path.write_text(evolved, encoding="utf-8")
+        return {
+            "output": (
+                f"Skill '{target_slug}' evolved: {current_tier} → {next_tier}\n"
+                f"Uses at evolution: {uses}"
+                + ("\nThis skill is now injected into the agent's core context." if next_tier == "ultimate" else "")
+            ),
+            "exit_code": 0,
+        }
+
+    # absorb — synthesize external content into a new skill (Predator mechanic)
+    if action == "absorb":
+        from src.settings import get_setting
+        from src.llm_core import llm_call_async
+
+        raw_content = (args.get("content") or "").strip()
+        target_cat = (args.get("category") or "general").strip()
+        if not raw_content:
+            return {"error": "absorb requires 'content' (text, workflow, or URL content to absorb).", "exit_code": 1}
+
+        prompt = (
+            f"You are synthesizing external knowledge into an Odysseus SKILL.md file.\n"
+            f"Analyze the provided content and extract a reusable procedure or skill from it.\n\n"
+            f"Rules:\n"
+            f"- Identify the core repeatable skill or workflow in the content\n"
+            f"- Write a clean SKILL.md with proper YAML frontmatter\n"
+            f"- Set tier: common (newly absorbed skills start at common tier)\n"
+            f"- Set status: published\n"
+            f"- Set category: {target_cat}\n"
+            f"- Set confidence: 0.80\n"
+            f"- Set source: absorbed\n"
+            f"- Write clear When to Use, Procedure, and Pitfalls sections\n"
+            f"- Output ONLY the raw SKILL.md content, no explanation\n\n"
+            f"Content to absorb:\n{raw_content[:6000]}"
+        )
+        try:
+            model_spec = get_setting("research_model", "").strip() or get_setting("default_model", "").strip()
+            url, model, headers = _resolve_model(model_spec, owner=owner)
+            response = await llm_call_async(
+                url, model,
+                [{"role": "user", "content": prompt}],
+                headers=headers, temperature=0.3, max_tokens=4096, timeout=60, max_retries=1,
+            )
+            skill_md = response.strip()
+            if skill_md.startswith("```"):
+                skill_md = _re.sub(r"^```(?:markdown)?\s*", "", skill_md)
+                skill_md = _re.sub(r"\n```\s*$", "", skill_md)
+            skill_md = skill_md.strip()
+        except Exception as e:
+            return {"error": f"LLM call failed during absorb: {e}", "exit_code": 1}
+
+        if dry_run:
+            return {"output": f"[DRY RUN] Absorbed skill preview:\n\n{skill_md[:2000]}", "exit_code": 0}
+
+        # Extract slug from the generated frontmatter
+        name_m = _re.search(r"^name:\s*(.+)$", skill_md, _re.MULTILINE)
+        slug = name_m.group(1).strip().strip('"\'') if name_m else "absorbed-skill"
+        # Sanitize slug
+        slug = _re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")[:60] or "absorbed-skill"
+
+        skill_dir = SKILLS_ROOT / target_cat / slug
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(skill_md, encoding="utf-8")
+
+        return {
+            "output": f"Absorbed new skill '{slug}' into {target_cat}/.\nIt starts at common tier and will evolve with use.",
+            "exit_code": 0,
+        }
+
+    # memory actions — delegate to do_manage_memory
+    if action in ("memory_audit", "memory_list", "memory_pin", "memory_delete", "memory_add"):
+        sub = action[len("memory_"):]  # "audit", "list", "pin", "delete", "add"
+        if sub == "pin":
+            memory_id = (args.get("id") or "").strip()
+            if not memory_id:
+                return {"error": "memory_pin requires 'id'", "exit_code": 1}
+            content_for_memory = f"pin\n{memory_id}"
+        elif sub == "delete":
+            memory_id = (args.get("id") or "").strip()
+            if not memory_id:
+                return {"error": "memory_delete requires 'id'", "exit_code": 1}
+            content_for_memory = f"delete\n{memory_id}"
+        elif sub == "add":
+            text = (args.get("text") or "").strip()
+            category = (args.get("category") or "fact").strip()
+            if not text:
+                return {"error": "memory_add requires 'text'", "exit_code": 1}
+            content_for_memory = f"add\n{text}\n{category}"
+        else:
+            content_for_memory = sub  # "audit" or "list"
+        result = await do_manage_memory(content_for_memory, session_id=session_id, owner=owner)
+        output = result.get("results") or result.get("error") or str(result)
+        return {"output": output, "exit_code": 0 if "error" not in result else 1}
+
+    # memory_evolve / memory_evolve_all — rewrite memories to be more concise and precise
+    if action in ("memory_evolve", "memory_evolve_all"):
+        from src.llm_core import llm_call_async
+        memories = _ensure_memory_manager().load(owner=owner)
+        if not memories:
+            return {"output": "No memories found.", "exit_code": 0}
+
+        if action == "memory_evolve":
+            memory_id = (args.get("id") or "").strip()
+            if not memory_id:
+                return {"error": "memory_evolve requires 'id'", "exit_code": 1}
+            targets = [m for m in memories if m.get("id", "").startswith(memory_id)]
+            if not targets:
+                return {"error": f"Memory '{memory_id}' not found.", "exit_code": 1}
+        else:
+            targets = memories
+
+        import asyncio as _asyncio
+        from src.settings import get_setting
+
+        _EVOLVE_PROMPT = (
+            "Rewrite this memory entry to be more concise, precise, and useful as a persistent fact.\n"
+            "Keep all key information. Remove filler words. Target: under 120 characters if possible.\n"
+            "Return ONLY the rewritten memory text, nothing else.\n\nMemory: {text}"
+        )
+
+        try:
+            model_spec = get_setting("research_model", "").strip() or get_setting("default_model", "").strip()
+            _url, _model, _headers = _resolve_model(model_spec, owner=owner)
+        except Exception as e:
+            return {"error": f"No model available to evolve memories: {e}", "exit_code": 1}
+
+        _rewrite_sem = _asyncio.Semaphore(_BULK_EVOLVE_CONCURRENCY)
+
+        async def _rewrite_one(m: dict):
+            old_text = m.get("text", "").strip()
+            if not old_text:
+                return m["id"], None, None
+            try:
+                async with _rewrite_sem:
+                    response = await _retry_on_rate_limit(lambda: llm_call_async(
+                        _url, _model, [{"role": "user", "content": _EVOLVE_PROMPT.format(text=old_text)}],
+                        headers=_headers, max_tokens=150, timeout=45, max_retries=1,
+                    ))
+                return m["id"], old_text, response.strip().strip('"').strip("'")
+            except Exception as e:
+                return m["id"], old_text, None
+
+        rewrite_results = await _asyncio.gather(*[_rewrite_one(m) for m in targets if m.get("text", "").strip()])
+
+        by_id = {m["id"]: m for m in targets}
+        results = []
+        for mid, old_text, new_text in rewrite_results:
+            if old_text is None:
+                continue
+            short = mid[:8]
+            if new_text and new_text != old_text:
+                by_id[mid]["text"] = new_text
+                results.append(f"- `{short}` {old_text[:60]}… → {new_text[:80]}")
+            elif new_text is None:
+                results.append(f"- `{short}` error")
+            else:
+                results.append(f"- `{short}` unchanged")
+
+        if _memory_manager:
+            _memory_manager.save(memories)
+
+        return {
+            "output": f"memory_evolve: {len(results)} memories processed\n" + "\n".join(results),
+            "exit_code": 0,
+        }
+
+    return {"error": f"Unknown action '{action}'. Use: audit, evolve, evolve_all, merge, delete, absorb, memory_audit, memory_list, memory_pin, memory_delete, memory_add, memory_evolve, memory_evolve_all.", "exit_code": 1}
 
 
 # ---------------------------------------------------------------------------

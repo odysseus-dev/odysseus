@@ -32,6 +32,9 @@ def get_text_similarity(text1: str, text2: str) -> float:
     
     return len(intersection) / len(union)
 
+AUTO_PIN_THRESHOLD = 10  # uses before a memory is automatically pinned
+
+
 class MemoryManager:
     def __init__(self, data_dir: str):
         self.memory_file = os.path.join(data_dir, "memory.json")
@@ -163,6 +166,8 @@ class MemoryManager:
                 entry["category"] = "fact"
             if "uses" not in entry:
                 entry["uses"] = 0
+            if "pinned" not in entry:
+                entry["pinned"] = entry.get("category") == "identity"
             validated.append(entry)
         return validated
     
@@ -229,20 +234,32 @@ class MemoryManager:
             entry["owner"] = owner
         return entry
 
-    def increment_uses(self, ids: List[str]) -> None:
-        """Bump the uses counter for each memory id. Called after a memory has
-        actually been injected into a chat's context (not just retrieved)."""
+    def increment_uses(self, ids: List[str], entries: List[Dict] = None) -> List[str]:
+        """Bump the uses counter for each memory id. Auto-pins when threshold reached.
+
+        Pass pre-loaded `entries` (load_all result) to avoid a redundant file read.
+        Returns list of (memory_id, old_text) tuples for newly auto-pinned memories
+        so the caller can fire an async evolve rewrite on them.
+        """
         if not ids:
-            return
+            return []
         id_set = set(ids)
-        entries = self.load_all()
+        if entries is None:
+            entries = self.load_all()
         changed = False
+        newly_pinned: List[str] = []  # list of (id, old_text)
         for e in entries:
             if e.get("id") in id_set:
                 e["uses"] = int(e.get("uses", 0) or 0) + 1
                 changed = True
+                if e["uses"] >= AUTO_PIN_THRESHOLD and not e.get("pinned"):
+                    e["pinned"] = True
+                    e["category"] = "identity"
+                    newly_pinned.append((e["id"], e.get("text", "")))
+                    logger.info("Auto-pinned memory %s after %d uses", e["id"][:8], e["uses"])
         if changed:
             self.save(entries)
+        return newly_pinned
     
     def find_duplicates(self, text: str, entries: List[Dict] = None) -> List[Dict]:
         """Find duplicate memory entries based on text content."""

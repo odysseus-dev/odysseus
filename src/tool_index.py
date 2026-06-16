@@ -47,7 +47,11 @@ ALWAYS_AVAILABLE = frozenset({
 # Tools that the Personal Assistant always has access to during scheduled
 # check-ins and proactive tasks, in addition to RAG-selected tools.
 ASSISTANT_ALWAYS_AVAILABLE = frozenset({
-    "list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email",
+    # send_email/reply_to_email are deliberately excluded: scheduled/proactive
+    # runs must not be able to send mail unsupervised. Both are still
+    # reachable via RAG retrieval during an active chat, gated by the
+    # confirmed-flag check in email_server.py.
+    "list_email_accounts", "list_emails", "search_emails", "read_email",
     "bulk_email", "archive_email", "delete_email", "mark_email_read",
     "manage_calendar", "manage_notes", "manage_tasks",
     "manage_memory", "web_search", "read_file",
@@ -67,8 +71,8 @@ COLLECTION_NAME = "odysseus_tool_index"
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
-    "bash": "Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing); use bash only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
-    "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
+    "bash": "Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing, downloading URLs). Do NOT use curl/wget to download files -- use download_file instead. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
+    "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, searching files, or downloading URLs. Do NOT use urllib/requests/httpx to download files from URLs -- use download_file instead. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "web_search": "Quick single web lookup for a fact, current event, latest/current information, or doc mid-task. Use this instead of bash/curl/python/requests for web searches. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
     "read_file": "Read a file from disk and return its contents. View source code, config files, logs. Supports an optional line range (offset/limit) for large files.",
@@ -78,6 +82,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "get_workspace": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without giving a path, instead of asking them.",
     "write_file": "Write/create or fully rewrite a file ON DISK (source code, configs, project files). Use for new files or full rewrites — NOT create_document (editor panel) and NOT a bash heredoc.",
     "edit_file": "Edit an existing file ON DISK by exact string replacement (fix a bug, change a function). Shows a diff. The tool for changing files on disk — NOT edit_document (editor panel) and NOT bash sed/heredoc.",
+    "download_file": "Download a file from an http/https URL and save it to disk in the active workspace. Streams large files. Use when the user asks to download, fetch, grab, or save a file from the web. NOT for web page reading (use web_fetch) or deep research (use trigger_research).",
+    "delete_file": "Permanently delete a file or directory ON DISK within the active workspace. Use ONLY when the user explicitly asks to delete or remove a file/folder. Deletes directories recursively. Cannot reach outside the workspace sandbox.",
     "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
     "edit_document": "Preferred tool for editing an existing document — targeted find-and-replace. Use for any small change: add a function, fix a bug, tweak a section, rename things.",
     "update_document": "Replace the entire active document content. ONLY for full rewrites (>50% changed). Do not use for small edits — use edit_document instead.",
@@ -96,6 +102,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_webhooks": "Webhook management: list, add, delete, enable, or disable webhooks.",
     "manage_tokens": "API token management: list, create, or delete API access tokens.",
     "manage_documents": "List, read, delete, or tidy documents in the editor panel. action='list' returns clickable rows (most-recent first) so the user can open any doc by clicking. action='read' (aka view/open/get) with document_id returns the content; supports offset=<N> + limit=<N> to page through large docs (response includes next_offset when more remains, so you can keep calling with offset=next_offset). action='delete' with document_id removes a doc (only way to delete). Use this for ANY 'show/read/list/open my documents/docs/files/notes' request — never shell or curl.",
+    "raphael": "Skill administrator: audit all skills (find duplicates/junk), merge duplicates into master skills, or delete junk. Always audit first.",
+    "save_research_to_brain": "Extract key facts from a deep research report and save them to the brain so they persist across sessions. Omit id to use the most recent research.",
     "manage_research": "List, read/open, or delete saved DEEP RESEARCH results from the Library. action='list' returns clickable [query](#research-<id>) rows (most-recent first). action='read' (aka open/view/get) with id returns the report + sources. action='delete' with id removes it. Use this for ANY 'open/read/find/delete my research / that report / the research on X' request. NOTE: this is for EXISTING research; to START new research use trigger_research.",
     "manage_settings": "Change ANY real app setting (the ones the Settings panel writes) so the user never has to open it: TTS voice/provider/speed, STT, search engine + result count, default/teacher/task/utility/vision/image/research models, image quality, reminder channel (browser/email/ntfy), agent timeout/tool-call budget, and more. action=set with key (friendly aliases ok: voice, 'search engine', 'default model', 'teacher model', 'image quality', 'reminder channel'...) + value; get/list/reset too. Also toggles tools on/off (disable_tool/enable_tool/list_tools). Secrets/API keys are read-only. Use for any 'change my…/set my…/use X for…/turn on…' preference request.",
     "create_session": "Create a new chat with a name and model.",
@@ -107,6 +115,7 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "ui_control": "Control the UI and toggle tools on/off. Use this to turn off / turn on / disable / enable individual tools and features: shell (bash), search (web), research, browser, documents, incognito. Open panels (documents library, gallery, email inbox, sessions, notes, memories/brain, skills, settings, cookbook) via `open_panel <name>`. Use `open_email_reply <uid> <folder> reply` to open an email reply draft document without sending. To pre-fill the reply body in one shot (USE THIS whenever the user told you what to say — opening an empty draft when they asked you to write is wrong), append the body after the mode: `open_email_reply <uid> <folder> reply <body text>`. Body can continue on subsequent lines for multi-line replies. Also switches between chat/agent modes, changes the current model, and applies/creates themes.",
     "list_email_accounts": "List configured email accounts and default status. Use before reading or sending mail when the user mentions Gmail, work mail, custom domain mail, another mailbox, or asks to compare/check multiple inboxes.",
     "list_emails": "List emails for a folder/account, newest first, including read messages by default. Shows subject, sender, date, UID, account, and AI summary. Check inbox, find emails needing replies. Supports account from list_email_accounts for Gmail/work/custom mailboxes. For last/latest/newest email, use max_results=1 and unread_only=false.",
+    "search_emails": "Search emails by free-text query across sender, subject, and body -- not just the most recent inbox slice list_emails returns. Use for 'emails from X', 'promotional emails from Y', 'invoice from Z', 'delete the rest of the marketing emails', or anything that needs matching by sender/topic rather than just listing recent mail. Walks INBOX + Sent + Archive by default. Returns UIDs usable with bulk_email/read_email/reply_to_email.",
     "read_email": "Read the full content of a specific email by UID or Message-ID. View email body, check details. Supports account from list_email_accounts when the UID belongs to a non-default mailbox.",
     "send_email": "Send a new email via SMTP. Provide recipient, subject, body, and optional account from list_email_accounts. For replying to a thread use reply_to_email instead.",
     "reply_to_email": "SEND a reply email immediately by UID. Do not use for open/start reply draft requests; use ui_control open_email_reply for those. For follow-up 'reply ...' send requests, use the exact UID and account from latest read_email/list_emails output; never invent UID 1. Threads automatically with In-Reply-To/References, prefixes Re:, marks original as Answered.",
@@ -345,7 +354,7 @@ class ToolIndex:
         # whole email toolset and crowding out the relevant tools — the model then
         # believed it had only email tools and refused web/other tasks (#1707).
         frozenset({"email", "emails", "mail", "mails", "gmail", "googlemail", "message", "messages", "send", "reply", "replies", "inbox", "unread"}):
-            {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
+            {"list_email_accounts", "list_emails", "search_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):
             {"manage_calendar"},
         frozenset({"note", "todo", "reminder", "remind", "checklist", "remember to"}):
@@ -486,9 +495,20 @@ class ToolIndex:
                    "show chats", "show sessions", "show documents"}):
             {"ui_control"},
         # Document creation intent
+        frozenset({"download", "fetch file", "grab file", "save file from",
+                   "download this", "download that", "download the file",
+                   "save this file", "save that file", "download url",
+                   "download from", "save from url"}):
+            {"download_file"},
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
             {"create_document", "edit_document", "update_document"},
+        frozenset({"raphael", "beelzebub", "skill audit", "audit skills",
+                   "merge skills", "delete skill", "clean up skills",
+                   "skill cleanup", "skills cleanup", "duplicate skills",
+                   "evolve skill", "evolve skills", "skill evolution",
+                   "absorb skill", "absorb this", "predator", "level up skill"}):
+            {"raphael"},
     }
 
     def get_tools_for_query(
@@ -603,3 +623,6 @@ def reset_tool_index() -> None:
     global _tool_index, _last_attempt
     _tool_index = None
     _last_attempt = 0.0
+
+
+

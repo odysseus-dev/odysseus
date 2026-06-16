@@ -270,14 +270,14 @@ _DOMAIN_RULES = {
 }
 
 _DOMAIN_TOOL_MAP = {
-    "web": {"web_search", "web_fetch", "trigger_research", "manage_research"},
+    "web": {"web_search", "web_fetch", "trigger_research", "manage_research", "save_research_to_brain"},
     "documents": {"create_document", "edit_document", "update_document", "suggest_document", "manage_documents"},
-    "email": {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
+    "email": {"list_email_accounts", "list_emails", "search_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "archive_email", "delete_email", "mark_email_read", "resolve_contact", "manage_contact"},
     "cookbook": {"download_model", "serve_model", "serve_preset", "list_serve_presets", "list_served_models", "stop_served_model", "tail_serve_output", "list_downloads", "cancel_download", "search_hf_models", "list_cached_models", "list_cookbook_servers", "adopt_served_model"},
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "delete_file", "download_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
 }
@@ -408,7 +408,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "ask_teacher": "- ```ask_teacher``` — Escalate a hard question to a more capable model. Line 1 = model name or 'auto', rest = the question. Use when stuck or need expert knowledge.",
     "list_models": "- ```list_models``` — Show all available AI models across all endpoints. Use when user asks what models are available.",
     "manage_session": "- ```manage_session``` — Rename, archive, delete, fork, switch, or `list` chats (the UI calls them 'chats'; 'session' is internal). Line 1 = action (list/switch/rename/archive/unarchive/delete/important/unimportant/truncate/fork), Line 2 = exact chat id from `list_sessions` (or `current` where supported). For delete/archive/truncate, always list first and reuse the exact id; never invent placeholder ids. `switch`/`open` returns a clickable anchor link the user can tap to open the chat — use for \"open my X chat\".",
-    "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts about the USER themselves, their preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this' about themselves, states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories. DO NOT use for info about another person (their address, phone, email, birthday) — that goes in `manage_contact`. If the user pastes an address/phone with a name and says 'save this for <person>', use `manage_contact add` with the address arg, NOT manage_memory.",
+    "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts about the USER themselves, their preferences, identity, context that persists across chats). Line 1 = action (list/add/edit/delete/search/pin/audit), rest = content. pin=mark entry as identity/pinned (category=identity, shows [PINNED] in UI), audit=scan all memories for duplicates/stale/vague and report with IDs. Use when user says 'remember this' about themselves, states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', asks about stored memories, or says 'audit/clean up/pin memories'. DO NOT use for info about another person (their address, phone, email, birthday) — that goes in `manage_contact`. If the user pastes an address/phone with a name and says 'save this for <person>', use `manage_contact add` with the address arg, NOT manage_memory.",
     "manage_skills": "- ```manage_skills``` — Skill registry (SKILL.md format). Args (JSON): {\"action\": \"list|view|view_ref|search|add|edit|patch|publish|delete\", ...}. `list` returns the index of available skills (published + teacher-escalation drafts); `view name=foo` fetches the full SKILL.md; `view_ref name=foo path=...` loads a reference file under the skill directory. For `add`, provide an explicit kebab-case `name` and only report the exact returned name, because storage may normalize or dedupe it. Use this BEFORE doing domain work — there may already be a procedure (published or draft) that prescribes the correct steps. Drafts written by the teacher loop are authoritative guidance even though they're not yet published.",
     "manage_tasks": "- ```manage_tasks``` — Create and manage scheduled background tasks (recurring AI jobs). Args (JSON): {\"action\": \"list|create|edit|delete|pause|resume|run\", ...}",
     "manage_endpoints": "- ```manage_endpoints``` — Add, remove, or configure AI model API endpoints. Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}. Use when user wants to add a new AI provider.",
@@ -416,6 +416,8 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "manage_webhooks": "- ```manage_webhooks``` — Configure outgoing webhooks (HTTP notifications on events like chat completion). Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}",
     "manage_tokens": "- ```manage_tokens``` — Generate or revoke API access tokens for external integrations. Args (JSON): {\"action\": \"list|create|delete\", ...}",
     "manage_documents": "- ```manage_documents``` — List, read/open, delete, or tidy documents in the editor panel. Args (JSON): {\"action\": \"list|read|delete|tidy\", ...}. `list` returns rows like `[Title](#document-<id>) — lang, size, updated 5m ago` sorted MOST-RECENT FIRST; the user clicks the anchor to open. `read` (aliases: view/open/get) takes `document_id` and returns the content. When the user asks \"open/show/read my notes\" or \"what documents do I have\", use this — do NOT shell out, do NOT curl.",
+    "raphael": "- ```raphael``` -- Skill administrator. audit=scan+report (shows tier/uses/evolution-ready), merge=combine skills, delete=remove junk, evolve=rewrite skill at next tier (common→extra→unique→ultimate), absorb=synthesize external content into a new skill. Always audit first. Trigger: user says raphael, beelzebub, evolve skill, or absorb skill.",
+    "save_research_to_brain": "- ```save_research_to_brain``` -- Distill a completed deep research report into key facts and save them to the brain so they persist across sessions. Args (JSON): {\"id\": \"<research_id>\", \"max_facts\": 5}. Omit `id` to use the most recent research. Use when the user says 'save this research to memory', 'remember what we found', or 'add the research findings to my brain'.",
     "manage_research": "- ```manage_research``` — List, read/open, or delete saved DEEP RESEARCH results from the Library. Args (JSON): {\"action\": \"list|read|delete\", \"id\": \"<id>\", \"search\": \"...\"}. `list` returns rows like `[query](#research-<id>) — N sources` MOST-RECENT FIRST; the user clicks to open. `read` (aliases: open/view/get) takes `id` and returns the report text + sources. Use when the user says \"open/read/find/delete my research\" or \"that report\". This IS how you read a finished report: when the user refers to a just-completed deep-research job (\"check it out\", \"read that report\", \"summarize the research\") WITHOUT giving an id, call `manage_research` with `action:list` to get the most-recent id, then `action:read` with that id, and answer from the returned text. Do NOT `web_fetch`/`app_api` the `/api/research/report/{id}` URL — that endpoint renders HTML for the browser, not clean text — and do NOT start a fresh `web_search`/`trigger_research` just to read an existing report. To START new research, use trigger_research instead.",
     "manage_settings": "- ```manage_settings``` — View/change the REAL app settings (same ones the Settings panel writes) AND turn tools on/off. Change a setting: `{\"action\":\"set\",\"key\":\"...\",\"value\":\"...\"}` — keys accept friendly aliases, e.g. voice→tts_voice, \"search engine\"→search_provider, \"default model\"→default_model, \"teacher model\"→teacher_model, \"task/background model\"→task_model, \"image quality\"→image_quality, \"reminder channel\"→reminder_channel (browser|email|ntfy), \"agent timeout\"/\"max tool calls\"/\"token budget\". Read: `{\"action\":\"get\",\"key\":\"...\"}`; see all: `{\"action\":\"list\"}`; reset one: `{\"action\":\"reset\",\"key\":\"...\"}`. Use this when the user asks to change ANY preference instead of making them open Settings. Secrets/API keys are read-only (tell them to set those in the panel). Tool toggles: `{\"action\":\"disable_tool|enable_tool\",\"tool\":\"shell\"}` (aliases: shell/search/browser/documents/memory/skills/images/tasks/notes/calendar/email), list disabled: `{\"action\":\"list_tools\"}`.",
     "manage_notes": """\
@@ -1291,6 +1293,35 @@ def _build_system_prompt(
             logger.debug(f"skill injection failed (non-fatal): {_sk_err}")
 
     agent_msg = {"role": "system", "content": agent_prompt}
+
+    # Ultimate-tier skills are injected into the TRUSTED system prompt so they
+    # are always active — not just when matched by relevance search. The user
+    # must explicitly evolve a skill to ultimate via raphael, so this is an
+    # intentional elevation (unlike regular skills which go into an untrusted
+    # user-role message to prevent prompt injection from user-editable content).
+    if not suppress_local_context:
+        try:
+            from services.memory.skills import SkillsManager
+            from src.constants import DATA_DIR as _ult_data_dir
+            _ult_sm = SkillsManager(str(_ult_data_dir))
+            _ult_skills = [
+                s for s in (_ult_sm.load(owner=owner) if owner else _ult_sm.load_all())
+                if s.get("tier") == "ultimate" and s.get("status") in ("published", None)
+            ]
+            if _ult_skills:
+                _ult_lines = ["\n\n## ULTIMATE SKILLS — always active, always follow"]
+                for _usk in _ult_skills:
+                    _ult_lines.append(f"\n### {_usk['name']}: {_usk.get('description', '')}")
+                    if _usk.get("when_to_use"):
+                        _ult_lines.append(f"Trigger: {_usk['when_to_use']}")
+                    for _step in (_usk.get("procedure") or []):
+                        _ult_lines.append(f"- {_step}")
+                    if _usk.get("pitfalls"):
+                        _ult_lines.append("Watch for: " + "; ".join((_usk.get("pitfalls") or [])[:3]))
+                agent_msg["content"] += "\n".join(_ult_lines)
+        except Exception:
+            pass
+
     insert_idx = 0
     for i, msg in enumerate(messages):
         if msg.get("role") == "system":

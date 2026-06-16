@@ -302,6 +302,7 @@ _ADMIN_TOOLS = {
     "serve_preset",
     "stop_served_model",
     "cancel_download",
+    "delete_file",
 }
 
 
@@ -370,6 +371,10 @@ def _parse_manage_memory(content: str) -> Dict:
     elif action == "list":
         if len(lines) > 1 and lines[1].strip():
             args["category"] = lines[1].strip().lower()
+    elif action == "pin":
+        args["memory_id"] = lines[1].strip() if len(lines) > 1 else ""
+    elif action == "audit":
+        pass  # no extra args needed
     return args
 
 
@@ -851,12 +856,23 @@ async def _execute_tool_block_impl(
     elif tool == "edit_file":
         result = await _direct_fallback(tool, content) or {"error": "edit failed", "exit_code": 1}
         desc = result.get("output") or result.get("error") or "edit_file"
+    elif tool == "delete_file":
+        result = await _direct_fallback(tool, content) or {"error": "delete failed", "exit_code": 1}
+        desc = result.get("output") or result.get("error") or "delete_file"
     elif tool == "trigger_research":
         desc = "trigger_research"
         result = await do_trigger_research(content, owner=owner)
     elif tool == "manage_research":
         desc = "manage_research"
         result = await do_manage_research(content, owner=owner)
+    elif tool == "save_research_to_brain":
+        desc = "save_research_to_brain"
+        from src.ai_interaction import do_save_research_to_brain
+        result = await do_save_research_to_brain(content, session_id=session_id, owner=owner)
+    elif tool == "raphael":
+        desc = "raphael"
+        from src.ai_interaction import do_raphael
+        result = await do_raphael(content, session_id=session_id, owner=owner)
     elif tool == "resolve_contact":
         desc = "resolve_contact"
         result = await do_resolve_contact(content, owner=owner)
@@ -968,3 +984,4 @@ def format_tool_result(description: str, result: Dict) -> str:
             pass
 
     return "\n".join(parts)
+

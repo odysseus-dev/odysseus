@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
-from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
+from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, DeleteFileTool, DownloadFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 
 TOOL_HANDLERS = {
@@ -31,6 +31,8 @@ TOOL_HANDLERS = {
     "read_file": ReadFileTool().execute,
     "write_file": WriteFileTool().execute,
     "edit_file": EditFileTool().execute,
+    "delete_file": DeleteFileTool().execute,
+    "download_file": DownloadFileTool().execute,
     "ls": LsTool().execute,
     "glob": GlobTool().execute,
     "grep": GrepTool().execute,
@@ -51,7 +53,7 @@ SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
-TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
+TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file", "delete_file",
              "grep", "glob", "ls", "get_workspace",
              "create_document", "update_document", "edit_document",
              "search_chats",
@@ -80,7 +82,8 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "list_serve_presets", "serve_preset", "adopt_served_model",
              "list_cookbook_servers",
              # Other tools the agent reaches for that were also missing.
-             "edit_image", "trigger_research", "manage_research",
+             "edit_image", "trigger_research", "manage_research", "save_research_to_brain",
+             "download_file", "raphael",
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
@@ -134,3 +137,5 @@ from src.tool_implementations import (  # noqa: E402, F401
     do_manage_settings,
     do_api_call,
 )
+
+

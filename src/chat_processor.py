@@ -204,9 +204,11 @@ class ChatProcessor:
         })
 
         # Memory: pinned (always included) + extended (RAG-retrieved when relevant)
+        # load_all() once; derive owner slice here to avoid a second file read in increment_uses.
         self._last_used_memories = []  # track what was injected
         if use_memory:
-            mem_entries = self.memory_manager.load(owner=owner)
+            _all_mem = self.memory_manager.load_all()
+            mem_entries = [m for m in _all_mem if not owner or m.get("owner") == owner]
 
             pinned = [m for m in mem_entries if m.get("pinned")]
             extended = [m for m in mem_entries if not m.get("pinned")]
@@ -239,10 +241,16 @@ class ChatProcessor:
                         if m.get("id"):
                             _used_ids.append(m["id"])
 
-            # Bump usage counters for the memories that were actually injected.
+            # Bump usage counters. Pass pre-loaded _all_mem to avoid a second file read.
+            # Returns (id, old_text) pairs for newly auto-pinned memories — fire background evolve.
             if _used_ids and hasattr(self.memory_manager, "increment_uses"):
                 try:
-                    self.memory_manager.increment_uses(_used_ids)
+                    newly_pinned = self.memory_manager.increment_uses(_used_ids, entries=_all_mem)
+                    if newly_pinned:
+                        import asyncio as _asyncio
+                        from src.ai_interaction import auto_evolve_memory as _aem
+                        for _mid, _old_text in newly_pinned:
+                            _asyncio.ensure_future(_aem(_mid, _old_text, owner=owner))
                 except Exception as _e:
                     logger.warning("Failed to increment memory uses: %s", _e)
 

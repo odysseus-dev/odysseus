@@ -25,7 +25,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
+            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, listing files, or downloading URLs); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed. Do NOT use curl/wget to download files -- use download_file instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -39,7 +39,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
+            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, searching files, or downloading URLs); use python only for computation, data processing, or scripting no dedicated tool covers. Do NOT use urllib/requests/httpx in python to download files -- use download_file instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -179,6 +179,20 @@ FUNCTION_TOOL_SCHEMAS = [
                     "replace_all": {"type": "boolean", "description": "Replace all occurrences instead of requiring a unique match"}
                 },
                 "required": ["path", "old_string", "new_string"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_file",
+            "description": "Permanently delete a file or directory ON DISK within the active workspace. Use only when the user explicitly requests deletion. For directories, deletes recursively. Cannot delete paths outside the workspace sandbox.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to the file or directory to delete"}
+                },
+                "required": ["path"]
             }
         }
     },
@@ -394,6 +408,39 @@ FUNCTION_TOOL_SCHEMAS = [
                                  "description": "Memory category (for add/list filter)"}
                 },
                 "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "raphael",
+            "description": "Skill administrator: audit all skills (action=audit), merge duplicates into master skills (action=merge), or delete junk (action=delete). Always audit first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["audit", "merge", "delete"]},
+                    "skills": {"type": "array", "items": {"type": "string"}},
+                    "target": {"type": "string"},
+                    "category": {"type": "string"},
+                    "dry_run": {"type": "boolean"}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_research_to_brain",
+            "description": "Extract key facts from a deep research report and save them to the brain/memory so they persist across sessions. Uses the LLM to distill findings. Call after research completes when the user wants to remember what was learned.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Research session id (from manage_research action=list). Omit to use the most recent research."},
+                    "max_facts": {"type": "integer", "description": "Number of facts to extract and save (1-10, default 5)"}
+                },
+                "required": []
             }
         }
     },
@@ -1055,7 +1102,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "send_email",
-            "description": "Send a new email. Use resolve_contact first if you only have a name and need to find the email address. If multiple accounts exist, pass account from list_email_accounts.",
+            "description": "Send a new email. By default the email is NOT sent immediately -- it is staged for the user to review and approve from the Odysseus UI. Compose the full email; the user gives the final go-ahead. Use resolve_contact first if you only have a name and need to find the email address. If multiple accounts exist, pass account from list_email_accounts.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1089,6 +1136,23 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "search_emails",
+            "description": "Search emails by free-text query (sender, subject, or body). Walks INBOX + Sent + Archive by default so older threads are findable, not just the recent inbox slice. Use this whenever the user names a person, sender, or topic that might not be in the most recent list_emails results -- e.g. 'emails from Sara', 'invoice from EY', 'promotional emails from X', 'delete the rest of the marketing emails'. Returns matching emails with their UIDs, which you can pass to bulk_email/read_email/reply_to_email.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Free-text query. Matches FROM, SUBJECT, and body TEXT."},
+                    "folders": {"type": "array", "items": {"type": "string"}, "description": "Folders to search (default: INBOX, Sent, Archive)"},
+                    "max_results": {"type": "integer", "description": "Max results per folder (default: 20)"},
+                    "account": {"type": "string", "description": "Optional account name/email/id from list_email_accounts, e.g. Gmail or user@example.com"},
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_email",
             "description": "Read the full content of a specific email by UID.",
             "parameters": {
@@ -1106,7 +1170,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "reply_to_email",
-            "description": "SEND a reply email immediately by UID. Do not use this when the user asks to open/start a reply window or draft; use ui_control action=open_email_reply instead. For follow-up 'reply ...' requests where the user clearly wants to send now, use the exact UID from the latest read_email/list_emails result; never invent UID 1. Automatically threads with In-Reply-To/References headers.",
+            "description": "Reply to an email by UID. By default the reply is NOT sent immediately -- it is staged for the user to review and approve from the Odysseus UI. Do not use this when the user asks to open/start a reply window or draft; use ui_control action=open_email_reply instead. For follow-up 'reply ...' requests, use the exact UID from the latest read_email/list_emails result; never invent UID 1. Automatically threads with In-Reply-To/References headers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1208,7 +1272,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
 
     tool_type = _TOOL_NAME_MAP.get(name, name)
     _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment",
+                            "search_emails"}
 
     # Some models emit valid JSON that isn't an object (e.g. a bare array
     # ["ls -la"], string, or number) as function arguments. Most local tools keep
@@ -1395,3 +1460,5 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         content = json.dumps(args)
 
     return ToolBlock(tool_type, content)
+
+
