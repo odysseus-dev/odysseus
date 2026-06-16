@@ -51,6 +51,8 @@ with _import_time_core_database_stub():
         token_owner,
         owner_can_see,
         has_companion_scope,
+        companion_admin_available,
+        require_companion_admin,
     )
 
 
@@ -106,28 +108,23 @@ def test_scope_cookie_session_always_allowed():
     assert has_companion_scope(_request(api_token=False)) is True
 
 
-# ── router smoke: this tier adds WRITE endpoints, but NOT admin ones ─────────
+# ── router smoke: this (final) tier adds the admin-gated tools ──────────────
 
-def test_router_registers_read_and_write_but_not_admin():
+def test_router_registers_read_write_and_admin():
     methods = {(r.path, m) for r in setup_mobile_companion_routes().routes for m in getattr(r, "methods", []) or []}
     paths = {p for p, _ in methods}
-    # reads still present
-    for p in ("/api/companion/documents", "/api/companion/gallery", "/api/companion/calendars",
-              "/api/companion/email/messages", "/api/companion/skills", "/api/companion/assistant"):
-        assert p in paths, f"missing read endpoint {p}"
-    # write endpoints now present (this tier)
-    assert ("/api/companion/compare/record", "POST") in methods
-    assert ("/api/companion/compare/{comp_id}", "DELETE") in methods
-    assert ("/api/companion/events", "POST") in methods
-    assert ("/api/companion/events/{uid}", "DELETE") in methods
+    # reads + writes still present
+    assert "/api/companion/documents" in paths
     assert ("/api/companion/email/send", "POST") in methods
     assert ("/api/companion/assistant", "PATCH") in methods
-    assert ("/api/companion/skills/{name}/markdown", "GET") in methods
-    # admin-gated tools must NOT leak in until tier 3
-    for p in ("/api/companion/terminal/exec", "/api/companion/vault/unlock", "/api/companion/vault/status",
-              "/api/companion/mcp/servers", "/api/companion/cookbook/state", "/api/companion/contacts",
-              "/api/companion/admin/status"):
-        assert p not in paths, f"admin endpoint {p} must not appear before tier 3"
+    # admin-gated tools now present (this tier)
+    assert "/api/companion/admin/status" in paths
+    assert ("/api/companion/contacts", "GET") in methods
+    assert ("/api/companion/terminal/exec", "POST") in methods
+    assert ("/api/companion/vault/status", "GET") in methods
+    assert ("/api/companion/vault/unlock", "POST") in methods
+    assert ("/api/companion/mcp/servers", "GET") in methods
+    assert ("/api/companion/cookbook/state", "GET") in methods
 
 
 # ── Behavioural endpoint tests ──────────────────────────────────────────────
@@ -604,3 +601,102 @@ def test_email_send_null_owner_403(db, monkeypatch):
         _route("/api/companion/email/send", "POST")(
             _req(owner=None), account_id="a", to="x@y.test", subject="", body="")
     assert e.value.status_code == 403 and calls == []  # never reached the ownership check
+
+
+# ── admin-gate enforcement (tier 3) ─────────────────────────────────────────
+# Every admin endpoint must pass through require_companion_admin, so each 403s
+# when the gate is closed. companion_admin_available's own triple-lock is unit-
+# tested too. (require_companion_admin reads the module-level
+# companion_admin_available, so patching it here controls the gate.)
+
+import companion.mobile_features as _mf  # noqa: E402
+
+
+@pytest.fixture
+def admin_gate(monkeypatch):
+    def _set(allowed):
+        monkeypatch.setattr(_mf, "companion_admin_available", lambda request: allowed)
+    return _set
+
+
+@pytest.mark.parametrize("path,method,kwargs", [
+    ("/api/companion/contacts", "GET", {}),
+    ("/api/companion/terminal/exec", "POST", {"command": "echo hi"}),
+    ("/api/companion/vault/status", "GET", {}),
+    ("/api/companion/vault/unlock", "POST", {"master_password": "x"}),
+    ("/api/companion/mcp/servers", "GET", {}),
+    ("/api/companion/cookbook/state", "GET", {}),
+])
+def test_admin_endpoints_403_when_gate_closed(admin_gate, path, method, kwargs):
+    admin_gate(False)
+    fn = _route(path, method)
+    with pytest.raises(HTTPException) as e:
+        res = fn(_req(), **kwargs)
+        # vault/unlock is async — resolve it to surface the raise. Use asyncio.run so
+        # the test owns a fresh loop and never depends on a current event loop left
+        # (or closed) by an earlier test in the suite.
+        if hasattr(res, "__await__"):
+            import asyncio
+            asyncio.run(res)
+    assert e.value.status_code == 403
+
+
+def test_terminal_exec_runs_when_gate_open(admin_gate):
+    admin_gate(True)
+    res = _route("/api/companion/terminal/exec", "POST")(_req(), command="printf hi", timeout=30)
+    assert res["stdout"] == "hi" and res["exit_code"] == 0
+
+
+class _AuthManager:
+    def __init__(self, admins):
+        self.admins = set(admins)
+
+    def is_admin(self, u):
+        return u in self.admins
+
+
+def _admin_req(owner, scopes=("companion",), admins=("alice",), has_am=True):
+    am = _AuthManager(admins) if has_am else None
+    return SimpleNamespace(
+        state=SimpleNamespace(api_token=True, api_token_owner=owner,
+                              api_token_scopes=list(scopes), current_user="api"),
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=am)))
+
+
+@pytest.fixture
+def setting(monkeypatch):
+    import src.settings as s
+
+    def _set(on):
+        monkeypatch.setattr(s, "get_setting",
+                            lambda k, d=None: on if k == "companion_admin_enabled" else d)
+    return _set
+
+
+def test_admin_available_all_locks(setting):
+    setting(True)
+    assert companion_admin_available(_admin_req("alice")) is True
+
+
+def test_admin_unavailable_when_setting_off(setting):
+    setting(False)
+    assert companion_admin_available(_admin_req("alice")) is False
+
+
+def test_admin_unavailable_when_owner_not_admin(setting):
+    setting(True)
+    assert companion_admin_available(_admin_req("bob")) is False
+
+
+def test_admin_unavailable_for_chat_only_scope(setting):
+    # Admin needs the companion scope specifically — a chat-only token can read
+    # data (relaxed) but must never reach admin surface.
+    setting(True)
+    assert companion_admin_available(_admin_req("alice", scopes=("chat",))) is False
+
+
+def test_require_admin_raises_generic_403(setting):
+    setting(False)
+    with pytest.raises(HTTPException) as e:
+        require_companion_admin(_admin_req("alice"))
+    assert e.value.status_code == 403
