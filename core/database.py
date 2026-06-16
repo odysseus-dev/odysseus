@@ -1108,11 +1108,11 @@ def _migrate_unify_notes():
             conn.close()
             return
         rows = conn.execute(
-            "SELECT id, content, items, note_type FROM notes "
+            "SELECT id, content, items FROM notes "
             "WHERE items IS NOT NULL AND items != '' AND items != '[]'"
         ).fetchall()
         converted = 0
-        for note_id, content, items_raw, note_type in rows:
+        for note_id, content, items_raw in rows:
             try:
                 items = json.loads(items_raw) if items_raw else None
             except (json.JSONDecodeError, TypeError):

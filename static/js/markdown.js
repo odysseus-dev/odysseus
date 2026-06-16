@@ -741,7 +741,7 @@ export function mdToHtml(src, opts) {
         : '';
       const pad = indent ? ` style="margin-left:${indent * 18}px"` : '';
       return `<tli data-task-index="${idx}" data-done="${done ? 1 : 0}"${pad}>` +
-             `<span class="md-task-box" role="checkbox" aria-checked="${done}" contenteditable="false">${check}</span>` +
+             `<span class="md-task-box" role="checkbox" aria-checked="${done}" tabindex="0" contenteditable="false">${check}</span>` +
              `<span class="md-task-text">${text}</span></tli>`;
     });
     s = s.replace(/(^|\n)((?:<tli[\s\S]*?<\/tli>(?:\n|$))+)/g, (_, prefix, block) =>

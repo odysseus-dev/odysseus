@@ -63,7 +63,6 @@ function _forceCloseNotesPanel() {
     clearInterval(_reminderTimer);
     _reminderTimer = null;
   }
-  _stopNotesLiveSync();
   document.body.classList.remove('notes-view', 'notes-mobile-mode', 'notes-drag-mode');
   document.getElementById('tool-notes-btn')?.classList.remove('active');
   try { Modals.unregister('notes-panel'); } catch {}
@@ -1144,37 +1143,6 @@ function _startReminderLoop() {
   _checkReminders(); // run once immediately
 }
 
-// ── Live sync ───────────────────────────────────────────────────────
-// Poll the notes list while the panel is open so a note someone else edits
-// (a shared note) updates in place. Skips while you're editing so it never
-// clobbers your work; only re-renders when something actually changed.
-let _liveSyncTimer = null;
-function _startNotesLiveSync() {
-  if (_liveSyncTimer) return;
-  _liveSyncTimer = setInterval(_liveSyncNotes, 20000);
-}
-function _stopNotesLiveSync() {
-  if (_liveSyncTimer) { clearInterval(_liveSyncTimer); _liveSyncTimer = null; }
-}
-// Cheap change detector: ids + edit times + archived state.
-function _notesSignature() {
-  return _notes.map(n => `${n.id}:${n.updated_at}:${n.archived ? 1 : 0}`).join('|');
-}
-async function _liveSyncNotes() {
-  if (!_open || document.hidden) return;
-  // Don't refresh mid-edit: an in-grid form open, the preview body focused, or
-  // any popover/menu open would be disrupted by a re-render.
-  if (_editingId) return;
-  const previewBody = document.querySelector('#note-preview-modal .note-preview-body');
-  if (previewBody && document.activeElement === previewBody) return;
-  if (document.querySelector('.note-share-menu, .note-reminder-menu, .note-corner-menu-dropdown, .note-img-menu')) return;
-  try {
-    const before = _notesSignature();
-    await _fetchNotes();
-    if (_notesSignature() !== before) _renderNotes();  // _renderNotes also re-syncs the open preview
-  } catch {}
-}
-
 function _countDueReminders() {
   return _notes.filter(n => !n.archived && _isDueTodayOrOverdue(n.due_date) && !_isNoteFullyDone(n)).length;
 }
@@ -1567,7 +1535,6 @@ export function openPanel() {
     _renderNotes();
     requestAnimationFrame(() => _flushPendingHighlights());
     _startReminderLoop();
-    _startNotesLiveSync();
     _showNotesFirstOpenHint(pane);
   });
 }
@@ -1729,9 +1696,6 @@ function _renderLabels(root = document) {
         _activeFilter = _activeFilter === null ? 'reminders'
           : _activeFilter === 'reminders' ? 'no-reminders'
           : null;
-      } else if (chip.dataset.action === 'shared') {
-        _activeLabel = null;
-        _activeFilter = (_activeFilter === 'shared') ? null : 'shared';
       } else if (chip.dataset.action === 'clear-past-reminders') {
         _clearPastReminders();
         return;
@@ -2749,11 +2713,8 @@ function _bindCardEvents(body) {
   // carry data-readonly on the wrapper — no toggling there, the click falls
   // through to the card tap and opens the read-only preview instead.
   body.querySelectorAll('.note-content-preview:not([data-readonly]) .md-task').forEach(el => {
-    el.addEventListener('click', (e) => {
+    const toggle = () => {
       if (_selectMode) return;
-      // The per-item agent button handles its own click (stops propagation);
-      // any other click on the row toggles the task.
-      e.stopPropagation();
       const wrap = el.closest('.note-content-preview');
       const noteId = wrap?.dataset.noteId;
       const idx = parseInt(el.dataset.taskIndex);
@@ -2764,6 +2725,16 @@ function _bindCardEvents(body) {
         const r = card.getBoundingClientRect();
         return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
       });
+    };
+    // Any click on the row toggles the task.
+    el.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+    // Keyboard a11y: the checkbox box is focusable (tabindex), so Enter/Space
+    // on it toggles too — matching the preview editor's behaviour.
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      if (!e.target.closest('.md-task-box')) return;
+      e.preventDefault(); e.stopPropagation();
+      toggle();
     });
   });
 
@@ -4978,6 +4949,7 @@ function _makeTaskLi(text = '', done = false) {
   box.setAttribute('role', 'checkbox');
   box.setAttribute('aria-checked', done ? 'true' : 'false');
   box.setAttribute('contenteditable', 'false');
+  box.setAttribute('tabindex', '0');
   if (done) box.innerHTML = _TASK_CHECK_SVG;
   const txt = document.createElement('span');
   txt.className = 'md-task-text';
@@ -5007,6 +4979,10 @@ function _previewInlineMd(node) {
     if (n.nodeType !== 1) return;
     if (n.classList && n.classList.contains('md-task-box')) return; // not text
     const tag = n.tagName;
+    // Lists/tables are block-level — they're serialized by the block emitter.
+    // Skipping them here stops a nested list inside an <li> from being emitted
+    // twice (once flattened inline, once as its own block).
+    if (tag === 'UL' || tag === 'OL' || tag === 'TABLE') return;
     if (tag === 'BR') { out += '\n'; return; }
     if (tag === 'IMG') { out += _imgToMd(n); return; }
     const inner = _previewInlineMd(n);
@@ -5026,7 +5002,10 @@ function _previewInlineMd(node) {
 // unknown blocks fall through to their text so nothing the user typed is lost.
 function _serializePreviewBody(bodyEl) {
   const lines = [];
-  const emit = (el) => {
+  // `depth` is the current list-nesting level (0 = top). It indents nested
+  // bullet/numbered items so sub-lists survive a round-trip instead of
+  // collapsing into their parent line.
+  const emit = (el, depth = 0) => {
     if (el.nodeType === 3) { if (el.nodeValue.trim()) lines.push(el.nodeValue); return; }
     if (el.nodeType !== 1) return;
     const tag = el.tagName;
@@ -5040,11 +5019,46 @@ function _serializePreviewBody(bodyEl) {
       return;
     }
     if (/^H[1-6]$/.test(tag)) { lines.push('#'.repeat(+tag[1]) + ' ' + _previewInlineMd(el).trim()); return; }
-    if (tag === 'LI') { const ol = el.parentElement?.tagName === 'OL'; lines.push((ol ? '1. ' : '- ') + _previewInlineMd(el).trim()); return; }
+    if (tag === 'LI') {
+      // Emit the item's own inline text at the current depth, then recurse into
+      // any nested sub-list one level deeper. _previewInlineMd skips child
+      // UL/OL, so the nested list isn't also flattened into this line.
+      const ol = el.parentElement?.tagName === 'OL';
+      const pad = '  '.repeat(Math.max(0, depth));
+      lines.push(pad + (ol ? '1. ' : '- ') + _previewInlineMd(el).trim());
+      Array.from(el.children).forEach(c => {
+        if (c.tagName === 'UL' || c.tagName === 'OL') emit(c, depth + 1);
+      });
+      return;
+    }
     if (tag === 'BLOCKQUOTE') { _previewInlineMd(el).split('\n').forEach(l => lines.push('> ' + l)); return; }
-    if (tag === 'PRE') { lines.push('```'); lines.push((el.textContent || '').replace(/\n$/, '')); lines.push('```'); return; }
+    if (tag === 'PRE') {
+      // Preserve the fenced-code language: mdToHtml puts it on <code data-lang>.
+      // Without this, editing a note silently turns ```python into a bare ```.
+      const code = el.querySelector('code');
+      const lang = (code?.getAttribute('data-lang') || '').trim();
+      const codeText = (code ? code.textContent : el.textContent || '').replace(/\n$/, '');
+      lines.push('```' + lang);
+      lines.push(codeText);
+      lines.push('```');
+      return;
+    }
     if (tag === 'HR') { lines.push('---'); return; }
     if (tag === 'IMG') { const md = _imgToMd(el); if (md) lines.push(md); return; }
+    if (tag === 'TABLE') {
+      // Serialize back to a GitHub pipe table so editing a note that contains a
+      // table doesn't flatten it into a run-on paragraph. The first row becomes
+      // the header, with a `---` separator beneath it.
+      const rows = Array.from(el.querySelectorAll('tr'));
+      let header = false;
+      rows.forEach((tr) => {
+        const cells = Array.from(tr.querySelectorAll('th, td'));
+        if (!cells.length) return;
+        lines.push('| ' + cells.map(c => (_previewInlineMd(c).trim().replace(/\|/g, '\\|')) || ' ').join(' | ') + ' |');
+        if (!header) { lines.push('| ' + cells.map(() => '---').join(' | ') + ' |'); header = true; }
+      });
+      return;
+    }
     if (tag === 'UL' || tag === 'OL') {
       // Two adjacent checklists must stay separate: consecutive task lines with
       // no blank line between them re-render as a single list. Insert a blank
@@ -5053,13 +5067,13 @@ function _serializePreviewBody(bodyEl) {
           && /^[ \t]*[-*+][ \t]+\[[ xX]\]/.test(lines[lines.length - 1])) {
         lines.push('');
       }
-      Array.from(el.children).forEach(emit);
+      Array.from(el.children).forEach(c => emit(c, depth));
       return;
     }
     // P, DIV, SPAN or anything else → a paragraph line (honor <br> as newlines)
     _previewInlineMd(el).split('\n').forEach(l => lines.push(l));
   };
-  Array.from(bodyEl.childNodes).forEach(emit);
+  Array.from(bodyEl.childNodes).forEach(el => emit(el));
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '').trim();
 }
 
@@ -5087,6 +5101,25 @@ function _schedulePreviewSave(bodyEl) {
   _previewSaveTimer = setTimeout(() => _savePreviewBody(bodyEl), 600);
 }
 
+// Flip a preview checkbox (shared by click and keyboard handlers), persist, and
+// fire confetti when this toggle completes the whole checklist.
+function _togglePreviewTaskBox(box, bodyEl) {
+  const li = box.closest('.md-task');
+  if (!li) return;
+  const nowDone = li.getAttribute('data-done') !== '1';
+  li.setAttribute('data-done', nowDone ? '1' : '0');
+  box.setAttribute('aria-checked', nowDone ? 'true' : 'false');
+  box.innerHTML = nowDone ? _TASK_CHECK_SVG : '';
+  _savePreviewBody(bodyEl, { rerender: true });
+  if (nowDone) {
+    const note = _notes.find(n => n.id === bodyEl.dataset.noteId);
+    if (note && _isNoteFullyDone(note)) {
+      const r = li.getBoundingClientRect();
+      spawnConfetti(r.left + r.width / 2, r.top + r.height / 2, 60);
+    }
+  }
+}
+
 // Bind the editable preview body: checkbox toggles, autosave, Enter handling
 // for checklists, and the insert-checklist toolbar button. (Name kept for the
 // existing call sites in _openNotePreview / _syncNotePreview.)
@@ -5104,7 +5137,7 @@ function _bindPreviewChecklist(container) {
     // stops the caret/focus from landing in the editor; the click below still
     // fires and toggles the item.
     bodyEl.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.md-task-box, .md-img, .md-task-agent')) e.preventDefault();
+      if (e.target.closest('.md-task-box, .md-img')) e.preventDefault();
     });
     // Tap an embedded image → resize / remove menu.
     bodyEl.addEventListener('click', (e) => {
@@ -5118,20 +5151,33 @@ function _bindPreviewChecklist(container) {
       const box = e.target.closest('.md-task-box');
       if (!box) return;
       e.preventDefault();
-      const li = box.closest('.md-task');
-      if (!li) return;
-      const nowDone = li.getAttribute('data-done') !== '1';
-      li.setAttribute('data-done', nowDone ? '1' : '0');
-      box.setAttribute('aria-checked', nowDone ? 'true' : 'false');
-      box.innerHTML = nowDone ? _TASK_CHECK_SVG : '';
-      _savePreviewBody(bodyEl, { rerender: true });
-      if (nowDone) {
-        const note = _notes.find(n => n.id === bodyEl.dataset.noteId);
-        if (note && _isNoteFullyDone(note)) {
-          const r = li.getBoundingClientRect();
-          spawnConfetti(r.left + r.width / 2, r.top + r.height / 2, 60);
-        }
+      _togglePreviewTaskBox(box, bodyEl);
+    });
+    // Keyboard a11y: the box carries role="checkbox" + tabindex, so Enter/Space
+    // must toggle it just like a click (it's contenteditable=false, so the
+    // browser won't do it for us).
+    bodyEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      const box = e.target.closest?.('.md-task-box');
+      if (!box) return;
+      e.preventDefault();
+      // stopImmediatePropagation so the body's Enter handler below (which would
+      // otherwise insert a new checklist item) doesn't also fire on the box.
+      e.stopImmediatePropagation();
+      _togglePreviewTaskBox(box, bodyEl);
+    });
+
+    // Paste as plain text: keep pasted HTML out of the live editor so (a) a
+    // pasted `<img onerror=…>` can't execute in the contenteditable DOM and
+    // (b) we never import rich markup the serializer would silently flatten on
+    // the next autosave.
+    bodyEl.addEventListener('paste', (e) => {
+      e.preventDefault();
+      const text = (e.clipboardData || window.clipboardData)?.getData('text/plain') || '';
+      if (text) {
+        try { document.execCommand('insertText', false, text); } catch {}
       }
+      _schedulePreviewSave(bodyEl);
     });
 
     // Autosave while typing; flush on blur.
