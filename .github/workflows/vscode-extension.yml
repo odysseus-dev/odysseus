@@ -1,0 +1,63 @@
+name: vscode-extension
+
+# Typecheck, lint, test, build, and package the VS Code extension on any change
+# under integrations/vscode-extension/. Keeps the editor integration green
+# independently of the Python app's CI.
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - "integrations/vscode-extension/**"
+      - ".github/workflows/vscode-extension.yml"
+  pull_request:
+    paths:
+      - "integrations/vscode-extension/**"
+      - ".github/workflows/vscode-extension.yml"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: integrations/vscode-extension
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: integrations/vscode-extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package VSIX
+        run: npx --yes @vscode/vsce package --out odysseus-vscode-extension.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: odysseus-vscode-extension
+          path: integrations/vscode-extension/odysseus-vscode-extension.vsix
+          if-no-files-found: error

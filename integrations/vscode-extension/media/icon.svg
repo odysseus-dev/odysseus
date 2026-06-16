@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Odysseus">
+  <!-- Odysseus mark: two sails + a wave (matches the homepage welcome-boat). -->
+  <path d="M16 4 L16 22 L6 22 Z" fill="#e06c75"/>
+  <path d="M16 8 L16 22 L24 22 Z" fill="#e06c75" opacity="0.6"/>
+  <path d="M4 24 Q10 20 16 24 Q22 28 28 24" stroke="#e06c75" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

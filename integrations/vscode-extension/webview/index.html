@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src {{cspSource}} https: data:; style-src {{cspSource}}; script-src 'nonce-{{nonce}}';"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="{{stylesUri}}" />
+    <title>Odysseus</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="status-dot" id="status-dot" title="Connection status"></span>
+          <span class="brand-name">Odysseus</span>
+        </div>
+        <div class="topbar-right">
+          <span class="streaming-indicator" id="streaming-indicator" hidden>
+            <span class="streaming-dots"><i></i><i></i><i></i></span>
+            Streaming
+          </span>
+          <button
+            type="button"
+            class="conn-pill"
+            id="connection-badge"
+            data-command="configure"
+            title="Connection settings"
+          >
+            Checking
+          </button>
+        </div>
+      </header>
+
+      <p class="workspace-warning" id="workspace-warning" hidden></p>
+
+      <div class="transcript-wrap">
+        <div
+          class="transcript"
+          id="transcript"
+          role="log"
+          aria-label="Conversation transcript"
+          aria-live="off"
+          tabindex="0"
+        ></div>
+        <button type="button" class="scroll-bottom" id="scroll-bottom" hidden>
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4" /></svg>
+          Jump to latest
+        </button>
+      </div>
+
+      <form id="composer-form" class="composer">
+        <div class="composer-chips" id="composer-chips" hidden></div>
+        <div class="composer-box">
+          <textarea
+            id="composer-input"
+            rows="1"
+            placeholder="Ask Odysseus anything about this project…"
+          ></textarea>
+          <div class="composer-toolbar">
+            <div class="toolbar-left">
+              <div class="tool-group">
+                <button type="button" class="icon-button" id="plus-button" aria-label="Add" title="Add" aria-haspopup="menu" aria-expanded="false" aria-controls="plus-menu">
+                  <svg viewBox="0 0 16 16" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10" /></svg>
+                </button>
+                <div class="popover popover-up" id="plus-menu" role="menu" aria-label="Add to prompt" hidden>
+                  <button type="button" class="menu-item" data-command="attachFile">Upload from computer</button>
+                  <button type="button" class="menu-item" data-command="attachImage">Upload photo</button>
+                  <button type="button" class="menu-item" data-command="addContext">Add context…</button>
+                  <div class="menu-sep"></div>
+                  <button type="button" class="menu-item menu-item-toggle" data-command="toggleWeb">
+                    <span>Browse the web</span>
+                    <span class="menu-check" id="web-check" hidden>✓</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="tool-group">
+                <button type="button" class="icon-button" id="settings-button" aria-label="Settings" title="Settings" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></svg>
+                </button>
+                <div class="popover popover-up popover-wide" id="settings-menu" role="menu" aria-label="Settings" hidden>
+                  <button type="button" class="menu-item menu-item-split" data-command="configure">
+                    <span>Connection</span>
+                    <span class="menu-pill" id="settings-conn">—</span>
+                  </button>
+                  <button type="button" class="menu-item menu-item-split" id="settings-model-btn">
+                    <span>Model</span>
+                    <span class="menu-value" id="settings-model">—</span>
+                  </button>
+                  <button type="button" class="menu-item menu-item-split" id="settings-session-btn">
+                    <span>Session</span>
+                    <span class="menu-value" id="settings-session">—</span>
+                  </button>
+                  <button type="button" class="menu-item" data-command="newChat">New chat</button>
+                  <div class="menu-sep"></div>
+                  <button type="button" class="menu-item menu-item-split" data-command="saveToBrain" id="settings-save-brain">
+                    <span>Save to Brain</span>
+                    <span class="menu-value" id="settings-brain-hint">memory</span>
+                  </button>
+                  <button type="button" class="menu-item menu-item-toggle" data-command="toggleMemoryAutoSave">
+                    <span>Auto-save to Brain</span>
+                    <span class="menu-check" id="memory-autosave-check" hidden>✓</span>
+                  </button>
+                  <div class="menu-sep"></div>
+                  <button type="button" class="menu-item menu-item-split" data-command="openUsage">
+                    <span>Usage dashboard</span>
+                    <span class="menu-ext">↗</span>
+                  </button>
+                </div>
+                <div class="popover popover-up model-menu session-menu" id="session-menu" role="listbox" aria-label="Sessions" hidden></div>
+              </div>
+
+              <div class="tool-group">
+                <button type="button" class="model-chip" id="model-chip" title="Change model" aria-haspopup="listbox" aria-expanded="false" aria-controls="model-menu">
+                  <span id="model-chip-label">No model</span>
+                  <svg class="model-chip-caret" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4" /></svg>
+                </button>
+                <div class="popover popover-up model-menu" id="model-menu" role="listbox" aria-label="Models" hidden></div>
+              </div>
+              <div class="tool-group">
+                <button type="button" class="mode-pill" id="behavior-button" title="Mode, agent approval & reasoning" aria-haspopup="menu" aria-expanded="false" aria-controls="behavior-menu">
+                  <span id="behavior-label">chat</span>
+                  <svg class="model-chip-caret" viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10l4-4 4 4" /></svg>
+                </button>
+                <div class="popover popover-up popover-wide" id="behavior-menu" role="menu" aria-label="Behavior" hidden>
+                  <div class="menu-row">
+                    <span class="menu-label">Mode</span>
+                    <div class="segmented" data-setting="mode">
+                      <button type="button" data-value="chat">Chat</button>
+                      <button type="button" data-value="agent">Agent</button>
+                    </div>
+                  </div>
+                  <div class="menu-row" id="approval-row">
+                    <span class="menu-label">Agent</span>
+                    <div class="segmented" data-setting="approval">
+                      <button type="button" data-value="ask">Ask first</button>
+                      <button type="button" data-value="auto">Auto</button>
+                    </div>
+                  </div>
+                  <div class="model-options-block">
+                    <div class="model-options-heading">Model options</div>
+                    <div id="model-options-list"></div>
+                    <p class="model-options-empty" id="model-options-empty">
+                      Pick a model with runtime controls to tune reasoning, thinking, or verbosity here.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <span class="web-dot" id="web-dot" hidden title="Web browsing on">
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="6" /><path d="M2 8h12M8 2c2 2.4 2 9.6 0 12M8 2c-2 2.4-2 9.6 0 12" /></svg>
+              </span>
+              <span class="workspace-pill" id="workspace-pill" hidden>
+                <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5a1 1 0 0 1 1-1h3l1.5 1.5H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" /></svg>
+                <span id="workspace-pill-label"></span>
+              </span>
+            </div>
+
+            <div class="toolbar-right">
+              <button type="button" class="icon-button stop-button" id="stop-button" aria-label="Stop" title="Stop" hidden>
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5" /></svg>
+              </button>
+              <button type="submit" class="send-button" id="send-button" aria-label="Send" title="Send">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V4M4 8l4-4 4 4" /></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </form>
+
+      <div class="overlay" id="config-overlay" hidden>
+        <form id="config-form" class="config-card">
+          <div class="config-card-header">
+            <strong>Odysseus Connection</strong>
+            <span class="conn-pill" id="config-status">—</span>
+          </div>
+          <label class="config-field">
+            <span>Server URL</span>
+            <input id="config-server-url" type="url" placeholder="http://127.0.0.1:7860" />
+          </label>
+          <label class="config-field">
+            <span>API Token</span>
+            <input id="config-token" type="password" placeholder="ody_…" />
+          </label>
+          <p class="status-copy" id="connection-detail">Validating token and capabilities.</p>
+          <div class="config-actions">
+            <button type="button" class="ghost-button" id="config-cancel-button">Cancel</button>
+            <button type="submit" id="config-save-button">Save &amp; Validate</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="toast" class="toast" hidden></div>
+    </div>
+
+    <script nonce="{{nonce}}" src="{{scriptUri}}"></script>
+  </body>
+</html>

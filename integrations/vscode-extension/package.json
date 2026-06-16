@@ -1,0 +1,218 @@
+{
+  "name": "odysseus-vscode-extension",
+  "displayName": "Odysseus",
+  "description": "Chat, agent, and computer-use workflows for a self-hosted Odysseus server — right inside VS Code.",
+  "version": "0.1.0",
+  "icon": "media/icon.png",
+  "publisher": "azfahimaf",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "author": "azfahimaf",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/azfahimaf/odysseus.git",
+    "directory": "integrations/vscode-extension"
+  },
+  "bugs": {
+    "url": "https://github.com/azfahimaf/odysseus/issues"
+  },
+  "homepage": "https://github.com/azfahimaf/odysseus/tree/main/integrations/vscode-extension#readme",
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "llm",
+    "chat",
+    "agent",
+    "assistant",
+    "self-hosted",
+    "odysseus"
+  ],
+  "galleryBanner": {
+    "color": "#282c34",
+    "theme": "dark"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:odysseus.chat",
+    "onView:odysseus.chat.secondary",
+    "onCommand:odysseus.configure",
+    "onCommand:odysseus.newChat",
+    "onCommand:odysseus.pickModel",
+    "onCommand:odysseus.pickSession",
+    "onCommand:odysseus.attachFile",
+    "onCommand:odysseus.attachImage",
+    "onCommand:odysseus.attachFolder",
+    "onCommand:odysseus.askSelection",
+    "onCommand:odysseus.addCurrentFile",
+    "onCommand:odysseus.stop",
+    "onCommand:odysseus.saveToBrain",
+    "onCommand:odysseus.openComputerView"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "odysseus",
+          "title": "Odysseus",
+          "icon": "media/icon.svg",
+          "when": "odysseus:doesNotSupportSecondarySidebar"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "odysseus-secondary",
+          "title": "Odysseus",
+          "icon": "media/icon.svg",
+          "when": "!odysseus:doesNotSupportSecondarySidebar"
+        }
+      ]
+    },
+    "views": {
+      "odysseus": [
+        {
+          "type": "webview",
+          "id": "odysseus.chat",
+          "name": "Chat",
+          "when": "odysseus:doesNotSupportSecondarySidebar"
+        }
+      ],
+      "odysseus-secondary": [
+        {
+          "type": "webview",
+          "id": "odysseus.chat.secondary",
+          "name": "Chat",
+          "when": "!odysseus:doesNotSupportSecondarySidebar"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "odysseus.configure",
+        "title": "Odysseus: Configure"
+      },
+      {
+        "command": "odysseus.newChat",
+        "title": "Odysseus: New Chat"
+      },
+      {
+        "command": "odysseus.pickModel",
+        "title": "Odysseus: Pick Model"
+      },
+      {
+        "command": "odysseus.pickSession",
+        "title": "Odysseus: Pick Session"
+      },
+      {
+        "command": "odysseus.attachFile",
+        "title": "Odysseus: Attach File"
+      },
+      {
+        "command": "odysseus.attachImage",
+        "title": "Odysseus: Attach Image"
+      },
+      {
+        "command": "odysseus.attachFolder",
+        "title": "Odysseus: Attach Folder Snapshot"
+      },
+      {
+        "command": "odysseus.askSelection",
+        "title": "Odysseus: Ask About Selection"
+      },
+      {
+        "command": "odysseus.addCurrentFile",
+        "title": "Odysseus: Add Current File"
+      },
+      {
+        "command": "odysseus.stop",
+        "title": "Odysseus: Stop"
+      },
+      {
+        "command": "odysseus.saveToBrain",
+        "title": "Odysseus: Save to Brain",
+        "icon": "$(save)"
+      },
+      {
+        "command": "odysseus.openComputerView",
+        "title": "Odysseus: Open Computer-Use View",
+        "icon": "$(device-desktop)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "odysseus.saveToBrain",
+          "when": "editorHasSelection",
+          "group": "odysseus@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "odysseus.saveToBrain"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Odysseus",
+      "properties": {
+        "odysseus.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:7860",
+          "description": "Base URL for the Odysseus server."
+        },
+        "odysseus.defaultMode": {
+          "type": "string",
+          "default": "chat",
+          "enum": [
+            "chat",
+            "agent"
+          ],
+          "description": "Default mode shown in the Odysseus sidebar."
+        },
+        "odysseus.memory.autoSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "After each Odysseus reply, offer to save the exchange to the Brain (memory). Opt-in; you confirm each save so the Brain stays high-signal. Requires an API token with the memory:write scope."
+        },
+        "odysseus.computerUseViewUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8391/vnc.html",
+          "description": "URL of the Phase C computer-use sandbox's live noVNC view (opened by 'Odysseus: Open Computer-Use View'). Start the sandbox with `docker compose up` in integrations/computer-use."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"webview/**/*.ts\" \"*.{json,mjs,md}\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"webview/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.10.1",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.4",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.61.0",
+    "vitest": "^4.1.8"
+  }
+}

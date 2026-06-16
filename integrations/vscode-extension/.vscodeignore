@@ -1,0 +1,12 @@
+src/**
+node_modules/**
+dist/**/*.map
+webview/**/*.ts
+esbuild.js
+tsconfig.json
+package-lock.json
+test/**
+vitest.config.ts
+eslint.config.mjs
+.prettierrc.json
+.prettierignore
