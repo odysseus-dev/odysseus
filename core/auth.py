@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 from core.atomic_io import atomic_write_json as _atomic_write_json  # noqa: E402
+from core.middleware import INTERNAL_TOOL_USER  # noqa: E402
 
 DEFAULT_PRIVILEGES = {
     "can_use_agent": True,
@@ -65,7 +66,7 @@ TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 # of those names would be denied an assistant and inconsistently owner-scoped.
 # Refuse to create or rename into any of them so the sentinels can't be
 # impersonated. (Keep this in sync with that synthetic-owner set.)
-RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
+RESERVED_USERNAMES = frozenset({INTERNAL_TOOL_USER, "api", "demo", "system"})
 
 
 def normalize_known_username(users: Dict[str, Any], username: str | None) -> Optional[str]:

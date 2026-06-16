@@ -843,8 +843,11 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
         if isinstance(content, list):
             content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
         content = (content or "").strip()
-        # Skip injected tool-result envelopes — role=user but not human intent.
-        if not content or content.startswith("[Tool execution results]"):
+        # Skip injected envelopes — role=user but not human intent. Tool results
+        # are now wrapped via untrusted_context_message (metadata.trusted=False);
+        # keep the legacy "[Tool execution results]" prefix for older histories.
+        meta = msg.get("metadata") or {}
+        if not content or meta.get("trusted") is False or content.startswith("[Tool execution results]"):
             continue
         collected.append(content)
         if len(collected) >= max_user:
@@ -1562,8 +1565,14 @@ def _append_tool_results(
         if round_reasoning:
             msg["reasoning_content"] = round_reasoning
         messages.append(msg)
+        # Tool output (shell/python stdout, file reads, fetched pages, email
+        # bodies, MCP results) is sourced from outside the server. Wrap it as
+        # untrusted data so prompt-injection inside a tool result is treated as
+        # data, not instructions — same hardening as skills (#788) and the
+        # web/RAG context. THREAT_MODEL.md lists tool output as a surface that
+        # must go through untrusted_context_message.
         messages.append(
-            {"role": "user", "content": f"[Tool execution results]\n\n{tool_output_text}"}
+            untrusted_context_message("tool execution results", tool_output_text)
         )
 
 

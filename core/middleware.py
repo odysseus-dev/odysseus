@@ -15,6 +15,8 @@ from starlette.responses import Response
 # same value from this module. Never persisted or exposed externally.
 INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token_hex(32)
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
+# Pseudo-username on in-process tool-loopback requests; require_admin trusts it and it is reserved.
+INTERNAL_TOOL_USER = "internal-tool"
 
 
 def is_cors_preflight(method: str, headers) -> bool:
@@ -39,7 +41,7 @@ def require_admin(request: Request):
         hdr = request.headers.get(INTERNAL_TOOL_HEADER)
         if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
             return
-        if getattr(request.state, "current_user", None) == "internal-tool":
+        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
             return
     except Exception:
         pass

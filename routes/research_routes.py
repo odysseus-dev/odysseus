@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from core.middleware import INTERNAL_TOOL_USER
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
 from core.auth import RESERVED_USERNAMES
@@ -386,7 +387,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         """Launch a research job from the dedicated panel."""
         from src.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_research")
-        if user == "internal-tool":
+        if user == INTERNAL_TOOL_USER:
             tool_owner = (request.headers.get("X-Odysseus-Owner") or "").strip()
             if tool_owner and tool_owner not in RESERVED_USERNAMES:
                 auth_mgr = getattr(request.app.state, "auth_manager", None)

@@ -758,7 +758,7 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
       });
       row.appendChild(btn);
     }
-    body.appendChild(row);
+    diag.appendChild(row);
   }
 }
 
