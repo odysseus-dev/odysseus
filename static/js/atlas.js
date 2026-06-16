@@ -84,6 +84,29 @@ function _buildModal() {
       #atlas-modal .atlas-menu div:hover { background:rgba(127,127,127,.18); }
       #atlas-modal .atlas-preview a.atlas-tag { color:var(--brand-color,#6cf); background:rgba(110,140,255,.14); border-radius:10px; padding:0 7px; font-size:.9em; text-decoration:none; white-space:nowrap; }
       #atlas-modal .atlas-preview a.atlas-tag:hover { background:rgba(110,140,255,.28); }
+      #atlas-modal .atlas-base-view { flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden; }
+      #atlas-modal .atlas-base-bar { display:flex; align-items:center; gap:6px; padding:8px 12px; border-bottom:1px solid var(--bubble-border,#333); flex-wrap:wrap; }
+      #atlas-modal .atlas-base-bar .title { font-weight:600; margin-right:auto; }
+      #atlas-modal .atlas-base-content { flex:1; overflow:auto; padding:12px; }
+      #atlas-modal table.atlas-table { border-collapse:collapse; width:100%; font-size:13px; }
+      #atlas-modal table.atlas-table th, #atlas-modal table.atlas-table td { border:1px solid var(--bubble-border,#333); padding:5px 8px; text-align:left; vertical-align:top; }
+      #atlas-modal table.atlas-table th { cursor:pointer; position:sticky; top:0; background:var(--input-bg,#222); user-select:none; }
+      #atlas-modal table.atlas-table td.editable { cursor:text; }
+      #atlas-modal table.atlas-table td.editable:hover { background:rgba(127,127,127,.1); }
+      #atlas-modal table.atlas-table a.cellopen { color:var(--brand-color,#6cf); text-decoration:none; cursor:pointer; }
+      #atlas-modal .atlas-cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
+      #atlas-modal .atlas-card { border:1px solid var(--bubble-border,#333); border-radius:8px; padding:10px; cursor:pointer; }
+      #atlas-modal .atlas-card:hover { background:rgba(127,127,127,.08); }
+      #atlas-modal .atlas-card .ttl { font-weight:600; margin-bottom:6px; }
+      #atlas-modal .atlas-card .kv { font-size:11px; opacity:.75; }
+      #atlas-modal .atlas-board { display:flex; gap:12px; align-items:flex-start; height:100%; }
+      #atlas-modal .atlas-col { background:rgba(127,127,127,.06); border-radius:8px; padding:8px; min-width:200px; max-width:260px; }
+      #atlas-modal .atlas-col h5 { margin:2px 4px 8px; font-size:12px; text-transform:uppercase; opacity:.7; }
+      #atlas-modal .atlas-col .atlas-card { background:var(--input-bg,#222); margin-bottom:8px; }
+      #atlas-modal .atlas-filter-row { display:flex; gap:6px; margin-bottom:6px; align-items:center; }
+      #atlas-modal .atlas-filter-row select, #atlas-modal .atlas-filter-row input { background:var(--input-bg,#222); border:1px solid var(--input-border,#444); color:inherit; border-radius:5px; padding:4px 6px; font-size:12px; }
+      #atlas-modal .atlas-builder { padding:12px; border-bottom:1px solid var(--bubble-border,#333); }
+      #atlas-modal .atlas-builder label { font-size:11px; opacity:.7; margin-right:6px; }
       #atlas-modal .atlas-center { flex:1; display:flex; min-height:0; }
       #atlas-modal .atlas-editor, #atlas-modal .atlas-preview { flex:1; overflow:auto; padding:14px; min-width:0; }
       #atlas-modal .atlas-editor { display:flex; flex-direction:column; border-right:1px solid var(--bubble-border,#333); }
@@ -136,6 +159,7 @@ function _buildModal() {
             <textarea spellcheck="false" placeholder="# Write markdown…  link with [[Other note]]"></textarea>
           </div>
           <div class="atlas-preview"></div>
+          <div class="atlas-base-view" style="display:none;"></div>
         </div>
         <div class="atlas-right">
           <h4>Backlinks</h4>
@@ -234,10 +258,13 @@ function closeAtlas() { _doClose(); }
 
 // ── note list ─────────────────────────────────────────────────────────────
 async function _reloadNotes() {
-  try {
-    const data = await apiGet('/notes');
-    _notes = data.notes || [];
-  } catch { _notes = []; }
+  let notes = [];
+  let bases = [];
+  try { notes = (await apiGet('/notes')).notes || []; } catch { notes = []; }
+  try { bases = (await apiGet('/bases')).bases || []; } catch { bases = []; }
+  // Merge .base files into the explorer so they appear (with a BASE badge)
+  // alongside notes — /notes only returns markdown.
+  _notes = notes.concat(bases.map((b) => ({ path: b.path, title: b.name })));
   _renderList(_notes);
 }
 
@@ -314,7 +341,7 @@ function _renderTreeLevel(container, node, depth) {
     row.innerHTML = `<span class="label"></span>${isBase ? '<span class="base-badge">BASE</span>' : ''}`;
     row.querySelector('.label').textContent = it.title || it.path.split('/').pop();
     row.title = it.path;
-    row.onclick = () => openNote(it.path);
+    row.onclick = () => isBase ? openBase(it.path) : openNote(it.path);
     row.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/atlas-path', it.path); });
     container.appendChild(row);
   }
@@ -349,6 +376,14 @@ async function _runSearch(q) {
   } catch { /* keep current list */ }
 }
 
+// Swap the centre pane between the note editor/preview and the Bases view.
+function _showCenter(mode) {
+  const note = mode !== 'base';
+  _modal.querySelector('.atlas-editor').style.display = note ? '' : 'none';
+  _modal.querySelector('.atlas-preview').style.display = note ? '' : 'none';
+  _modal.querySelector('.atlas-base-view').style.display = note ? 'none' : '';
+}
+
 // ── open / edit / save a note ───────────────────────────────────────────────
 async function openNote(path) {
   if (_dirty) { clearTimeout(_saveTimer); await _saveCurrent(); }
@@ -357,6 +392,7 @@ async function openNote(path) {
     _current = data.path;
     _selectedFolder = data.path.includes('/') ? data.path.slice(0, data.path.lastIndexOf('/')) : '';
     _dirty = false;
+    _showCenter('note');
     _modal.querySelector('textarea').value = data.content || '';
     _modal.querySelector('[data-el="path"]').textContent = data.path;
     _renderPreview(data.content || '', data.outlinks);
@@ -376,6 +412,7 @@ function _openPlusMenu(anchor) {
   menu.innerHTML = `
     <div data-m="note">New note${here}</div>
     <div data-m="folder">New folder${here}</div>
+    <div data-m="base">New base (query)…</div>
     <div data-m="template">Insert template…</div>`;
   const r = anchor.getBoundingClientRect();
   menu.style.top = (r.bottom + 4) + 'px';
@@ -386,6 +423,7 @@ function _openPlusMenu(anchor) {
   setTimeout(() => document.addEventListener('click', onDoc, true), 0);
   menu.querySelector('[data-m="note"]').onclick = () => { close(); _newNote(); };
   menu.querySelector('[data-m="folder"]').onclick = () => { close(); _newFolder(); };
+  menu.querySelector('[data-m="base"]').onclick = () => { close(); _newBase(); };
   menu.querySelector('[data-m="template"]').onclick = () => { close(); _insertTemplate(); };
 }
 
@@ -698,6 +736,267 @@ function _listDialog(title, items) {
     ov.querySelector('[data-act="cancel"]').onclick = () => done(null);
     ov.addEventListener('click', (e) => { if (e.target === ov) done(null); });
   });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bases — saved structured queries rendered as table / cards / board, with a
+// filter builder and inline property editing. Mirrors the backend query model
+// (src/atlas_query.py); the agent/MCP produce the very same JSON.
+// ═══════════════════════════════════════════════════════════════════════════
+let _base = null;   // { path, query, result } for the open base
+
+const FIELD_OPTS = [
+  'file.title', 'file.path', 'file.tags', 'file.folder', 'file.mtime',
+  'section.heading', 'section.body', 'section.level',
+];
+const OP_OPTS = ['eq', 'ne', 'contains', 'startswith', 'endswith', 'regex',
+  'gt', 'lt', 'gte', 'lte', 'exists', 'empty', 'in'];
+
+async function _newBase() {
+  const folder = _selectedFolder ? _selectedFolder + '/' : '';
+  const path = await styledPrompt('', {
+    title: 'New base', defaultValue: folder, placeholder: 'e.g. Tracking/Open items',
+    confirmText: 'Create', maxLength: 200,
+  });
+  if (!path || !path.replace(/\/+$/, '')) return;
+  const query = { from: 'notes', where: { join: 'and', filters: [] }, view: 'table' };
+  try {
+    const res = await apiSend('/base', 'PUT', { path, query });
+    await _reloadNotes();
+    openBase(res.path, query);
+  } catch (e) { showError('Could not create base: ' + e.message); }
+}
+
+async function openBase(path, presetQuery) {
+  try {
+    let query, result;
+    if (presetQuery) {
+      query = presetQuery;
+      result = await apiSend('/query', 'POST', { query });
+    } else {
+      const data = await apiGet('/base', { path });
+      query = data.query || {}; result = data;
+    }
+    _base = { path, query, result };
+    _current = null;
+    _showCenter('base');
+    _renderBase();
+    _renderList(_notes);
+  } catch (e) { showError('Could not open base: ' + e.message); }
+}
+
+async function _runBase() {
+  try {
+    _base.result = await apiSend('/query', 'POST', { query: _base.query });
+    _renderBase();
+  } catch (e) { showError('Query failed: ' + e.message); }
+}
+
+async function _saveBase() {
+  try {
+    await apiSend('/base', 'PUT', { path: _base.path, query: _base.query });
+    showToast('Base saved.');
+  } catch (e) { showError('Save failed: ' + e.message); }
+}
+
+function _renderBase() {
+  const host = _modal.querySelector('.atlas-base-view');
+  const q = _base.query;
+  const view = q.view || 'table';
+  host.innerHTML = '';
+
+  // Toolbar.
+  const bar = document.createElement('div');
+  bar.className = 'atlas-base-bar';
+  bar.innerHTML = `
+    <span class="title"></span>
+    <button class="atlas-btn" data-v="table">Table</button>
+    <button class="atlas-btn" data-v="cards">Cards</button>
+    <button class="atlas-btn" data-v="board">Board</button>
+    <button class="atlas-btn" data-act="filters">Filters</button>
+    <button class="atlas-btn" data-act="save">Save</button>`;
+  bar.querySelector('.title').textContent = _base.path.split('/').pop().replace(/\.base$/, '');
+  bar.querySelectorAll('[data-v]').forEach((b) => {
+    b.classList.toggle('active', b.dataset.v === view);
+    b.onclick = () => { _base.query.view = b.dataset.v; _renderBase(); };
+  });
+  bar.querySelector('[data-act="filters"]').onclick = () => _toggleBuilder(host);
+  bar.querySelector('[data-act="save"]').onclick = _saveBase;
+  host.appendChild(bar);
+
+  const content = document.createElement('div');
+  content.className = 'atlas-base-content';
+  host.appendChild(content);
+
+  const res = _base.result || { columns: [], rows: [] };
+  if (view === 'cards') _renderCards(content, res);
+  else if (view === 'board') _renderBoard(content, res, q.group_by);
+  else _renderTable(content, res);
+}
+
+function _openRowNote(path) { if (path) openNote(path); }
+
+function _renderTable(host, res) {
+  if (!res.rows.length) { host.innerHTML = '<div style="opacity:.5">No matching notes.</div>'; return; }
+  const cols = res.columns;
+  const table = document.createElement('table');
+  table.className = 'atlas-table';
+  const thead = document.createElement('tr');
+  thead.innerHTML = '<th>Note</th>' + cols.map((c) => `<th data-c="${_attr(c)}"></th>`).join('');
+  thead.querySelectorAll('th[data-c]').forEach((th, i) => {
+    th.textContent = cols[i];
+    th.onclick = () => { _base.query.sort = [{ field: cols[i], dir: _flipDir(cols[i]) }]; _runBase(); };
+  });
+  table.appendChild(thead);
+  for (const row of res.rows) {
+    const tr = document.createElement('tr');
+    const open = document.createElement('td');
+    const a = document.createElement('a');
+    a.className = 'cellopen'; a.textContent = (row['file.path'] || '').split('/').pop().replace(/\.md$/, '');
+    a.onclick = () => _openRowNote(row['file.path']);
+    open.appendChild(a); tr.appendChild(open);
+    for (const c of cols) {
+      const td = document.createElement('td');
+      const v = row[c];
+      td.textContent = Array.isArray(v) ? v.join(', ') : (v == null ? '' : String(v));
+      // Inline edit for frontmatter property columns.
+      if (c.startsWith('prop.')) {
+        td.classList.add('editable');
+        td.title = 'Click to edit';
+        td.onclick = () => _editCell(td, row['file.path'], c.slice(5), v);
+      }
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  }
+  host.appendChild(table);
+}
+
+function _editCell(td, notePath, key, current) {
+  if (td.querySelector('input')) return;
+  const input = document.createElement('input');
+  input.value = current == null ? '' : (Array.isArray(current) ? current.join(', ') : String(current));
+  input.style.width = '100%';
+  td.textContent = ''; td.appendChild(input); input.focus();
+  const commit = async () => {
+    const val = input.value.trim();
+    try {
+      await apiSend('/property', 'POST', { path: notePath, key, value: val });
+      await _runBase();
+    } catch (e) { showError('Update failed: ' + e.message); _renderBase(); }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') _renderBase();
+  });
+  input.addEventListener('blur', commit);
+}
+
+function _renderCards(host, res) {
+  if (!res.rows.length) { host.innerHTML = '<div style="opacity:.5">No matching notes.</div>'; return; }
+  const wrap = document.createElement('div'); wrap.className = 'atlas-cards';
+  for (const row of res.rows) wrap.appendChild(_card(row, res.columns));
+  host.appendChild(wrap);
+}
+
+function _card(row, cols) {
+  const card = document.createElement('div'); card.className = 'atlas-card';
+  card.onclick = () => _openRowNote(row['file.path']);
+  const ttl = document.createElement('div'); ttl.className = 'ttl';
+  ttl.textContent = row['file.title'] || (row['file.path'] || '').split('/').pop();
+  card.appendChild(ttl);
+  for (const c of cols) {
+    if (c === 'file.title') continue;
+    const v = row[c]; if (v == null || v === '') continue;
+    const kv = document.createElement('div'); kv.className = 'kv';
+    kv.textContent = `${c.replace(/^prop\./, '')}: ${Array.isArray(v) ? v.join(', ') : v}`;
+    card.appendChild(kv);
+  }
+  return card;
+}
+
+function _renderBoard(host, res, groupBy) {
+  if (!groupBy) {
+    host.innerHTML = '<div style="opacity:.6">Board view needs a "group by" field — open Filters to set one.</div>';
+    return;
+  }
+  const cols = new Map();
+  for (const row of res.rows) {
+    const key = (row[groupBy] == null || row[groupBy] === '') ? '(none)' : String(row[groupBy]);
+    if (!cols.has(key)) cols.set(key, []);
+    cols.get(key).push(row);
+  }
+  const board = document.createElement('div'); board.className = 'atlas-board';
+  for (const [key, rows] of cols) {
+    const col = document.createElement('div'); col.className = 'atlas-col';
+    const h = document.createElement('h5'); h.textContent = `${key} (${rows.length})`; col.appendChild(h);
+    for (const row of rows) col.appendChild(_card(row, res.columns));
+    board.appendChild(col);
+  }
+  host.appendChild(board);
+}
+
+// Inline filter builder, toggled above the results.
+function _toggleBuilder(host) {
+  const existing = host.querySelector('.atlas-builder');
+  if (existing) { existing.remove(); return; }
+  const q = _base.query;
+  const b = document.createElement('div'); b.className = 'atlas-builder';
+  b.innerHTML = `
+    <div style="margin-bottom:8px;">
+      <label>From</label>
+      <select data-f="from"><option value="notes">notes</option><option value="sections">sections</option></select>
+      <label style="margin-left:12px;">Match</label>
+      <select data-f="join"><option value="and">all (AND)</option><option value="or">any (OR)</option></select>
+      <label style="margin-left:12px;">Group by</label>
+      <input data-f="group" placeholder="e.g. prop.status" style="width:130px;">
+    </div>
+    <div class="rows"></div>
+    <button class="atlas-btn" data-act="add">+ condition</button>
+    <button class="atlas-btn" data-act="run">Run</button>`;
+  b.querySelector('[data-f="from"]').value = q.from || 'notes';
+  b.querySelector('[data-f="join"]').value = (q.where && q.where.join) || 'and';
+  b.querySelector('[data-f="group"]').value = q.group_by || '';
+  const rows = b.querySelector('.rows');
+  const filters = (q.where && q.where.filters) || [];
+  filters.forEach((f, i) => rows.appendChild(_filterRow(f, i)));
+  b.querySelector('[data-act="add"]').onclick = () => {
+    rows.appendChild(_filterRow({ field: 'prop.status', op: 'eq', value: '' }, rows.children.length));
+  };
+  b.querySelector('[data-act="run"]').onclick = () => {
+    q.from = b.querySelector('[data-f="from"]').value;
+    q.group_by = b.querySelector('[data-f="group"]').value.trim() || undefined;
+    const newFilters = [...rows.querySelectorAll('.atlas-filter-row')].map((r) => ({
+      field: r.querySelector('[data-k="field"]').value,
+      op: r.querySelector('[data-k="op"]').value,
+      value: r.querySelector('[data-k="value"]').value,
+    })).filter((f) => f.field && f.op);
+    q.where = { join: b.querySelector('[data-f="join"]').value, filters: newFilters };
+    _runBase();
+  };
+  host.querySelector('.atlas-base-content').before(b);
+}
+
+function _filterRow(f) {
+  const row = document.createElement('div'); row.className = 'atlas-filter-row';
+  const fieldSel = `<select data-k="field">${FIELD_OPTS.map((o) => `<option ${o === f.field ? 'selected' : ''}>${o}</option>`).join('')}<option ${(f.field || '').startsWith('prop.') ? 'selected' : ''} value="${_attr(f.field)}">${_esc(f.field || 'prop.…')}</option></select>`;
+  const opSel = `<select data-k="op">${OP_OPTS.map((o) => `<option ${o === f.op ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+  row.innerHTML = `${fieldSel}${opSel}<input data-k="value" placeholder="value" value="${_attr(f.value == null ? '' : f.value)}"><button class="atlas-btn" data-act="rm">✕</button>`;
+  // Let the user type a custom prop.<name> field.
+  const fieldEl = row.querySelector('[data-k="field"]');
+  fieldEl.addEventListener('dblclick', async () => {
+    const custom = await styledPrompt('', { title: 'Field', defaultValue: 'prop.', confirmText: 'Set' });
+    if (custom) { const o = document.createElement('option'); o.value = custom; o.textContent = custom; o.selected = true; fieldEl.appendChild(o); }
+  });
+  row.querySelector('[data-act="rm"]').onclick = () => row.remove();
+  return row;
+}
+
+function _esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function _attr(s) { return _esc(s).replace(/"/g, '&quot;'); }
+function _flipDir(field) {
+  const cur = (_base.query.sort && _base.query.sort[0]);
+  return (cur && cur.field === field && cur.dir === 'asc') ? 'desc' : 'asc';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
