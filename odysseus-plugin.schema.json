@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://odysseus.dev/odysseus-plugin.schema.json",
+  "title": "Odysseus Plugin Manifest",
+  "description": "Manifest for an Odysseus plugin. Plugins are pip-installed, out-of-tree Python packages that extend Odysseus via a register(host) hook.",
+  "type": "object",
+  "required": ["name", "version", "entry_point", "odysseus_compat", "description", "author", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "URI of the JSON Schema for IDE autocomplete and CI linting."
+    },
+    "name": {
+      "type": "string",
+      "description": "Unique plugin identifier (kebab-case).",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "version": {
+      "type": "string",
+      "description": "SemVer version string.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"
+    },
+    "entry_point": {
+      "type": "string",
+      "description": "Dotted path to the register(host) callable, e.g. 'my_plugin:register'."
+    },
+    "odysseus_compat": {
+      "type": "string",
+      "description": "Version range of Odysseus this plugin is compatible with, e.g. '>=0.1.0'."
+    },
+    "description": {
+      "type": "string",
+      "description": "Short human-readable description of the plugin."
+    },
+    "author": {
+      "type": "string",
+      "description": "Plugin author or organization."
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "description": "Plugin homepage URL."
+    },
+    "repository": {
+      "type": "string",
+      "format": "uri",
+      "description": "Source code repository URL."
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier or custom license name."
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Declared capabilities this plugin requires. Ordinary capabilities are self-serve; privileged capabilities require explicit operator opt-in.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "tools",
+          "routes",
+          "ui",
+          "settings",
+          "provider",
+          "manage_plugins"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "frontend": {
+      "type": "string",
+      "description": "Optional path (relative to plugin package root) to the frontend JavaScript module, loaded in-process when the plugin is enabled."
+    },
+    "styles": {
+      "type": "array",
+      "description": "Optional CSS files to inject into the main app page.",
+      "items": { "type": "string" }
+    }
+  }
+}

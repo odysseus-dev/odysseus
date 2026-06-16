@@ -1,0 +1,15 @@
+{
+  "$schema": "../../odysseus-plugin.schema.json",
+  "name": "hello-odysseus",
+  "version": "1.0.0",
+  "entry_point": "hello_odysseus:register",
+  "odysseus_compat": ">=0.1.0",
+  "description": "A minimal reference plugin for Odysseus. Demonstrates the register(host) contract, tool registration, and settings contribution.",
+  "author": "Odysseus Team",
+  "homepage": "https://github.com/pewdiepie-archdaemon/odysseus",
+  "repository": "https://github.com/pewdiepie-archdaemon/odysseus",
+  "license": "MIT",
+  "capabilities": ["tools", "settings", "ui"],
+  "frontend": "static/frontend.js",
+  "styles": ["static/style.css"]
+}

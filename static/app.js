@@ -53,6 +53,47 @@ window.uiModule = uiModule;
 window.adminModule = adminModule;
 window.cookbookModule = cookbookModule;
 
+// Plugin frontend loader — thin core (no iframe sandbox)
+const _pluginScripts = new Map();
+
+function _loadPluginStyles(pluginId, styles) {
+  if (!Array.isArray(styles)) return;
+  const head = document.head;
+  for (const sheet of styles) {
+    if (typeof sheet !== 'string' || !sheet) continue;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = `/api/plugins/static/${encodeURIComponent(pluginId)}/${sheet}`;
+    link.dataset.pluginId = pluginId;
+    link.dataset.pluginStyle = 'true';
+    head.appendChild(link);
+  }
+}
+
+function _removePluginStyles(pluginId) {
+  document.querySelectorAll(`link[data-plugin-style="true"][data-plugin-id="${pluginId}"]`).forEach(l => l.remove());
+}
+
+// Minimal odysseus API for in-process plugins
+window.odysseus = {
+  getSetting(pluginId, key) {
+    const fullKey = pluginId ? `plugin:${pluginId}:settings:${key}` : key;
+    try {
+      const raw = localStorage.getItem(fullKey);
+      return raw === null ? null : JSON.parse(raw);
+    } catch (_) { return null; }
+  },
+  setSetting(pluginId, key, value) {
+    const fullKey = pluginId ? `plugin:${pluginId}:settings:${key}` : key;
+    try {
+      localStorage.setItem(fullKey, JSON.stringify(value));
+    } catch (_) {}
+  },
+  log(level, message) {
+    console.log(`[Plugin ${level}]`, message);
+  },
+};
+
 // Redirect to login on 401 from any fetch
 const _origFetch = window.fetch;
 window.fetch = async function(...args) {
@@ -1134,6 +1175,10 @@ function initializeEventListeners() {
     .then(d => {
       window._isAdmin = !!d.is_admin;
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
+      // Sync admin-only UI elements globally (plugins rail, sidebar, etc.)
+      document.querySelectorAll('.admin-only').forEach(el => {
+        el.style.display = window._isAdmin ? '' : 'none';
+      });
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {
@@ -4074,6 +4119,16 @@ function startOdysseusApp() {
       window.hljs.highlightElement(block);
     });
   }
+
+  // Load installed plugin frontend scripts via the thin registry
+  (async () => {
+    try {
+      const { initPluginRegistry } = await import('./js/plugin_registry.js');
+      await initPluginRegistry();
+    } catch (e) {
+      console.warn('[Plugins] failed to init registry:', e);
+    }
+  })();
 }
 
 if (document.readyState === 'loading') {
