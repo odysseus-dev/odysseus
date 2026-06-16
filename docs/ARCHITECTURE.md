@@ -19,6 +19,24 @@ graph TD
 ### Exhaustive System Architecture
 
 ```mermaid
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#ffffff',
+    'primaryTextColor': '#000000',
+    'primaryBorderColor': '#7C0000',
+    'lineColor': '#F8B229',
+    'secondaryColor': '#006100',
+    'tertiaryColor': '#fff',
+    'fontSize': '24px'
+  },
+  'flowchart': {
+    'htmlLabels': true,
+    'curve': 'basis',
+    'nodeSpacing': 80,
+    'rankSpacing': 120
+  }
+}}%%
 graph TB
     subgraph Frontend["Frontend (Vanilla JS SPA)"]
         direction TB
@@ -116,26 +134,26 @@ graph TB
     end
 
     %% Connections
-    Frontend --|'HTTP/REST & SSE Streaming'|--> FastAPI
+    Frontend -->|'HTTP/REST & SSE Streaming'| FastAPI
 
-    Backend --|'SQLAlchemy'|--> SQLite
-    MemoryRAG --|'API'|--> ChromaDB
-    FSTools --|'File IO'|--> LocalFileSystem
-    AtomicIO --|'File IO'|--> LocalFileSystem
+    Backend -->|'SQLAlchemy'| SQLite
+    MemoryRAG -->|'API'| ChromaDB
+    FSTools -->|'File IO'| LocalFileSystem
+    AtomicIO -->|'File IO'| LocalFileSystem
 
-    AgentEngine --|'Prompting'|--> ExtLLMs
-    AgentEngine --|'Prompting'|--> LocLLMs
-    CookbookUI --|'Launch via tmux'|--> LocLLMs
-    HWFit --|'Profiles'|--> LocLLMs
+    AgentEngine -->|'Prompting'| ExtLLMs
+    AgentEngine -->|'Prompting'| LocLLMs
+    CookbookUI -->|'Launch via tmux'| LocLLMs
+    HWFit -->|'Profiles'| LocLLMs
 
-    WebTools --|'Scraping'|--> WebEndpoints
-    SearchService --|'Query'|--> WebEndpoints
-    DeepResearch --|'Iterative Scraping'|--> WebEndpoints
+    WebTools -->|'Scraping'| WebEndpoints
+    SearchService -->|'Query'| WebEndpoints
+    DeepResearch -->|'Iterative Scraping'| WebEndpoints
 
-    MailCalSync --|'IMAP/SMTP/CalDAV'|--> ExtMailServers
+    MailCalSync -->|'IMAP/SMTP/CalDAV'| ExtMailServers
 
-    CompanionBridge --|'Token Pair'|--> Middleware
-    WebhookMan --|'POST'|--> WebEndpoints
+    CompanionBridge -->|'Token Pair'| Middleware
+    WebhookMan -->|'POST'| WebEndpoints
 ```
 
 ### Core Responsibilities
