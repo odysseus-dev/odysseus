@@ -9,3 +9,15 @@ from src.tools.system import (  # noqa: F401
     do_manage_mcp, do_manage_webhooks, do_manage_tokens, do_manage_settings,
     do_api_call, do_app_api,
 )
+from src.tools.cookbook import (  # noqa: F401
+    do_download_model, do_serve_model, do_list_served_models,
+    do_stop_served_model, do_tail_serve_output, do_list_downloads,
+    do_cancel_download, do_search_hf_models, do_adopt_served_model,
+    do_list_cookbook_servers, do_list_serve_presets, do_serve_preset,
+    do_list_cached_models,
+    _cookbook_servers, _resolve_cookbook_host, _cookbook_env_for_host,
+    _infer_serve_port, _infer_serve_host, _ensure_served_endpoint,
+    _cookbook_register_task, _cookbook_apply_retry_suggestion,
+    _scan_running_model_processes, _cookbook_kill_session,
+    _MODEL_PROCESS_PATTERNS,
+)
