@@ -17,7 +17,12 @@ import bcrypt
 from src.constants import AUTH_FILE
 
 PAIRING_VERSION = 1
-COMPANION_SCOPE = "chat"
+# Scopes granted to a paired mobile client. "chat" lets it stream chat; the
+# companion data routes (notes/tasks/memory) gate on a narrower "companion"
+# scope, so the pairing token must carry both — otherwise a paired phone would
+# 403 on those endpoints even though it owns the data. Comma-separated; the
+# auth middleware splits this into a scope list.
+COMPANION_SCOPE = "chat,companion"
 
 
 def default_port() -> int:
@@ -81,7 +86,7 @@ def find_admin_user() -> str | None:
 
 
 def mint_token(owner: str, name: str = "companion") -> tuple[str, str]:
-    """Create a chat-scoped API token row and return (token_id, raw_token).
+    """Create a companion-scoped (chat + companion) API token row and return (token_id, raw_token).
 
     The raw token is returned ONCE -- only its bcrypt hash + an 8-char prefix
     are persisted. Mirrors routes/api_token_routes.py so cookie- and

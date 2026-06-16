@@ -196,7 +196,7 @@ def setup_companion_routes() -> APIRouter:
 </style></head>
 <body><div class="card">
   <h2>Pair a device</h2>
-  <p>Generate a one-time pairing code (a chat-scoped API token) for a LAN client.</p>
+  <p>Generate a one-time pairing code (a chat + companion scoped API token) for a LAN client.</p>
   <form method="POST" action="/api/companion/pair">
     <button type="submit">Generate pairing code</button>
   </form>
