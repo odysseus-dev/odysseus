@@ -14,6 +14,9 @@ import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import HTTPException
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -140,3 +143,63 @@ def test_data_endpoints_are_read_only():
             if getattr(r, "path", "").endswith(path_suffix):
                 methods |= set(getattr(r, "methods", set()) or set())
         assert methods == {"GET"}, f"{path_suffix} must be GET-only, got {methods}"
+
+
+# --- end-to-end: the MINTED pairing scope matches this consumer -------------
+# Ties the scope GRANT (pairing mints `companion`) to the GATE in this PR. The
+# pairing flow mints `COMPANION_SCOPE`; a real paired phone must both (a) clear
+# the companion data gate AND (b) keep chat streaming, which requires the
+# "chat" scope. Reviewing the grant + consumer + these tests in one window is
+# exactly what the maintainer asked for before widening the paired scope.
+
+import companion.pairing as _pairing  # noqa: E402
+
+
+def _paired_scopes():
+    """The scope list a freshly paired device actually carries."""
+    return [s.strip() for s in _pairing.COMPANION_SCOPE.split(",") if s.strip()]
+
+
+def test_paired_scope_is_exactly_chat_and_companion():
+    # Guards against silently dropping/adding a scope on the pairing path.
+    assert set(_paired_scopes()) == {"chat", "companion"}
+
+
+def test_paired_token_keeps_chat_so_streaming_still_works():
+    # Chat streaming gates on the "chat" scope; widening to companion must not
+    # drop it, or every paired phone would lose chat.
+    assert "chat" in _paired_scopes()
+
+
+def test_paired_token_clears_the_companion_data_gate():
+    req = _req(api_token=True, owner="alice", scopes=_paired_scopes())
+    assert has_companion_scope(req) is True
+
+
+def _data_handler(path_suffix):
+    router = setup_companion_routes()
+    for r in router.routes:
+        if getattr(r, "path", "").endswith(path_suffix):
+            return r.endpoint
+    raise AssertionError(f"{path_suffix} route not found")
+
+
+@pytest.mark.parametrize("suffix", ["/notes", "/tasks", "/memory"])
+def test_all_data_routes_reject_chat_only_token(suffix, monkeypatch):
+    # A plain chat token (no companion scope) must be rejected on ALL three
+    # data views, not just /notes.
+    _install_core_database([], monkeypatch)
+    req = _req(api_token=True, owner="alice", scopes=["chat"])
+    with pytest.raises(HTTPException) as exc:
+        _data_handler(suffix)(req)
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize("suffix", ["/notes", "/tasks", "/memory"])
+def test_all_data_routes_accept_paired_token(suffix, monkeypatch):
+    # The exact scope the pairing flow mints is accepted on all three views
+    # (no 403); same owner sees a well-formed (here empty) result.
+    _install_core_database([], monkeypatch)
+    req = _req(api_token=True, owner="alice", scopes=_paired_scopes())
+    result = _data_handler(suffix)(req)
+    assert isinstance(result, dict) and "items" in result
