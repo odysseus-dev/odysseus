@@ -196,6 +196,15 @@ def sanitize_error(error: str, max_len: int = 200) -> str:
     return cleaned[:max_len]
 
 
+WEBHOOK_MAX_RETRIES = 3
+WEBHOOK_RETRY_BASE_DELAY = 1.0  # seconds; exponential: 1s, 2s, 4s
+
+
+def _webhook_retry_delay(attempt: int) -> float:
+    """Exponential backoff for webhook delivery retries. Capped at 30s."""
+    return min(WEBHOOK_RETRY_BASE_DELAY * (2 ** (attempt - 1)), 30.0)
+
+
 class WebhookManager:
     def __init__(self, api_key_manager=None):
         # Disable redirects to prevent SSRF via redirect chains
@@ -281,28 +290,71 @@ class WebhookManager:
             sig = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
             headers["X-Odysseus-Signature"] = sig
 
+        # PERF-001/ARCH-P3-004: open one session for the entire retry sequence and
+        # close it once in the outer finally. The previous code opened a new
+        # SessionLocal() on every loop iteration — each open allocates a connection
+        # from the pool, and on retryable status codes the old session was closed
+        # mid-loop but a fresh one was immediately opened for the next attempt,
+        # wasting pool connections for pure-HTTP work that doesn't need a DB handle
+        # until the final write.
+        last_status = None
+        last_exc = None
         db = SessionLocal()
         try:
-            resp = await self._client.post(url, content=body, headers=headers)
-            db.query(Webhook).filter(Webhook.id == webhook_id).update({
-                "last_triggered_at": _utcnow(),
-                "last_status_code": resp.status_code,
-                "last_error": None,
-            })
-            db.commit()
-        except Exception as e:
-            logger.warning(f"Webhook delivery failed for {webhook_id}")
-            try:
-                db.query(Webhook).filter(Webhook.id == webhook_id).update({
-                    "last_triggered_at": _utcnow(),
-                    "last_status_code": None,
-                    "last_error": sanitize_error(str(e)),
-                })
-                db.commit()
-            except Exception:
-                db.rollback()
+            for attempt in range(1, WEBHOOK_MAX_RETRIES + 1):
+                try:
+                    resp = await self._client.post(url, content=body, headers=headers)
+                    last_status = resp.status_code
+                    if resp.status_code in (429, 502, 503, 504) and attempt < WEBHOOK_MAX_RETRIES:
+                        delay = _webhook_retry_delay(attempt)
+                        logger.debug(
+                            f"Webhook {webhook_id} got {resp.status_code}, retry {attempt}/{WEBHOOK_MAX_RETRIES} "
+                            f"after {delay:.1f}s"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    # Success or non-retriable status: record and return
+                    db.query(Webhook).filter(Webhook.id == webhook_id).update({
+                        "last_triggered_at": _utcnow(),
+                        "last_status_code": resp.status_code,
+                        "last_error": None,
+                    })
+                    db.commit()
+                    return
+                except Exception as e:
+                    last_exc = e
+                    logger.warning(f"Webhook delivery attempt {attempt}/{WEBHOOK_MAX_RETRIES} failed for {webhook_id}: {sanitize_error(str(e))}")
+                    if attempt < WEBHOOK_MAX_RETRIES:
+                        delay = _webhook_retry_delay(attempt)
+                        await asyncio.sleep(delay)
+                        continue
+                    # Final attempt failed — record error
+                    try:
+                        db.query(Webhook).filter(Webhook.id == webhook_id).update({
+                            "last_triggered_at": _utcnow(),
+                            "last_status_code": None,
+                            "last_error": sanitize_error(str(e)),
+                        })
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+
+            # If we fell through (all retries exhausted with non-exception failure path)
+            if last_status is not None and last_status in (429, 502, 503, 504):
+                try:
+                    db.query(Webhook).filter(Webhook.id == webhook_id).update({
+                        "last_triggered_at": _utcnow(),
+                        "last_status_code": last_status,
+                        "last_error": f"Delivery failed after {WEBHOOK_MAX_RETRIES} attempts (HTTP {last_status})",
+                    })
+                    db.commit()
+                except Exception:
+                    db.rollback()
         finally:
-            db.close()
+            try:
+                db.close()
+            except Exception:
+                pass
 
     async def close(self):
         await self._client.aclose()
