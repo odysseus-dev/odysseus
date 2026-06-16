@@ -95,3 +95,16 @@ def test_computed_rejects_arbitrary_code():
 def test_default_columns_include_props():
     cols = run_query({"from": "notes"}, _notes())["columns"]
     assert "file.title" in cols and "prop.status" in cols
+
+
+def test_unprefixed_field_resolves_to_property():
+    """Agents write 'status', not 'prop.status' — resolve it to the property."""
+    q = {"where": {"filters": [{"field": "status", "op": "eq", "value": "open"}]}}
+    assert [x["file.path"] for x in run_query(q, _notes())["rows"]] == ["daily.md"]
+
+
+def test_unprefixed_field_in_select_column():
+    q = {"where": {"filters": [{"field": "file.title", "op": "eq", "value": "Daily"}]},
+         "select": ["status"]}
+    row = run_query(q, _notes())["rows"][0]
+    assert row["status"] == "open"

@@ -2256,6 +2256,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   window._manageMemoryTimer = setTimeout(
                     () => window.dispatchEvent(new CustomEvent('memory-refresh')), 600);
                 }
+                // --- Live-refresh Atlas after the agent writes/edits a note ---
+                if (json.tool === 'manage_atlas') {
+                  if (window._manageAtlasTimer) clearTimeout(window._manageAtlasTimer);
+                  window._manageAtlasTimer = setTimeout(
+                    () => window.dispatchEvent(new CustomEvent('atlas-refresh')), 600);
+                }
                 // --- Apply UI control actions embedded in tool_output ---
                 if (json.ui_event) {
                   chatStream.handleUIControl(json);

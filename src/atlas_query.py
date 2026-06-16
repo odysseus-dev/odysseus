@@ -206,6 +206,27 @@ def _match(field_val: Any, op: str, value: Any) -> bool:
     return False
 
 
+_KNOWN_PREFIXES = ("file.", "prop.", "section.")
+
+
+def resolve_field(rec: Dict[str, Any], field: Optional[str]) -> Any:
+    """Look up a field value, tolerant of an unprefixed name.
+
+    Agents (and humans) routinely write ``status`` rather than ``prop.status``.
+    Try the literal key first, then the common prefixes, so a natural field name
+    resolves to the frontmatter property / file attribute it obviously means.
+    """
+    if not field:
+        return None
+    if field in rec:
+        return rec[field]
+    if not field.startswith(_KNOWN_PREFIXES):
+        for pref in ("prop.", "file.", "section."):
+            if pref + field in rec:
+                return rec[pref + field]
+    return None
+
+
 def _passes(rec: Dict[str, Any], where: Dict[str, Any]) -> bool:
     filters = (where or {}).get("filters") or []
     if not filters:
@@ -217,7 +238,7 @@ def _passes(rec: Dict[str, Any], where: Dict[str, Any]) -> bool:
         if op not in VALID_OPS:
             results.append(False)
             continue
-        results.append(_match(rec.get(f.get("field")), op, f.get("value")))
+        results.append(_match(resolve_field(rec, f.get("field")), op, f.get("value")))
     return all(results) if join == "and" else any(results)
 
 
@@ -327,7 +348,7 @@ def run_query(query: Dict[str, Any], notes: List[Dict[str, Any]]) -> Dict[str, A
     for s in reversed(query.get("sort") or []):
         field = s.get("field")
         rev = (s.get("dir") or "asc").lower() == "desc"
-        matched.sort(key=lambda r, f=field: _sort_key(r.get(f)), reverse=rev)
+        matched.sort(key=lambda r, f=field: _sort_key(resolve_field(r, f)), reverse=rev)
 
     limit = min(int(query.get("limit", MAX_ROWS) or MAX_ROWS), MAX_ROWS)
     matched = matched[:limit]
@@ -342,7 +363,7 @@ def run_query(query: Dict[str, Any], notes: List[Dict[str, Any]]) -> Dict[str, A
     for r in matched:
         row = {"file.path": r.get("file.path")}
         for c in columns:
-            row[c] = r.get(c)
+            row[c] = resolve_field(r, c)
         for name, tree in computed.items():
             row[name] = _eval_computed(tree, r) if tree is not None else None
         rows.append(row)

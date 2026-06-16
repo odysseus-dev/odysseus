@@ -79,7 +79,7 @@ function _buildModal() {
       #atlas-modal .atlas-row .twisty { width:12px; flex:0 0 auto; opacity:.6; font-size:10px; }
       #atlas-modal .atlas-row .label { overflow:hidden; text-overflow:ellipsis; flex:1; }
       #atlas-modal .atlas-row .base-badge { font-size:9px; opacity:.55; border:1px solid currentColor; border-radius:3px; padding:0 3px; letter-spacing:.5px; }
-      #atlas-modal .atlas-menu { position:absolute; z-index:30; background:var(--input-bg,#222); border:1px solid var(--input-border,#444); border-radius:8px; padding:4px; min-width:170px; box-shadow:0 6px 20px rgba(0,0,0,.4); }
+      #atlas-modal .atlas-menu { position:fixed; z-index:1000; background:var(--input-bg,#222); border:1px solid var(--input-border,#444); border-radius:8px; padding:4px; min-width:170px; box-shadow:0 6px 20px rgba(0,0,0,.4); }
       #atlas-modal .atlas-menu div { padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; }
       #atlas-modal .atlas-menu div:hover { background:rgba(127,127,127,.18); }
       #atlas-modal .atlas-preview a.atlas-tag { color:var(--brand-color,#6cf); background:rgba(110,140,255,.14); border-radius:10px; padding:0 7px; font-size:.9em; text-decoration:none; white-space:nowrap; }
@@ -138,6 +138,7 @@ function _buildModal() {
       <div class="atlas-head">
         <strong style="font-size:14px;">Atlas</strong>
         <span class="grow"></span>
+        <button class="atlas-btn" data-act="refresh" title="Refresh from disk">↻</button>
         <button class="atlas-btn" data-act="graph-toggle" title="Show the link graph alongside your note">Graph</button>
         <button class="atlas-btn" data-act="import">Import</button>
         <button class="atlas-btn" data-act="export">Export</button>
@@ -177,6 +178,7 @@ function _buildModal() {
   // header actions
   _modal.querySelector('#atlas-close').onclick = closeAtlas;
   _modal.querySelector('[data-act="new"]').onclick = (e) => _openPlusMenu(e.currentTarget);
+  _modal.querySelector('[data-act="refresh"]').onclick = () => _refresh();
   _modal.querySelector('[data-act="graph-toggle"]').onclick = () => _toggleGraph();
   _modal.querySelector('[data-act="graph-close"]').onclick = () => _toggleGraph(false);
   _modal.querySelector('[data-act="export"]').onclick = () => {
@@ -240,8 +242,29 @@ async function openAtlas() {
     _modal._dragWired = true;
   }
   document.addEventListener('keydown', _escHandler);
+  window.addEventListener('atlas-refresh', _onExternalRefresh);
   await _reloadNotes();
   // Restart the graph sim if the panel was left open from a previous session.
+  if (_graphOpen) _openGraph();
+}
+
+// Fired (debounced) when the agent's manage_atlas tool writes/edits a note, so
+// the vault reflects the agent's changes without a manual reload.
+function _onExternalRefresh() { if (_open) _refresh(); }
+
+// Re-read everything from disk: explorer, the open note (unless it has unsaved
+// edits), the open base's query, and the graph.
+async function _refresh() {
+  await _reloadNotes();
+  if (_base) await _runBase();
+  else if (_current && !_dirty) {
+    try {
+      const data = await apiGet('/note', { path: _current });
+      _modal.querySelector('textarea').value = data.content || '';
+      _renderPreview(data.content || '', data.outlinks);
+      _renderBacklinks(data.backlinks || []);
+    } catch { /* note may have been deleted */ }
+  }
   if (_graphOpen) _openGraph();
 }
 
@@ -252,6 +275,7 @@ function _doClose() {
   if (_graph) { _graph.stop(); }
   _open = false;
   document.removeEventListener('keydown', _escHandler);
+  window.removeEventListener('atlas-refresh', _onExternalRefresh);
   if (_modal) { _modal.style.display = 'none'; _modal.classList.add('hidden'); }
 }
 function closeAtlas() { _doClose(); }

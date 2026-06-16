@@ -94,6 +94,23 @@ def test_query_action_accepts_bare_where(tool):
     assert [r["file.path"] for r in out["rows"]] == ["n.md"]
 
 
+def test_query_unprefixed_field_works(tool):
+    """The agent's natural 'status' (not 'prop.status') still matches."""
+    _call(tool, "alice", action="write", path="n", content="---\nstatus: open\n---\n# N")
+    out = _call(tool, "alice", action="query",
+                query={"where": {"filters": [{"field": "status", "op": "eq", "value": "open"}]}})
+    assert [r["file.path"] for r in out["rows"]] == ["n.md"]
+
+
+def test_query_empty_result_hints_available_fields(tool):
+    _call(tool, "alice", action="write", path="n", content="---\nstatus: open\npriority: high\n---\n# N")
+    out = _call(tool, "alice", action="query",
+                query={"where": {"filters": [{"field": "nope", "op": "eq", "value": "x"}]}})
+    assert out["count"] == 0
+    assert "prop.status" in out["available_fields"] and "prop.priority" in out["available_fields"]
+    assert "prop.status" in out["response"]
+
+
 def test_invalid_json(tool):
     out = _run(tool("{not json", {"owner": "alice"}))
     assert out["exit_code"] == 1

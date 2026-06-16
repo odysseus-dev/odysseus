@@ -197,8 +197,24 @@ class ManageAtlasTool:
                 # Allow a bare filter list / where-block to be passed directly.
                 if "where" not in q and ("filters" in q or "join" in q):
                     q = {"where": q}
-                result = run_query(q, notes_for_query(owner))
+                vault_notes = notes_for_query(owner)
+                result = run_query(q, vault_notes)
                 rows = result["rows"]
+                if not rows:
+                    # Help the model self-correct instead of guessing field names:
+                    # surface the properties + tags that actually exist in the vault.
+                    all_cols = run_query({"from": q.get("from", "notes")}, vault_notes)["columns"]
+                    props = sorted(c for c in all_cols if c.startswith("prop."))
+                    tags = sorted({t for n in vault_notes
+                                   for t in parse_links(n["content"]).get("tags", [])})
+                    hint = "No matching rows."
+                    if props:
+                        hint += f" Available properties: {', '.join(props)}."
+                    if tags:
+                        hint += f" Tags in vault: {', '.join('#' + t for t in tags[:20])}."
+                    if not props and not tags:
+                        hint += " No frontmatter properties or tags exist in the vault yet."
+                    return {"response": hint, **result, "available_fields": props, "exit_code": 0}
                 lines = [f"{result['count']} row(s) [{', '.join(result['columns'])}]:"]
                 for row in rows[:30]:
                     cells = " · ".join(f"{c}={row.get(c)}" for c in result["columns"])
