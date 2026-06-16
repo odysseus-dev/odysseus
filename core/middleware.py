@@ -117,12 +117,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
                 "font-src 'self' https://cdn.jsdelivr.net; "
-                # Allow external HTTPS images so notes can embed remote pictures
-                # (e.g. Unsplash). <img> can't execute script, so this is XSS-safe;
-                # the only trade-off is the standard tracking-pixel privacy one,
-                # mitigated by the no-referrer policy above. http: is left out to
-                # avoid mixed-content/plaintext loads.
-                "img-src 'self' data: blob: https:; "
+                # Images are same-origin only ('self' covers /api/upload/<id>),
+                # plus inline data:/blob:. External hosts are intentionally NOT
+                # allowed: a remote <img> is a tracking pixel (leaks the viewer's
+                # IP/timing on render), which matters once notes are shared. When
+                # remote images are wanted, proxy them same-origin instead of
+                # widening this to `https:`.
+                "img-src 'self' data: blob:; "
                 "media-src 'self' blob:; "
                 "connect-src 'self'; "
                 "frame-src 'self'; "
