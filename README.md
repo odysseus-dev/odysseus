@@ -61,15 +61,16 @@ Help is welcome. The best entry points are fresh-install testing, provider setup
 
 Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled, keep private data out of Git, and do not expose raw model/service ports publicly. Deployment details are in the [setup guide](docs/setup.md#security-notes).
 
-## Star History
+## Documentation
 
-<a href="https://www.star-history.com/?repos=pewdiepie-archdaemon%2Fodysseus&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&legend=top-left" />
- </picture>
-</a>
+| Topic | Link |
+|-------|------|
+| Install, GPU, HTTPS, and configuration | [docs/setup.md](docs/setup.md) |
+| Security notes and hardening | [docs/setup.md#security-notes](docs/setup.md#security-notes) · [SECURITY.md](SECURITY.md) · [THREAT_MODEL.md](THREAT_MODEL.md) |
+| Backup and restore | [docs/backup-restore.md](docs/backup-restore.md) |
+| Agent migration | [docs/agent-migration.md](docs/agent-migration.md) |
+| Email with Outlook | [docs/email-outlook.md](docs/email-outlook.md) |
+| Roadmap and contributing | [ROADMAP.md](ROADMAP.md) · [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## License
 
