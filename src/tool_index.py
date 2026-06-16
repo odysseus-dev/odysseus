@@ -33,17 +33,23 @@ logger = logging.getLogger(__name__)
 # keyword intent so a trivial agent prompt like "test" does not carry every
 # domain's schemas and rules.
 ALWAYS_AVAILABLE = frozenset({
-    # Memory is ambient — "remember this" can follow any message regardless
-    # of topic. Without this, RAG drops it and the agent falls back to
-    # app_api /api/memory/add which fails with 422 on first attempt.
-    "manage_memory",
     # Ask the user a multiple-choice question for a decision/clarification.
     # Always reachable so the agent can pause and ask at any point.
     "ask_user",
     # Write back to the active plan (tick steps done / revise) during execution.
     "update_plan",
+    # NOTE: `manage_memory` used to be in this set so ambient requests
+    # ("remember my name is X", "I prefer Y") would always have it. But the
+    # ambient slot is high-salience: a 3B-active local model fixated on it
+    # for *every* turn, including ones where the user's actual ask was
+    # about MCP, web, files, etc. — silently calling manage_memory: list
+    # and reporting "memory is live" instead of doing the real work.
+    # 2026-06-16 fix: ambient memory triggers are now covered by the
+    # "remember/my name/I live/call me/I prefer" keyword hint below
+    # (force-included on ambient phrasings) plus RAG for memory-adjacent
+    # queries. The model only sees manage_memory when the query actually
+    # warrants it, not on every turn.
 })
-
 # Tools that the Personal Assistant always has access to during scheduled
 # check-ins and proactive tasks, in addition to RAG-selected tools.
 ASSISTANT_ALWAYS_AVAILABLE = frozenset({
@@ -370,6 +376,21 @@ class ToolIndex:
             {"manage_tasks"},
         frozenset({"contact", "address", "phone", "who is"}):
             {"resolve_contact", "manage_contact"},
+        # Ambient memory triggers — user is stating a fact about THEMSELVES
+        # that should land in persistent memory. Without this, a query like
+        # "remember my name is Paul" depends on the RAG lane picking up
+        # "memory" from the embedding, which it sometimes does and sometimes
+        # doesn't (especially for short/vague phrasings). Force-include
+        # manage_memory so the model has the tool whenever the user is
+        # actually talking about themselves.
+        frozenset({"remember", "remember this", "remember that",
+                   "my name is", "i'm called", "i am called", "call me",
+                   "i live in", "i'm from", "i am from",
+                   "i prefer", "i like", "i don't like", "i hate",
+                   "my favorite", "my favourite",
+                   "what do you remember", "what do you know about me",
+                   "do you remember", "forget that", "forget this"}):
+            {"manage_memory"},
         frozenset({"save contact", "add contact", "new contact", "update contact",
                    "edit contact", "delete contact", "remove contact",
                    "save this person", "add to contacts", "save to contacts",
