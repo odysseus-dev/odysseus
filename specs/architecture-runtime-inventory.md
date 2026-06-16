@@ -2,7 +2,7 @@
 
 > **Purpose**: Phase 0 planning baseline for codebase readability improvements (#4071).
 > **Parent issue**: [#4082](https://github.com/pewdiepie-archdaemon/odysseus/issues/4082)
-> **Last updated**: dev@9d7a3d6 | 2026-06-14
+> **Last updated**: dev@b58af42 | 2026-06-16
 > **Status**: Draft — to be reviewed before follow-up slices open.
 
 This document maps the current runtime module structure, identifies high-risk boundaries, and recommends safe first refactor slices. It does **not** move files, change imports, or alter runtime behavior.
@@ -17,7 +17,7 @@ This document maps the current runtime module structure, identifies high-risk bo
 odysseus/
 ├── app.py                    # FastAPI app entrypoint (1,145 lines)
 ├── conf/                     # Configuration (config.py, settings.py, settings_scrub.py)
-├── src/                      # 91 flat .py files + 2 subdirectories
+├── src/                      # 95 flat .py files + 2 subdirectories
 │   ├── agent_tools/          # Tool helpers: document, filesystem, subprocess, web
 │   └── search/               # Search subsystem
 ├── routes/                   # 54 flat .py files — HTTP route handlers
@@ -25,7 +25,7 @@ odysseus/
 ├── mcp_servers/              # 4 files — MCP server implementations
 ├── scripts/                  # CLI tools and one-shot scripts
 ├── static/                   # Frontend HTML/CSS/JS
-├── tests/                    # 544 test files (~54,800 lines)
+├── tests/                    # 583 test files (~54,800 lines)
 └── services/                 # (exists as needed)
 ```
 
@@ -33,7 +33,7 @@ odysseus/
 
 | Directory | Flat `.py` Files | Subdirectories | Concern |
 |-----------|-----------------|----------------|---------|
-| `src/` | **91** | 2 (`agent_tools/`, `search/`) | No domain grouping; 91 files in one directory |
+| `src/` | **95** | 2 (`agent_tools/`, `search/`) | No domain grouping; 95 files in one directory |
 | `routes/` | **54** | 0 | All route handlers in one flat directory |
 | `core/` | 10 | 0 | Manageable, but `database.py` is oversized |
 
@@ -84,7 +84,7 @@ odysseus/
 
 ### 3.1 Who Depends on `core/database.py`
 
-**94 files** import from `core.database` — this is the most depended-upon module:
+**102 files** import from `core.database` — this is the most depended-upon module:
 
 - All route handlers (`routes/*.py`)
 - Most `src/*.py` files
@@ -102,7 +102,7 @@ odysseus/
 
 ### 3.3 Who Depends on `src/agent_loop.py`
 
-**21 files** import from `src.agent_loop`:
+**22 files** import from `src.agent_loop`:
 
 - `src/tool_policy.py`, `src/teacher_escalation.py`, `src/bg_monitor.py`
 - `src/task_scheduler.py`
@@ -128,10 +128,17 @@ src/tool_implementations.py ──→ routes/prefs_routes.py
 **Import counts (top-level)**:
 | Direction | Count | Notes |
 |-----------|-------|-------|
-| `routes/` → `src/` | **351** | Expected: HTTP handlers call domain logic |
+| `routes/` → `src/` | **374** | Expected: HTTP handlers call domain logic |
 | `routes/` → `core/` | **124** | Expected: handlers access DB models |
-| `src/` → `routes/` | **30** | **Unexpected**: domain logic reaching into HTTP layer (direct grep of import lines referencing `routes/`) |
-| `src/` → `core/` | **99** | Acceptable but could be reduced with a data-access layer |
+| `src/` → `routes/` | **31** | **Unexpected**: domain logic reaching into HTTP layer (direct grep of import lines referencing `routes/`) |
+| `src/` → `core/` | **106** | Acceptable but could be reduced with a data-access layer |
+
+> **How the metrics in this document are computed** — recompute against current `dev` before treating any count as authoritative (the tree drifts; these numbers are a snapshot, not a live value):
+> - `src/` flat `.py` files: `find src -maxdepth 1 -name '*.py' | wc -l`
+> - `tests/` test files: `find tests -name 'test_*.py' | wc -l`
+> - `core.database` importers: `grep -rlE '(from|import) +core\.database' --include='*.py' . | grep -v core/database.py | wc -l`
+> - `src.agent_loop` importers: `grep -rlE '(from|import) +src\.agent_loop' --include='*.py' . | grep -v src/agent_loop.py | wc -l`
+> - Cross-layer import lines: `grep -rhE '(from|import) +<pkg>' --include='*.py' <dir>/ | wc -l` (e.g. `(from|import) +routes` over `src/`)
 
 ---
 
@@ -214,7 +221,7 @@ The 33 `do_*` functions in `tool_implementations.py` fall into natural domain gr
 | **3** | `src/agent_loop.py` → `src/agent/loop.py` + submodules | **MEDIUM-HIGH** | 2,961 lines, 24 functions. Can extract prompt building, classification, verification, and runaway detection. Tracked in #3266. |
 | **4** | `src/` → `src/pkg/`, `src/domain/`, `src/infra/`, `src/api/` | **MEDIUM** | Structural reorganization. Split flat `src/` into layered packages. Must come after routes and tools are stable. |
 | **5** | `routes/email_*.py` consolidation | **LOW** | Already grouped by filename prefix. Low-risk cleanup within the email domain. |
-| **6** | `core/database.py` → `src/infra/database/models/*.py` | **HIGH** | 27 classes, 94 importers. Highest-risk split. Must be **last** in any sequence. Requires careful import shim strategy. |
+| **6** | `core/database.py` → `src/infra/database/models/*.py` | **HIGH** | 27 classes, 102 importers. Highest-risk split. Must be **last** in any sequence. Requires careful import shim strategy. |
 | **7** | Frontend CSS modularization | **MEDIUM** | 36,653 lines. Tracked in #2617. Separate timeline from backend work. |
 | **8** | Frontend JS modularization | **MEDIUM** | 9,776 lines in `document.js`. Introduce ES modules at minimum. |
 
@@ -312,7 +319,7 @@ These become real only when the corresponding slices land.
 
 ## Appendix A: File Listing
 
-### `src/` (91 files — 61 shown; run `ls src/*.py` for the full list)
+### `src/` (95 files — 61 shown; run `ls src/*.py` for the full list)
 
 ```
 agent_loop.py          tool_implementations.py   tool_schemas.py
@@ -376,14 +383,14 @@ atomic_io.py   platform_compat.py
 ## Appendix B: Key Import Relationships
 
 ```
-core/database.py  ←── 94 importers (routes/*, src/*, core/*, tests/*)
+core/database.py  ←── 102 importers (routes/*, src/*, core/*, tests/*)
     ↑
     ├── routes/auth_routes.py
     ├── routes/email_routes.py
     ├── src/builtin_actions.py
     ├── src/task_scheduler.py
     ├── src/tool_implementations.py (inline)
-    └── ...89 more
+    └── ...97 more
 
 src/tool_implementations.py  ←── 18 importers
     ↑
@@ -394,11 +401,11 @@ src/tool_implementations.py  ←── 18 importers
     ├── src/tool_policy.py
     └── ...13 more (mostly tests)
 
-src/agent_loop.py  ←── 21 importers
+src/agent_loop.py  ←── 22 importers
     ↑
     ├── src/tool_policy.py
     ├── src/teacher_escalation.py
     ├── src/bg_monitor.py
     ├── src/task_scheduler.py
-    └── 17 more (incl. tests)
+    └── 18 more (incl. tests)
 ```
