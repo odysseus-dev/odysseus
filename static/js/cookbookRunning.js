@@ -2653,16 +2653,14 @@ async function _reconnectTask(el, task) {
           const pipLooksSuccessful = _isPipTask
             && /Successfully installed|Requirement already (?:satisfied|up-to-date)/i.test(lastOutput)
             && !/error:|ERROR:/.test(lastOutput.slice(-1024));
-          const serveLooksReady = task.type === 'serve' && _serveOutputLooksReady({ ...task, output: lastOutput });
+          const serveLooksReady = task.type === 'serve'
+            && (_serveOutputLooksReady({ ...task, output: lastOutput }) || pipLooksSuccessful);
           // Dependency installs are tracked as download tasks but finish with a
           // pip exit-0 sentinel, not HF download markers — check that too.
           // Standalone pip-* serves finish with pip's own success line, not
           // HF or "Uvicorn running on".
           const depInstallSucceeded = !!task.payload?._dep && _depInstallSucceeded(lastOutput);
-          const looksSuccessful = depInstallSucceeded
-            || (task.type === 'download'
-              ? downloadLooksSuccessful
-              : (_isPipTask ? pipLooksSuccessful : serveLooksReady));
+          const looksSuccessful = depInstallSucceeded || (task.type === 'download' ? downloadLooksSuccessful : serveLooksReady);
           if (!lastOutput.trim() || !looksSuccessful) {
             _updateTask(task.sessionId, { status: 'crashed' });
             el.dataset.status = 'crashed';
