@@ -59,6 +59,7 @@ _COMMON_TOOL_NAMES = {
     "manage_research",
     "save_research_to_brain",
     "raphael",
+    "beelzebub",
     "manage_session",
     "manage_settings",
     "manage_skills",

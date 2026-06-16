@@ -1241,8 +1241,8 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
             out.append(f"- `{mid}` [{cat}]{pin_tag} ×{uses}{near_tag} {text}")
 
         out.append("\n---")
-        out.append("To pin:    beelzebub → pin memory <id>")
-        out.append("To delete: beelzebub → delete memory <id>")
+        out.append('To pin:    raphael {"action":"memory_pin","id":"<id>"}')
+        out.append('To delete: raphael {"action":"memory_delete","id":"<id>"}')
 
         return {"results": "\n".join(out)}
 
@@ -1579,7 +1579,8 @@ async def do_raphael(content: str, session_id: Optional[str] = None, owner: Opti
                 lines.append(f'- **{s["name"]}** ×{s.get("uses",0)} (needs {thresh} for next tier)')
             lines.append("")
         lines.append("---")
-        lines.append('Actions: raphael {"action":"evolve","target":"slug"} | {"action":"merge","skills":["a","b"],"target":"c","category":"cat"} | {"action":"delete","target":"slug"} | {"action":"absorb","content":"..."}')
+        lines.append('Actions: raphael {"action":"evolve","target":"slug"} | {"action":"merge","skills":["a","b"],"target":"c","category":"cat"} | {"action":"delete","target":"slug"}')
+        lines.append('Ingest new content: beelzebub {"action":"absorb","content":"..."}')
         lines.append('Add "dry_run":true to preview without writing.')
         return {"output": "\n".join(lines), "exit_code": 0}
 

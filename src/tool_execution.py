@@ -873,6 +873,10 @@ async def _execute_tool_block_impl(
         desc = "raphael"
         from src.ai_interaction import do_raphael
         result = await do_raphael(content, session_id=session_id, owner=owner)
+    elif tool == "beelzebub":
+        desc = "beelzebub"
+        from src.ai_interaction import do_raphael
+        result = await do_raphael(content, session_id=session_id, owner=owner)
     elif tool == "resolve_contact":
         desc = "resolve_contact"
         result = await do_resolve_contact(content, owner=owner)

@@ -83,7 +83,7 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              "list_cookbook_servers",
              # Other tools the agent reaches for that were also missing.
              "edit_image", "trigger_research", "manage_research", "save_research_to_brain",
-             "download_file", "raphael",
+             "download_file", "raphael", "beelzebub",
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.

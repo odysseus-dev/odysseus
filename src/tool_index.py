@@ -102,7 +102,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "manage_webhooks": "Webhook management: list, add, delete, enable, or disable webhooks.",
     "manage_tokens": "API token management: list, create, or delete API access tokens.",
     "manage_documents": "List, read, delete, or tidy documents in the editor panel. action='list' returns clickable rows (most-recent first) so the user can open any doc by clicking. action='read' (aka view/open/get) with document_id returns the content; supports offset=<N> + limit=<N> to page through large docs (response includes next_offset when more remains, so you can keep calling with offset=next_offset). action='delete' with document_id removes a doc (only way to delete). Use this for ANY 'show/read/list/open my documents/docs/files/notes' request — never shell or curl.",
-    "raphael": "Skill administrator: audit all skills (find duplicates/junk), merge duplicates into master skills, or delete junk. Always audit first.",
+    "raphael": "Raphael, Lord of Wisdom: manager of skills AND memories. Skills: audit (find duplicates/junk, show tier/uses/evolution-ready), evolve a skill to the next tier (common->extra->unique->ultimate), evolve_all eligible skills, merge duplicates into a master skill, delete junk. Memories: audit, list, add, pin, delete, evolve stored memories. Always audit first. To devour external content into a new skill use beelzebub.",
+    "beelzebub": "Beelzebub, Lord of Gluttony — the Predator that devours: absorb external content (article, transcript, doc, pasted text) and synthesize it into a brand-new skill. Use to take in new knowledge. To manage existing skills or memories use raphael.",
     "save_research_to_brain": "Extract key facts from a deep research report and save them to the brain so they persist across sessions. Omit id to use the most recent research.",
     "manage_research": "List, read/open, or delete saved DEEP RESEARCH results from the Library. action='list' returns clickable [query](#research-<id>) rows (most-recent first). action='read' (aka open/view/get) with id returns the report + sources. action='delete' with id removes it. Use this for ANY 'open/read/find/delete my research / that report / the research on X' request. NOTE: this is for EXISTING research; to START new research use trigger_research.",
     "manage_settings": "Change ANY real app setting (the ones the Settings panel writes) so the user never has to open it: TTS voice/provider/speed, STT, search engine + result count, default/teacher/task/utility/vision/image/research models, image quality, reminder channel (browser/email/ntfy), agent timeout/tool-call budget, and more. action=set with key (friendly aliases ok: voice, 'search engine', 'default model', 'teacher model', 'image quality', 'reminder channel'...) + value; get/list/reset too. Also toggles tools on/off (disable_tool/enable_tool/list_tools). Secrets/API keys are read-only. Use for any 'change my…/set my…/use X for…/turn on…' preference request.",
@@ -503,12 +504,18 @@ class ToolIndex:
         frozenset({"write a", "create a doc", "draft", "compose", "poem", "story",
                    "essay", "outline", "letter"}):
             {"create_document", "edit_document", "update_document"},
-        frozenset({"raphael", "beelzebub", "skill audit", "audit skills",
+        frozenset({"raphael", "skill audit", "audit skills",
                    "merge skills", "delete skill", "clean up skills",
                    "skill cleanup", "skills cleanup", "duplicate skills",
                    "evolve skill", "evolve skills", "skill evolution",
-                   "absorb skill", "absorb this", "predator", "level up skill"}):
+                   "level up skill",
+                   "remember this", "forget this", "audit memory", "memory audit",
+                   "list memories", "pin memory", "delete memory", "manage memories"}):
             {"raphael"},
+        frozenset({"beelzebub", "absorb skill", "absorb this", "absorb the",
+                   "ingest this", "ingest the", "devour this", "devour the",
+                   "predator", "gluttony", "synthesize into a skill"}):
+            {"beelzebub"},
     }
 
     def get_tools_for_query(

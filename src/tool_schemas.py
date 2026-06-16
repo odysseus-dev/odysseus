@@ -415,14 +415,34 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "raphael",
-            "description": "Skill administrator: audit all skills (action=audit), merge duplicates into master skills (action=merge), or delete junk (action=delete). Always audit first.",
+            "description": "Raphael, Lord of Wisdom — manager of skills and memories. Skills: audit=scan all skills (find duplicates/junk, show tier/uses/evolution-ready), evolve=rewrite a skill at the next tier (common->extra->unique->ultimate), evolve_all=evolve every eligible skill, merge=combine duplicates into a master skill, delete=remove junk. Memories: memory_audit=review stored memories, memory_list=list them, memory_add=store a new memory, memory_pin=protect one from cleanup, memory_delete=remove one, memory_evolve / memory_evolve_all=consolidate/upgrade memories. Always audit first. (To devour/absorb external content into a new skill, use beelzebub.)",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["audit", "merge", "delete"]},
+                    "action": {"type": "string", "enum": ["audit", "evolve", "evolve_all", "merge", "delete", "memory_audit", "memory_list", "memory_add", "memory_pin", "memory_delete", "memory_evolve", "memory_evolve_all"]},
                     "skills": {"type": "array", "items": {"type": "string"}},
                     "target": {"type": "string"},
                     "category": {"type": "string"},
+                    "text": {"type": "string", "description": "For memory_add: the memory text to store."},
+                    "id": {"type": "string", "description": "Memory id for memory_pin / memory_delete / memory_evolve."},
+                    "dry_run": {"type": "boolean"}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "beelzebub",
+            "description": "Beelzebub, Lord of Gluttony — the Predator that devours. absorb=consume external content (an article, transcript, doc, or pasted text) and synthesize it into a brand-new skill. Use this to take in new knowledge. (To manage existing skills or memories, use raphael.)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["absorb"]},
+                    "content": {"type": "string", "description": "For absorb: the external content to devour and synthesize into a skill."},
+                    "category": {"type": "string"},
+                    "target": {"type": "string"},
                     "dry_run": {"type": "boolean"}
                 },
                 "required": ["action"]
