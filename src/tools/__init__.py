@@ -21,3 +21,4 @@ from src.tools.cookbook import (  # noqa: F401
     _scan_running_model_processes, _cookbook_kill_session,
     _MODEL_PROCESS_PATTERNS,
 )
+from src.tools.search import do_search_chats  # noqa: F401
