@@ -232,7 +232,7 @@ The 33 `do_*` functions in `tool_implementations.py` fall into natural domain gr
 
 - Create `src/tools/` package with one file per tool category
 - Add `src/tools/__init__.py` re-exporting all symbols with current names
-- Update 18 importers to use new paths (can be deferred via shim)
+- Update 17 importers to use new paths (can be deferred via shim)
 - Validation: `python -m pytest tests/ -x -q` + manual smoke test of tool execution
 - Reference: #3629
 
