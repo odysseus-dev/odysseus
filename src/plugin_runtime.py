@@ -19,6 +19,7 @@ from src.plugin_schema import PluginValidationError, validate_manifest
 logger = logging.getLogger(__name__)
 
 PLUGINS_DIR = os.path.join(DATA_DIR, "plugins")
+REPO_PLUGINS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins")
 
 # Scoped plugin storage (in-memory + persisted JSON file)
 _plugin_settings: dict[str, dict[str, Any]] = {}
@@ -105,11 +106,21 @@ def _make_module(plugin_name: str) -> Any:
 
 def _load_manifest(plugin_name: str) -> dict[str, Any] | None:
     """Find and validate a plugin manifest by name."""
-    # Local
+    # Local (DATA_DIR)
     local_path = os.path.join(PLUGINS_DIR, plugin_name, "odysseus-plugin.json")
     if os.path.isfile(local_path):
         try:
             with open(local_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            validate_manifest(manifest)
+            return manifest
+        except PluginValidationError:
+            pass
+    # Bundled repo plugins
+    repo_path = os.path.join(REPO_PLUGINS_DIR, plugin_name, "odysseus-plugin.json")
+    if os.path.isfile(repo_path):
+        try:
+            with open(repo_path, "r", encoding="utf-8") as f:
                 manifest = json.load(f)
             validate_manifest(manifest)
             return manifest
@@ -161,6 +172,15 @@ def call_register(plugin_name: str, app: Any) -> bool:
     capabilities = manifest.get("capabilities", [])
     host = PluginHost(plugin_name, capabilities, app)
 
+    # Determine plugin root for sys.path injection
+    plugin_root = os.path.join(PLUGINS_DIR, plugin_name)
+    if not os.path.isdir(plugin_root):
+        plugin_root = os.path.join(REPO_PLUGINS_DIR, plugin_name)
+    _path_inserted = False
+    if os.path.isdir(plugin_root) and plugin_root not in sys.path:
+        sys.path.insert(0, plugin_root)
+        _path_inserted = True
+
     # Inject a scoped fake odysseus module so the plugin can import it.
     # Save and restore the previous entry so plugins don't clobber each other.
     _previous_odysseus = sys.modules.get("odysseus")
@@ -182,6 +202,11 @@ def call_register(plugin_name: str, app: Any) -> bool:
             sys.modules.pop("odysseus", None)
         else:
             sys.modules["odysseus"] = _previous_odysseus
+        if _path_inserted:
+            try:
+                sys.path.remove(plugin_root)
+            except ValueError:
+                pass
 
 
 def _load_enabled() -> dict[str, bool]:
@@ -194,21 +219,28 @@ def _load_enabled() -> dict[str, bool]:
         return {}
 
 
+def _scan_and_register(plugins_dir: str, enabled: dict[str, bool], app: Any):
+    if not os.path.isdir(plugins_dir):
+        return
+    for entry in os.listdir(plugins_dir):
+        plugin_dir = os.path.join(plugins_dir, entry)
+        if not os.path.isdir(plugin_dir):
+            continue
+        manifest_path = os.path.join(plugin_dir, "odysseus-plugin.json")
+        if not os.path.isfile(manifest_path):
+            continue
+        if not enabled.get(entry, False):
+            continue
+        call_register(entry, app)
+
+
 def startup_all(app: Any):
     """Call register(host) for every installed/enabled plugin that has an entry_point."""
     enabled = _load_enabled()
-    # Local plugins
-    if os.path.isdir(PLUGINS_DIR):
-        for entry in os.listdir(PLUGINS_DIR):
-            plugin_dir = os.path.join(PLUGINS_DIR, entry)
-            if not os.path.isdir(plugin_dir):
-                continue
-            manifest_path = os.path.join(plugin_dir, "odysseus-plugin.json")
-            if not os.path.isfile(manifest_path):
-                continue
-            if not enabled.get(entry, False):
-                continue
-            call_register(entry, app)
+    # Local plugins (DATA_DIR)
+    _scan_and_register(PLUGINS_DIR, enabled, app)
+    # Bundled repo plugins
+    _scan_and_register(REPO_PLUGINS_DIR, enabled, app)
     # Entry-point plugins
     try:
         import importlib.metadata as md

@@ -21,6 +21,7 @@ import documentModule from './document.js';
 import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
+import { tryPluginSlashCommand } from './plugin_registry.js';
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
@@ -461,6 +462,15 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
 
     // --- Slash commands: execute directly without AI (no session needed) ---
     if (isCommand(msg.trim())) {
+      // Try plugin-registered slash commands first
+      const pluginHandled = await tryPluginSlashCommand(msg.trim());
+      if (pluginHandled) {
+        el('message').value = '';
+        if (window._syncModelPickerAutohide) window._syncModelPickerAutohide();
+        if (uiModule.autoResize) uiModule.autoResize(el('message'));
+        _releaseSendFlag();
+        return;
+      }
       const handled = await handleSlashCommand(msg.trim());
       if (handled) {
         el('message').value = '';

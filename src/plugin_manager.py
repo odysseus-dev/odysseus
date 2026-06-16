@@ -3,6 +3,7 @@
 Plugins are discovered via:
 1. Python entry-points (pip-installed, ``odysseus.plugins`` group)
 2. Local ``DATA_DIR/plugins/`` directory (dev overrides)
+3. Bundled repo ``plugins/`` directory (reference plugins shipped with core)
 
 Remote discover/install are intentionally left out of this PR;
 they will be revisited separately once the contract is settled.
@@ -21,6 +22,7 @@ from src.plugin_schema import PluginValidationError, validate_manifest
 logger = logging.getLogger(__name__)
 
 PLUGINS_DIR = os.path.join(DATA_DIR, "plugins")
+REPO_PLUGINS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins")
 
 
 def _registry_file() -> str:
@@ -138,9 +140,11 @@ class PluginManager:
                     logger.warning("Failed to load entry-point %s: %s", ep.name, e)
         except Exception:
             pass
-        if os.path.isdir(PLUGINS_DIR):
-            for entry in os.listdir(PLUGINS_DIR):
-                plugin_dir = os.path.join(PLUGINS_DIR, entry)
+        for root_dir in (PLUGINS_DIR, REPO_PLUGINS_DIR):
+            if not os.path.isdir(root_dir):
+                continue
+            for entry in os.listdir(root_dir):
+                plugin_dir = os.path.join(root_dir, entry)
                 if not os.path.isdir(plugin_dir):
                     continue
                 manifest = _load_manifest_from_dir(plugin_dir)
@@ -197,16 +201,16 @@ class PluginManager:
     def serve_path(self, plugin_name: str, file_path: str) -> str | None:
         if "/" in plugin_name or "\\" in plugin_name or ".." in plugin_name:
             return None
-        base = os.path.join(PLUGINS_DIR, plugin_name)
-        target = os.path.normpath(os.path.join(base, file_path))
-        if not target.startswith(os.path.normpath(base)):
-            return None
-        if os.path.exists(target) and os.path.isfile(target):
-            return target
+        for base in (os.path.join(PLUGINS_DIR, plugin_name), os.path.join(REPO_PLUGINS_DIR, plugin_name)):
+            target = os.path.normpath(os.path.join(base, file_path))
+            if not target.startswith(os.path.normpath(base)):
+                continue
+            if os.path.exists(target) and os.path.isfile(target):
+                return target
         return None
 
     def get_local_dir(self, plugin_name: str) -> str | None:
-        path = os.path.join(PLUGINS_DIR, plugin_name)
-        if os.path.isdir(path):
-            return path
+        for path in (os.path.join(PLUGINS_DIR, plugin_name), os.path.join(REPO_PLUGINS_DIR, plugin_name)):
+            if os.path.isdir(path):
+                return path
         return None

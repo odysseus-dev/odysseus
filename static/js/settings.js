@@ -23,24 +23,28 @@ function safeRasterDataUrl(raw) {
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
 
+function _switchTab(tab) {
+  // Lazy-init admin when first clicking an admin tab
+  if (ADMIN_TABS.has(tab) && window.adminModule && typeof window.adminModule.open === 'function') {
+    window.adminModule.open(tab);
+    return;
+  }
+  modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
+  modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+  // Mark when the Appearance tab is open so the modal can go
+  // semi-transparent — lets the user see the rest of the UI react as
+  // they flip toggles instead of having to close + reopen the modal.
+  document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
+  syncAppearanceOpacity(tab === 'appearance');
+  if (tab === 'ai') refreshAiModelEndpoints();
+}
+
 function initTabs() {
-  modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = btn.dataset.settingsTab;
-      // Lazy-init admin when first clicking an admin tab
-      if (ADMIN_TABS.has(tab) && window.adminModule && typeof window.adminModule.open === 'function') {
-        window.adminModule.open(tab);
-        return;
-      }
-      modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
-      modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
-      // Mark when the Appearance tab is open so the modal can go
-      // semi-transparent — lets the user see the rest of the UI react as
-      // they flip toggles instead of having to close + reopen the modal.
-      document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
-      syncAppearanceOpacity(tab === 'appearance');
-      if (tab === 'ai') refreshAiModelEndpoints();
-    });
+  // Event delegation so dynamically-added plugin tabs work without rebinding
+  modalEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-settings-tab]');
+    if (!btn) return;
+    _switchTab(btn.dataset.settingsTab);
   });
 }
 
