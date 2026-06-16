@@ -130,6 +130,36 @@ def mcp_tool_is_readonly(tool: Dict) -> bool:
     return name.startswith(_MCP_READONLY_VERBS)
 
 
+# Reserved env-var name used to pass HTTP headers to SSE/Streamable-HTTP
+# transports without adding a new column to the mcp_servers table. The value
+# is a JSON-encoded object {"Header-Name": "value", ...} which the manager
+# unpacks and forwards as request headers. Visible in the UI under the env
+# field for HTTP/SSE servers; ignored for stdio.
+_MCP_HEADERS_ENV_KEY = "ODYSSEUS_MCP_HTTP_HEADERS"
+
+
+def _headers_from_env(env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Pull HTTP headers from a reserved env key. Returns {} on any error
+    (missing, malformed JSON, non-dict) so the manager stays resilient."""
+    if not env:
+        return {}
+    raw = env.get(_MCP_HEADERS_ENV_KEY)
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            f"MCP {_MCP_HEADERS_ENV_KEY} is not valid JSON; ignoring. "
+            f"Got: {raw[:80]!r}"
+        )
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    # Coerce to str values (JSON requires strings, but be defensive).
+    return {str(k): str(v) for k, v in parsed.items() if k}
+
+
 class McpManager:
     """Manages MCP server connections and tool routing."""
 
@@ -156,14 +186,32 @@ class McpManager:
         args: Optional[List[str]] = None,
         env: Optional[Dict[str, str]] = None,
         url: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
     ) -> bool:
-        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport."""
+        """Connect to an MCP server via stdio, SSE, or Streamable HTTP transport.
+
+        `headers` is forwarded to SSE/Streamable-HTTP transports as request
+        headers (e.g. bearer tokens for pre-shared-secret auth). For stdio
+        servers, `env` is the right place. Headers can also be passed
+        indirectly via the ODYSSEUS_MCP_HTTP_HEADERS env var (JSON string)
+        so the value lives in the DB row alongside the rest of the server
+        config without requiring a schema change.
+        """
         try:
+            # Merge ODYSSEUS_MCP_HTTP_HEADERS from env (JSON) into the
+            # explicit headers dict, so DB rows can carry headers without
+            # needing a new column. Explicit headers take precedence.
+            env_headers = _headers_from_env(env)
+            merged_headers = {**env_headers, **(headers or {})}
             if transport == "stdio":
                 res = await self._connect_stdio(server_id, name, command, args or [], env or {})
             elif transport == "sse":
-                res = await self._connect_sse(server_id, name, url)
+                res = await self._connect_sse(server_id, name, url, headers=merged_headers or None)
             elif transport == "http":
+                # NOTE: _start_http_connect doesn't accept a `headers` arg today
+                # (it uses OAuth via `auth=provider` for transport auth). If/when
+                # it grows a headers path, merge them in here alongside the stdio
+                # and sse branches above.
                 res = await self._start_http_connect(server_id, name, url)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
@@ -245,8 +293,13 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
-        """Connect to an MCP server via SSE transport."""
+    async def _connect_sse(self, server_id: str, name: str, url: str, headers: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to an MCP server via SSE transport.
+
+        `headers` are sent with every request — useful for pre-shared-secret
+        auth (e.g. an internal API gateway that uses an X-Service-Token
+        header). When absent, the SSE client behaves exactly as before.
+        """
         try:
             from mcp import ClientSession
             from mcp.client.sse import sse_client
@@ -254,7 +307,13 @@ class McpManager:
 
             stack = AsyncExitStack()
             try:
-                transport = await stack.enter_async_context(sse_client(url))
+                # sse_client accepts `headers=` in the modern mcp-python API;
+                # pass through only when provided so older versions stay
+                # forward-compatible.
+                if headers:
+                    transport = await stack.enter_async_context(sse_client(url, headers=headers))
+                else:
+                    transport = await stack.enter_async_context(sse_client(url))
                 read_stream, write_stream = transport
                 session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
 
