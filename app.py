@@ -871,7 +871,7 @@ from routes.contacts.contacts_routes import setup_contacts_routes
 app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
-app.include_router(setup_companion_routes(memory_manager=memory_manager))
+app.include_router(setup_companion_routes(memory_manager=memory_manager, research_handler=research_handler))
 
 # ========= ROUTES (kept in app.py) =========
 
