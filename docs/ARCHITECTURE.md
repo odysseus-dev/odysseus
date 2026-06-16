@@ -266,7 +266,7 @@ Odysseus employs a lightweight routing heuristic to determine when a standard ch
 ```mermaid
 graph TD
     Input["User Prompt"] --> Regex["Regex Intent Detection"]
-    Regex --> |"can you search...", "read this..."| Agent["Promote to Agent Mode"]
+    Regex --> |'can you search...', 'read this...'| Agent["Promote to Agent Mode"]
     Regex --> |General question| Chat["Standard Chat Completion"]
     Agent --> LoadTools["Load Tools & System Prompt"]
     Chat --> LLM["LLM Generation"]
