@@ -1485,8 +1485,6 @@ class CustomSelect {
     this.dropdown.style.position = 'fixed';
     this.dropdown.style.left = `${rect.left}px`;
     this.dropdown.style.top = `${rect.bottom + 4}px`;
-    this.dropdown.style.right = 'auto';
-    this.dropdown.style.bottom = 'auto';
     this.dropdown.style.minWidth = `${rect.width}px`;
     this.dropdown.style.width = 'auto';
     this.dropdown.style.zIndex = '9999';
