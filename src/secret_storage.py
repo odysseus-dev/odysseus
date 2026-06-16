@@ -35,6 +35,18 @@ _fernet: Fernet | None = None
 
 
 def _load_or_create_key() -> bytes:
+    import base64
+    env_key = os.environ.get('APP_KEY', '').strip()
+    if env_key:
+        try:
+            key = base64.urlsafe_b64decode(env_key + '==')  # padding-tolerant
+            if len(key) == 32:
+                logger.info("Using APP_KEY from environment variable.")
+                return base64.urlsafe_b64encode(key)  # re-encode to Fernet format
+            else:
+                logger.critical("APP_KEY env var is not a valid 32-byte Fernet key; falling back to key file.")
+        except Exception:
+            logger.critical("APP_KEY env var decode failed — invalid base64 or key length; falling back to key file.")
     if _KEY_PATH.exists():
         return _KEY_PATH.read_bytes()
     _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)

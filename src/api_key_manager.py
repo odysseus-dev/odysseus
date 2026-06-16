@@ -82,10 +82,12 @@ class APIKeyManager:
         write them back as plaintext, which then fails to decrypt on the next
         load() and silently drops those providers.
         """
+        from core.atomic_io import atomic_write_json as _atomic_write_json  # deferred: avoids core/__init__ at module load
         keys = self._load_raw()
         keys[provider] = self.encrypt_api_key(api_key)
-        with open(self.api_keys_file, 'w', encoding="utf-8") as f:
-            json.dump(keys, f)
+        # Atomic temp-write + os.replace so a crash mid-write can't truncate
+        # api_keys.json, and 0o600 so the encrypted-at-rest store is owner-only.
+        _atomic_write_json(self.api_keys_file, keys, mode=0o600)
 
     def load(self) -> Dict[str, str]:
         """Load and decrypt API keys"""

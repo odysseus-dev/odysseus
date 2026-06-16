@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from typing import Any, Optional
 
+from core.platform_compat import safe_chmod
 
-def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> None:
+
+def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None, mode: Optional[int] = None) -> None:
     """Atomically persist `data` as JSON at `path`.
 
     The temp file uses the live PID as a suffix so two processes saving the
@@ -31,6 +34,8 @@ def atomic_write_json(path: str, data: Any, *, indent: Optional[int] = None) -> 
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, path)
+    if mode is not None:
+        safe_chmod(path, mode)
 
 
 def atomic_write_text(path: str, text: str) -> None:
