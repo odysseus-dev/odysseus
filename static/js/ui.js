@@ -1481,6 +1481,7 @@ class CustomSelect {
   open() {
     this._sync();
     const rect = this.wrapper.getBoundingClientRect();
+    this.dropdown.style.display = 'block';
     this.dropdown.style.position = 'fixed';
     this.dropdown.style.left = `${rect.left}px`;
     this.dropdown.style.top = `${rect.bottom + 4}px`;
@@ -1490,12 +1491,22 @@ class CustomSelect {
     this.trigger.setAttribute('aria-expanded', 'true');
     const selected = this.dropdown.querySelector('.custom-select__option.is-selected');
     if (selected) selected.focus();
+    // Close if the page or any ancestor scrolls while open (prevents
+    // the fixed-position dropdown from floating detached).
+    this._onScrollClose = this._onScrollClose || (() => this.close());
+    document.addEventListener('scroll', this._onScrollClose, true);
+    window.addEventListener('resize', this._onScrollClose);
   }
 
   close() {
+    this.dropdown.style.display = 'none';
     this.wrapper.classList.remove('is-open');
     this.trigger.setAttribute('aria-expanded', 'false');
     this.trigger.removeAttribute('aria-activedescendant');
+    if (this._onScrollClose) {
+      document.removeEventListener('scroll', this._onScrollClose, true);
+      window.removeEventListener('resize', this._onScrollClose);
+    }
   }
 
   destroy() {
@@ -1523,6 +1534,7 @@ class CustomSelect {
       }
     });
     document.querySelectorAll('.custom-select__dropdown').forEach((dd) => {
+      dd.style.display = 'none';
       dd.style.zIndex = '';
     });
   }
