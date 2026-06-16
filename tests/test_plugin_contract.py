@@ -133,7 +133,7 @@ class TestPluginHost:
 class TestPluginManager:
     def test_list_installed_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.plugin_manager.PLUGINS_DIR", tmpdir):
+            with patch("src.plugin_manager.PLUGINS_DIR", tmpdir), patch("src.plugin_manager.REPO_PLUGINS_DIR", tmpdir):
                 pm = PluginManager()
                 assert pm.list_installed() == []
 
@@ -160,7 +160,7 @@ class TestPluginManager:
 
     def test_enable_disable(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.plugin_manager.PLUGINS_DIR", tmpdir):
+            with patch("src.plugin_manager.PLUGINS_DIR", tmpdir), patch("src.plugin_manager.REPO_PLUGINS_DIR", tmpdir):
                 pm = PluginManager()
                 # Default is off — no opt-in means no code runs
                 assert not pm.is_enabled("never-seen")
