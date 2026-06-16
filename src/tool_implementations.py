@@ -53,6 +53,8 @@ from src.tools.search import do_search_chats  # noqa: F401
 from src.tools.notes import do_manage_notes  # noqa: F401
 # Calendar domain extracted to src/tools/calendar.py (slice 1, #4082/#4071).
 from src.tools.calendar import do_manage_calendar  # noqa: F401
+# Image domain extracted to src/tools/image.py (slice 1, #4082/#4071).
+from src.tools.image import do_edit_image  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -143,35 +145,6 @@ def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
     if owner:
         headers["X-Odysseus-Owner"] = owner
     return headers
-
-
-# ── Gallery tools ──
-
-async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
-    """Edit a gallery image (upscale, rembg, inpaint, harmonize)."""
-    import httpx
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
-    image_id = args.get("image_id", "")
-    action = args.get("action", "")
-    if not image_id or not action:
-        return {"error": "image_id and action are required", "exit_code": 1}
-    payload = {"image_id": image_id}
-    if args.get("prompt"):
-        payload["prompt"] = args["prompt"]
-    if args.get("scale"):
-        payload["scale"] = args["scale"]
-    try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/gallery/{action}", json=payload)
-            data = resp.json()
-        if data.get("success") or data.get("id"):
-            return {"output": f"Image edited ({action}). New image ID: {data.get('id', '?')}", "exit_code": 0}
-        return {"error": data.get("error", f"{action} failed"), "exit_code": 1}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
 
 
 # ── Research tools ──
