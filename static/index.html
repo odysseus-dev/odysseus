@@ -322,11 +322,11 @@
             <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px;">
               <h2 style="margin:0;padding:0;line-height:1;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;color:var(--accent, var(--red));"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>Add Skill</h2>
             </div>
-            <p class="memory-desc doclib-desc" style="margin-top:6px;">Import a skill from GitHub or <a href="https://skills.sh" target="_blank" rel="noopener noreferrer">skills.sh</a> (folder with <code>SKILL.md</code> and optional templates).</p>
+            <p class="memory-desc doclib-desc" style="margin-top:6px;">Import a skill from GitHub or <a href="https://skills.sh" target="_blank" rel="noopener noreferrer">skills.sh</a> — paste a GitHub folder URL or the whole <code>npx skills add …</code> command (it reads the <code>--skill</code> name for you).</p>
             <div class="memory-add-row" style="margin-top:6px;margin-bottom:10px;">
               <div class="skill-ph-wrap" style="flex:1;min-width:0;">
-                <input type="url" id="skill-import-url" placeholder=" " class="memory-add-input skill-hint-input" aria-label="Skill import URL" />
-                <span class="skill-rich-ph"><span class="k">Import URL</span> — e.g. GitHub tree link to a skill folder</span>
+                <input type="text" id="skill-import-url" placeholder=" " class="memory-add-input skill-hint-input" aria-label="Skill import URL or command" />
+                <span class="skill-rich-ph"><span class="k">Import</span> — GitHub folder URL or <code>npx skills add …</code> command</span>
               </div>
               <button type="button" id="skill-import-url-btn" class="theme-io-btn" title="Import skill from URL" style="flex:none;height:28px;font-size:12px;"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Import</button>
             </div>

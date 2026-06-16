@@ -1244,21 +1244,26 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
     @router.post("/import-from-url")
     async def import_skill_from_url(request: Request, body: SkillImportUrlRequest):
-        """Install a SKILL.md bundle from a public GitHub URL (skills.sh links supported)."""
+        """Install one or more SKILL.md bundles from a public GitHub URL or a
+        pasted `npx skills add …` command (skills.sh links supported)."""
         require_admin(request)
         user = _owner(request)
         from services.memory.skill_importer import (
             SkillImportError,
-            fetch_skill_bundle,
+            fetch_skill_bundles,
         )
 
+        src_input = body.url.strip()
         try:
-            files, _src = fetch_skill_bundle(body.url.strip())
-            entry = skills_manager.import_bundle_from_files(
-                files,
-                owner=user,
-                source_url=body.url.strip(),
-            )
+            bundles = fetch_skill_bundles(src_input)
+            entries = [
+                skills_manager.import_bundle_from_files(
+                    files,
+                    owner=user,
+                    source_url=src_input,
+                )
+                for files, _src in bundles
+            ]
         except SkillImportError as e:
             raise HTTPException(400, str(e)) from e
         except httpx.HTTPError as e:
@@ -1270,7 +1275,16 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
             raise HTTPException(500, "Skill import failed") from e
 
         _fire_skill_added(user)
-        return {"ok": True, "skill": entry, "files": len(files)}
+        file_count = sum(len(files) for files, _ in bundles)
+        # `skill` kept (first entry) for backward compatibility; `skills` is the
+        # full list when a command installs several at once.
+        return {
+            "ok": True,
+            "skill": entries[0] if entries else None,
+            "skills": entries,
+            "count": len(entries),
+            "files": file_count,
+        }
 
     @router.post("/add")
     async def add_skill(request: Request, body: SkillAddRequest):

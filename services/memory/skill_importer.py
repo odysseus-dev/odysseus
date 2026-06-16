@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shlex
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote, urlparse
@@ -37,6 +38,17 @@ def _assert_github_url(url: str, *, context: str = "URL") -> None:
         raise SkillImportError(
             f"{context} must stay on GitHub (got {host or 'unknown host'})"
         )
+
+
+def _gh_headers(accept: str = "application/vnd.github+json") -> Dict[str, str]:
+    """Headers for GitHub requests. Adds Authorization from GITHUB_TOKEN (or
+    GH_TOKEN) when set, lifting the unauthenticated 60 req/hour API limit to
+    5,000/hour. Harmless on raw.githubusercontent.com fetches."""
+    headers = {"Accept": accept}
+    token = (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 @dataclass
@@ -127,6 +139,85 @@ def parse_skill_source(url: str) -> ResolvedSource:
     return ResolvedSource(owner=owner, repo=repo, ref=ref, path=path)
 
 
+_SKILL_FLAGS = ("--skill", "-s")
+# Tokens that are runner/subcommand noise, never a skill source.
+_COMMAND_NOISE = {"npx", "npm", "pnpm", "yarn", "bunx", "skills", "add", "use", "exec"}
+
+
+def parse_skill_command(text: str) -> Tuple[str, List[str]]:
+    """Split an ``npx skills add …`` command into (source_token, skill_names).
+
+    A plain URL or ``owner/repo`` shorthand returns it unchanged with no names.
+    Skill selectors are read from ``--skill``/``-s`` (each accepts one or more
+    space-separated names, matching the skills CLI's variadic flag); ``*`` is
+    dropped since it means "all" and has no single-folder mapping here.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        raise SkillImportError("URL or command is required")
+
+    has_flags = any(f in raw.split() for f in _SKILL_FLAGS)
+    is_command = "skills add" in raw.lower() or "skills use" in raw.lower()
+    if not has_flags and not is_command:
+        # Bare URL / shorthand — nothing to extract.
+        return raw, []
+
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        tokens = raw.split()
+
+    names: List[str] = []
+    source = ""
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _SKILL_FLAGS:
+            i += 1
+            while i < len(tokens) and not tokens[i].startswith("-"):
+                val = tokens[i].strip().strip("'\"")
+                if val and val != "*":
+                    names.append(val)
+                i += 1
+            continue
+        if tok.startswith("-"):  # unknown flag, ignore
+            i += 1
+            continue
+        if tok.split("@", 1)[0].lower() in _COMMAND_NOISE:
+            i += 1
+            continue
+        if not source:
+            source = tok
+        i += 1
+
+    if not source:
+        raise SkillImportError("Could not find a repo or URL in the command")
+    return source, names
+
+
+def _resolve_source_token(token: str) -> ResolvedSource:
+    """Resolve a command source token — a GitHub URL or ``owner/repo[@ref][/path]``
+    shorthand — into a ResolvedSource."""
+    tok = (token or "").strip()
+    if not tok:
+        raise SkillImportError("missing skill source")
+    if "://" in tok or "skills.sh" in tok or tok.startswith("git@"):
+        return parse_skill_source(tok)
+    if tok.startswith("github.com/") or tok.startswith("www.github.com/"):
+        return parse_skill_source("https://" + tok)
+    bits = [p for p in tok.split("/") if p]
+    if len(bits) < 2:
+        raise SkillImportError(
+            f"'{tok}' is not a GitHub repo — use owner/repo or a github.com URL"
+        )
+    owner, repo = bits[0], bits[1]
+    ref = "main"
+    if "@" in repo:
+        repo, ref = repo.split("@", 1)
+    path = "/".join(bits[2:])
+    return ResolvedSource(owner=owner, repo=repo, ref=ref or "main", path=path)
+
+
 def _raw_url(src: ResolvedSource, rel_path: str) -> str:
     rel = _safe_relpath(rel_path)
     return f"https://raw.githubusercontent.com/{src.owner}/{src.repo}/{quote(src.ref, safe='')}/{quote(rel, safe='/')}"
@@ -169,7 +260,7 @@ def _fetch_bytes(url: str) -> bytes:
     if not ok:
         raise SkillImportError(reason)
     with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-        r = client.get(url, headers={"Accept": "application/vnd.github+json"})
+        r = client.get(url, headers=_gh_headers())
         if r.status_code >= 400:
             raise _github_response_error(r)
         _assert_github_url(str(r.url), context="redirect target")
@@ -194,7 +285,7 @@ def _list_github_dir(src: ResolvedSource, rel_dir: str, out: Dict[str, str], *, 
     if not ok:
         raise SkillImportError(reason)
     with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-        r = client.get(url, headers={"Accept": "application/vnd.github+json"})
+        r = client.get(url, headers=_gh_headers())
         if r.status_code >= 400:
             raise _github_response_error(r)
         _assert_github_url(str(r.url), context="redirect target")
@@ -227,9 +318,9 @@ def _list_github_dir(src: ResolvedSource, rel_dir: str, out: Dict[str, str], *, 
         out[rel] = text
 
 
-def fetch_skill_bundle(url: str) -> Tuple[Dict[str, str], ResolvedSource]:
-    """Download SKILL.md and sibling text assets. Returns relative_path → content."""
-    src = parse_skill_source(url)
+def _fetch_bundle_for_source(src: ResolvedSource) -> Dict[str, str]:
+    """Download SKILL.md and sibling text assets for a resolved source.
+    Returns relative_path → content."""
     files: Dict[str, str] = {}
 
     path = _safe_relpath(src.path) if src.path else ""
@@ -239,37 +330,134 @@ def fetch_skill_bundle(url: str) -> Tuple[Dict[str, str], ResolvedSource]:
         if parent:
             try:
                 _list_github_dir(src, parent, files)
-            except SkillImportError:
+            except Exception:
                 pass
-        return files, src
+        return files
 
     if path:
+        # Folder containing SKILL.md? Grab it via raw first (free), then list
+        # the folder for extras best-effort — so a valid folder still imports
+        # even when the GitHub API is rate-limited.
         try:
-            _fetch_text(_raw_url(src, f"{path}/SKILL.md"))
-            _list_github_dir(src, path, files)
-            return files, src
-        except Exception:
-            pass
+            files[f"{path}/SKILL.md"] = _fetch_text(_raw_url(src, f"{path}/SKILL.md"))
+            try:
+                _list_github_dir(src, path, files)
+            except Exception:
+                pass
+            return files
+        except SkillImportError:
+            files.pop(f"{path}/SKILL.md", None)
         try:
             text = _fetch_text(_raw_url(src, path))
             if path.lower().endswith(".md"):
                 files[path] = text
-                return files, src
+                return files
         except Exception:
             pass
         _list_github_dir(src, path, files)
     else:
         _list_github_dir(src, "", files)
 
-    if not any(p.lower().endswith("skill.md") for p in files):
+    skill_mds = [p for p in files if p.lower().endswith("skill.md")]
+    if not skill_mds:
         # Flat repo root with SKILL.md only
         try:
             files["SKILL.md"] = _fetch_text(_raw_url(src, "SKILL.md"))
+            skill_mds = ["SKILL.md"]
         except Exception as e:
             raise SkillImportError(
                 "No SKILL.md found — link to a skill folder or SKILL.md on GitHub"
             ) from e
-    return files, src
+
+    if len(skill_mds) > 1 and not path:
+        folders = sorted({p.rsplit("/", 1)[0] or "(root)" for p in skill_mds})
+        listed = ", ".join(folders[:12]) + (" …" if len(folders) > 12 else "")
+        raise SkillImportError(
+            f"This repo contains multiple skills ({listed}). "
+            "Add --skill <name> (e.g. paste the whole `npx skills add` command) "
+            "or link the specific skill folder on GitHub."
+        )
+    return files
+
+
+def _fetch_named_skill(src: ResolvedSource, name: str) -> Dict[str, str]:
+    """Resolve a single named skill to its bundle, raw-first (no GitHub API in
+    the common case). Falls back to a SKILL.md-only bundle when the folder
+    can't be listed (e.g. API rate limit), so it never imports the wrong skill
+    and never hard-fails on the limit."""
+    safe_name = _safe_relpath(name)
+    base = _safe_relpath(src.path) if src.path else ""
+    candidates: List[str] = []
+    if base:
+        candidates += [f"{base}/{safe_name}", f"{base}/skills/{safe_name}"]
+        if base.endswith(f"/{safe_name}") or base == safe_name:
+            candidates.append(base)
+    candidates += [f"skills/{safe_name}", safe_name]
+
+    folder = ""
+    skill_md = ""
+    for cand in candidates:
+        if not cand:
+            continue
+        try:
+            skill_md = _fetch_text(_raw_url(src, f"{cand}/SKILL.md"))
+            folder = cand
+            break
+        except SkillImportError:
+            continue
+
+    if not folder:
+        raise SkillImportError(
+            f"Could not find skill '{name}' in {src.owner}/{src.repo} "
+            f"(looked for skills/{safe_name}/SKILL.md). "
+            "Check the name, or paste the skill's GitHub folder URL."
+        )
+
+    files: Dict[str, str] = {"SKILL.md": skill_md}
+    # Best-effort: pull sibling assets (templates/, references/) via the API.
+    # Swallow listing/rate-limit failures — SKILL.md alone is a valid bundle.
+    try:
+        raw_files: Dict[str, str] = {}
+        _list_github_dir(src, folder, raw_files)
+        prefix = f"{folder}/"
+        for rel, content in raw_files.items():
+            rerooted = rel[len(prefix):] if rel.startswith(prefix) else rel
+            if rerooted:
+                files[rerooted] = content
+    except Exception:
+        pass
+    return files
+
+
+def fetch_skill_bundle(url: str) -> Tuple[Dict[str, str], ResolvedSource]:
+    """Download SKILL.md and sibling text assets for a single URL.
+    Returns (relative_path → content, source). Kept for callers that import
+    exactly one skill from a URL."""
+    src = parse_skill_source(url)
+    return _fetch_bundle_for_source(src), src
+
+
+def fetch_skill_bundles(text: str) -> List[Tuple[Dict[str, str], ResolvedSource]]:
+    """Resolve a pasted URL or ``npx skills add`` command into one or more
+    installable bundles. ``--skill <name>`` selectors are resolved raw-first;
+    a bare URL/repo yields a single bundle (and errors helpfully if the repo
+    holds multiple skills)."""
+    source_token, names = parse_skill_command(text)
+    if names:
+        src = _resolve_source_token(source_token)
+        return [(_fetch_named_skill(src, nm), src) for nm in names]
+
+    # No explicit names: single bundle. URLs (incl. skills.sh) go through the
+    # URL parser; bare owner/repo shorthand resolves directly.
+    if (
+        "://" in source_token
+        or "skills.sh" in source_token
+        or source_token.startswith(("git@", "github.com/", "www.github.com/"))
+    ):
+        src = parse_skill_source(source_token)
+    else:
+        src = _resolve_source_token(source_token)
+    return [(_fetch_bundle_for_source(src), src)]
 
 
 def pick_skill_md(files: Dict[str, str]) -> Tuple[str, str]:

@@ -1846,7 +1846,7 @@ async function importSkillFromUrl() {
   const input = document.getElementById('skill-import-url');
   const url = (input?.value || '').trim();
   if (!url) {
-    uiModule.showError('Paste a GitHub or skills.sh URL first');
+    uiModule.showError('Paste a GitHub URL or an `npx skills add …` command first');
     return;
   }
   const btn = document.getElementById('skill-import-url-btn');
@@ -1861,8 +1861,13 @@ async function importSkillFromUrl() {
     if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
     if (input) input.value = '';
     await loadSkills();
-    const name = data.skill?.name || 'skill';
-    uiModule.showToast(`Imported ${name} (${data.files || 1} file(s))`);
+    const entries = Array.isArray(data.skills) && data.skills.length ? data.skills : [data.skill].filter(Boolean);
+    const name = entries[0]?.name || 'skill';
+    if (entries.length > 1) {
+      uiModule.showToast(`Imported ${entries.length} skills (${entries.map(s => s.name).join(', ')})`);
+    } else {
+      uiModule.showToast(`Imported ${name} (${data.files || 1} file(s))`);
+    }
     if (name) openSkill(name);
   } catch (err) {
     uiModule.showError('Import failed: ' + err.message);

@@ -397,7 +397,9 @@ class SkillsManager:
             raise SkillImportError("empty bundle")
         _rel, skill_md = pick_skill_md(files)
         sk = Skill.from_markdown(skill_md)
-        nm = slugify(sk.name or _rel.split("/")[-2] or "skill")
+        _rel_parts = _rel.split("/")
+        _rel_folder = _rel_parts[-2] if len(_rel_parts) >= 2 else ""
+        nm = slugify(sk.name or _rel_folder or "skill")
         cat = slugify(category or sk.category or "imported", fallback="imported")
 
         existing = {s["name"] for s in self.load_all()}
