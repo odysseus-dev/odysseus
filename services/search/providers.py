@@ -9,13 +9,11 @@ from urllib.parse import urljoin, urlparse, parse_qs
 import httpx
 from bs4 import BeautifulSoup
 
-from src.constants import SEARXNG_INSTANCE
+from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT, WEB_FETCH_USER_AGENT
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 
 logger = logging.getLogger(__name__)
-
-REQUEST_TIMEOUT = 20
 
 # Provider registry — maps setting value to (label, needs_key, needs_url)
 PROVIDER_INFO = {
@@ -134,12 +132,13 @@ _NEWS_HINTS = ("news", "nyheter", "headlines", "breaking", "latest", "today", "i
 _GENERAL_ENGINES = os.environ.get("SEARXNG_GENERAL_ENGINES", "bing,mojeek,presearch")
 
 
-def searxng_search_api(query: str, count: int = 10, categories: str = "general",
+def searxng_search_api(query: str, count: Optional[int] = None, categories: str = "general",
                        time_filter: Optional[str] = None) -> List[dict]:
     """Search using SearXNG JSON API. Returns list of {title, url, snippet}."""
+    count = count if count is not None else _get_result_count()
     instance = _get_search_instance()
     api_key = ""
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": WEB_FETCH_USER_AGENT}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     # News/fresh queries do badly in the 'general' category — it favours
@@ -251,7 +250,7 @@ def searxng_search(query, max_results=10):
     """Search using SearXNG instance - parsing HTML."""
     instance = _get_search_instance()
     api_key = ""
-    req_headers = {"User-Agent": "Mozilla/5.0"}
+    req_headers = {"User-Agent": WEB_FETCH_USER_AGENT}
     if api_key:
         req_headers["Authorization"] = f"Bearer {api_key}"
     try:
@@ -282,8 +281,9 @@ def searxng_search(query, max_results=10):
 
 # ── Brave ──
 
-def brave_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def brave_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Brave API with key from admin settings or env var."""
+    count = count if count is not None else _get_result_count()
     api_key = _get_provider_key("brave") or os.environ.get("DATA_BRAVE_API_KEY") or ""
     return _brave_search_impl(query, count, time_filter, search_config={"brave_api_key": api_key})
 
@@ -381,15 +381,15 @@ def _resolve_ddg_redirect(raw: str) -> str:
     return resolved
 
 
-def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def duckduckgo_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using DuckDuckGo via the duckduckgo-search library. No API key needed."""
-
+    count = count if count is not None else _get_result_count()
     def _html_fallback() -> List[dict]:
         try:
             response = httpx.get(
                 "https://html.duckduckgo.com/html/",
                 params={"q": query, "kp": _safesearch_for("duckduckgo_html")},
-                headers={"User-Agent": "Mozilla/5.0"},
+                headers={"User-Agent": WEB_FETCH_USER_AGENT},
                 timeout=REQUEST_TIMEOUT,
             )
             response.raise_for_status()
@@ -415,7 +415,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
             return []
 
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
     except ImportError:
         logger.warning("duckduckgo-search package not installed; using HTML fallback")
         return _html_fallback()
@@ -452,7 +452,7 @@ def duckduckgo_search(query: str, count: int = 10, time_filter: Optional[str] = 
 
 # ── Google Programmable Search Engine ──
 
-def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def google_pse_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Google PSE (Custom Search JSON API).
 
     Requires two keys in settings:
@@ -460,6 +460,7 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
       - google_pse_cx: Programmable Search Engine ID (cx)
     Or env vars GOOGLE_API_KEY and GOOGLE_PSE_CX.
     """
+    count = count if count is not None else _get_result_count()
     settings = _get_search_settings()
     api_key = _get_provider_key("google_pse") or os.environ.get("GOOGLE_API_KEY", "")
     cx = (settings.get("google_pse_cx") or "").strip() or os.environ.get("GOOGLE_PSE_CX", "")
@@ -522,8 +523,9 @@ def google_pse_search(query: str, count: int = 10, time_filter: Optional[str] = 
 
 # ── Tavily ──
 
-def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def tavily_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Tavily API. Requires search_api_key or TAVILY_API_KEY env var."""
+    count = count if count is not None else _get_result_count()
     api_key = _get_provider_key("tavily") or os.environ.get("TAVILY_API_KEY", "")
     if not api_key:
         logger.warning("Tavily: no API key configured")
@@ -580,8 +582,9 @@ def tavily_search(query: str, count: int = 10, time_filter: Optional[str] = None
 
 # ── Serper.dev ──
 
-def serper_search(query: str, count: int = 10, time_filter: Optional[str] = None) -> List[dict]:
+def serper_search(query: str, count: Optional[int] = None, time_filter: Optional[str] = None) -> List[dict]:
     """Search using Serper.dev API. Requires search_api_key or SERPER_API_KEY env var."""
+    count = count if count is not None else _get_result_count()
     api_key = _get_provider_key("serper") or os.environ.get("SERPER_API_KEY", "")
     if not api_key:
         logger.warning("Serper: no API key configured")

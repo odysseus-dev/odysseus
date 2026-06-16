@@ -15,6 +15,17 @@ from starlette.responses import Response
 # same value from this module. Never persisted or exposed externally.
 INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token_hex(32)
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
+# Pseudo-username on in-process tool-loopback requests; require_admin trusts it and it is reserved.
+INTERNAL_TOOL_USER = "internal-tool"
+
+
+def is_cors_preflight(method: str, headers) -> bool:
+    """True for a genuine CORS preflight: an OPTIONS request carrying the
+    Access-Control-Request-Method header. Such requests are credential-less by
+    design and must reach CORSMiddleware to be answered -- gating them on auth
+    401s the preflight and breaks every cross-origin browser/WebView client.
+    Pure so it can be unit-tested without standing up the app."""
+    return method == "OPTIONS" and "access-control-request-method" in headers
 
 
 def require_admin(request: Request):
@@ -30,7 +41,7 @@ def require_admin(request: Request):
         hdr = request.headers.get(INTERNAL_TOOL_HEADER)
         if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
             return
-        if getattr(request.state, "current_user", None) == "internal-tool":
+        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
             return
     except Exception:
         pass
@@ -58,11 +69,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Tool render endpoints are served inside iframes — allow framing by self
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
+        # PDF previews are embedded by the in-app document library. Keep the
+        # exception route-scoped so normal app pages remain unframeable.
+        is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=()"
+
+        is_https = (
+            request.url.scheme == "https"
+            or request.headers.get("X-Forwarded-Proto") == "https"
+        )
+        if is_https:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         if is_report:
             response.headers["Content-Security-Policy"] = (
@@ -79,6 +101,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # sandbox="allow-scripts" attribute provides isolation.
             # Don't overwrite the route's own restrictive CSP either.
             pass
+        elif is_document_pdf_preview:
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'none'; "
+                "frame-ancestors 'self'"
+            )
         else:
             response.headers["X-Frame-Options"] = "DENY"
             # NOTE: `style-src 'unsafe-inline'` is intentionally retained.

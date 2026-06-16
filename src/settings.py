@@ -29,7 +29,15 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
-    "image_gen_enabled": True,
+    # Agent email safety: when True, the MCP send_email / reply_to_email
+    # tools don't SMTP directly. They stage the composed message into the
+    # scheduled_emails table with status='agent_draft' and return a
+    # pending_id + the rendered email so the user can review and approve
+    # (or cancel) before it actually goes out. Default ON because models
+    # have been observed inventing signatures and sending to real
+    # recipients without confirmation.
+    "agent_email_confirm": True,
+    "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
     "vision_model": "",
@@ -101,14 +109,22 @@ DEFAULT_SETTINGS = {
     "research_run_timeout_seconds": 1800,
     "agent_max_tool_calls": 0,
     "agent_max_rounds": 20,  # per-message agent step cap (clamped 1..200)
+    # Soft input-token budget for the agent loop. The DEFAULT value (6000) is the
+    # "auto" sentinel: it means "scale the budget to the model's context window"
+    # (#1230) — so long-context models aren't capped at 6000. Set ANY OTHER value
+    # to enforce an explicit cap (clamped to the window only — hard_max does not
+    # apply to explicit budgets, #1230); set 0 to disable soft-trimming. The
+    # default is treated as auto because the settings-save path materializes
+    # defaults, so a persisted 6000 can't be told apart from a deliberate 6000 —
+    # to pin a budget near the default, use a nearby value (e.g. 5999).
     "agent_input_token_budget": 6000,
-    # Ceiling on the *auto-derived* input budget that #1230 introduced. Has
-    # no effect when `agent_input_token_budget` is explicitly set (the user's
-    # value is honoured regardless). Default matches
-    # `src.context_budget.DEFAULT_HARD_MAX`; lower this for cost-paranoid
-    # setups, raise it on premium APIs with very large windows that you
+    # Ceiling on the *auto-derived* input budget; a configurable setting since #1273
+    # (the merged #1230 left it a module constant). No effect on an explicit budget
+    # — a deliberate value is honoured (#1230). Default matches
+    # `src.context_budget.DEFAULT_HARD_MAX`; lower this for
+    # cost-paranoid setups, raise it on premium APIs with very large windows you
     # want to actually use (e.g. 900_000 to fill a 1M-context model). See
-    # `compute_input_token_budget` in src/context_budget.py.
+    # `compute_input_token_budget`.
     "agent_input_token_hard_max": 200_000,
     "agent_stream_timeout_seconds": 300,
     # Extra directory roots that read_file / write_file may access, in
@@ -143,6 +159,7 @@ DEFAULT_SETTINGS = {
     # Reminders
     "reminder_channel": "browser",   # "browser" | "email" | "ntfy" | "webhook"
     "reminder_llm_synthesis": False,
+    "reminder_llm_persona": "",
     "reminder_ntfy_topic": "Reminders",
     "reminder_email_to": "",
     # Generic outbound webhook channel: pick any saved Integration as the
@@ -223,8 +240,10 @@ def is_setting_overridden(key: str) -> bool:
 
     ``load_settings`` merges DEFAULT_SETTINGS with the saved file, so a value
     equal to its default is indistinguishable from "never set" via get_setting.
-    Callers that need to treat an explicit user choice differently from the
-    default (e.g. adaptive budgets) use this to read the raw saved file.
+    Callers that must distinguish an explicit user choice from a default read
+    the raw saved file via this. (Note: a materialized default is also "present",
+    so value-sensitive callers should compare against the default — see
+    ``context_budget.budget_is_explicit``.)
     """
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
@@ -283,7 +302,7 @@ def load_features() -> dict:
         if not isinstance(saved, dict):
             raise ValueError("features must be an object")
         merged = {**DEFAULT_FEATURES, **saved}
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+    except (FileNotFoundError, PermissionError, json.JSONDecodeError, ValueError):
         merged = dict(DEFAULT_FEATURES)
     _features_cache = (now, merged)
     return merged

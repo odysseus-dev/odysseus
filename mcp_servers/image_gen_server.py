@@ -16,6 +16,8 @@ from mcp.types import Tool, TextContent
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.constants import GENERATED_IMAGES_DIR
+
 server = Server("image_gen")
 
 
@@ -121,7 +123,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             _pub_base = (get_setting("app_public_url", "") or "").rstrip("/")
 
             if img.get("b64_json"):
-                img_dir = Path("data/generated_images")
+                img_dir = Path(GENERATED_IMAGES_DIR)
                 img_dir.mkdir(parents=True, exist_ok=True)
                 filename = f"{uuid.uuid4().hex[:12]}.png"
                 img_path = img_dir / filename

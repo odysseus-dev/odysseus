@@ -14,6 +14,8 @@ Set EMBEDDING_URL in .env, e.g.:
 
 import os
 
+from src.constants import FASTEMBED_CACHE_DIR, EMBEDDING_ENDPOINT_FILE
+
 # Windows: force HuggingFace/fastembed to COPY model files rather than symlink
 # them. On a network-share/UNC cache dir Windows can't follow HF's symlinks
 # ([WinError 1463] "symbolic link cannot be followed"), so ONNX fails to load the
@@ -28,6 +30,8 @@ import logging
 import numpy as np
 import httpx
 from typing import List, Optional
+
+from src.runtime_paths import get_app_root
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +121,7 @@ class FastEmbedClient:
         # Persistent cache under data/ so the model survives reboots and so
         # the download lands exactly where the admin panel's _is_downloaded()
         # check looks (both default to this same path).
-        cache_dir = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "fastembed_cache",
-        )
+        cache_dir = FASTEMBED_CACHE_DIR
         os.makedirs(cache_dir, exist_ok=True)
         # Windows self-heal: the HuggingFace-hub cache stores model files as
         # symlinks (snapshots/<rev>/model.onnx -> ../../blobs/<hash>). On a
@@ -188,10 +189,7 @@ class FastEmbedClient:
 def _load_persisted_endpoint() -> dict:
     """Load the custom embedding endpoint saved from the admin panel."""
     try:
-        endpoint_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "data", "embedding_endpoint.json",
-        )
+        endpoint_file = EMBEDDING_ENDPOINT_FILE
         if os.path.exists(endpoint_file):
             import json
             data = json.loads(open(endpoint_file, encoding="utf-8").read())
