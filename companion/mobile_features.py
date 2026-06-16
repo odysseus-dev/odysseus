@@ -9,16 +9,54 @@ app.py via `setup_mobile_companion_routes()`. It never imports companion.routes
 internals. Endpoints lazy-import their data deps (core.database, email helpers,
 SkillsManager, etc.) exactly like the core bridge does.
 
-Security: data reads require the `companion` token scope; admin features
-(contacts/terminal/vault/mcp/cookbook) require the off-by-default
-`companion_admin_enabled` setting AND a `companion`-scoped token AND an
-owner who is a server admin. Owner-scoped throughout (own rows + legacy
-null-owner shared rows; cross-owner → 404).
+Security: these read endpoints require a paired (`chat`/`companion`) token scope
+and are owner-scoped throughout — own rows + legacy null-owner shared rows;
+cross-owner → 404, never confirming a row's existence to a non-owner. List
+endpoints are paged (bounded ?limit/?offset) so a caller can't pull a whole
+table in one request. Write actions and the admin-gated tools
+(contacts/terminal/vault/mcp/cookbook, behind an off-by-default
+`companion_admin_enabled` triple-lock) land in the later tiers of this stack,
+not in this read-only module.
 """
 
 from fastapi import APIRouter, Form, HTTPException, Request
 
 from src.auth_helpers import get_current_user
+
+# List endpoints page their results so a caller can never pull a whole table in
+# one request (a DoS / bandwidth / row-count-disclosure surface). Callers may
+# narrow or walk with ?limit / ?offset; limit is clamped to a bounded window.
+DEFAULT_PAGE_LIMIT = 100
+MAX_PAGE_LIMIT = 200
+
+
+def _page(limit, offset):
+    """Clamp caller-supplied pagination to a sane, bounded window.
+
+    limit → [1, MAX_PAGE_LIMIT] (default DEFAULT_PAGE_LIMIT); offset → >= 0.
+    Bad/garbage values fall back to the defaults rather than erroring.
+    """
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = DEFAULT_PAGE_LIMIT
+    try:
+        offset = int(offset)
+    except (TypeError, ValueError):
+        offset = 0
+    return max(1, min(limit, MAX_PAGE_LIMIT)), max(0, offset)
+
+
+def _scope_query(q, model, owner):
+    """Apply the owner-scope rule to a SQL query so it returns EXACTLY the rows
+    `owner_can_see` would keep (own rows + legacy null-owner shared rows), and no
+    more. Making the SQL predicate match the in-Python check is what lets a LIMIT
+    be applied in SQL without a later filter shrinking the page.
+    """
+    if owner:
+        return q.filter((model.owner == owner) | (model.owner == None))  # noqa: E711
+    # Legacy single-user / unresolved owner: only the shared null-owner rows.
+    return q.filter(model.owner == None)  # noqa: E711
 
 
 def token_owner(request: Request) -> str | None:
@@ -69,27 +107,29 @@ def setup_mobile_companion_routes() -> APIRouter:
     router = APIRouter(prefix="/api/companion", tags=["companion-mobile"])
 
     @router.get("/documents")
-    def documents(request: Request):
-        """List the caller's own documents (RAG library), newest first.
+    def documents(request: Request, limit: int = DEFAULT_PAGE_LIMIT, offset: int = 0):
+        """List the caller's own documents (RAG library), paged.
 
         Owner-scoped exactly like the stock /api/documents/library, but resolved
         to the token's real owner (plus legacy null-owner shared rows) instead of
         the sandboxed "api" user. Read-only summary — returns a short content
-        snippet, never the full body (that's the per-doc GET below). Requires the
-        companion scope."""
+        snippet, never the full body (that's the per-doc GET below). Bounded by
+        ?limit/?offset. Requires the companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read documents.")
         from core.database import SessionLocal, Document
 
         owner = token_owner(request)
+        limit, offset = _page(limit, offset)
         out = []
         db = SessionLocal()
         try:
             q = db.query(Document).filter(Document.is_active == True)  # noqa: E712
             # Exclude archived (NULL = legacy rows = not archived).
             q = q.filter((Document.archived == False) | (Document.archived == None))  # noqa: E711,E712
-            if owner:
-                q = q.filter((Document.owner == owner) | (Document.owner == None))  # noqa: E711
+            q = _scope_query(q, Document, owner)
+            # Document has no timestamp column — page deterministically by id.
+            q = q.order_by(Document.id).offset(offset).limit(limit)
             for d in q.all():
                 if not owner_can_see(d.owner, owner):
                     continue
@@ -103,9 +143,7 @@ def setup_mobile_companion_routes() -> APIRouter:
                 })
         finally:
             db.close()
-        # Newest first when a timestamp is available; stable otherwise.
-        out.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
-        return {"items": out}
+        return {"items": out, "limit": limit, "offset": offset}
 
     @router.get("/documents/{doc_id}")
     def document_detail(request: Request, doc_id: str):
@@ -140,19 +178,21 @@ def setup_mobile_companion_routes() -> APIRouter:
     # endpoints only persist and list the caller's own comparison verdicts.
 
     @router.get("/compare/history")
-    def compare_history(request: Request):
-        """The caller's own past model comparisons, newest first. Companion scope."""
+    def compare_history(request: Request, limit: int = DEFAULT_PAGE_LIMIT, offset: int = 0):
+        """The caller's own past model comparisons, most-recently-voted first.
+        Bounded by ?limit/?offset. Companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read comparisons.")
         from core.database import SessionLocal, Comparison
 
         owner = token_owner(request)
+        limit, offset = _page(limit, offset)
         out = []
         db = SessionLocal()
         try:
-            q = db.query(Comparison)
-            if owner:
-                q = q.filter((Comparison.owner == owner) | (Comparison.owner == None))  # noqa: E711
+            q = _scope_query(db.query(Comparison), Comparison, owner)
+            # voted_at is the only timestamp; id is a stable tiebreaker for paging.
+            q = q.order_by(Comparison.voted_at.desc(), Comparison.id).offset(offset).limit(limit)
             for c in q.all():
                 if not owner_can_see(c.owner, owner):
                     continue
@@ -168,8 +208,7 @@ def setup_mobile_companion_routes() -> APIRouter:
                 })
         finally:
             db.close()
-        out.sort(key=lambda r: r.get("created_at") or "", reverse=True)
-        return {"items": out}
+        return {"items": out, "limit": limit, "offset": offset}
 
     def _cal_iso(dt):
         try:
@@ -187,32 +226,35 @@ def setup_mobile_companion_routes() -> APIRouter:
             return None
 
     @router.get("/calendars")
-    def calendars(request: Request):
-        """List the caller's own calendars. Companion scope."""
+    def calendars(request: Request, limit: int = DEFAULT_PAGE_LIMIT, offset: int = 0):
+        """List the caller's own calendars, paged. Companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read calendars.")
         from core.database import SessionLocal, CalendarCal
 
         owner = token_owner(request)
+        limit, offset = _page(limit, offset)
         out = []
         db = SessionLocal()
         try:
-            q = db.query(CalendarCal)
-            if owner:
-                q = q.filter((CalendarCal.owner == owner) | (CalendarCal.owner == None))  # noqa: E711
+            q = _scope_query(db.query(CalendarCal), CalendarCal, owner)
+            q = q.order_by(CalendarCal.id).offset(offset).limit(limit)
             for c in q.all():
                 if not owner_can_see(c.owner, owner):
                     continue
                 out.append({"id": c.id, "name": c.name, "color": c.color, "source": c.source})
         finally:
             db.close()
-        return {"items": out}
+        return {"items": out, "limit": limit, "offset": offset}
 
     @router.get("/events")
-    def events(request: Request, start: str = "", end: str = ""):
-        """The caller's events overlapping [start, end] (ISO). Scoped to the
-        caller's calendars. Non-recurring overlap only (no RRULE expansion in
-        v1). Companion scope."""
+    def events(request: Request, start: str = "", end: str = "",
+               limit: int = DEFAULT_PAGE_LIMIT, offset: int = 0):
+        """The caller's events overlapping [start, end] (ISO), scoped to the
+        caller's calendars, ordered by start and bounded by ?limit/?offset. The
+        window and cancelled-status filters are applied in SQL (no full-table
+        fetch). Non-recurring overlap only (no RRULE expansion in v1). Companion
+        scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read events.")
         from core.database import SessionLocal, CalendarCal, CalendarEvent
@@ -220,22 +262,24 @@ def setup_mobile_companion_routes() -> APIRouter:
         owner = token_owner(request)
         start_dt = _cal_parse_dt(start)
         end_dt = _cal_parse_dt(end)
+        limit, offset = _page(limit, offset)
         out = []
         db = SessionLocal()
         try:
-            cq = db.query(CalendarCal)
-            if owner:
-                cq = cq.filter((CalendarCal.owner == owner) | (CalendarCal.owner == None))  # noqa: E711
+            cq = _scope_query(db.query(CalendarCal), CalendarCal, owner)
             cal_ids = [c.id for c in cq.all() if owner_can_see(c.owner, owner)]
             if cal_ids:
-                for e in db.query(CalendarEvent).filter(CalendarEvent.calendar_id.in_(cal_ids)).all():
-                    if e.status == "cancelled":
-                        continue
-                    # Window overlap (when no/unparseable range given → return all).
-                    if start_dt and e.dtend is not None and e.dtend <= start_dt:
-                        continue
-                    if end_dt and e.dtstart is not None and e.dtstart >= end_dt:
-                        continue
+                eq = db.query(CalendarEvent).filter(CalendarEvent.calendar_id.in_(cal_ids))
+                # Exclude cancelled (NULL status = legacy = not cancelled).
+                eq = eq.filter((CalendarEvent.status != "cancelled") | (CalendarEvent.status == None))  # noqa: E711
+                # Window overlap pushed into SQL: keep events that end after the
+                # window start AND begin before the window end (when a bound is given).
+                if start_dt:
+                    eq = eq.filter(CalendarEvent.dtend > start_dt)
+                if end_dt:
+                    eq = eq.filter(CalendarEvent.dtstart < end_dt)
+                eq = eq.order_by(CalendarEvent.dtstart).offset(offset).limit(limit)
+                for e in eq.all():
                     out.append({
                         "uid": e.uid,
                         "calendar_id": e.calendar_id,
@@ -253,23 +297,22 @@ def setup_mobile_companion_routes() -> APIRouter:
                     })
         finally:
             db.close()
-        out.sort(key=lambda r: r.get("dtstart") or "")
-        return {"items": out}
+        return {"items": out, "limit": limit, "offset": offset}
 
     @router.get("/email/accounts")
-    def email_accounts(request: Request):
-        """The caller's own email accounts (no secrets). Companion scope."""
+    def email_accounts(request: Request, limit: int = DEFAULT_PAGE_LIMIT, offset: int = 0):
+        """The caller's own email accounts (no secrets), paged. Companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read email.")
         from core.database import SessionLocal, EmailAccount
 
         owner = token_owner(request)
+        limit, offset = _page(limit, offset)
         out = []
         db = SessionLocal()
         try:
-            q = db.query(EmailAccount)
-            if owner:
-                q = q.filter((EmailAccount.owner == owner) | (EmailAccount.owner == None))  # noqa: E711
+            q = _scope_query(db.query(EmailAccount), EmailAccount, owner)
+            q = q.order_by(EmailAccount.id).offset(offset).limit(limit)
             for a in q.all():
                 if not owner_can_see(a.owner, owner):
                     continue
@@ -282,7 +325,7 @@ def setup_mobile_companion_routes() -> APIRouter:
                 })
         finally:
             db.close()
-        return {"items": out}
+        return {"items": out, "limit": limit, "offset": offset}
 
     @router.get("/email/messages")
     def email_messages(request: Request, account_id: str, folder: str = "INBOX", limit: int = 30):
@@ -357,19 +400,22 @@ def setup_mobile_companion_routes() -> APIRouter:
             raise HTTPException(502, f"Could not read the message: {e}")
 
     @router.get("/gallery")
-    def gallery(request: Request):
-        """List the caller's own gallery images (metadata + companion image URL)."""
+    def gallery(request: Request, limit: int = DEFAULT_PAGE_LIMIT, offset: int = 0):
+        """List the caller's own gallery images (metadata + companion image URL),
+        newest first, bounded by ?limit/?offset."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read the gallery.")
         from core.database import SessionLocal, GalleryImage
 
         owner = token_owner(request)
+        limit, offset = _page(limit, offset)
         out = []
         db = SessionLocal()
         try:
             q = db.query(GalleryImage).filter(GalleryImage.is_active == True)  # noqa: E712
-            if owner:
-                q = q.filter((GalleryImage.owner == owner) | (GalleryImage.owner == None))  # noqa: E711
+            q = _scope_query(q, GalleryImage, owner)
+            # taken_at is the capture timestamp; id is a stable tiebreaker for paging.
+            q = q.order_by(GalleryImage.taken_at.desc(), GalleryImage.id).offset(offset).limit(limit)
             for im in q.all():
                 if not owner_can_see(im.owner, owner):
                     continue
@@ -386,8 +432,7 @@ def setup_mobile_companion_routes() -> APIRouter:
                 })
         finally:
             db.close()
-        out.sort(key=lambda r: r.get("created_at") or "", reverse=True)
-        return {"items": out}
+        return {"items": out, "limit": limit, "offset": offset}
 
     @router.get("/gallery/image/{image_id}")
     def gallery_image(request: Request, image_id: str):
