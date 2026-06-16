@@ -1146,6 +1146,7 @@ export function openPanel() {
         <span class="notes-header-btn-label">Toggle</span>
       </button>
       <button id="notes-minimize-btn" class="modal-minimize-btn" title="Minimize" aria-label="Minimize notes" style="position:relative;left:2px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="18" x2="18" y2="18"/></svg></button>
+      <button id="notes-close-btn" class="close-btn" type="button" title="Close" aria-label="Close notes">✖</button>
     </div>
     <div class="notes-search-bar">
       <input type="text" id="notes-search" class="memory-search-input" placeholder="Search notes…" autocomplete="off" />
@@ -1208,6 +1209,19 @@ export function openPanel() {
     e.stopPropagation();
     closePanel('down');
   });
+  // Full close (the `_` button only minimizes/docks). Gives Notes the same
+  // minimize · maximize · close control set as every other tool window.
+  const closeBtnEl = document.getElementById('notes-close-btn');
+  if (closeBtnEl) closeBtnEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    closePanel();
+  });
+  // Maximize/restore, inserted between minimize and close. The pane is a centred
+  // floating panel, so the shared toggle resizes it just like the other modals.
+  try {
+    Modals.injectMaximizeButton(pane.querySelector('.notes-pane-header'), pane, closeBtnEl);
+  } catch (_) {}
   // Search
   const searchEl = document.getElementById('notes-search');
   if (searchEl) {

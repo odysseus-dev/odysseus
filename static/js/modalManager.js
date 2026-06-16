@@ -74,6 +74,90 @@ function _emitModalOpened(id, modal) {
   } catch (_) {}
 }
 
+// ── Maximize / restore — a header button on every tool modal ──
+// Lets any window be enlarged on demand, so windows can open at the normal
+// (dev-origin) size instead of one of them opening oversized.
+const _MAX_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>';
+const _RESTORE_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9H5a2 2 0 0 1-2-2V5"/><path d="M15 9h4a2 2 0 0 0 2-2V5"/><path d="M9 15H5a2 2 0 0 0-2 2v2"/><path d="M15 15h4a2 2 0 0 1 2 2v2"/></svg>';
+const _MAX_PROPS = ['width', 'height', 'max-width', 'max-height'];
+
+function _toggleMaximize(content, btn) {
+  if (!content) return;
+  if (btn.dataset.state !== 'restore') {
+    // Save the current inline sizing so restore puts it back exactly.
+    const saved = {};
+    _MAX_PROPS.forEach((p) => { saved[p] = content.style.getPropertyValue(p); });
+    btn._odySaved = saved;
+    content.style.setProperty('width', '96%', 'important');
+    content.style.setProperty('height', '95%', 'important');
+    content.style.setProperty('max-width', '96%', 'important');
+    content.style.setProperty('max-height', '95%', 'important');
+    content.classList.add('modal-content-maximized');
+    btn.dataset.state = 'restore';
+    btn.innerHTML = _RESTORE_ICON;
+    btn.setAttribute('aria-label', 'Restore window');
+    btn.title = 'Restore';
+  } else {
+    const saved = btn._odySaved || {};
+    _MAX_PROPS.forEach((p) => {
+      content.style.removeProperty(p);
+      if (saved[p]) content.style.setProperty(p, saved[p]);
+    });
+    content.classList.remove('modal-content-maximized');
+    btn.dataset.state = 'maximize';
+    btn.innerHTML = _MAX_ICON;
+    btn.setAttribute('aria-label', 'Maximize window');
+    btn.title = 'Maximize';
+  }
+  const m = content.closest('.modal');
+  if (m) _bringToFront(m);
+}
+
+// Build a maximize/restore button wired to resize `content`. Shared by the
+// auto-injector (standard modals) and custom panels (e.g. notes).
+function _makeMaximizeButton(content) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'modal-maximize-btn';
+  btn.dataset.state = 'maximize';
+  btn.setAttribute('aria-label', 'Maximize window');
+  btn.title = 'Maximize';
+  btn.innerHTML = _MAX_ICON;
+  btn.style.flexShrink = '0';
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    _toggleMaximize(content, btn);
+  });
+  // Don't let a click on the button start the header's drag (tileManager).
+  btn.addEventListener('mousedown', (e) => e.stopPropagation());
+  return btn;
+}
+
+/** Ensure a maximize button sits in `header` (before `beforeEl` or the close
+ * button) wired to resize `content`. Idempotent. Exported for custom panels. */
+export function injectMaximizeButton(header, content, beforeEl) {
+  if (!header || !content) return null;
+  // Skip if one already exists (e.g. usage ships its own).
+  if (header.querySelector('.modal-maximize-btn')) return null;
+  const btn = _makeMaximizeButton(content);
+  const anchor = beforeEl || header.querySelector('.close-btn, .modal-close, .modal-close-btn');
+  if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(btn, anchor);
+  else header.appendChild(btn);
+  return btn;
+}
+
+// Standard modals: maximize the `.modal-content`, placed before the close button
+// (and after the minimize button injectMinimizeButton already inserted), so the
+// controls read minimize · maximize · close, grouped at the right.
+function _ensureMaximizeButton(modal) {
+  if (!modal) return;
+  const header = modal.querySelector('.modal-header');
+  const content = modal && modal.querySelector('.modal-content');
+  if (!header || !content) return;
+  injectMaximizeButton(header, content);
+}
+
 function _captureRestoreHeight(modal, state) {
   if (!modal || !state) return;
   const content = modal.querySelector('.modal-content');
@@ -1356,6 +1440,7 @@ export function injectMinimizeButton(modal, modalId) {
         minimize(modalId);
       }, true);
     }
+    _ensureMaximizeButton(modal);
     return;
   }
   const closeBtn = header.querySelector('.close-btn, .modal-close');
@@ -1386,6 +1471,8 @@ export function injectMinimizeButton(modal, modalId) {
   });
   if (closeBtn && closeBtn.parentNode) closeBtn.parentNode.insertBefore(btn, closeBtn);
   else header.appendChild(btn);
+  // After minimize is placed, add maximize between it and close → minimize · maximize · close.
+  _ensureMaximizeButton(modal);
 }
 
 // ── Auto-wire fallback for modals not explicitly registered ──
@@ -1549,4 +1636,4 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 
-export default { register, unregister, isRegistered, isMinimized, minimize, restore, toggle, close, injectMinimizeButton };
+export default { register, unregister, isRegistered, isMinimized, minimize, restore, toggle, close, injectMinimizeButton, injectMaximizeButton };

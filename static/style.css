@@ -825,6 +825,27 @@ body.bg-pattern-sparkles {
       transition: background 0.15s, color 0.15s;
     }
     .modal-minimize-btn:hover { background: var(--fg); color: var(--bg); }
+    /* Generic maximize/restore button injected into every tool modal's header by
+       modalManager (next to close). Mirrors .modal-minimize-btn. */
+    .modal-maximize-btn {
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--fg);
+      cursor: pointer;
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      margin-left: 0;
+      margin-right: 4px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+    .modal-maximize-btn:hover { background: var(--fg); color: var(--bg); }
     .modal.modal-minimized { display: none !important; }
     /* Window tile snap ghost (desktop only) */
     #tile-ghost {
