@@ -26,6 +26,7 @@ from core.middleware import require_admin
 from src.auth_helpers import get_current_user
 
 from companion import pairing as _pairing
+from companion import push as _push
 
 
 def token_owner(request: Request) -> str | None:
@@ -158,6 +159,49 @@ def setup_companion_routes() -> APIRouter:
         finally:
             db.close()
         return {"endpoints": out}
+
+    async def _push_token_from_body(request: Request) -> str:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, "Invalid JSON body")
+        return ((body or {}).get("token") or "").strip()
+
+    @router.post("/push/register")
+    async def push_register(request: Request):
+        """Register this device's Expo push token for the calling owner.
+
+        Owner-scoped: bearer callers resolve to their token's real owner, so a
+        paired phone registers under that account and never another's. The token
+        is a device handle, not a chat credential."""
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Unknown caller")
+        token = await _push_token_from_body(request)
+        try:
+            _push.register_push_token(owner, token)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "devices": len(_push.list_push_tokens(owner))}
+
+    @router.post("/push/unregister")
+    async def push_unregister(request: Request):
+        """Drop one Expo push token for the calling owner (e.g. on sign-out)."""
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Unknown caller")
+        token = await _push_token_from_body(request)
+        _push.unregister_push_token(owner, token)
+        return {"ok": True, "devices": len(_push.list_push_tokens(owner))}
+
+    @router.post("/push/test")
+    async def push_test(request: Request):
+        """Send a test notification to the caller's registered devices."""
+        owner = token_owner(request)
+        if not owner:
+            raise HTTPException(401, "Unknown caller")
+        sent = await _push.send_test_push(owner)
+        return {"ok": True, "sent": sent}
 
     @router.get("/pair")
     def pair_page(request: Request):

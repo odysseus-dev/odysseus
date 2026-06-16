@@ -861,6 +861,9 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+# Route owner-bearing webhook events to paired phones via Expo push.
+from companion.push import build_push_sink
+webhook_manager.add_sink(build_push_sink())
 
 # ========= ROUTES (kept in app.py) =========
 
