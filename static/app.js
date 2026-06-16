@@ -1741,6 +1741,14 @@ function initializeEventListeners() {
     });
   }
 
+  // Atlas composer entry — open the vault docked to the right of the chat.
+  const overflowAtlasBtn = el('overflow-atlas-btn');
+  if (overflowAtlasBtn) {
+    overflowAtlasBtn.addEventListener('click', () => {
+      if (atlasModule && atlasModule.openAtlasDocked) atlasModule.openAtlasDocked();
+    });
+  }
+
   // ── RAG toggle (overflow + indicator) ──
   function _syncRagIndicator(active) {
     const indicator = el('rag-indicator-btn');

@@ -16,6 +16,7 @@ import * as Modals from './modalManager.js';
 import { mdToHtml } from './markdown.js';
 import { showToast, showError, styledPrompt } from './ui.js';
 import { makeWindowDraggable } from './windowDrag.js';
+import { snapModalRight } from './tileManager.js';
 
 // Width (px) the graph panel adds to the dialog when docked open.
 const GRAPH_PANEL_W = 460;
@@ -84,6 +85,13 @@ function _buildModal() {
       #atlas-modal .atlas-menu div:hover { background:rgba(127,127,127,.18); }
       #atlas-modal .atlas-preview a.atlas-tag { color:var(--brand-color,#6cf); background:rgba(110,140,255,.14); border-radius:10px; padding:0 7px; font-size:.9em; text-decoration:none; white-space:nowrap; }
       #atlas-modal .atlas-preview a.atlas-tag:hover { background:rgba(110,140,255,.28); }
+      #atlas-modal .atlas-center { position:relative; }
+      #atlas-modal .atlas-center.atlas-pulse::after { content:''; position:absolute; inset:0; pointer-events:none; border-radius:6px; z-index:5; animation: atlasPulse 1.4s cubic-bezier(0.22,1,0.36,1); }
+      @keyframes atlasPulse {
+        0%   { box-shadow: inset 0 0 0 2px var(--brand-color,#6c8cff), 0 0 0 0 color-mix(in srgb, var(--brand-color,#6c8cff) 55%, transparent); background: color-mix(in srgb, var(--brand-color,#6c8cff) 14%, transparent); }
+        60%  { box-shadow: inset 0 0 0 1px var(--brand-color,#6c8cff); background: transparent; }
+        100% { box-shadow: inset 0 0 0 0 transparent; background: transparent; }
+      }
       #atlas-modal .atlas-base-view { flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden; }
       #atlas-modal .atlas-base-bar { display:flex; align-items:center; gap:6px; padding:8px 12px; border-bottom:1px solid var(--bubble-border,#333); flex-wrap:wrap; }
       #atlas-modal .atlas-base-bar .title { font-weight:600; margin-right:auto; }
@@ -246,6 +254,36 @@ async function openAtlas() {
   await _reloadNotes();
   // Restart the graph sim if the panel was left open from a previous session.
   if (_graphOpen) _openGraph();
+}
+
+// Open Atlas docked to the right half of the workspace (the composer "Atlas"
+// entry, and the target for chat note-links). Idempotent: re-docks if already
+// open. Uses the shared tile-snap so it animates like any other right-snap.
+async function openAtlasDocked() {
+  const fresh = !_open;
+  if (fresh) await openAtlas();
+  // Let the modal lay out before snapping so the animation starts from its
+  // real geometry rather than the flex-centered default.
+  requestAnimationFrame(() => { try { snapModalRight(_modal); } catch (_) {} });
+}
+
+// Open a specific note in the docked panel and pulse-highlight it — used by the
+// chat [title](#atlas-<path>) links the agent emits.
+async function openAtlasNote(path) {
+  await openAtlasDocked();
+  await openNote(path);
+  _pulseEditor();
+}
+
+// Theme-matched attention pulse on the editor/preview when a note is opened
+// from a chat link.
+function _pulseEditor() {
+  const center = _modal && _modal.querySelector('.atlas-center');
+  if (!center) return;
+  center.classList.remove('atlas-pulse');
+  void center.offsetWidth;  // restart the animation
+  center.classList.add('atlas-pulse');
+  setTimeout(() => center.classList.remove('atlas-pulse'), 1400);
 }
 
 // Fired (debounced) when the agent's manage_atlas tool writes/edits a note, so
@@ -1189,6 +1227,6 @@ class GraphView {
   }
 }
 
-const atlasModule = { openAtlas, closeAtlas, isAtlasOpen };
-export { openAtlas, closeAtlas, isAtlasOpen };
+const atlasModule = { openAtlas, openAtlasDocked, openAtlasNote, closeAtlas, isAtlasOpen };
+export { openAtlas, openAtlasDocked, openAtlasNote, closeAtlas, isAtlasOpen };
 export default atlasModule;

@@ -111,6 +111,16 @@ def test_query_empty_result_hints_available_fields(tool):
     assert "prop.status" in out["response"]
 
 
+def test_responses_emit_clickable_atlas_links(tool):
+    _call(tool, "alice", action="write", path="Projects/Plan", content="# Plan")
+    # write, list, read, and search all surface a #atlas-<encoded-path> link
+    # so chat can route a click to the docked panel.
+    saved = _call(tool, "alice", action="write", path="Projects/Plan", content="# Plan v2")
+    assert "(#atlas-Projects%2FPlan.md)" in saved["response"]
+    assert "(#atlas-Projects%2FPlan.md)" in _call(tool, "alice", action="list")["response"]
+    assert "(#atlas-Projects%2FPlan.md)" in _call(tool, "alice", action="read", path="Projects/Plan")["response"]
+
+
 def test_invalid_json(tool):
     out = _run(tool("{not json", {"owner": "alice"}))
     assert out["exit_code"] == 1

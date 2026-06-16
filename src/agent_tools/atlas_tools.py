@@ -61,6 +61,16 @@ class ManageAtlasTool:
             """
             return resolve_link(p, list(read_all_notes(owner).keys()))
 
+        def _link(rel, label=None):
+            """A chat-clickable note link: [label](#atlas-<url-encoded-path>).
+
+            chatRenderer's anchor delegate routes #atlas-… links to the docked
+            Atlas panel and pulse-highlights the note, so when the model says
+            "found X" the user can click straight to it.
+            """
+            from urllib.parse import quote
+            return f"[{label or rel}](#atlas-{quote(rel, safe='')})"
+
         try:
             if action == "list":
                 notes = read_all_notes(owner)
@@ -73,7 +83,7 @@ class ManageAtlasTool:
                     items = [n for n in items
                              if q in n["path"].lower() or q in n["title"].lower()]
                 items = items[: int(args.get("limit", 50))]
-                lines = [f"- `{n['path']}` — {n['title']}"
+                lines = [f"- {_link(n['path'], n['title'])} (`{n['path']}`)"
                          + (f" #{' #'.join(n['tags'])}" if n["tags"] else "")
                          for n in items]
                 return {
@@ -99,7 +109,7 @@ class ManageAtlasTool:
                 truncated = len(md) > preview_limit
                 body = md[:preview_limit] + (f"\n... (truncated, {len(md)} chars)" if truncated else "")
                 return {
-                    "response": f"**{note_title(rel, md)}** (`{rel}`)\n\n{body}",
+                    "response": f"{_link(rel, note_title(rel, md))} (`{rel}`)\n\n{body}",
                     "note": {
                         "path": rel,
                         "title": note_title(rel, md),
@@ -114,7 +124,7 @@ class ManageAtlasTool:
                 if not path:
                     return {"error": "Need 'path' to write a note", "exit_code": 1}
                 rel = write_note(owner, path, args.get("content", "") or "")
-                return {"response": f"Saved note `{rel}`.", "path": rel, "exit_code": 0}
+                return {"response": f"Saved note {_link(rel)}.", "path": rel, "exit_code": 0}
 
             if action == "append":
                 if not path:
@@ -127,7 +137,7 @@ class ManageAtlasTool:
                 addition = args.get("content", "") or ""
                 joined = existing + ("\n" if existing and not existing.endswith("\n") else "") + addition
                 rel = write_note(owner, target, joined)
-                return {"response": f"Appended to `{rel}`.", "path": rel, "exit_code": 0}
+                return {"response": f"Appended to {_link(rel)}.", "path": rel, "exit_code": 0}
 
             if action == "delete":
                 if not path:
@@ -156,7 +166,7 @@ class ManageAtlasTool:
                 if not hits:
                     return {"response": f"No notes match '{q}'.", "results": [], "exit_code": 0}
                 return {
-                    "response": f"{len(hits)} match(es) for '{q}':\n" + "\n".join(f"- `{h}`" for h in hits),
+                    "response": f"{len(hits)} match(es) for '{q}':\n" + "\n".join(f"- {_link(h)}" for h in hits),
                     "results": hits,
                     "exit_code": 0,
                 }
@@ -218,7 +228,8 @@ class ManageAtlasTool:
                 lines = [f"{result['count']} row(s) [{', '.join(result['columns'])}]:"]
                 for row in rows[:30]:
                     cells = " · ".join(f"{c}={row.get(c)}" for c in result["columns"])
-                    lines.append(f"- `{row.get('file.path')}` {cells}")
+                    fp = row.get("file.path")
+                    lines.append(f"- {_link(fp) if fp else '(row)'} {cells}")
                 return {"response": "\n".join(lines), **result, "exit_code": 0}
 
             return {"error": f"Unknown action '{action}'", "exit_code": 1}
