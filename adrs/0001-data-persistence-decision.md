@@ -1,4 +1,4 @@
-# ADR: Data Persistence — Per-Domain Architecture Decisions
+# ADR-0001: Data Persistence — Per-Domain Architecture Decisions
 
 - Status: proposed
 - Deciders: Felix, active maintainers
