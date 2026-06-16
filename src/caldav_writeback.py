@@ -18,7 +18,7 @@ network.
 
 import asyncio
 import logging
-from datetime import timezone
+from datetime import timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,15 @@ def build_event_ical(ev: dict) -> str:
     dtstart = ev["dtstart"]
     dtend = ev["dtend"]
     if ev.get("all_day"):
-        ve.add("dtstart", dtstart.date())
-        ve.add("dtend", dtend.date())
+        start_date = dtstart.date()
+        end_date = dtend.date()
+        if end_date <= start_date:
+            # RFC 5545: all-day DTEND is exclusive — zero-length events corrupt
+            # CalDAV servers that back DTSTART up one day to "repair" the interval,
+            # creating phantom occurrences in recurring series (issue #4394).
+            end_date = start_date + timedelta(days=1)
+        ve.add("dtstart", start_date)
+        ve.add("dtend", end_date)
     elif ev.get("is_utc"):
         # Stored as naive-UTC instants — re-attach UTC so the server gets a Z time.
         ve.add("dtstart", dtstart.replace(tzinfo=timezone.utc))

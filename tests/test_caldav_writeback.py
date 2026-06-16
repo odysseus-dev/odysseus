@@ -78,6 +78,23 @@ def test_build_ical_all_day_uses_date_values():
     assert "DTSTART;VALUE=DATE:20260610" in ical
 
 
+def test_build_ical_all_day_zero_length_dtend_becomes_next_day():
+    """RFC 5545: all-day DTEND is exclusive; dtend==dtstart is zero-length.
+
+    CalDAV servers (e.g. SOGo) repair zero-length all-day events by backing
+    DTSTART up one day, which creates phantom occurrences in recurring series.
+    build_event_ical must never emit DTEND <= DTSTART for all-day events.
+    """
+    ical = build_event_ical(_ev(
+        all_day=True, is_utc=False,
+        dtstart=datetime(2026, 6, 18, 0, 0),
+        dtend=datetime(2026, 6, 18, 0, 0),  # zero-length — same day
+    ))
+    assert "DTSTART;VALUE=DATE:20260618" in ical
+    assert "DTEND;VALUE=DATE:20260619" in ical  # exclusive end bumped by 1 day
+    assert "DTEND;VALUE=DATE:20260618" not in ical
+
+
 def test_build_ical_includes_rrule():
     ical = build_event_ical(_ev(rrule="FREQ=WEEKLY;BYDAY=MO"))
     assert "RRULE:FREQ=WEEKLY" in ical

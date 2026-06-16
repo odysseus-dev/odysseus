@@ -1353,7 +1353,8 @@ def setup_calendar_routes() -> APIRouter:
                 lines.append(f"SUMMARY:{_ics_escape(ev.summary or '')}")
                 if ev.all_day:
                     lines.append(f"DTSTART;VALUE=DATE:{ev.dtstart.strftime('%Y%m%d')}")
-                    lines.append(f"DTEND;VALUE=DATE:{ev.dtend.strftime('%Y%m%d')}")
+                    _export_end = ev.dtend if ev.dtend > ev.dtstart else ev.dtstart + timedelta(days=1)
+                    lines.append(f"DTEND;VALUE=DATE:{_export_end.strftime('%Y%m%d')}")
                 else:
                     _dt_suffix = "Z" if getattr(ev, "is_utc", False) else ""
                     lines.append(f"DTSTART:{ev.dtstart.strftime('%Y%m%dT%H%M%S')}{_dt_suffix}")
