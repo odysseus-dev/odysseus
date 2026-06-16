@@ -22,6 +22,7 @@ import memoryModule from './js/memory.js';
 import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
+import atlasModule from './js/atlas.js';
 import tasksModule from './js/tasks.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
@@ -872,6 +873,19 @@ function initializeEventListeners() {
       if (!Modals.toggle('gallery-modal')) {
         if (galleryModule.isGalleryOpen()) galleryModule.closeGallery();
         else galleryModule.openGallery();
+      }
+    });
+  }
+
+  // Atlas tool button (Obsidian-style markdown vault)
+  const toolAtlasBtn = el('tool-atlas-btn');
+  if (toolAtlasBtn) {
+    toolAtlasBtn.addEventListener('click', async () => {
+      if (!atlasModule) return;
+      const Modals = await import('./js/modalManager.js');
+      if (!Modals.toggle('atlas-modal')) {
+        if (atlasModule.isAtlasOpen()) atlasModule.closeAtlas();
+        else atlasModule.openAtlas();
       }
     });
   }
@@ -3415,6 +3429,7 @@ function startOdysseusApp() {
     'rail-tasks':     'tool-tasks-btn',
     'rail-calendar':  'tool-calendar-btn',
     'rail-notes':     'tool-notes-btn',
+    'rail-atlas':     'tool-atlas-btn',
     'rail-memory':    'tool-memory-btn',
     'rail-theme':     'tool-theme-btn',
     'rail-email':     'email-section-title',

@@ -47,6 +47,7 @@ _COMMON_TOOL_NAMES = {
     "list_served_models",
     "list_sessions",
     "ls",
+    "manage_atlas",
     "manage_calendar",
     "manage_contact",
     "manage_documents",

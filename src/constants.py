@@ -54,6 +54,11 @@ SKILLS_DIR = os.path.join(DATA_DIR, "skills")
 GALLERY_DIR = os.path.join(DATA_DIR, "gallery")
 GALLERY_UPLOADS_DIR = os.path.join(DATA_DIR, "gallery_uploads")
 MEMORY_VECTORS_DIR = os.path.join(DATA_DIR, "memory_vectors")
+# Atlas: an Obsidian-style markdown vault. Plain `.md` files on disk (one
+# subdirectory per owner) so external sync tools (Syncthing/Dropbox/git) and
+# Obsidian itself can read/write the same folder. Has a dedicated env override
+# so operators can point it at an existing vault on a mounted volume.
+ATLAS_DIR = os.getenv("ODYSSEUS_ATLAS_DIR", os.path.join(DATA_DIR, "atlas"))
 
 # Paths with an intentional dedicated env override, defaulting under DATA_DIR.
 MAIL_ATTACHMENTS_DIR = os.getenv("ODYSSEUS_MAIL_ATTACHMENTS_DIR", os.path.join(DATA_DIR, "mail-attachments"))

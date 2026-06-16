@@ -670,6 +670,10 @@ from routes.document_routes import setup_document_routes
 document_router = setup_document_routes(session_manager, upload_handler)
 app.include_router(document_router)
 
+# Atlas (Obsidian-style markdown vault: plain .md files + wikilinks + graph)
+from routes.atlas_routes import setup_atlas_routes
+app.include_router(setup_atlas_routes())
+
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
 app.include_router(setup_signature_routes())

@@ -756,7 +756,7 @@ async def _execute_tool_block_impl(
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
-                  "suggest_document", "manage_documents"):
+                  "suggest_document", "manage_documents", "manage_atlas"):
         desc = f"{tool}: {content.split(chr(10))[0][:80]}"
         result = await _document_tool_dispatch(tool, content, session_id, owner) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
