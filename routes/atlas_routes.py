@@ -37,6 +37,8 @@ from src.atlas_links import (
     backlinks as _backlinks,
     note_title,
 )
+from src.atlas_frontmatter import parse_frontmatter
+from src.atlas_query import run_query
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +48,10 @@ ATLAS_ROOT = Path(ATLAS_DIR)
 NOTE_EXTS = {".md", ".markdown"}
 ATTACH_EXTS = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico",
-    ".pdf", ".txt", ".csv", ".json", ".canvas",
+    ".pdf", ".txt", ".csv", ".json", ".canvas", ".base",
 }
+# Saved Bases queries: YAML files holding a structured query + view config.
+BASE_EXT = ".base"
 # Per-note size cap (generous for prose, blocks accidental huge uploads).
 MAX_NOTE_BYTES = 5 * 1024 * 1024
 ATTACH_DIRNAME = "_attachments"
@@ -208,6 +212,61 @@ class PathBody(BaseModel):
 class RenameBody(BaseModel):
     path: str
     new_path: str
+
+
+class QueryBody(BaseModel):
+    query: dict = {}
+
+
+class BaseWrite(BaseModel):
+    path: str
+    query: dict = {}
+
+
+class PropertyBody(BaseModel):
+    path: str
+    key: str
+    value: object = None
+    delete: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Bases helpers
+# ---------------------------------------------------------------------------
+
+def notes_for_query(owner: Optional[str]) -> list:
+    """Vault notes shaped for the query engine: [{path, title, mtime, content}]."""
+    out = []
+    for rel, md in read_all_notes(owner).items():
+        meta = _note_meta(owner, rel, md)
+        out.append({"path": rel, "title": meta["title"], "mtime": meta["mtime"], "content": md})
+    return out
+
+
+def set_property(owner: Optional[str], relpath: str, key: str, value, delete: bool = False) -> str:
+    """Set/delete a single YAML frontmatter property on a note, preserving body.
+
+    Rewrites only the leading `---` block (creating one if absent) and leaves the
+    markdown body byte-for-byte intact. Returns the note's relpath.
+    """
+    import yaml
+    abs_path = safe_atlas_path(owner, relpath)
+    if not abs_path.is_file():
+        raise AtlasPathError("note not found")
+    md = abs_path.read_text(encoding="utf-8", errors="replace")
+    props, body = parse_frontmatter(md)
+    if delete:
+        props.pop(key, None)
+    else:
+        props[key] = value
+    if props:
+        fm = yaml.safe_dump(props, sort_keys=False, allow_unicode=True).strip()
+        new_md = f"---\n{fm}\n---\n{body}"
+    else:
+        new_md = body
+    atomic_write_text(str(abs_path), new_md)
+    invalidate_cache(owner)
+    return _rel_str(owner, abs_path)
 
 
 # ---------------------------------------------------------------------------
@@ -467,5 +526,75 @@ def setup_atlas_routes() -> APIRouter:
 
         invalidate_cache(owner)
         return {"ok": True, "imported": imported, "skipped": skipped}
+
+    # ── Bases: structured query engine ──────────────────────────────────────
+
+    @router.post("/query")
+    async def query(req: QueryBody, request: Request):
+        """Run an ad-hoc structured query over the owner's vault."""
+        owner = require_user(request)
+        try:
+            return run_query(req.query or {}, notes_for_query(owner))
+        except Exception as e:  # malformed query → 400, never a 500
+            raise HTTPException(400, f"query error: {e}")
+
+    @router.get("/bases")
+    async def list_bases(request: Request):
+        """List saved .base files in the vault."""
+        owner = require_user(request)
+        root = owner_root(owner)
+        out = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+            for fn in filenames:
+                if fn.lower().endswith(BASE_EXT):
+                    rel = _rel_str(owner, Path(dirpath) / fn)
+                    out.append({"path": rel, "name": os.path.splitext(fn)[0]})
+        out.sort(key=lambda b: b["path"])
+        return {"bases": out}
+
+    @router.get("/base")
+    async def get_base(request: Request, path: str):
+        """Load a .base file and run its query in one call."""
+        owner = require_user(request)
+        import yaml
+        try:
+            abs_path = safe_atlas_path(owner, path)
+        except AtlasPathError as e:
+            raise HTTPException(400, str(e))
+        if not abs_path.is_file():
+            raise HTTPException(404, "Base not found")
+        try:
+            spec = yaml.safe_load(abs_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as e:
+            raise HTTPException(400, f"invalid .base file: {e}")
+        q = spec.get("query", spec) if isinstance(spec, dict) else {}
+        result = run_query(q, notes_for_query(owner))
+        return {"path": _rel_str(owner, abs_path), "query": q, **result}
+
+    @router.put("/base")
+    async def put_base(req: BaseWrite, request: Request):
+        """Create/overwrite a .base file (YAML holding a structured query)."""
+        owner = require_user(request)
+        import yaml
+        rel = req.path if req.path.lower().endswith(BASE_EXT) else req.path + BASE_EXT
+        try:
+            abs_path = safe_atlas_path(owner, rel)
+        except AtlasPathError as e:
+            raise HTTPException(400, str(e))
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(str(abs_path), yaml.safe_dump({"query": req.query or {}}, sort_keys=False, allow_unicode=True))
+        invalidate_cache(owner)
+        return {"ok": True, "path": _rel_str(owner, abs_path)}
+
+    @router.post("/property")
+    async def update_property(req: PropertyBody, request: Request):
+        """Set or delete one frontmatter property on a note (inline editing)."""
+        owner = require_user(request)
+        try:
+            rel = set_property(owner, req.path, req.key, req.value, delete=req.delete)
+        except AtlasPathError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "path": rel}
 
     return router
