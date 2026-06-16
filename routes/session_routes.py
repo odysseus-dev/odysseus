@@ -1004,6 +1004,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         """
         from src.llm_core import llm_call
         user = effective_user(request)
+        single_user_mode = not user and _auth_disabled()
         user_sessions = session_manager.get_sessions_for_user(user)
 
         # Delete empty and throwaway sessions before sorting
@@ -1022,7 +1023,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         }
         _THROWAWAY_MAX_MESSAGES = 4  # only delete if <= this many messages
         try:
-            rows = db.query(DbSession).filter(DbSession.archived == False, DbSession.owner == user).limit(2000).all()
+            rows_q = db.query(DbSession).filter(DbSession.archived == False)
+            if user:
+                rows_q = rows_q.filter(DbSession.owner == user)
+            elif not single_user_mode:
+                rows_q = rows_q.filter(DbSession.owner == user)
+            rows = rows_q.limit(2000).all()
             folder_map = {r.id: r.folder for r in rows}
             # Precompute per-session message counts in TWO aggregate queries
             # instead of 1–3 queries PER session — with many chats the per-row
@@ -1242,7 +1248,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         db = SessionLocal()
         try:
             for sid, folder_name in assignments.items():
-                db_session = db.query(DbSession).filter(DbSession.id == sid, DbSession.owner == user).first()
+                db_session_q = db.query(DbSession).filter(DbSession.id == sid)
+                if user:
+                    db_session_q = db_session_q.filter(DbSession.owner == user)
+                elif not single_user_mode:
+                    db_session_q = db_session_q.filter(DbSession.owner == user)
+                db_session = db_session_q.first()
                 if db_session:
                     db_session.folder = folder_name
                     db_session.updated_at = datetime.utcnow()

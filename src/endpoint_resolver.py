@@ -161,6 +161,32 @@ def normalize_base(url: str) -> str:
     return url
 
 
+def _validated_endpoint_base(url: str) -> str:
+    """Return a base URL that is safe for endpoint path appends."""
+    base = (url or "").strip().rstrip("/")
+    if "?" in base or "#" in base:
+        raise ValueError("Endpoint base URL must not include query or fragment")
+    return urlunparse(urlparse(base)._replace(query="", fragment="")).rstrip("/")
+
+
+def _prepare_endpoint_base(base: str) -> str:
+    base = _validated_endpoint_base(normalize_base(base))
+    return _validated_endpoint_base(normalize_base(resolve_url(base)))
+
+
+def _append_endpoint_path(base: str, suffix: str) -> str:
+    parsed = urlparse(base)
+    current = (parsed.path or "").rstrip("/")
+    extra = "/" + suffix.lstrip("/")
+    path = f"{current}{extra}" if current else extra
+    return urlunparse(parsed._replace(path=path, query="", fragment=""))
+
+
+def _pathless_host(base: str, host: str) -> bool:
+    parsed = urlparse(base)
+    return (parsed.hostname or "").lower() == host and not (parsed.path or "").strip("/")
+
+
 def _anthropic_api_root(base: str) -> str:
     """Return Anthropic's API root, preserving /v1 for OpenAI-compatible APIs elsewhere."""
     base = (base or "").strip().rstrip("/")
@@ -171,15 +197,17 @@ def _anthropic_api_root(base: str) -> str:
 
 def build_chat_url(base: str) -> str:
     """Return the correct chat endpoint URL for a given base."""
-    base = resolve_url(base)
+    base = _prepare_endpoint_base(base)
     provider = _detect_provider(base)
     if provider == "anthropic":
-        return _anthropic_api_root(base) + "/v1/messages"
+        return _append_endpoint_path(_anthropic_api_root(base), "/v1/messages")
     if provider == "ollama":
-        return _ollama_api_root(base) + "/chat"
+        return _append_endpoint_path(_ollama_api_root(base), "/chat")
     if provider == "chatgpt-subscription":
-        return base.rstrip("/") + "/responses"
-    return base + "/chat/completions"
+        return _append_endpoint_path(base, "/responses")
+    if _pathless_host(base, "api.openai.com"):
+        base = _append_endpoint_path(base, "/v1")
+    return _append_endpoint_path(base, "/chat/completions")
 
 
 def build_models_url(base: str) -> Optional[str]:
@@ -193,12 +221,12 @@ def build_models_url(base: str) -> Optional[str]:
     untouched (so custom prefixes like ``/openai`` or ``/api/openai/v1`` keep
     their semantics).
     """
-    base = normalize_base(resolve_url(base))
+    base = _prepare_endpoint_base(base)
     provider = _detect_provider(base)
     if provider == "anthropic":
-        return _anthropic_api_root(base) + "/v1/models"
+        return _append_endpoint_path(_anthropic_api_root(base), "/v1/models")
     if provider == "ollama":
-        return _ollama_api_root(base) + "/tags"
+        return _append_endpoint_path(_ollama_api_root(base), "/tags")
     if provider == "chatgpt-subscription":
         return None
     # Generic OpenAI-compatible fallback: local model servers with no explicit
@@ -208,10 +236,10 @@ def build_models_url(base: str) -> Optional[str]:
     parsed = urlparse(base)
     host = (parsed.hostname or "").lower()
     is_local = host in {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
-    uses_v1_models_by_default = is_local or host in {"api.deepseek.com"}
+    uses_v1_models_by_default = is_local or host in {"api.deepseek.com", "api.openai.com"}
     if not parsed.path and uses_v1_models_by_default:
-        base = base + "/v1"
-    return base + "/models"
+        base = _append_endpoint_path(base, "/v1")
+    return _append_endpoint_path(base, "/models")
 
 
 def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
