@@ -133,8 +133,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         directory = _dir.strip() if isinstance(_dir, str) else ""
         if not directory:
             return [TextContent(type="text", text="Error: remove_directory needs a directory path")]
-        # Expand ~ to match add_directory, which indexes the expanded path.
-        # Without this, removing "~/docs" never matches the stored absolute path.
+      # Normalize the path the same way as add_directory.
+      # This ensures both "~" and relative paths resolve to the same
+      # absolute path stored in the index.
         directory = os.path.abspath(os.path.expanduser(directory))
         if not _personal_docs_manager:
             return [TextContent(type="text", text="Error: Personal docs manager not available")]
