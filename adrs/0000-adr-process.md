@@ -14,7 +14,7 @@ The following two principles should motivate all ADRs:
 
 > **All architecture decisions are a trade-off.**
 
-There are no right or wrong answers — only trade-offs. Recording the trade-off reasoning is the point.
+There are no right or wrong answers — only trade-offs. Recording the trade-off reasoning is the point. If there are no trade-offs, then it's not an ADR
 
 > **Why is more important than how.**
 
@@ -43,10 +43,13 @@ Required sections:
 Why this decision is needed. What forces are at play.
 
 ## Decision
-What was decided and why. Source-grounded evidence — not opinion.
+What was decided and why. 
+Source-grounded evidence — not opinion.
+Proposed implementation plan.
+Open questions.
 
 ## Consequences
-What becomes easier, what becomes harder, what changes.
+This is the most important part of an ADR.
 ```
 
 A framework ADR (like this one) may set principles, with follow-up ADRs for each concrete change. One decision per ADR — do not bundle unrelated choices.
