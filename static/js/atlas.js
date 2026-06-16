@@ -155,6 +155,16 @@ function _buildModal() {
       #atlas-modal .atlas-center.show-base .atlas-preview { display:none; }
       #atlas-modal .atlas-center.show-base .atlas-base-view { display:flex; }
 
+      /* Mobile (small viewport): a real full-screen sheet — drag/resize are off
+         below 768px, so it must fill the screen, not float un-movable. !important
+         overrides inline width/height/left/top left by drag/resize on desktop. */
+      #atlas-modal.atlas-sheet .modal-content {
+        position:fixed !important; inset:0 !important;
+        width:100vw !important; height:100vh !important; height:100dvh !important;
+        max-width:none !important; max-height:none !important;
+        margin:0 !important; border-radius:0 !important; transform:none !important;
+      }
+
       /* Segmented switcher — hidden on wide, shown when the panel is narrow. */
       #atlas-modal .atlas-tabs { display:none; }
       #atlas-modal .atlas-tabs button { flex:1; background:none; border:0; border-bottom:2px solid transparent; color:inherit; opacity:.6; padding:9px 4px; font-size:12px; cursor:pointer; }
@@ -517,20 +527,36 @@ function _showCenter(mode) {
   _modal.querySelector('.atlas-center').classList.toggle('show-base', mode === 'base');
 }
 
-// ── responsive: narrow single-pane layout ────────────────────────────────────
+// ── responsive ────────────────────────────────────────────────────────────
+// Two signals:
+//   • mobile  (small VIEWPORT ≤768, the app's mobile breakpoint) → full-screen
+//     sheet; dragging/resizing are disabled by makeWindowDraggable at the same
+//     threshold, so the sheet must fill the screen rather than float un-movable.
+//   • narrow  (mobile OR a pinched/docked panel <680 wide) → single-pane layout.
 function _applyResponsive() {
   if (!_modal) return;
   const content = _modal.querySelector('.modal-content');
-  const w = content ? content.getBoundingClientRect().width : 9999;
-  const narrow = w > 0 && w < NARROW_WIDTH;
-  if (narrow === _modal.classList.contains('atlas-narrow')) return; // no change
+  const vw = window.innerWidth || 9999;
+  const cw = content ? content.getBoundingClientRect().width : 9999;
+  const mobile = vw <= 768;
+  const narrow = mobile || (cw > 0 && cw < NARROW_WIDTH);
+  const wasNarrow = _modal.classList.contains('atlas-narrow');
+  _modal.classList.toggle('atlas-sheet', mobile);
   _modal.classList.toggle('atlas-narrow', narrow);
-  if (narrow) {
-    _setPane(_current || _base ? 'editor' : 'files');
-    // The desktop right-dock/widen doesn't apply on a narrow sheet; clear any
-    // inline width so the panel fills the screen and the graph stacks below.
-    if (content) content.style.width = '';
+  if (mobile) {
+    // Drop any floating/docked geometry left over from a desktop session so the
+    // full-screen sheet CSS isn't overridden by inline width/left/top, and
+    // release any reserved right-dock gutter.
+    if (_docked) {
+      try { clearDockSide('right', _modal); } catch (_) {}
+      _modal.classList.remove('modal-right-docked');
+      _docked = false;
+    }
+    ['width', 'height', 'left', 'top', 'transform'].forEach((p) => {
+      if (content) content.style[p] = '';
+    });
   }
+  if (narrow && !wasNarrow) _setPane((_current || _base) ? 'editor' : 'files');
 }
 
 // Show exactly one pane in narrow mode (Files / Editor / Preview / Links).
