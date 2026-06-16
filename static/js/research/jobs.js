@@ -4,7 +4,6 @@ import { api, apiPath } from '../axios/api.js';
  */
 
 let _jobs = [];
-let _apiBase = '';
 let _renderCb = null;
 let _idCounter = 0;
 
@@ -29,7 +28,7 @@ function _markDismissed(ids) {
 
 let _activePollInterval = null;
 
-export function init(apiBase) {
+export function init() {
   _reconnectActive();
   // Poll for active sessions periodically so research started elsewhere
   // (e.g. by the agent via trigger_research) gets adopted into the

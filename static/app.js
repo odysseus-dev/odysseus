@@ -47,7 +47,6 @@ import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 import { api, apiPath, apiErrorMessage } from './js/axios/api.js';
 
-const API_BASE = window.location.origin;
 window.themeModule = themeModule;
 window.sessionModule = sessionModule;
 window.uiModule = uiModule;
@@ -3333,7 +3332,7 @@ function initializeEventListeners() {
   initKeyboardShortcuts({
     el, Storage, sessionModule, uiModule, chatModule,
     adminModule, settingsModule, searchChatModule,
-    _closeCompareIfActive, _deactivateIncognito, API_BASE
+    _closeCompareIfActive, _deactivateIncognito
   });
   
 }
@@ -3374,22 +3373,20 @@ function startOdysseusApp() {
   const _inputBottom = document.querySelector('.chat-input-bottom');
   if (_inputBottom) _inputBottom.style.visibility = '';
 
-  fileHandlerModule.init(API_BASE);
-  modelsModule.init(API_BASE);
-  ragModule.init(API_BASE);
-  presetsModule.init(API_BASE);
-  searchModule.init(API_BASE);
-  chatModule.init(API_BASE);
+  ragModule.init();
+  presetsModule.init();
+  searchModule.init();
+  chatModule.init();
   chatModule.initListeners();
-  groupModule.init(API_BASE);
+  groupModule.init();
   // Initialize compare module
   if (compareModule) {
-    compareModule.init(API_BASE);
+    compareModule.init();
   }
-  researchPanelModule.init(API_BASE, markdownModule, sessionModule);
+  researchPanelModule.init(markdownModule, sessionModule);
   // Initialize document editor module
   if (documentModule) {
-    documentModule.init(API_BASE);
+    documentModule.init();
     // Restore document panel if it was open before refresh
     const _curSession = sessionModule && sessionModule.getCurrentSessionId();
     if (_curSession && localStorage.getItem('odysseus-doc-open-' + _curSession) === '1') {
@@ -3398,7 +3395,7 @@ function startOdysseusApp() {
   }  
   // Initialize search chat module
   if (searchChatModule) {
-    searchChatModule.init(API_BASE);
+    searchChatModule.init();
   }
 
   // Search buttons — icon rail + sidebar
@@ -3903,7 +3900,6 @@ function startOdysseusApp() {
 
   if (sessionModule) {
     sessionModule.initDependencies({
-      API_BASE: API_BASE,
       el: el,
       showToast: uiModule.showToast,
       showError: uiModule.showError,

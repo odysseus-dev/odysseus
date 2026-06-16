@@ -8,7 +8,7 @@ import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 import { api } from './axios/api.js';
 
-export function init(_apiBase) {
+export function init() {
   _setupUploadZone();
 }
 

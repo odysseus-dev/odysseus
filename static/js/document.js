@@ -138,7 +138,7 @@ import { api, apiFetch, apiPath, apiErrorMessage } from './axios/api.js';
     }
   }
 
-  export function init(_apiBase) {
+  export function init() {
     initLibrary({
       esc: _esc,
       getDocs: () => docs,

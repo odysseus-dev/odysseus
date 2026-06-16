@@ -76,7 +76,7 @@ let userTemplates = [];
 /**
  * Initialize with dependencies
  */
-export function init(apiBase) {
+export function init() {
   initCharTabs();
   initEnabledToggle();
   initNameDropdown();

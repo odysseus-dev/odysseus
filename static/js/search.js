@@ -8,7 +8,7 @@ import { api } from './axios/api.js';
 let _provider = 'searxng';
 let _loaded = false;
 
-export function init(_apiBase) {
+export function init() {
   // Fetch provider on init so it's ready when chat needs it
   _fetchProvider();
 }

@@ -52,7 +52,7 @@ function _slotChar(i) { return state._parallel ? String.fromCharCode(65 + i) : S
 // ── init ──
 // ────────────────────────────────────────────────────────────────────────────
 
-function init(_apiBase) {
+function init() {
   // Clean up unsaved compare sessions on page close/refresh
   window.addEventListener('beforeunload', () => {
     if (!state._saveOnClose && state._paneSessionIds.length > 0) {

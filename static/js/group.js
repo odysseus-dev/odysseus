@@ -22,7 +22,7 @@ let _roundRobinIdx = 0;
 let _parentSessionId = null;
 const GROUP_STATE_KEY = 'odysseus-group-state';
 
-export function init(apiBase) {
+export function init() {
   // Initialize Group tab inside Characters modal
   setTimeout(_initGroupTab, 500);
 }

@@ -182,8 +182,8 @@ import { api, apiFetch, apiPath } from './axios/api.js';
   /**
    * Initialize with dependencies
    */
-  export function init(apiBase) {
-    initSlashCommands({ apiBase, isStreaming: () => isStreaming });
+  export function init() {
+    initSlashCommands({ isStreaming: () => isStreaming });
     // Initialize email inbox
     emailInbox.init(documentModule);
     // Wire the slash-command autocomplete popup on the chat composer. The

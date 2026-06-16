@@ -171,7 +171,7 @@ function handleInput(e) {
   }, 300);
 }
 
-export function init(_apiBase) {
+export function init() {
   const input = el('search-input');
   if (input) {
     input.addEventListener('input', handleInput);
