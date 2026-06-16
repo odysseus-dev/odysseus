@@ -68,6 +68,14 @@ def test_manage_notes_covers_every_feature(monkeypatch):
         assert "0: Passport" in out
         assert "[x] 1: Tickets" in out
 
+        # 2b) get: full (untruncated) content + checklist indices, plus the
+        # read/view/show/open alias that resolves to get.
+        g = call(action="get", id=nid).get("results", "")
+        assert "**Trip**" in g
+        assert "![map](https://example.com/map.png)" in g  # full content, not truncated
+        assert "0: Passport" in g and "[x] 1: Tickets" in g
+        assert "**Trip**" in call(action="read", id=nid).get("results", "")  # alias
+
         # 3) toggle_item: flip index 0 (Passport) to done
         r = call(action="toggle_item", id=nid, index=0)
         assert "marked done" in r.get("response", ""), r

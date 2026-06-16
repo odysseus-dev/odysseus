@@ -154,6 +154,33 @@ def test_task_lines_and_inline_still_serialize(node_available):
     assert "**Hi** [link](https://x)" in out["md"]
 
 
+def test_adjacent_checklists_stay_separate(node_available):
+    # Two separate task lists must keep a blank line between them, else they
+    # re-render (via mdToHtml) as one merged list.
+    out = _run(r"""
+      const mk = (txtv) => el('ul', { cls:['md-tasklist'], children:[
+        el('li', { cls:['md-task'], attrs:{'data-done':'0'}, children:[
+          el('span', { cls:['md-task-box'], attrs:{'aria-checked':'false'} }),
+          el('span', { cls:['md-task-text'], children:[txt(txtv)] }),
+        ]})
+      ]});
+      const body = el('div', { children: [ mk('a'), mk('b') ] });
+      console.log(JSON.stringify({ md: _serializePreviewBody(body) }));
+    """)
+    assert out["md"] == "- [ ] a\n\n- [ ] b"
+
+
+def test_image_width_round_trips(node_available):
+    # A resized image serializes its width back as a `w=NN` title so the resize
+    # survives an edit (mdToHtml reads `w=NN` back into a width style).
+    out = _run(r"""
+      const img = el('img', { cls:['md-img'], attrs:{ src:'/api/upload/x', alt:'' }, style:{ width:'66%' } });
+      const body = el('div', { children: [img] });
+      console.log(JSON.stringify({ md: _serializePreviewBody(body) }));
+    """)
+    assert out["md"] == '![](/api/upload/x "w=66")'
+
+
 def test_preview_editor_event_fixes_present():
     """Source-assertions for the event-bound fixes (not runnable without a DOM)."""
     # Paste-as-plaintext: pasted HTML must never land live in the editor.

@@ -185,3 +185,69 @@ def test_dotted_python_import_paths_are_not_autolinked(node_available):
     assert 'href="https://imblearn.com' not in html
     assert 'href="https://sklearn.me' not in html
     assert 'href="https://example.com/docs"' in html
+
+
+# ── Markdown images (![alt](url)) — safeImageUrl gate + sizing ───────────────
+
+def test_image_javascript_url_does_not_render_img(node_available):
+    # The important one: a javascript: image URL must never become an <img>.
+    html = _run_markdown_case("![evil](javascript:alert(1))")
+    assert "<img" not in html
+    assert "javascript:" not in html
+    assert "evil" in html  # falls back to the alt text
+
+
+def test_image_data_html_url_rejected(node_available):
+    # data: is only allowed for image MIME types; data:text/html must be dropped.
+    html = _run_markdown_case("![x](data:text/html,<script>alert(1)</script>)")
+    assert "<img" not in html
+    assert "data:text/html" not in html
+    assert "<script>alert(1)</script>" not in html
+
+
+def test_image_https_and_relative_urls_render(node_available):
+    https = _run_markdown_case("![pic](https://e.com/a.png)")
+    assert '<img class="md-img"' in https
+    assert 'src="https://e.com/a.png"' in https
+
+    # Root-relative (e.g. an upload) resolves against the page origin.
+    rel = _run_markdown_case("![up](/api/upload/abc123)")
+    assert "<img" in rel
+    assert "/api/upload/abc123" in rel
+
+
+def test_image_data_image_url_allowed(node_available):
+    html = _run_markdown_case("![x](data:image/png;base64,iVBORw0KGgo=)")
+    assert "<img" in html
+    assert "data:image/png;base64,iVBORw0KGgo=" in html
+
+
+def test_image_width_title_sets_style_and_clamps(node_available):
+    sized = _run_markdown_case('![x](https://e.com/a.png "w=50")')
+    assert 'style="width:50%"' in sized
+
+    clamped = _run_markdown_case('![x](https://e.com/a.png "w=999")')
+    assert 'style="width:100%"' in clamped  # clamped to 100
+
+
+def test_interactive_tasklist_renders_indices_and_a11y(node_available):
+    html = _run_markdown_case(
+        "- [ ] first\n- [x] second",
+        "mod.mdToHtml(input, { tasks: 'interactive' })",
+    )
+    assert '<ul class="md-tasklist">' in html
+    assert 'data-task-index="0"' in html
+    assert 'data-task-index="1"' in html
+    assert 'role="checkbox"' in html
+    assert 'tabindex="0"' in html  # keyboard-focusable checkbox
+    assert "first" in html and "second" in html
+
+
+def test_interactive_empty_task_line_does_not_eat_next(node_available):
+    # Regression: an empty "- [ ]" line must not swallow the following item.
+    html = _run_markdown_case(
+        "- [ ]\n- [ ] second",
+        "mod.mdToHtml(input, { tasks: 'interactive' })",
+    )
+    assert html.count('data-task-index="') == 2
+    assert "second" in html
