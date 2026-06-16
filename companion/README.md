@@ -10,9 +10,25 @@ Odysseus server offers and pair to it, without duplicating any LLM logic.
 | GET | `/api/companion/models` | session or token | the **caller's own** model endpoints |
 | GET | `/api/companion/pair` | **admin cookie** | pairing page (a form; never mints) |
 | POST | `/api/companion/pair` | **admin cookie** | mint a one-time pairing token (`?format=json` for an in-app screen) |
+| POST | `/api/companion/research/start` | session or token | launch a Deep Research run (the caller's own) |
+| GET | `/api/companion/research/active` | session or token | the caller's currently-running runs |
+| GET | `/api/companion/research/stream/{id}` | session or token | SSE progress for one run |
+| POST | `/api/companion/research/cancel/{id}` | session or token | cancel one of the caller's runs |
+| POST | `/api/companion/research/result/{id}` | session or token | read a run's report + sources (no clear) |
 
 `/models` scopes to the caller's real owner plus legacy null-owner shared rows
 (same rule as `owner_filter`) and never returns API-key material.
+
+## Deep Research launcher
+
+`/api/companion/research/*` mirrors the stock `/api/research/*` endpoints but
+re-scopes every run to the token's **real owner** (`token_owner`). The stock
+routes resolve a bearer caller to the sandboxed pseudo-user `api`, so a run
+started there would be owned by `api` — invisible in the owner's web-UI library
+and gated by `api`'s privileges. Ownership is enforced on every read/cancel
+(`research_owns`, a 404-not-403 gate), so a caller only ever touches their own
+runs. No extra `companion` scope is required: research is a chat-class generation
+capability and is mounted only when the app passes a `research_handler`.
 
 ## Pairing CSRF posture
 
