@@ -1,6 +1,7 @@
 # app.py — slim orchestrator
 import mimetypes
 import os
+import sys
 
 
 def register_static_mime_types() -> None:
@@ -113,12 +114,13 @@ app = FastAPI(
 )
 
 # ========= CORS =========
+CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=CORS_ALLOW_METHODS,
     allow_headers=[
         "Accept",
         "Authorization",
@@ -331,8 +333,8 @@ if AUTH_ENABLED:
                         request.state.current_user = "internal-tool"
                     request.state.api_token = False
                     return await call_next(request)
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("Internal tool auth header check failed", exc_info=_e)
             # Allow DIRECT localhost requests (internal service calls from
             # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
@@ -385,11 +387,10 @@ if AUTH_ENABLED:
                                     _db.close()
                             try:
                                 await _asyncio.to_thread(_do)
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                logger.debug("Failed to update token last_used_at", exc_info=_e)
                         _asyncio.create_task(_touch_last_used(matched_id))
                         # Keep bearer-token callers out of normal cookie/user
-                        # routes. API-aware routes can read api_token_owner.
                         request.state.current_user = "api"
                         request.state.api_token = True
                         request.state.api_token_id = matched_id
@@ -438,7 +439,7 @@ class _RevalidatingStatic(StaticFiles):
         return resp
 
 
-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+app.mount("/static", _RevalidatingStatic(directory=STATIC_DIR), name="static")
 
 # ========= GENERATED IMAGES =========
 @app.get("/api/generated-image/{filename}")
@@ -464,8 +465,8 @@ async def serve_generated_image(filename: str, request: Request):
                 _db.close()
     except HTTPException:
         raise
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("Image ownership verification failed for %r", filename, exc_info=_e)
     ext = filename.rsplit('.', 1)[-1].lower()
     mime = {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -528,6 +529,7 @@ memory_vector     = components.get("memory_vector")
 upload_handler    = components["upload_handler"]
 app.state.upload_handler = upload_handler
 personal_docs_mgr = components["personal_docs_manager"]
+app.state.personal_docs_manager = personal_docs_mgr
 api_key_manager   = components["api_key_manager"]
 preset_manager    = components["preset_manager"]
 chat_processor    = components["chat_processor"]
@@ -1171,3 +1173,12 @@ async def _shutdown_event():
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
     logger.info("Application shutdown complete")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    bind_host = os.getenv("APP_BIND", "127.0.0.1")
+    bind_port = int(os.getenv("APP_PORT", "7000"))
+
+    uvicorn.run(app, host=bind_host, port=bind_port, log_level="info")
