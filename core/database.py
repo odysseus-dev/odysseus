@@ -10,6 +10,7 @@ from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.orm import relationship, sessionmaker, backref
 
 from src.runtime_paths import get_app_root
+from core.platform_compat import safe_chmod, IS_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -1794,6 +1795,24 @@ def init_db():
     """
     _migrate_model_endpoints()
     Base.metadata.create_all(bind=engine)
+    # Lock the DB file to 0o600 — it holds bearer-token + bcrypt hashes and
+    # encrypted provider keys. POSIX only; safe_chmod no-ops on Windows
+    # (ACL-restricted profile dir) and is skipped for Postgres / in-memory.
+    # Must stay AFTER create_all: the file is born here (at the umask default),
+    # and nothing below resets the mode. The rollback journal inherits 0600 from
+    # this file at creation, so no separate sidecar handling is needed.
+    if DATABASE_URL.startswith("sqlite:///") and ":memory:" not in DATABASE_URL:
+        db_path = DATABASE_URL.replace("sqlite:///", "")
+        # Fail closed-loud: this is the only access control on the file, so if
+        # the chmod genuinely fails (read-only FS, foreign owner) an operator
+        # should hear about it. safe_chmod also returns False as a Windows no-op,
+        # so guard on IS_WINDOWS to avoid a spurious warning there.
+        if not safe_chmod(db_path, 0o600) and not IS_WINDOWS:
+            logger.warning(
+                "Could not restrict %s to 0o600; it holds secrets and may be "
+                "world-readable. Check filesystem permissions and ownership.",
+                db_path,
+            )
     _migrate_add_hidden_models_column()
     _migrate_add_cached_models_column()
     _migrate_add_pinned_models_column()
