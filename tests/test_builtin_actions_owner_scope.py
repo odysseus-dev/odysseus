@@ -1,5 +1,6 @@
 """Regression tests for owner-scoped model resolution in scheduled actions."""
 
+import sqlite3
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -106,6 +107,9 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
     from src.builtin_actions import action_learn_sender_signatures
 
     class FakeImap:
+        def __init__(self, owner=""):
+            self.owner = owner
+
         def select(self, *_args, **_kwargs):
             return "OK", []
 
@@ -119,13 +123,122 @@ async def test_learn_sender_signatures_resolves_llm_for_task_owner(monkeypatch):
             return None
 
     calls, _fallback_calls = _resolver_spy(monkeypatch, utility_result=("", "", {}), default_result=("", "", {}))
-    monkeypatch.setattr(email_helpers, "_imap_connect", lambda _account_id=None: FakeImap())
+    imap_owners = []
+
+    def fake_imap_connect(_account_id=None, owner=""):
+        imap_owners.append(owner)
+        return FakeImap(owner)
+
+    monkeypatch.setattr(email_helpers, "_imap_connect", fake_imap_connect)
 
     message, ok = await action_learn_sender_signatures("alice")
 
     assert ok is False
     assert message == "No LLM endpoint available"
     assert calls == [("utility", "alice"), ("default", "alice")]
+    assert imap_owners == ["alice"]
+
+
+@pytest.mark.asyncio
+async def test_learn_sender_signatures_writes_owner_scoped_cache(monkeypatch, tmp_path):
+    from routes import email_helpers
+    from src import endpoint_resolver, llm_core
+    from src.builtin_actions import action_learn_sender_signatures
+
+    db_path = tmp_path / "scheduled_emails.db"
+    monkeypatch.setattr(email_helpers, "SCHEDULED_DB", db_path)
+    email_helpers._init_scheduled_db()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO sender_signatures
+            (from_address, owner, signature_text, sample_count, last_built_at, model_used, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "writer@example.com",
+                "bob",
+                "bob cached signature",
+                3,
+                "2999-01-01T00:00:00",
+                "old-model",
+                "llm",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    class FakeImap:
+        def select(self, *_args, **_kwargs):
+            return "OK", []
+
+        def search(self, *_args, **_kwargs):
+            return "OK", [b"1 2 3"]
+
+        def fetch(self, uid, query):
+            if "HEADER.FIELDS" in query:
+                return "OK", [(None, b"From: Writer <writer@example.com>\r\n\r\n")]
+            return "OK", [
+                (
+                    None,
+                    (
+                        b"Thanks for the update.\r\n\r\n"
+                        b"Regards,\r\n"
+                        b"Writer Example\r\n"
+                        b"Example Co.\r\n"
+                        + str(uid).encode()
+                    ),
+                )
+            ]
+
+        def logout(self):
+            return None
+
+    imap_owners = []
+
+    def fake_imap_connect(_account_id=None, owner=""):
+        imap_owners.append(owner)
+        return FakeImap()
+
+    monkeypatch.setattr(email_helpers, "_imap_connect", fake_imap_connect)
+    monkeypatch.setattr(
+        endpoint_resolver,
+        "resolve_endpoint",
+        lambda kind, *args, **kwargs: ("http://llm", "alice-model", {}),
+    )
+
+    async def fake_llm_call_async(**_kwargs):
+        return "Writer Example\nExample Co.\nwriter@example.com"
+
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call_async)
+
+    message, ok = await action_learn_sender_signatures("alice")
+
+    assert ok is True
+    assert message.startswith("Learned sigs: 1 found")
+    assert imap_owners == ["alice", "alice"]
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT owner, signature_text, model_used
+            FROM sender_signatures
+            WHERE from_address = ?
+            ORDER BY owner
+            """,
+            ("writer@example.com",),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert rows == [
+        ("alice", "Writer Example\nExample Co.\nwriter@example.com", "alice-model"),
+        ("bob", "bob cached signature", "old-model"),
+    ]
 
 
 @pytest.mark.asyncio

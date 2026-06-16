@@ -37,6 +37,9 @@ PROVIDER_CASES = [
     ("openai", "https://api.openai.com/v1",
      "https://api.openai.com/v1/chat/completions",
      "https://api.openai.com/v1/models"),
+    ("openai_pathless", "https://api.openai.com",
+     "https://api.openai.com/v1/chat/completions",
+     "https://api.openai.com/v1/models"),
     ("anthropic", "https://api.anthropic.com",
      "https://api.anthropic.com/v1/messages",
      "https://api.anthropic.com/v1/models"),
@@ -58,7 +61,7 @@ PROVIDER_CASES = [
      "https://api.x.ai/v1/models"),
     ("deepseek", "https://api.deepseek.com",
      "https://api.deepseek.com/chat/completions",
-     "https://api.deepseek.com/models"),
+     "https://api.deepseek.com/v1/models"),
     # Gemini's OpenAI-compatible surface — treated as a generic OpenAI endpoint.
     ("gemini_openai", "https://generativelanguage.googleapis.com/v1beta/openai",
      "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",

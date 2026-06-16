@@ -7,7 +7,9 @@ injected fake executor so no pytest subprocess is ever spawned.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -45,6 +47,21 @@ def test_area_and_sub_area_marker_expression():
 
 def test_no_selection_marker_expression_is_none():
     assert build_marker_expression(None, None) is None
+
+
+def test_fast_only_marker_expression():
+    assert build_marker_expression(None, None, fast=True) == "not slow"
+
+
+def test_fast_composes_with_area():
+    assert build_marker_expression("services", None, fast=True) == "area_services and not slow"
+
+
+def test_fast_composes_with_area_and_sub_area():
+    assert (
+        build_marker_expression("services", "cookbook", fast=True)
+        == "area_services and sub_cookbook and not slow"
+    )
 
 
 # --- command construction --------------------------------------------------
@@ -92,6 +109,47 @@ def test_last_failed_appends_safe_flags():
 def test_default_python_is_current_interpreter():
     command = build_pytest_command(FocusSelection(area="cli"))
     assert command[0] == sys.executable
+
+
+# --- fast lane and duration visibility -------------------------------------
+
+
+def test_fast_only_command():
+    assert _cmd(fast=True) == [PY, "-m", "pytest", "-m", "not slow"]
+
+
+def test_fast_with_area_command():
+    assert _cmd(area="services", fast=True) == [
+        PY, "-m", "pytest", "-m", "area_services and not slow",
+    ]
+
+
+def test_fast_with_area_and_sub_area_command():
+    assert _cmd(area="services", sub_area="cookbook", fast=True) == [
+        PY, "-m", "pytest", "-m", "area_services and sub_cookbook and not slow",
+    ]
+
+
+def test_durations_appends_flag():
+    assert _cmd(fast=True, durations=25) == [
+        PY, "-m", "pytest", "-m", "not slow", "--durations=25",
+    ]
+
+
+def test_durations_min_appends_flag():
+    assert _cmd(fast=True, durations=25, durations_min=0.05) == [
+        PY, "-m", "pytest", "-m", "not slow", "--durations=25", "--durations-min=0.05",
+    ]
+
+
+def test_durations_is_not_a_focus_selector():
+    assert FocusSelection(durations=25).has_focus is False
+    assert FocusSelection(fast=True).has_focus is True
+
+
+def test_durations_kept_before_passthrough_args():
+    command = _cmd(fast=True, durations=25, pytest_args=("-q",))
+    assert command == [PY, "-m", "pytest", "-m", "not slow", "--durations=25", "-q"]
 
 
 # --- sub-area normalization ------------------------------------------------
@@ -216,3 +274,126 @@ def test_no_focus_selector_is_rejected():
         run(["--", "-q"], executor=executor)
     assert excinfo.value.code == 2
     assert executor.calls == []
+
+
+def test_fast_run_invokes_executor_with_not_slow():
+    executor = _FakeExecutor()
+    run(["--fast"], executor=executor)
+    assert executor.calls == [[sys.executable, "-m", "pytest", "-m", "not slow"]]
+
+
+def test_fast_with_durations_run_invokes_executor():
+    executor = _FakeExecutor()
+    run(["--area", "services", "--fast", "--durations", "25"], executor=executor)
+    assert executor.calls == [[
+        sys.executable,
+        "-m",
+        "pytest",
+        "-m",
+        "area_services and not slow",
+        "--durations=25",
+    ]]
+
+
+def test_fast_durations_dry_run_prints_command(capsys):
+    executor = _FakeExecutor()
+    code = run(["--dry-run", "--fast", "--durations", "25"], executor=executor)
+    out = capsys.readouterr().out
+    assert code == 0
+    assert executor.calls == []
+    assert out == f"{sys.executable} -m pytest -m 'not slow' --durations=25\n"
+
+
+def test_durations_alone_is_rejected_before_executor():
+    executor = _FakeExecutor()
+    with pytest.raises(SystemExit) as excinfo:
+        run(["--durations", "25"], executor=executor)
+    assert excinfo.value.code == 2
+    assert executor.calls == []
+
+
+def test_durations_zero_is_allowed_means_show_all():
+    executor = _FakeExecutor()
+    run(["--fast", "--durations", "0"], executor=executor)
+    assert executor.calls == [[
+        sys.executable, "-m", "pytest", "-m", "not slow", "--durations=0",
+    ]]
+
+
+@pytest.mark.parametrize("flag,value", [("--durations", "-1"), ("--durations-min", "-0.5")])
+def test_negative_duration_values_are_rejected(flag, value):
+    executor = _FakeExecutor()
+    with pytest.raises(SystemExit) as excinfo:
+        run(["--fast", flag, value], executor=executor)
+    assert excinfo.value.code == 2
+    assert executor.calls == []
+
+
+@pytest.mark.parametrize("argv", [
+    ["--fast", "--durations-min", "0.05"],
+    ["--area", "services", "--durations-min", "0.05"],
+])
+def test_durations_min_without_durations_is_rejected(argv):
+    executor = _FakeExecutor()
+    with pytest.raises(SystemExit) as excinfo:
+        run(argv, executor=executor)
+    assert excinfo.value.code == 2
+    assert executor.calls == []
+
+
+def test_durations_min_with_durations_is_allowed():
+    executor = _FakeExecutor()
+    run(["--fast", "--durations", "25", "--durations-min", "0.05"], executor=executor)
+    assert executor.calls == [[
+        sys.executable,
+        "-m",
+        "pytest",
+        "-m",
+        "not slow",
+        "--durations=25",
+        "--durations-min=0.05",
+    ]]
+
+
+# --- fast lane deselects evidence-backed slow tests (real collection) -------
+
+# Node names in tests/test_auth_config_lock_concurrency.py: the single unmarked
+# fast test, and the five @pytest.mark.slow tests the fast lane must exclude.
+_FAST_AUTH_CONCURRENCY_TEST = "test_parallel_creates_same_username_only_one_wins"
+_SLOW_AUTH_CONCURRENCY_TESTS = (
+    "test_parallel_creates_no_lost_users",
+    "test_parallel_deletes_no_corruption",
+    "test_parallel_renames_no_lost_users",
+    "test_mixed_operations_no_corruption",
+    "test_file_always_valid_json_during_concurrent_ops",
+)
+
+
+def test_fast_lane_collects_only_unmarked_auth_concurrency_test():
+    """`--fast` collection drops the marked slow tests but keeps the fast one.
+
+    Unlike the other tests here, this runs a real `--collect-only` so it proves
+    the `slow` markers actually deselect during collection, not just that the
+    command is built with `not slow`.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "tests/run_focus.py",
+            "--fast",
+            "--",
+            "--collect-only",
+            "-q",
+            "tests/test_auth_config_lock_concurrency.py",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    collected = result.stdout
+
+    assert _FAST_AUTH_CONCURRENCY_TEST in collected
+    for slow_test in _SLOW_AUTH_CONCURRENCY_TESTS:
+        assert slow_test not in collected, f"slow test was not deselected: {slow_test}"

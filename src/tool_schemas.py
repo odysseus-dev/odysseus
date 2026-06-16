@@ -25,7 +25,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access)",
+            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -39,7 +39,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something",
+            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -68,11 +68,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "web_fetch",
-            "description": "Fetch and read the text content of a specific URL the user names (e.g. 'check example.com', 'what's on this page <url>'). Use when you already have a concrete URL/domain. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research).",
+            "description": "Fetch and read the text content of a specific URL the user names (e.g. 'check example.com', 'what's on this page <url>'). Use when you already have a concrete URL/domain. NOT for open-ended searches (use web_search) or 'research X' jobs (use trigger_research). Downloads are size-budgeted; a '[partial content: ...]' notice in the result means the body was cut short and you can re-call with full=true for the rest.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "The URL or domain to fetch (http/https; a bare domain like example.com is fine)"}
+                    "url": {"type": "string", "description": "The URL or domain to fetch (http/https; a bare domain like example.com is fine)"},
+                    "full": {"type": "boolean", "description": "Raise the download budget to the hard cap for large pages/files. Use only after a result reported partial content."}
                 },
                 "required": ["url"]
             }
@@ -139,6 +140,14 @@ FUNCTION_TOOL_SCHEMAS = [
                 },
                 "required": []
             }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_workspace",
+            "description": "Return the absolute path of the active workspace folder the user is working in. File tools are confined to it; the shell starts there but is not sandboxed. Call this first when the user refers to 'the project'/'the code'/'this folder' without a path, instead of asking them. Takes no arguments.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
     {
@@ -1000,7 +1009,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "resolve_contact",
-            "description": "Look up a contact's email address by name. Searches CardDAV address book and sent email history. Use when the user says 'message [name]' or 'email [name]' without an email address.",
+            "description": "Look up a contact by name. Searches CardDAV address book and sent email history. Returns email addresses (when available) or phone numbers. Use when the user says 'message [name]', 'email [name]', or asks for someone's contact details.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1014,7 +1023,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_contact",
-            "description": "Create, update, delete, or list the user's CardDAV contacts. Use to save a new contact ('save Jonathan's email jon@x.com'), update an existing one ('change Maria's number'), or remove one. For update/delete you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI.",
+            "description": "Create, update, delete, or list the user's CardDAV contacts. Use to save a new contact, update an existing one (email/phone/address), or remove one. For update/delete you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1025,6 +1034,7 @@ FUNCTION_TOOL_SCHEMAS = [
                     "email": {"type": "string", "description": "Single email address (convenience for add, or the primary email for update)."},
                     "emails": {"type": "array", "items": {"type": "string"}, "description": "Full list of email addresses (for update; first is primary)."},
                     "phones": {"type": "array", "items": {"type": "string"}, "description": "Full list of phone numbers (for update)."},
+                    "address": {"type": "string", "description": "Postal/mailing address as a single human-readable string."},
                 },
                 "required": ["action"]
             }
@@ -1196,23 +1206,26 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
         logger.error(f"Failed to parse function call arguments for {name}: {arguments}")
         return None
 
+    tool_type = _TOOL_NAME_MAP.get(name, name)
+    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
+                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
+
     # Some models emit valid JSON that isn't an object (e.g. a bare array
-    # ["ls -la"], string, or number) as the function arguments. Every branch
-    # below assumes a dict and calls args.get(...), so a non-dict would raise
-    # AttributeError and abort the whole agent stream. Coerce to {} instead.
+    # ["ls -la"], string, or number) as function arguments. Most local tools keep
+    # the legacy empty-object coercion for stream robustness, but email MCP tools
+    # must fail closed so a malformed call cannot read the default mailbox.
     if not isinstance(args, dict):
+        if tool_type.startswith("mcp__email__") or name in _BUILTIN_EMAIL_TOOLS:
+            logger.warning(f"Non-object email function call arguments for {name}: {args!r}; rejecting")
+            return None
         logger.warning(f"Non-object function call arguments for {name}: {args!r}; treating as empty")
         args = {}
-
-    tool_type = _TOOL_NAME_MAP.get(name, name)
 
     # Allow MCP tools through (namespaced as mcp__serverid__toolname)
     if tool_type.startswith("mcp__"):
         content = json.dumps(args) if args else "{}"
         return ToolBlock(tool_type, content)
     # Email tools are implemented as MCP — route them to email
-    _BUILTIN_EMAIL_TOOLS = {"list_email_accounts", "send_email", "list_emails", "read_email", "reply_to_email",
-                            "archive_email", "delete_email", "mark_email_read", "bulk_email", "download_attachment"}
     if name in _BUILTIN_EMAIL_TOOLS:
         return ToolBlock(f"mcp__email__{name}", json.dumps(args) if args else "{}")
     if tool_type not in TOOL_TAGS:
@@ -1246,6 +1259,8 @@ def function_call_to_tool_block(name: str, arguments: str) -> Optional[ToolBlock
             content = args.get("path", "")
     elif tool_type in ("grep", "glob", "ls"):
         content = json.dumps(args) if args else "{}"
+    elif tool_type == "get_workspace":
+        content = ""
     elif tool_type == "write_file":
         content = args.get("path", "") + "\n" + args.get("content", "")
     elif tool_type == "edit_file":

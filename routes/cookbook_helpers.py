@@ -1,16 +1,19 @@
 """cookbook_helpers.py — validators + small helpers shared by the cookbook routes.
 Extracted from cookbook_routes.py; the routes module imports the symbols it needs."""
 
+import json
 import logging
 import ntpath
 import os
 import posixpath
 import re
 import shlex
+from pathlib import Path
 
 from fastapi import HTTPException
 from pydantic import BaseModel
 
+from routes._validators import validate_remote_host, validate_ssh_port
 from core.platform_compat import _ssh_exec_argv
 
 logger = logging.getLogger(__name__)
@@ -30,16 +33,12 @@ _LOCAL_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _OLLAMA_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,200}$")
 # Include pattern is a glob: allow typical safe glyphs only.
 _INCLUDE_RE = re.compile(r"^[A-Za-z0-9._\-*?/\[\]]+$")
-# Remote host: either `user@host` or plain `host` (alias is allowed), where host
-# is a safe DNS-like token or a short SSH config alias.
-_REMOTE_HOST_RE = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$")
 # HF tokens and API tokens are url-safe base64-like.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9._~+/=-]+$")
 # Session IDs we mint look like "cookbook-deadbeef" or "serve-deadbeef".
 # Anything beyond plain alphanumerics + dash + underscore could break out
 # of the shell/PowerShell contexts the value lands in.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-_SSH_PORT_RE = re.compile(r"^\d{1,5}$")
 _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 # A download target directory. Absolute or ~-relative path; safe path glyphs
 # only (no quotes or shell metacharacters). Spaces are allowed because command
@@ -85,20 +84,30 @@ def _validate_include(v: str | None) -> str | None:
     return v
 
 
-def _validate_remote_host(v: str | None) -> str | None:
-    if v is None or v == "":
-        return None
-    if not _REMOTE_HOST_RE.match(v):
-        raise HTTPException(400, "Invalid remote_host — must be host or user@host, no SSH option syntax")
-    return v
-
-
 def _validate_token(v: str | None) -> str | None:
     if v is None or v == "":
         return None
     if not _TOKEN_RE.match(v):
         raise HTTPException(400, "Invalid token characters")
     return v
+
+
+def load_stored_hf_token(*, state_path: Path | str | None = None) -> str:
+    """Return the decrypted HF token from cookbook_state.json, else env fallback."""
+    path = Path(state_path) if state_path else Path(os.environ.get("DATA_DIR", "data")) / "cookbook_state.json"
+    token = ""
+    if path.exists():
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+            env = state.get("env") if isinstance(state, dict) else {}
+            if isinstance(env, dict) and env.get("hfToken"):
+                from src.secret_storage import decrypt
+                token = decrypt(env.get("hfToken") or "")
+        except Exception:
+            token = ""
+    if not token:
+        token = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
+    return token
 
 
 def _validate_local_dir(v: str | None) -> str | None:
@@ -118,17 +127,6 @@ def _validate_local_dir(v: str | None) -> str | None:
     if any(seg.startswith("-") for seg in re.split(r"[\\/]", v) if seg):
         raise HTTPException(400, "Invalid local_dir — path segments cannot start with '-'")
     return v
-
-
-def _validate_ssh_port(v: str | None) -> str | None:
-    if v is None or v == "":
-        return None
-    if not _SSH_PORT_RE.fullmatch(str(v)):
-        raise HTTPException(400, "Invalid ssh_port")
-    port = int(v)
-    if port < 1 or port > 65535:
-        raise HTTPException(400, "Invalid ssh_port")
-    return str(port)
 
 
 def _validate_gpus(v: str | None) -> str | None:
@@ -364,7 +362,12 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
-        'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        # Windows can expose python3 as a Microsoft Store App Execution Alias
+        # under WindowsApps. Git Bash sees that stub as present, but it exits
+        # before running Python. A Windows venv usually has python.exe, not
+        # python3.exe, so treat a missing or WindowsApps python3 as absent.
+        '_odys_py3="$(command -v python3 2>/dev/null || true)"',
+        'case "$_odys_py3" in ""|*[Ww]indows[Aa]pps*) python3() { python "$@"; } ;; esac',
         'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }',
     ]
 
@@ -502,6 +505,8 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    if u.startswith('KB'): return int(n * 1024)",
         "    return int(n)",
         "def scan_ollama():",
+        "    if any(m.get('is_ollama') for m in models): return",
+        "    if os.name == 'nt' and not os.environ.get('ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN'): return",
         "    if not shutil.which('ollama'): return",
         "    try:",
         "        p = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)",
@@ -532,8 +537,8 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
         "for _hf_cache in hf_cache_paths(): scan_hf(_hf_cache)",
-        "scan_ollama()",
         "scan_ollama_api()",
+        "scan_ollama()",
     ]
     for model_dir in model_dirs or []:
         lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
@@ -575,6 +580,36 @@ _GGUF_PRELUDE_RE = re.compile(
 _OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
 _OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
 _OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+_LLAMA_CPP_PYTHON_GGML_TYPES = {
+    "f32": "0",
+    "f16": "1",
+    "q4_0": "2",
+    "q4_1": "3",
+    "q5_0": "6",
+    "q5_1": "7",
+    "q8_0": "8",
+    "q8_1": "9",
+    "q2_k": "10",
+    "q3_k": "11",
+    "q4_k": "12",
+    "q5_k": "13",
+    "q6_k": "14",
+    "q8_k": "15",
+    "iq2_xxs": "16",
+    "iq2_xs": "17",
+    "iq3_xxs": "18",
+    "iq1_s": "19",
+    "iq4_nl": "20",
+    "iq3_s": "21",
+    "iq2_s": "22",
+    "iq4_xs": "23",
+    "mxfp4": "39",
+    "nvfp4": "40",
+    "q1_0": "41",
+}
+_LLAMA_CPP_PYTHON_TYPE_FLAG_RE = re.compile(
+    r"(?P<flag>--type_[kv])(?P<sep>\s+|=)(?P<quote>['\"]?)(?P<value>[A-Za-z0-9_]+)(?P=quote)"
+)
 
 
 def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -> tuple[str, str]:
@@ -604,6 +639,22 @@ def _ollama_bind_from_cmd(cmd: str | None, *, default_host: str = "127.0.0.1") -
     if port_num < 1 or port_num > 65535:
         return "127.0.0.1", "11434"
     return f"[{host}]" if bracketed_host else host, port
+
+
+def _normalize_llama_cpp_python_cache_types(cmd: str | None) -> str | None:
+    """Map llama.cpp KV cache type names to llama-cpp-python's integer enum."""
+    if not cmd or "llama_cpp.server" not in cmd:
+        return cmd
+
+    def repl(match: re.Match[str]) -> str:
+        value = match.group("value")
+        mapped = _LLAMA_CPP_PYTHON_GGML_TYPES.get(value.lower())
+        if not mapped:
+            return match.group(0)
+        quote = match.group("quote")
+        return f"{match.group('flag')}{match.group('sep')}{quote}{mapped}{quote}"
+
+    return _LLAMA_CPP_PYTHON_TYPE_FLAG_RE.sub(repl, cmd)
 
 
 def _check_serve_binary(seg: str) -> None:
@@ -744,6 +795,7 @@ def _append_llama_cpp_linux_accel_build_lines(runner_lines: list[str]) -> None:
     runner_lines.append('    done')
     # rm -rf build so a prior poisoned CMakeCache.txt (e.g. from a failed CUDA
     # or HIP attempt) doesn't cause the next configure to reuse stale settings.
+    runner_lines.append('    mkdir -p ~/bin')
     runner_lines.append('    cd ~/llama.cpp && rm -rf build')
     runner_lines.append('    if command -v hipconfig &>/dev/null || [ -d /opt/rocm ] || [ -n "$ROCM_PATH" ] || [ -n "$HIP_PATH" ]; then')
     runner_lines.append('      if command -v hipconfig &>/dev/null; then')
@@ -1047,6 +1099,16 @@ def _diagnose_serve_output(text: str) -> dict | None:
             r"vllm.*command not found|No module named vllm|ERROR: vLLM is not installed",
             "vLLM is not installed or not in PATH on this server.",
             [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
+        ),
+        (
+            r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|"
+            r"(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|"
+            r"Please ensure sgl_kernel is properly installed",
+            "SGLang native dependencies are missing on this server.",
+            [
+                {"label": "install OS packages: libnuma-dev python3.12-dev build-essential", "op": "manual"},
+                {"label": "upgrade sglang-kernel after OS packages are installed", "op": "manual"},
+            ],
         ),
         (
             r"sglang.*command not found|No module named sglang|SGLang is not installed",

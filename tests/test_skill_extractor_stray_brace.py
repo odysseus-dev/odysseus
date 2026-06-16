@@ -115,3 +115,33 @@ async def test_maybe_extract_skill_drops_when_no_candidate_parses(monkeypatch):
 
     assert entry is None
     assert not skills_manager.added
+
+
+async def test_maybe_extract_skill_drops_on_multiple_json_objects(monkeypatch):
+    # Two valid JSON objects should be rejected by maybe_extract_skill.
+    resp = (
+        '{"title": "Deploy runbook", "problem": "manual", "solution": "script", '
+        '"steps": ["build"], "tags": ["deploy"], "confidence": 0.9}\n'
+        '{"title": "Unrelated skill", "problem": "manual", "solution": "script", '
+        '"steps": ["build"], "tags": ["deploy"], "confidence": 0.9}'
+    )
+    async def fake_llm_call_async(*args, **kwargs):
+        return resp
+
+    monkeypatch.setattr("src.llm_core.llm_call_async", fake_llm_call_async)
+
+    skills_manager = _FakeSkillsManager()
+    entry = await skill_extractor.maybe_extract_skill(
+        _FakeSession(),
+        skills_manager,
+        endpoint_url="http://endpoint",
+        model="test-model",
+        headers={},
+        round_count=3,
+        tool_count=3,
+        owner="alice",
+    )
+
+    assert entry is None
+    assert not skills_manager.added
+

@@ -219,7 +219,7 @@ def create_plain_pdf_document(
     pages without form-field overlays.
     """
     from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
-    from src.tool_implementations import set_active_document
+    from src.agent_tools.document_tools import set_active_document
 
     content = render_plain_pdf_markdown(upload_id, title, body_text)
     db = SessionLocal()
@@ -402,7 +402,7 @@ def create_form_markdown_document(
     inside the content, which the export route looks for.
     """
     from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
-    from src.tool_implementations import set_active_document
+    from src.agent_tools.document_tools import set_active_document
 
     content = render_form_as_markdown(fields, upload_id, title, intro_text=intro_text)
     db = SessionLocal()

@@ -579,6 +579,24 @@ def _classify_event_heuristic(summary: str) -> tuple:
     return etype, None
 
 
+def _memory_context_lines(mems, limit: int = 40) -> list:
+    """Render Memory rows into short personal-context bullets for event classify.
+
+    Reads the Memory ORM `text` column. The previous inline code read a
+    non-existent `content` attribute, so it raised AttributeError on the first
+    row, the surrounding except swallowed it, and the classifier ran with no
+    personal context at all. getattr keeps it robust to future schema drift.
+    """
+    lines: list = []
+    for m in mems:
+        c = (getattr(m, "text", "") or "").strip()
+        if c:
+            lines.append(f"- {c[:200]}")
+        if len(lines) >= limit:
+            break
+    return lines
+
+
 async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
     """Hybrid classification of upcoming calendar events: fast heuristic for
     obvious cases, LLM fallback for ambiguous ones. Assigns event_type +
@@ -614,16 +632,11 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             try:
                 from core.database import Memory as _Mem
                 _mems = db.query(_Mem).filter(_Mem.owner == owner).limit(60).all() if owner else []
-                if _mems:
-                    _lines = []
-                    for m in _mems:
-                        c = (m.content or "").strip()
-                        if c:
-                            _lines.append(f"- {c[:200]}")
-                    if _lines:
-                        _memory_context = "USER CONTEXT (relationships, work, life):\n" + "\n".join(_lines[:40]) + "\n\n"
+                _lines = _memory_context_lines(_mems)
+                if _lines:
+                    _memory_context = "USER CONTEXT (relationships, work, life):\n" + "\n".join(_lines) + "\n\n"
             except Exception as _me:
-                logger.debug(f"Could not load memory for classify: {_me}")
+                logger.warning(f"Could not load memory for classify: {_me}")
 
             classified_h = 0
             classified_llm = 0
@@ -796,14 +809,14 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import email as _email_mod
         import asyncio as _aio
         from datetime import datetime as _dt, timedelta as _td
-        from routes.email_helpers import _imap_connect, SCHEDULED_DB
+        from routes.email_helpers import _email_cache_owner_clause, _imap_connect, SCHEDULED_DB
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
         # 1. Pull recent UIDs + From headers cheaply (header-only fetch).
         def _pull_headers():
             results = []
-            conn = _imap_connect(None)
+            conn = _imap_connect(None, owner=owner)
             try:
                 conn.select("INBOX", readonly=True)
                 status, data = conn.search(None, "ALL")
@@ -855,9 +868,11 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         # 3. Eligibility: ≥3 emails AND (no cache OR cache > 30 days old).
         try:
             conn = _sql3.connect(SCHEDULED_DB)
+            owner_clause, owner_params = _email_cache_owner_clause(owner)
             cached = {
                 r[0]: r[1] for r in conn.execute(
-                    "SELECT from_address, last_built_at FROM sender_signatures"
+                    f"SELECT from_address, last_built_at FROM sender_signatures WHERE {owner_clause}",
+                    owner_params,
                 ).fetchall()
             }
             conn.close()
@@ -888,7 +903,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
 
             def _fetch_bodies(_msgs):
                 bodies = []
-                conn2 = _imap_connect(None)
+                conn2 = _imap_connect(None, owner=owner)
                 try:
                     conn2.select("INBOX", readonly=True)
                     for mm in _msgs:
@@ -965,11 +980,12 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
 
             try:
                 conn = _sql3.connect(SCHEDULED_DB)
+                owner_value = (owner or "").strip()
                 conn.execute(
                     "INSERT OR REPLACE INTO sender_signatures "
-                    "(from_address, signature_text, sample_count, last_built_at, model_used, source) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (addr, cached_sig, len(bodies), _dt.utcnow().isoformat(), model, "llm"),
+                    "(from_address, owner, signature_text, sample_count, last_built_at, model_used, source) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (addr, owner_value, cached_sig, len(bodies), _dt.utcnow().isoformat(), model, "llm"),
                 )
                 conn.commit()
                 conn.close()

@@ -65,7 +65,13 @@ import spinnerModule from './spinner.js';
 
 // ── Error diagnosis ──
 
-function _openCookbookDependencies(pkgName = '') {
+// Re-exported so callers (Launch-tab pre-flight) can deep-link into the
+// Dependencies tab + auto-expand a specific backend's recipe panel and
+// pre-select the model they were trying to launch.
+export function openCookbookDependencies(pkgName = '', opts = {}) {
+  _openCookbookDependencies(pkgName, opts);
+}
+function _openCookbookDependencies(pkgName = '', opts = {}) {
   const cookbook = window.cookbookModule;
   if (cookbook && typeof cookbook.open === 'function') {
     cookbook.open({ tab: 'Dependencies' });
@@ -94,6 +100,34 @@ function _openCookbookDependencies(pkgName = '') {
       row.scrollIntoView({ block: 'center' });
       row.classList.add('cookbook-pkg-flash');
       setTimeout(() => row.classList.remove('cookbook-pkg-flash'), 1800);
+      // Pre-flight deep link: auto-expand the recipe panel + pre-select
+      // the model the user was trying to launch. The dropdown values are
+      // now full model ids (sourced from _cachedModelIds), so we match by
+      // exact value first, then fall back to a substring match.
+      if (opts.expandRecipe) {
+        const caret = row.querySelector('[data-dep-recipe-toggle]');
+        if (caret && caret.getAttribute('aria-expanded') !== 'true') caret.click();
+        if (opts.model) {
+          const sel = document.querySelector(`[data-dep-recipe-pick="${CSS.escape(opts.expandRecipe)}"]`);
+          if (sel) {
+            const wanted = String(opts.model);
+            let matched = false;
+            for (let i = 0; i < sel.options.length; i++) {
+              if (sel.options[i].value === wanted) {
+                sel.value = wanted; matched = true; break;
+              }
+            }
+            if (!matched) {
+              for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value && wanted.includes(sel.options[i].value)) {
+                  sel.value = sel.options[i].value; matched = true; break;
+                }
+              }
+            }
+            if (matched) sel.dispatchEvent(new Event('change'));
+          }
+        }
+      }
     }
   };
   tryHighlight();
@@ -321,6 +355,15 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|Please ensure sgl_kernel is properly installed/i,
+    message: 'SGLang native dependencies are missing on this server.',
+    fixes: [
+      { label: 'Copy OS package command', action: () => _copyText('sudo apt-get install -y libnuma-dev python3.12-dev build-essential') },
+      { label: 'Copy kernel upgrade', action: () => _copyText('python3 -m pip install --upgrade sglang-kernel') },
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
+    ],
+  },
+  {
     pattern: /sglang.*command not found|No module named sglang|SGLang is not installed/i,
     message: 'SGLang is not installed or not in PATH.',
     fixes: [
@@ -406,7 +449,7 @@ export const ERROR_PATTERNS = [
       { label: 'Repair kernel package', action: () => {
         const _vp = (_envState.env === 'venv' && _envState.envPath)
           ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
-        _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages kernels<0.15`);
+        _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages "kernels<0.15"`);
       }},
       { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
     ],
@@ -617,7 +660,24 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   // the full error+context for a forum/discord paste.
   const toolbar = document.createElement('div');
   toolbar.className = 'cookbook-diag-toolbar';
-  toolbar.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:4px;margin-bottom:-2px;';
+  // Left side carries the diagnosis text (message + suggestion); buttons
+  // stay on the right. Was a separate body row below the toolbar, but
+  // the message reads more like "this is what the toolbar is for" when
+  // it sits inline with Copy / × Dismiss.
+  toolbar.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-bottom:-2px;';
+
+  const textWrap = document.createElement('div');
+  textWrap.style.cssText = 'flex:1;min-width:0;font-size:11px;line-height:1.35;';
+  const msg = document.createElement('div');
+  msg.className = 'cookbook-diag-message';
+  msg.textContent = diagnosis.message;
+  textWrap.appendChild(msg);
+  const suggestion = document.createElement('div');
+  suggestion.className = 'cookbook-diag-suggestion';
+  suggestion.textContent = suggestionText;
+  suggestion.style.cssText = 'opacity:0.75;margin-top:1px;';
+  textWrap.appendChild(suggestion);
+  toolbar.appendChild(textWrap);
 
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
@@ -650,18 +710,6 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   toolbar.appendChild(copyBtn);
   toolbar.appendChild(dismissBtn);
   diag.appendChild(toolbar);
-
-  const body = document.createElement('div');
-  body.className = 'cookbook-diag-body';
-  const msg = document.createElement('div');
-  msg.className = 'cookbook-diag-message';
-  msg.textContent = diagnosis.message;
-  body.appendChild(msg);
-  const suggestion = document.createElement('div');
-  suggestion.className = 'cookbook-diag-suggestion';
-  suggestion.textContent = suggestionText;
-  body.appendChild(suggestion);
-  diag.appendChild(body);
 
   const runFix = async (fix, button, busyLabel = fix.label, onStart = null, onDone = null) => {
     if (!fix || !button || button.dataset.busy) return;
