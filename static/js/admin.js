@@ -2725,6 +2725,43 @@ function initBackup() {
   });
 }
 
+/* ── Mobile pairing ── */
+function initPairing() {
+  const btn = el('adm-pairBtn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const result = el('adm-pairResult');
+    const msg = el('adm-pairMsg');
+    btn.disabled = true; btn.textContent = 'Generating...';
+    result.innerHTML = ''; msg.textContent = ''; msg.className = '';
+    try {
+      const res = await fetch('/api/companion/pair?format=json', {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to generate pairing code');
+      // The QR is a server-generated PNG data URI; only render it if it is one.
+      const qrOk = typeof data.qr === 'string' && data.qr.startsWith('data:image/png;base64,');
+      const payloadStr = JSON.stringify(data.payload);
+      result.innerHTML = `
+        <div style="text-align:center;">
+          ${qrOk ? `<img src="${esc(data.qr)}" alt="Pairing QR" width="240" height="240" style="background:#fff;border-radius:12px;padding:8px;">`
+                 : '<div class="admin-toggle-sub">QR rendering unavailable — enter the details manually.</div>'}
+        </div>
+        <div class="admin-toggle-sub" style="margin-top:10px"><strong>Host:</strong> <code>${esc(data.host)}</code></div>
+        <div class="admin-toggle-sub"><strong>Port:</strong> <code>${esc(String(data.port))}</code></div>
+        <div class="admin-toggle-sub" style="word-break:break-all"><strong>Token:</strong> <code>${esc(data.token)}</code></div>
+        <div class="admin-toggle-sub" style="word-break:break-all"><strong>Payload:</strong> <code>${esc(payloadStr)}</code></div>`;
+      msg.textContent = 'Shown once. Revoke it in Settings → Account → API tokens (id ' + (data.token_id || '?') + ').';
+      msg.className = 'admin-success';
+    } catch (e) {
+      msg.textContent = 'Could not generate pairing code: ' + e.message;
+      msg.className = 'admin-error';
+    }
+    btn.disabled = false; btn.textContent = 'Generate pairing code';
+  });
+}
+
 /* ── Danger Zone ── */
 function initDangerZone() {
   // Per-category Danger Zone wipes. Each button declares its target
@@ -2988,7 +3025,7 @@ function initAll() {
   modalEl = el('settings-modal');
   const inits = [
     initSignupToggle, initAddUser, initEndpointForm, initMcpForm,
-    initCalDAV, initBackup, initDangerZone, initTokenForm, initLogsView,
+    initCalDAV, initBackup, initPairing, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];
   for (const fn of inits) {
