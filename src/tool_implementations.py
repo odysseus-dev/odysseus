@@ -658,9 +658,11 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 _MCP_DENIED_COMMANDS = frozenset({
     "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "ash", "busybox",
     "cmd", "command.com", "powershell", "pwsh",
-    "python", "python2", "python3", "node", "nodejs", "deno", "bun", "ruby",
-    "perl", "php", "lua", "tclsh", "rscript", "groovy", "scala", "elixir", "erl",
-    "npx", "uvx", "pipx", "npm", "pnpm", "yarn", "pip", "pip2", "pip3", "uv",
+    "python", "pypy", "node", "nodejs", "deno", "bun", "ruby", "jruby",
+    "perl", "raku", "php", "lua", "luajit", "tclsh", "wish", "expect", "rscript",
+    "groovy", "scala", "elixir", "erl", "iex", "java", "javac", "jshell", "jbang",
+    "kotlin", "kotlinc", "dotnet", "mono", "swift", "osascript", "tsx", "ts-node",
+    "npx", "bunx", "uvx", "pipx", "npm", "pnpm", "yarn", "pip", "uv",
     "gem", "cargo", "go", "bundle", "poetry", "conda", "mamba", "brew",
     "apt", "apt-get", "yum", "dnf", "pacman", "apk",
     "env", "xargs", "nohup", "setsid", "nice", "ionice", "time", "timeout",
@@ -719,7 +721,12 @@ def _validate_mcp_command(command, args, env) -> Optional[str]:
     base = command.lower()
     if base.endswith(".exe") or base.endswith(".cmd") or base.endswith(".bat"):
         base = base.rsplit(".", 1)[0]
-    if base in _MCP_DENIED_COMMANDS:
+    # Canonicalize a trailing version suffix so versioned aliases collapse to the
+    # family name (python3.11 -> python, node18 -> node, pip3 -> pip); both the
+    # raw basename and the canonical form are denied, so an operator cannot
+    # accidentally allowlist a runtime alias back into the path.
+    canon = re.sub(r"[-_.]?\d+(?:\.\d+)*$", "", base)
+    if base in _MCP_DENIED_COMMANDS or canon in _MCP_DENIED_COMMANDS:
         return (
             f"command '{command}' is not allowed on the agent MCP path: "
             "interpreters, runtimes, package runners, and shells can execute "

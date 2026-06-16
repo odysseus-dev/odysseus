@@ -84,6 +84,24 @@ def test_denied_command_rejected_even_when_operator_allowlists_it():
     assert _validate_mcp_command("python3", ["server.py"], {}) is not None
 
 
+@pytest.mark.parametrize("command", [
+    "python3.11", "python3.12", "node18", "node20", "pip3", "ruby3.2",
+    "java", "javac", "bunx", "tsx", "ts-node", "pypy3", "deno1",
+])
+def test_versioned_and_alias_runtimes_are_denied(command):
+    # Versioned / alias runtime forms must collapse to the family and be denied,
+    # not slip past exact-name matching (RaresKeY review on #4433).
+    assert _validate_mcp_command(command, [], {}) is not None
+
+
+def test_alias_runtime_denied_even_if_operator_allowlists_it(monkeypatch):
+    # The exact scenario from review: an operator allowlists a versioned alias.
+    # Hard-deny by family must still win, before the allowlist is consulted.
+    monkeypatch.setenv("ODYSSEUS_MCP_ALLOWED_COMMANDS", "python3.11,node18,java,bunx")
+    for command in ("python3.11", "node18", "java", "bunx"):
+        assert _validate_mcp_command(command, [], {}) is not None, command
+
+
 def test_command_not_in_allowlist_rejected():
     assert _validate_mcp_command("some-random-binary", [], {}) is not None
 
@@ -112,6 +130,23 @@ def test_add_rejects_rce_with_no_db_write_and_no_connect(monkeypatch):
     db = _TS()
     try:
         assert db.query(McpServer).count() == 0, "rejected add must not persist an enabled row"
+    finally:
+        db.close()
+
+
+def test_add_rejects_versioned_runtime_alias_no_row_no_connect(monkeypatch):
+    # Versioned alias on the real add path must also write no row and not connect.
+    mcp = MagicMock()
+    mcp.connect_server = AsyncMock()
+    monkeypatch.setattr(ti, "get_mcp_manager", lambda: mcp)
+
+    res = _add("python3.11", ["server.py"])
+    assert res["exit_code"] == 1
+    mcp.connect_server.assert_not_called()
+
+    db = _TS()
+    try:
+        assert db.query(McpServer).count() == 0
     finally:
         db.close()
 
