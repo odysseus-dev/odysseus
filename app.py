@@ -162,7 +162,7 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # ========= SECURITY HEADERS MIDDLEWARE =========
-# app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 # ========= REQUEST TIMEOUT (FALLBACK FOR HUNG HANDLERS) =========
 # If a single request takes longer than REQUEST_HARD_TIMEOUT, abort it and
@@ -463,7 +463,7 @@ class _RevalidatingStatic(StaticFiles):
 app.mount(f"{BASE_PATH}/static", _RevalidatingStatic(directory="static"), name="static")
 
 # ========= GENERATED IMAGES =========
-@api_router.get("/generated-image/{filename}")
+@api_router.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
     img_path = resolve_generated_image_path(filename)
