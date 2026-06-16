@@ -5,16 +5,10 @@ Extracted tool implementation functions (do_* and helpers) from agent_tools.py.
 These handle the actual execution logic for each tool type.
 """
 
-import asyncio
-import json
 import logging
-import os
-import re
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
-from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
-from src.tool_utils import get_mcp_manager
-from core.constants import internal_api_base
+from src.tool_utils import get_mcp_manager  # re-exported: tests patch src.tool_implementations.get_mcp_manager
 
 # System-domain tools were extracted to src/tools/system.py (slice 1,
 # #4082/#4071); the admin manage_* tools live in src/agent_tools/admin_tools
@@ -32,8 +26,8 @@ from src.agent_tools.admin_tools import (  # noqa: F401
 )
 # Cookbook (model serving) domain extracted to src/tools/cookbook.py
 # (slice 1, #4082/#4071). Re-imported here so this module stays a working
-# facade. `_internal_headers` / `_INTERNAL_BASE` stay in this file and are
-# pulled back function-locally inside cookbook.py.
+# facade. cookbook.py pulls `_internal_headers` / `_INTERNAL_BASE` back
+# function-locally from this facade (which re-exports them from _common).
 from src.tools.cookbook import (  # noqa: F401
     do_download_model, do_serve_model, do_list_served_models,
     do_stop_served_model, do_tail_serve_output, do_list_downloads,
@@ -64,6 +58,10 @@ from src.tools.vault import (  # noqa: F401
     _load_vault_config, _run_bw,
     do_vault_search, do_vault_get, do_vault_unlock,
 )
+# Shared helpers live in src/tools/_common.py. Re-exported here so the
+# function-local `from src.tool_implementations import _INTERNAL_BASE` (and
+# friends) used by domain files still resolve through this facade.
+from src.tools._common import _parse_tool_args, _INTERNAL_BASE, _internal_headers  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -100,57 +98,3 @@ def get_active_email() -> Optional[Dict[str, str]]:
 def clear_active_email() -> None:
     global _active_email_ref
     _active_email_ref = None
-
-# ---------------------------------------------------------------------------
-# Argument parsing
-# ---------------------------------------------------------------------------
-
-def _parse_tool_args(content):
-    """Parse a tool-call argument blob.
-
-    Accepts either a JSON string or an already-decoded dict. Unwraps the
-    common `{"body": {...}}` envelope that smaller models emit when they
-    read tool descriptions like "Body is JSON: {...}" literally — they
-    pass `body` as a field name rather than treating it as a noun.
-
-    Returns a dict on success, raises ValueError on bad JSON.
-    """
-    if isinstance(content, str):
-        try:
-            args = json.loads(content) if content.strip() else {}
-        except (json.JSONDecodeError, TypeError) as e:
-            raise ValueError(str(e))
-    elif isinstance(content, dict):
-        args = content
-    else:
-        args = {}
-    # Unwrap {"body": {...}} envelope — but only if `body` is the sole key
-    # and points at a dict. We don't want to clobber a legitimate `body`
-    # field on tools where it's a real arg (e.g. send_email body text).
-    if (
-        isinstance(args, dict)
-        and len(args) == 1
-        and "body" in args
-        and isinstance(args["body"], dict)
-        and "action" in args["body"]  # extra safety: only unwrap if the inner dict looks like a tool call
-    ):
-        args = args["body"]
-    return args
-
-
-# ── Cookbook tools ──
-
-# In-process loopback base for agent tools that call Odysseus's own API
-# (cookbook state, model serve, gallery, email, calendar). We ride the
-# per-process internal token so require_admin lets us through. See
-# core/middleware.py. Resolution (override / APP_PORT / 7000) lives in
-# core.constants.internal_api_base().
-_INTERNAL_BASE = internal_api_base()
-
-
-def _internal_headers(owner: Optional[str] = None) -> Dict[str, str]:
-    from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN
-    headers = {INTERNAL_TOOL_HEADER: INTERNAL_TOOL_TOKEN}
-    if owner:
-        headers["X-Odysseus-Owner"] = owner
-    return headers
