@@ -162,6 +162,8 @@ class TestPluginManager:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("src.plugin_manager.PLUGINS_DIR", tmpdir):
                 pm = PluginManager()
+                # Default is off — no opt-in means no code runs
+                assert not pm.is_enabled("never-seen")
                 pm.set_enabled("test", False)
                 assert not pm.is_enabled("test")
                 pm.set_enabled("test", True)

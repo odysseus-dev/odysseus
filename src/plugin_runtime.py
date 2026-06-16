@@ -161,7 +161,9 @@ def call_register(plugin_name: str, app: Any) -> bool:
     capabilities = manifest.get("capabilities", [])
     host = PluginHost(plugin_name, capabilities, app)
 
-    # Inject the fake odysseus module so the plugin can import it
+    # Inject a scoped fake odysseus module so the plugin can import it.
+    # Save and restore the previous entry so plugins don't clobber each other.
+    _previous_odysseus = sys.modules.get("odysseus")
     sys.modules["odysseus"] = _make_module(plugin_name)
 
     try:
@@ -175,6 +177,11 @@ def call_register(plugin_name: str, app: Any) -> bool:
     except Exception as e:
         logger.warning("Plugin %s registration failed: %s", plugin_name, e)
         return False
+    finally:
+        if _previous_odysseus is None:
+            sys.modules.pop("odysseus", None)
+        else:
+            sys.modules["odysseus"] = _previous_odysseus
 
 
 def _load_enabled() -> dict[str, bool]:
@@ -199,14 +206,14 @@ def startup_all(app: Any):
             manifest_path = os.path.join(plugin_dir, "odysseus-plugin.json")
             if not os.path.isfile(manifest_path):
                 continue
-            if not enabled.get(entry, True):
+            if not enabled.get(entry, False):
                 continue
             call_register(entry, app)
     # Entry-point plugins
     try:
         import importlib.metadata as md
         for ep in md.entry_points(group="odysseus.plugins"):
-            if not enabled.get(ep.name, True):
+            if not enabled.get(ep.name, False):
                 continue
             call_register(ep.name, app)
     except Exception:

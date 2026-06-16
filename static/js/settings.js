@@ -5730,7 +5730,7 @@ async function renderPluginToggles() {
       toggleWrap.className = 'admin-switch';
       const input = document.createElement('input');
       input.type = 'checkbox';
-      input.checked = p._enabled !== false;
+      input.checked = p._enabled === true;
       input.dataset.pluginName = p.name;
       input.addEventListener('change', async (e) => {
         try {

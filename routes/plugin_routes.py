@@ -1,9 +1,12 @@
-"""Plugin system API — discover, install, list, and uninstall plugins."""
+"""Plugin system API — list, toggle, uninstall, and serve static files.
+
+Remote discover/install are intentionally left out of this PR;
+they will be revisited separately once the contract is settled.
+"""
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import FileResponse
 
 from src.plugin_manager import PluginManager
-from src.auth_helpers import get_current_user
 from core.middleware import require_admin
 
 
@@ -15,27 +18,6 @@ def setup_plugin_routes():
     async def list_plugins(request: Request):
         require_admin(request)
         return {"installed": pm.list_installed()}
-
-    @router.post("/discover")
-    async def discover_plugins(request: Request, body: dict):
-        require_admin(request)
-        url = (body.get("url") or "").strip()
-        if not url:
-            raise HTTPException(400, "url required")
-        results = pm.discover(url)
-        return {"plugins": results}
-
-    @router.post("/install")
-    async def install_plugins(request: Request, body: dict):
-        require_admin(request)
-        url = (body.get("url") or "").strip()
-        ids = body.get("ids", [])
-        if not url or not ids:
-            raise HTTPException(400, "url and ids required")
-        if not isinstance(ids, list):
-            raise HTTPException(400, "ids must be a list")
-        result = pm.install(url, ids)
-        return result
 
     @router.delete("/{plugin_name}")
     async def uninstall_plugin(request: Request, plugin_name: str):
@@ -52,12 +34,6 @@ def setup_plugin_routes():
             raise HTTPException(400, "enabled must be a boolean")
         pm.set_enabled(plugin_name, enabled)
         return {"ok": True, "enabled": enabled}
-
-    @router.post("/updates")
-    async def check_updates(request: Request):
-        require_admin(request)
-        updates = pm.check_updates()
-        return {"updates": updates}
 
     @router.get("/static/{plugin_name}/{filepath:path}")
     async def plugin_static(request: Request, plugin_name: str, filepath: str):

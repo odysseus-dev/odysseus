@@ -789,6 +789,10 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# Plugins
+from routes.plugin_routes import setup_plugin_routes
+app.include_router(setup_plugin_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
@@ -1146,6 +1150,14 @@ async def _startup_event():
     # removes the feature.
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
+
+    # Plugin startup — load enabled plugins via register(host) contract
+    try:
+        from src.plugin_runtime import startup_all
+        startup_all(app)
+        logger.info("Plugin startup complete")
+    except Exception as e:
+        logger.warning("Plugin startup failed (non-critical): %s", e)
 
     logger.info("Application startup complete")
 
