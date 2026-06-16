@@ -14,6 +14,7 @@ let modalEl = null;
 // the endpoints list can flash a glow on that row. Cleared once the
 // animation fires.
 let _recentlyAddedEpId = null;
+let _authPolicy = { password_min_length: 8, reserved_usernames: [] };
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -321,6 +322,15 @@ function initSignupToggle() {
 }
 
 function initAddUser() {
+  fetch('/api/auth/policy', { credentials: 'same-origin' })
+    .then(r => r.ok ? r.json() : null)
+    .then(policy => {
+      if (!policy) return;
+      _authPolicy = policy;
+      const admPw = el('adm-newPassword');
+      if (admPw) admPw.placeholder = `Password (min ${policy.password_min_length})`;
+    })
+    .catch(() => {});
   el('adm-addBtn').addEventListener('click', async () => {
     const msg = el('adm-addMsg');
     msg.textContent = ''; msg.className = '';
@@ -328,7 +338,8 @@ function initAddUser() {
     const password = el('adm-newPassword').value;
     const is_admin = el('adm-newIsAdmin').checked;
     if (!username) { msg.textContent = 'Username required'; msg.className = 'admin-error'; return; }
-    if (password.length < 8) { msg.textContent = 'Password must be at least 8 characters'; msg.className = 'admin-error'; return; }
+    if (password.length < _authPolicy.password_min_length) { msg.textContent = `Password must be at least ${_authPolicy.password_min_length} characters`; msg.className = 'admin-error'; return; }
+    if (_authPolicy.reserved_usernames.includes(username.toLowerCase())) { msg.textContent = 'This username is reserved'; msg.className = 'admin-error'; return; }
     el('adm-addBtn').disabled = true;
     try {
       try {
