@@ -61,8 +61,26 @@ def require_models_scope(request: Request) -> None:
     if isinstance(scopes, str):
         scopes = [scope.strip() for scope in scopes.split(",")]
     scope_set = {str(scope).strip() for scope in scopes if str(scope).strip()}
-    if _pairing.COMPANION_SCOPE not in scope_set:
+    # Require the individual "chat" scope rather than the compound
+    # COMPANION_SCOPE string: a paired token mints COMPANION_SCOPE
+    # ("chat,companion"), which the auth layer splits into {"chat","companion"},
+    # so the whole string is never an element of scope_set.
+    if "chat" not in scope_set:
         raise HTTPException(403, "API token requires chat scope")
+
+
+def has_companion_scope(request: Request) -> bool:
+    """Whether the caller may read the companion DATA views (notes/tasks/memory).
+
+    A cookie session (the logged-in user) always may. A bearer token must carry
+    the explicit ``companion`` scope: a plain ``chat`` token cannot read your
+    private notes or memory. This keeps these reads strictly NARROWER than chat,
+    per review. Pure + testable.
+    """
+    if not getattr(request.state, "api_token", False):
+        return True
+    scopes = getattr(request.state, "api_token_scopes", None) or []
+    return "companion" in scopes
 
 
 def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
@@ -246,5 +264,83 @@ def setup_companion_routes() -> APIRouter:
   device must be on the same network, and the server must bind to your LAN.</p>
 </div></body></html>"""
         return HTMLResponse(page)
+
+    @router.get("/notes")
+    def notes(request: Request):
+        """The caller's own notes (read-only). Requires the companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to read notes.")
+        import json as _json
+        from core.database import SessionLocal, Note
+
+        owner = token_owner(request)
+        out = []
+        db = SessionLocal()
+        try:
+            q = db.query(Note).filter(Note.archived == False)  # noqa: E712
+            if owner:
+                q = q.filter((Note.owner == owner) | (Note.owner == None))  # noqa: E711
+            for n in q.all():
+                if not owner_can_see(n.owner, owner):
+                    continue
+                try:
+                    items = _json.loads(n.items) if n.items else None
+                except (ValueError, TypeError):
+                    items = None
+                out.append({
+                    "id": n.id, "title": n.title, "content": n.content,
+                    "items": items, "pinned": bool(n.pinned),
+                })
+        finally:
+            db.close()
+        return {"items": out}
+
+    @router.get("/tasks")
+    def tasks(request: Request):
+        """The caller's own scheduled tasks (read-only). Requires the companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to read tasks.")
+        from core.database import SessionLocal, ScheduledTask
+
+        owner = token_owner(request)
+        out = []
+        db = SessionLocal()
+        try:
+            q = db.query(ScheduledTask)
+            if owner:
+                q = q.filter((ScheduledTask.owner == owner) | (ScheduledTask.owner == None))  # noqa: E711
+            for t in q.all():
+                if not owner_can_see(t.owner, owner):
+                    continue
+                out.append({
+                    "id": t.id, "name": t.name, "schedule": t.schedule,
+                    "enabled": t.status == "active",
+                    "last_run": t.last_run.isoformat() + "Z" if t.last_run else None,
+                })
+        finally:
+            db.close()
+        return {"items": out}
+
+    @router.get("/memory")
+    def memory(request: Request):
+        """The caller's own long-term memories (read-only). Requires the companion scope."""
+        if not has_companion_scope(request):
+            raise HTTPException(403, "This token is not allowed to read memory.")
+        from core.database import SessionLocal, Memory
+
+        owner = token_owner(request)
+        out = []
+        db = SessionLocal()
+        try:
+            q = db.query(Memory)
+            if owner:
+                q = q.filter((Memory.owner == owner) | (Memory.owner == None))  # noqa: E711
+            for m in q.all():
+                if not owner_can_see(m.owner, owner):
+                    continue
+                out.append({"id": m.id, "text": m.text, "category": m.category})
+        finally:
+            db.close()
+        return {"items": out}
 
     return router
