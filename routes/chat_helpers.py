@@ -14,7 +14,7 @@ from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user
 from src.prompt_security import untrusted_context_message
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
@@ -78,7 +78,7 @@ def _enforce_chat_privileges(request, sess) -> None:
     which means unrestricted allowed_models / zero cap -> no-op for them.
     """
     try:
-        user = get_current_user(request)
+        user = effective_user(request)
     except Exception:
         user = None
     if not user:
@@ -160,7 +160,7 @@ async def auto_name_session(session_manager, sess):
 
         owner = getattr(sess, "owner", None)
         t_url, t_model, t_headers = resolve_task_endpoint(
-            sess.endpoint_url, sess.model, sess.headers, owner=owner,
+            sess.endpoint_url, sess.model, sess.headers, owner=owner
         )
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
@@ -338,11 +338,11 @@ def add_user_message(sess, chat_handler, preprocessed: PreprocessedMessage, inco
 def fire_message_event(request, webhook_manager, session_id: str, sess, message: str, compare_mode: bool = False):
     """Fire webhook and event_bus events for a new user message."""
     if webhook_manager and not compare_mode:
-        asyncio.create_task(webhook_manager.fire("chat.message", {
+        webhook_manager.fire_and_forget("chat.message", {
             "session_id": session_id, "model": sess.model, "message": message[:2000],
-        }))
+        })
     from src.event_bus import fire_event
-    user = get_current_user(request)
+    user = effective_user(request)
     fire_event("message_sent", user)
 
 
@@ -497,6 +497,29 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
     return None
 
 
+def _session_is_research_spinoff(sess) -> bool:
+    """True if this session was created via research "Discuss" spin-off.
+
+    Detected by the primer system message the spin-off endpoint seeds into
+    history (metadata ``research_spinoff_from``). Such sessions are grounded
+    on the seeded report, so global memory + personal-doc RAG injection is
+    suppressed for them (the report is the sole knowledge base). Handles both
+    ChatMessage objects and plain dicts.
+    """
+    for m in getattr(sess, "history", []) or []:
+        role = getattr(m, "role", None)
+        if role is None and isinstance(m, dict):
+            role = m.get("role")
+        if role != "system":
+            continue
+        md = getattr(m, "metadata", None)
+        if md is None and isinstance(m, dict):
+            md = m.get("metadata")
+        if (md or {}).get("research_spinoff_from"):
+            return True
+    return False
+
+
 async def build_chat_context(
     sess,
     request,
@@ -545,8 +568,9 @@ async def build_chat_context(
     if not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
-    # Resolve user prefs
-    user = get_current_user(request)
+    # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
+    # bearer-token chat requests use the token owner instead of the "api" sentinel.
+    user = effective_user(request)
     uprefs = load_prefs_for_user(user)
 
     # Memory enabled?
@@ -562,9 +586,17 @@ async def build_chat_context(
         mem_enabled, user, incognito, no_memory, uprefs.get("memory_enabled", "NOT_SET"),
     )
 
+    # Research-spinoff ("Discuss") sessions are grounded on the seeded report:
+    # the primer system message IS the knowledge base. Injecting global memory
+    # or personal-doc RAG on every turn pulls in keyword-matched but off-topic
+    # facts ("wrong data") and competes with the report, so suppress both here.
+    is_research_spinoff = _session_is_research_spinoff(sess)
+    if is_research_spinoff:
+        mem_enabled = False
+
     # Use RAG?
     use_rag_val = (str(use_rag).lower() != "false") if use_rag is not None else True
-    if incognito or not allow_tool_preprocessing:
+    if incognito or not allow_tool_preprocessing or is_research_spinoff:
         use_rag_val = False
 
     # If pre-fetched search context was provided (compare mode), skip live web search
@@ -587,7 +619,7 @@ async def build_chat_context(
         incognito=incognito,
         use_skills=skills_enabled,
     )
-    if use_rag is not None:
+    if use_rag is not None or is_research_spinoff:
         _preface_kwargs["use_rag"] = use_rag_val
     preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
 
@@ -1081,10 +1113,10 @@ def run_post_response_tasks(
 
     # Webhook
     if webhook_manager and not compare_mode:
-        asyncio.create_task(webhook_manager.fire("chat.completed", {
+        webhook_manager.fire_and_forget("chat.completed", {
             "session_id": session_id, "model": sess.model,
             "user_message": message, "response": full_response[:2000],
-        }))
+        })
 
     # Auto-name
     if needs_auto_name(sess.name):

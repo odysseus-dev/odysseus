@@ -19,6 +19,40 @@ from core.constants import internal_api_base
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Active email state
+# ---------------------------------------------------------------------------
+
+# When the user has an email reader window open, the frontend tells the
+# backend about it on each chat submit. Email tools can resolve "this email"
+# without guessing a UID. Cleared between requests by chat_routes.
+_active_email_ref: Optional[Dict[str, str]] = None
+
+
+def set_active_email(uid: Optional[str], folder: Optional[str] = None, account: Optional[str] = None,
+                     subject: Optional[str] = None, sender: Optional[str] = None) -> None:
+    """Stash the email currently open in the UI. None clears it."""
+    global _active_email_ref
+    if not uid:
+        _active_email_ref = None
+        return
+    _active_email_ref = {
+        "uid": str(uid),
+        "folder": str(folder or "INBOX"),
+        "account": str(account or ""),
+        "subject": str(subject or ""),
+        "from": str(sender or ""),
+    }
+
+
+def get_active_email() -> Optional[Dict[str, str]]:
+    return _active_email_ref
+
+
+def clear_active_email() -> None:
+    global _active_email_ref
+    _active_email_ref = None
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
@@ -1445,13 +1479,57 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from routes.calendar_routes import (
+        _ensure_default_calendar,
+        _parse_dt,
+        _parse_dt_pair,
+        parse_due_for_user,
+        _resolve_base_uid,
+        _push_caldav_event_after_commit,
+        _record_caldav_delete_tombstone,
+    )
     import uuid as _uuid
 
     try:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    # ── Batch normalization ──
+    # Some models (e.g. deepseek-v4-flash) emit {"events": [{...}, ...]}
+    # instead of individual create_event calls. Iterate and create each.
+    if isinstance(args.get("events"), list) and not args.get("action"):
+        results = []
+        for ev in args["events"]:
+            if not isinstance(ev, dict):
+                continue
+            # Normalize start/end from {dateTime: "..."} object to flat string
+            for field, target in [("start", "dtstart"), ("end", "dtend")]:
+                val = ev.pop(field, None)
+                if val and target not in ev:
+                    ev[target] = val.get("dateTime", val) if isinstance(val, dict) else val
+            ev.setdefault("action", "create_event")
+            r = await do_manage_calendar(json.dumps(ev), owner=owner)
+            results.append(r)
+        created = [r for r in results if r.get("exit_code") == 0 and not r.get("error")]
+        failed = [r for r in results if r.get("error")]
+
+        if not results:
+            return {"error": "No events to create", "exit_code": 1}
+
+        # Surface both successes and failures
+        parts = []
+        if created:
+            summaries = [r.get("response", "") for r in created]
+            parts.append(f"Created {len(created)} event(s):\n" + "\n".join(summaries))
+        if failed:
+            first_error = failed[0].get("error", "Unknown error")
+            parts.append(f"Failed to create {len(failed)} event(s). First error: {first_error}")
+
+        response = "\n\n".join(parts)
+        # Non-zero exit code for partial or total failure
+        exit_code = 0 if not failed else 1
+        return {"response": response, "exit_code": exit_code, "created_count": len(created), "failed_count": len(failed)}
 
     # Normalize action — some models emit hyphens ("list-calendars") instead
     # of underscores. Treat them as equivalent so we don't bounce a
@@ -1501,10 +1579,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         text = str(raw).strip().lower()
         if text in {"none", "no", "off", "false"}:
             return None
-        m = re.search(r"(\d+)\s*(?:m|min|minute|minutes)\b", text)
+        m = re.search(r"(\d+)\s*(?:minutes?|mins?|m)\b", text)
         if m:
             return max(0, int(m.group(1)))
-        m = re.search(r"(\d+)\s*(?:h|hr|hour|hours)\b", text)
+        m = re.search(r"(\d+)\s*(?:hours?|hrs?|h)\b", text)
         if m:
             return max(0, int(m.group(1)) * 60)
         if text.isdigit():
@@ -1517,7 +1595,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             return desc
         reminder_only = re.compile(
             r"^\s*(?:remind(?:er)?|alarm)\s*:?\s*\d+\s*"
-            r"(?:m|min|minute|minutes|h|hr|hour|hours)\b.*$",
+            r"(?:minutes?|mins?|m|hours?|hrs?|h)\b.*$",
             re.I,
         )
         return "" if reminder_only.match(desc) else desc
@@ -1606,6 +1684,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
+
+            if end_dt <= start_dt:
+                end_dt = start_dt + timedelta(days=1)
 
             q = _event_query().filter(
                 CalendarEvent.dtstart < end_dt,
@@ -1786,6 +1867,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 rrule=args.get("rrule", "") or "",
                 event_type=event_type,
                 importance=importance,
+                caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
             reminder_note_id = None
@@ -1800,6 +1882,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     dtstart_is_utc and not all_day,
                 )
             db.commit()
+            if cal.source == "caldav":
+                await _push_caldav_event_after_commit(owner, uid, "create")
             tag_blurb = f" [{event_type}]" if event_type else ""
             if minutes_before is None:
                 reminder_blurb = ""
@@ -1857,7 +1941,12 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.event_type = _tag or None
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
+            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_caldav:
+                ev.caldav_sync_pending = "update"
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "update")
             return {"response": f"Updated event {uid}", "exit_code": 0}
 
         elif action == "delete_event":
@@ -1871,8 +1960,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
+            is_caldav = ev.calendar and ev.calendar.source == "caldav" and ev.remote_href
+            if is_caldav:
+                _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "delete")
             return {"response": f"Deleted event {uid}", "exit_code": 0}
 
         else:
@@ -2018,13 +2112,14 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
         else:
             env_prefix = f'eval "$(conda shell.bash hook)" && conda activate {env_path}'
 
+    from routes.cookbook_helpers import load_stored_hf_token
     return {
         "env_prefix": env_prefix,
         "env_type": env_kind,
         "env_path": env_path,
         "gpus": env_root.get("gpus") or "",
         "platform": platform,
-        "hf_token": env_root.get("hfToken") or "",
+        "hf_token": load_stored_hf_token(),
         "ssh_port": ssh_port,
     }
 
@@ -3702,7 +3797,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     if not name:
         return {"error": "name is required", "exit_code": 1}
 
-    contacts = {}  # email -> {name, source}
+    contacts = {}  # email_or_phone -> {name, source, phone?}
 
     # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
     # server-side httpx GET to /api/contacts/search carries no session
@@ -3717,10 +3812,18 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
             match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
             if not match:
                 continue
+            has_email = False
             for email in (c.get("emails") or []):
                 email = (email or "").strip().lower()
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+                    has_email = True
+            # Fall back to phone numbers when the contact has no email address
+            if not has_email:
+                for phone in (c.get("phones") or []):
+                    phone = (phone or "").strip()
+                    if phone:
+                        contacts[phone] = {"name": c.get("name") or phone, "source": "contacts", "phone": phone}
     except Exception:
         pass
 
@@ -3740,8 +3843,11 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
         return {"output": f"No contacts found matching '{name}'.", "exit_code": 0}
 
     lines = [f"Contacts matching '{name}':"]
-    for email, info in contacts.items():
-        lines.append(f"- {info['name']} <{email}> ({info['source']})")
+    for key, info in contacts.items():
+        if info.get("phone"):
+            lines.append(f"- {info['name']} — phone: {info['phone']} ({info['source']})")
+        else:
+            lines.append(f"- {info['name']} <{key}> ({info['source']})")
     return {"output": "\n".join(lines), "exit_code": 0}
 
 

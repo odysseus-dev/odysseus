@@ -6,7 +6,7 @@ import os
 import time
 import logging
 from datetime import datetime
-from typing import Dict, Any, AsyncGenerator, List
+from typing import Dict, Any, AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Request, HTTPException, Form, Query
 from fastapi.responses import StreamingResponse
@@ -23,7 +23,7 @@ from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_
 from src.session_search import search_session_messages
 from src.prompt_security import untrusted_context_message
 from core.exceptions import SessionNotFoundError
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user, get_current_user
 from routes.session_routes import _verify_session_owner
 from routes.document_helpers import _owner_session_filter
 from core.database import SessionLocal, get_session_mode, set_session_mode
@@ -60,6 +60,33 @@ def _stream_set(session_id: str, **fields) -> None:
     if rec is None:
         return
     rec.update(fields)
+
+
+def _resolve_request_workspace(request, raw_value) -> tuple:
+    """Resolve the posted workspace for this request: (workspace, rejected).
+
+    Privilege is checked BEFORE the path ever touches the filesystem. Only
+    admin/single-user callers can use the workspace-backed file/shell tools,
+    so only they get vet_workspace() and the workspace_rejected signal. For
+    any other caller the submitted value is dropped uniformly, with no vetting
+    and no event: otherwise the presence/absence of workspace_rejected would
+    let a non-admin chat caller probe which host paths exist.
+
+    vet_workspace rejects non-directories, sensitive roots (.ssh, .gnupg,
+    ...), and filesystem roots; on rejection there is no confinement and the
+    default tool-path allowlist applies. The rejected value is surfaced so the
+    stream can tell an admin client (which believes a workspace is active)
+    that it was dropped.
+    """
+    requested = (raw_value or "").strip()
+    if not requested:
+        return "", ""
+    from src.tool_security import owner_is_admin_or_single_user
+    if not owner_is_admin_or_single_user(get_current_user(request)):
+        return "", ""
+    from src.tool_execution import vet_workspace
+    workspace = vet_workspace(requested) or ""
+    return workspace, (requested if not workspace else "")
 
 
 def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
@@ -99,7 +126,8 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         sess.model = ""
         sess.headers = {}
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to clear orphaned session endpoint", exc_info=e)
         db.rollback()
         return False
     finally:
@@ -117,7 +145,8 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
         return True
     try:
         models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except Exception as e:
+        logger.warning("Failed to parse cached models list, treating as containing model", exc_info=e)
         return True
     if not isinstance(models, list) or not models:
         return True
@@ -209,7 +238,8 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
                 is_chatgpt_subscription = False
         try:
             cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to parse cached_models for endpoint %r", getattr(ep, "id", "?"), exc_info=e)
             cached = []
         if not cached:
             visible = []
@@ -333,7 +363,7 @@ def setup_chat_routes(
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, f"Session '{session}' not found")
-        owner = get_current_user(request)
+        owner = effective_user(request)
         if _clear_orphaned_session_endpoint(sess, owner=owner):
             raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
 
@@ -447,8 +477,11 @@ def setup_chat_routes(
         use_research = form_data.get("use_research")
         time_filter = form_data.get("time_filter")
         preset_id = form_data.get("preset_id")
-        allow_bash = form_data.get("allow_bash")
-        allow_web_search = form_data.get("allow_web_search")
+        # Issue #3229: API callers send JSON, not FormData.  Read from the
+        # JSON body as fallback so callers who send {"allow_bash": true}
+        # actually get bash enabled.
+        allow_bash = form_data.get("allow_bash") or (body or {}).get("allow_bash")
+        allow_web_search = form_data.get("allow_web_search") or (body or {}).get("allow_web_search")
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
@@ -457,6 +490,10 @@ def setup_chat_routes(
         # manual form posts that still send plan_mode=true.
         plan_mode = False
         chat_mode = str(form_data.get("mode", "")).lower()  # 'chat' or 'agent'
+        # Workspace: confine the agent's file/shell tools to this folder.
+        workspace, workspace_rejected = _resolve_request_workspace(
+            request, form_data.get("workspace")
+        )
         # Plan mode is a modifier on agent mode — it only makes sense with tools.
         if plan_mode:
             chat_mode = "agent"
@@ -492,6 +529,66 @@ def setup_chat_routes(
         active_doc_id = form_data.get("active_doc_id", "").strip()
         logger.info(f"[doc-inject] chat_mode={chat_mode}, active_doc_id={active_doc_id!r}")
 
+        # Active email reader — when the user has an email open in the UI, the
+        # frontend passes its uid/folder/account so "reply", "summarize this",
+        # etc. resolve to the real email instead of the agent inventing a
+        # fake markdown draft.
+        active_email_uid = form_data.get("active_email_uid", "").strip()
+        active_email_folder = form_data.get("active_email_folder", "INBOX").strip() or "INBOX"
+        active_email_account = form_data.get("active_email_account", "").strip()
+        active_email_ctx: Optional[Dict[str, str]] = None
+        # Always reset between requests so a stale active-email pointer from
+        # a previous turn (different reader closed, different account, etc.)
+        # can't leak in when the user has no email open this turn.
+        try:
+            from src.tool_implementations import clear_active_email
+            clear_active_email()
+        except Exception:
+            pass
+        if active_email_uid:
+            active_email_ctx = {
+                "uid": active_email_uid,
+                "folder": active_email_folder,
+                "account": active_email_account,
+            }
+            # Try to enrich with subject + from so the agent's system prompt
+            # block can quote them. Best-effort: a stale cache is fine, a
+            # missing email just means we pass uid/folder/account only.
+            try:
+                from routes.email_routes import _read_cache_get, _read_cache_key
+                _ck = _read_cache_key(active_email_account or None, active_email_folder, active_email_uid, owner=get_current_user(request))
+                _cached_email = _read_cache_get(_ck)
+                if _cached_email and isinstance(_cached_email, dict):
+                    active_email_ctx["subject"] = str(_cached_email.get("subject") or "")
+                    active_email_ctx["from"] = str(
+                        _cached_email.get("from_address")
+                        or _cached_email.get("from")
+                        or _cached_email.get("from_name")
+                        or ""
+                    )
+                    _body_preview = (_cached_email.get("body") or "")[:2000]
+                    if _body_preview:
+                        active_email_ctx["body_preview"] = _body_preview
+            except Exception as _e:
+                logger.debug(f"[email-inject] cache enrich skipped: {_e}")
+            # Stash so email tools can resolve "this email" without UID guessing.
+            try:
+                from src.tool_implementations import set_active_email
+                set_active_email(
+                    uid=active_email_uid,
+                    folder=active_email_folder,
+                    account=active_email_account or None,
+                    subject=active_email_ctx.get("subject"),
+                    sender=active_email_ctx.get("from"),
+                )
+            except Exception as _e:
+                logger.debug(f"[email-inject] set_active_email failed: {_e}")
+            logger.info(
+                "[email-inject] active_email uid=%s folder=%s account=%s subject=%r",
+                active_email_uid, active_email_folder, active_email_account or "(default)",
+                active_email_ctx.get("subject", ""),
+            )
+
         try:
             # Attachment-only sends: skip the message-required check when the
             # user has attached one or more files (the attachment IS the action).
@@ -506,7 +603,7 @@ def setup_chat_routes(
             # but BEFORE loading. Prevents cross-user session hijack.
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
-            owner = get_current_user(request)
+            owner = effective_user(request)
             if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but
@@ -537,7 +634,7 @@ def setup_chat_routes(
         _enforce_chat_privileges(request, sess)
 
         # Ensure session has auth headers
-        resolve_session_auth(sess, session, owner=get_current_user(request))
+        resolve_session_auth(sess, session, owner=effective_user(request))
 
         # Check for research_pending BEFORE mode persist overwrites it
         do_research = str(use_research).lower() == "true"
@@ -552,8 +649,8 @@ def setup_chat_routes(
         elif attachments:
             try:
                 att_ids = [str(x) for x in json.loads(attachments)]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse attachments JSON, ignoring attachments", exc_info=e)
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
         pre_context_tool_policy = build_effective_tool_policy(
@@ -607,15 +704,27 @@ def setup_chat_routes(
                             active_doc_id,
                         )
                         active_doc = None
-                    elif doc_session and doc_session != session:
-                        logger.warning(
-                            "[doc-inject] ignoring stale active_doc_id %s from session %s while in session %s",
-                            active_doc_id,
-                            doc_session,
-                            session,
-                        )
-                        active_doc = None
                     else:
+                        # NOTE: previously dropped the doc when doc.session_id
+                        # != current chat session — but that broke the common
+                        # case of "open an email draft from one chat, ask a
+                        # different chat to write into it". The frontend only
+                        # sends active_doc_id for docs currently visible in
+                        # the UI, and we already owner-checked above, so trust
+                        # the explicit signal. We just log the mismatch and
+                        # re-bind the doc to the current session so future
+                        # turns find it via the session-fallback path too.
+                        if doc_session and doc_session != session:
+                            logger.info(
+                                "[doc-inject] cross-session active_doc_id %s (was session %s, now %s) — accepting and rebinding",
+                                active_doc_id, doc_session, session,
+                            )
+                            try:
+                                active_doc.session_id = session
+                                _doc_db.commit()
+                            except Exception as _e:
+                                _doc_db.rollback()
+                                logger.warning(f"[doc-inject] session rebind failed: {_e}")
                         logger.info(f"[doc-inject] found by ID: title={active_doc.title!r}, lang={active_doc.language!r}, is_active={active_doc.is_active}, content_len={len(active_doc.current_content or '')}")
                 else:
                     logger.warning(f"[doc-inject] NOT FOUND by ID {active_doc_id}")
@@ -656,9 +765,18 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
-        if str(allow_bash).lower() != "true":
+        # Only disable bash/web_search when the caller *explicitly* set them
+        # to a falsy value.  When unset (None), defer to per-user privilege
+        # checks below — this lets admins with can_use_bash=True use bash
+        # by default without having to send allow_bash in every request.
+        if allow_bash is not None and str(allow_bash).lower() != "true":
             disabled_tools.add("bash")
-        if str(allow_web_search).lower() != "true":
+        _explicit_web_intent = bool(_tool_intent and _tool_intent.category == "web")
+        if (
+            allow_web_search is not None
+            and str(allow_web_search).lower() != "true"
+            and not _explicit_web_intent
+        ):
             disabled_tools.add("web_search")
             disabled_tools.add("web_fetch")
 
@@ -669,6 +787,21 @@ def setup_chat_routes(
                 "manage_memory",      # persistent memory store
                 "search_chats",       # past chat history
                 "manage_skills",      # skill presets tied to user
+            })
+
+        # Active email reader open → strip the tools that let the agent
+        # "drift" to a new compose: create_document (writes a fake email-
+        # shaped .md file) and send_email (sends fresh to a recipient the
+        # agent invented). With those gone, the only paths left for "write
+        # email saying X" are ui_control open_email_reply (draft) and
+        # reply_to_email (immediate send) — both of which use the open
+        # email's UID. Code-level enforcement instead of relying on a
+        # prompt rule the model can ignore.
+        if active_email_ctx and active_email_ctx.get("uid"):
+            disabled_tools.update({
+                "create_document",
+                "send_email",
+                "mcp__email__send_email",
             })
 
         # Enforce per-user privileges
@@ -760,6 +893,13 @@ def setup_chat_routes(
 
             # Register active stream for partial-save safety net
             _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
+
+            # The client sent a workspace the server refused to bind (deleted
+            # folder, file path, sensitive dir, filesystem root). Tell it up
+            # front so the UI can clear the pill instead of displaying a
+            # confinement that is not actually in effect.
+            if workspace_rejected:
+                yield f"data: {json.dumps({'type': 'workspace_rejected', 'data': {'path': workspace_rejected}})}\n\n"
 
             if ctx.preprocessed.attachment_meta:
                 yield f"data: {json.dumps({'type': 'attachments', 'data': ctx.preprocessed.attachment_meta})}\n\n"
@@ -1131,6 +1271,7 @@ def setup_chat_routes(
                         max_rounds=_max_rounds,
                         context_length=ctx.context_length,
                         active_document=active_doc,
+                        active_email=active_email_ctx,
                         session_id=session,
                         disabled_tools=disabled_tools if disabled_tools else None,
                         tool_policy=tool_policy,
@@ -1138,6 +1279,7 @@ def setup_chat_routes(
                         fallbacks=_fallback_candidates,
                         plan_mode=plan_mode,
                         approved_plan=approved_plan or None,
+                        workspace=workspace or None,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
@@ -1343,7 +1485,7 @@ def setup_chat_routes(
         if not q or not q.strip():
             return []
 
-        _user = get_current_user(request)
+        _user = effective_user(request)
         return [
             result.to_dict()
             for result in search_session_messages(

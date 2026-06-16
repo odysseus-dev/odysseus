@@ -46,13 +46,7 @@ def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
 
 class EditFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
-                    _resolve_tool_path,
-                    _resolve_tool_path_in_workspace,
-                    _resolve_search_root,
-                    _truncate
-                )
-        workspace = ctx.get("workspace")
+        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         try:
             args = json.loads(content) if content.strip().startswith("{") else {}
         except (json.JSONDecodeError, TypeError):
@@ -64,8 +58,7 @@ class EditFileTool:
         if not raw_path:
             return {"error": "edit_file: path required", "exit_code": 1}
         try:
-            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
-                    if workspace else _resolve_tool_path(raw_path))
+            path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"edit_file: {e}", "exit_code": 1}
         if old == "":
@@ -113,13 +106,7 @@ class EditFileTool:
 
 class ReadFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
-                    _resolve_tool_path,
-                    _resolve_tool_path_in_workspace,
-                    _resolve_search_root,
-                    _truncate
-                )
-        workspace = ctx.get("workspace")
+        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         raw_path, offset, limit = content.split("\n", 1)[0].strip(), 0, 0
         _stripped = content.strip()
         if _stripped.startswith("{"):
@@ -131,8 +118,7 @@ class ReadFileTool:
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
         try:
-            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
-                    if workspace else _resolve_tool_path(raw_path))
+            path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"read_file: {e}", "exit_code": 1}
         try:
@@ -170,19 +156,12 @@ class ReadFileTool:
 
 class WriteFileTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
-                    _resolve_tool_path,
-                    _resolve_tool_path_in_workspace,
-                    _resolve_search_root,
-                    _truncate
-                )
-        workspace = ctx.get("workspace")
+        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         lines = content.split("\n", 1)
         raw_path = lines[0].strip()
         body = lines[1] if len(lines) > 1 else ""
         try:
-            path = (_resolve_tool_path_in_workspace(workspace, raw_path)
-                    if workspace else _resolve_tool_path(raw_path))
+            path = _resolve_tool_path(raw_path)
         except ValueError as e:
             return {"error": f"write_file: {e}", "exit_code": 1}
         try:
@@ -212,13 +191,7 @@ class WriteFileTool:
 
 class LsTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
-                    _resolve_tool_path,
-                    _resolve_tool_path_in_workspace,
-                    _resolve_search_root,
-                    _truncate
-                )
-        workspace = ctx.get("workspace")
+        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         raw_path = ""
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -267,13 +240,7 @@ class LsTool:
 
 class GlobTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
-                    _resolve_tool_path,
-                    _resolve_tool_path_in_workspace,
-                    _resolve_search_root,
-                    _truncate
-                )
-        workspace = ctx.get("workspace")
+        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         args = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -325,13 +292,7 @@ class GlobTool:
 
 class GrepTool:
     async def execute(self, content: str, ctx: dict) -> dict:
-        from src.tool_execution import (
-                    _resolve_tool_path,
-                    _resolve_tool_path_in_workspace,
-                    _resolve_search_root,
-                    _truncate
-                )
-        workspace = ctx.get("workspace")
+        from src.tool_execution import _resolve_tool_path, _resolve_search_root, _truncate
         args: Dict[str, Any] = {}
         _s = (content or "").strip()
         if _s.startswith("{"):
@@ -417,3 +378,21 @@ class GrepTool:
         if len(lines) >= max_hits:
             out += f"\n... [capped at {max_hits} matches]"
         return {"output": _truncate(out), "exit_code": 0}
+
+class GetWorkspaceTool:
+    """Report the active workspace folder (no args). File tools are confined to
+    it; the shell starts there (cwd) but is NOT sandboxed."""
+    async def execute(self, content: str, ctx: dict) -> dict:
+        from src.tool_execution import get_active_workspace
+        ws = get_active_workspace()
+        if ws:
+            return {
+                "output": f"{ws}\n(File tools are confined to this folder; the shell starts "
+                          f"here but is not sandboxed and can reach outside it.)",
+                "exit_code": 0,
+            }
+        return {
+            "output": "No workspace is set. File tools use the default allowed roots; "
+                      "resolve paths from the user or use absolute paths.",
+            "exit_code": 0,
+        }

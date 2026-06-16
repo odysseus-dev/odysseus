@@ -21,7 +21,7 @@ from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
 from src.tool_policy import GUIDE_ONLY_DIRECTIVE, ToolPolicy
-from src.tool_utils import get_mcp_manager
+from src.tool_utils import _truncate, get_mcp_manager
 from src.agent_tools import (
     parse_tool_blocks,
     strip_tool_blocks,
@@ -262,6 +262,11 @@ _DOMAIN_RULES = {
 - Use `manage_settings` for preferences and tool enable/disable.
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+    "contacts": """\
+## Contacts rules
+- Use `resolve_contact` to look up a contact's email or phone number by name. Searches the CardDAV address book and sent email history.
+- Use `manage_contact` to list, add, update, or delete contacts in the address book.
+- Do NOT use `manage_memory` for contact lookups — contact details live in the address book, not memory.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -272,8 +277,9 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "contacts": {"resolve_contact", "manage_contact"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -309,6 +315,7 @@ NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats re
 <python code>
 ```
 Execute Python code. Use for computation, data processing, scripting. NOT for writing code for the user (use create_document for that). Same sandbox limits as bash — no TTY, no GUI, no `input()`; for anything the user should interact with, generate a single HTML file with inline JS instead.
+Prefer a dedicated tool whenever one fits the job (reading, searching, or writing files); use python only for computation/processing no dedicated tool covers - not for reading or writing files.
 Do NOT use Python/requests for web lookup/search/latest/current requests when `web_search` or `web_fetch` is available.""",
 
     "web_search": """\
@@ -346,6 +353,11 @@ Write content to a file. First line is the path, rest is the content.""",
 {"path": "<file path>", "old_string": "<exact text to replace>", "new_string": "<replacement>", "replace_all": false}
 ```
 Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/echo/redirects) for changing files — it shows a before/after diff. `old_string` must match the file exactly and be unique unless `replace_all` is true. Use write_file to create a new file.""",
+
+    "get_workspace": """\
+```get_workspace
+```
+Return the absolute path of the active workspace folder. File tools are CONFINED to it (paths can be RELATIVE to it); the shell starts there (cwd) but is NOT sandboxed. Call this first when the user says "the project"/"the code"/"this folder" without a path, instead of asking them. No arguments.""",
 
     "create_document": """\
 ```create_document
@@ -396,7 +408,7 @@ Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g.
     "ask_teacher": "- ```ask_teacher``` — Escalate a hard question to a more capable model. Line 1 = model name or 'auto', rest = the question. Use when stuck or need expert knowledge.",
     "list_models": "- ```list_models``` — Show all available AI models across all endpoints. Use when user asks what models are available.",
     "manage_session": "- ```manage_session``` — Rename, archive, delete, fork, switch, or `list` chats (the UI calls them 'chats'; 'session' is internal). Line 1 = action (list/switch/rename/archive/unarchive/delete/important/unimportant/truncate/fork), Line 2 = exact chat id from `list_sessions` (or `current` where supported). For delete/archive/truncate, always list first and reuse the exact id; never invent placeholder ids. `switch`/`open` returns a clickable anchor link the user can tap to open the chat — use for \"open my X chat\".",
-    "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts, identity, preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this', states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories.",
+    "manage_memory": "- ```manage_memory``` — Manage the user's persistent memory (facts about the USER themselves, their preferences, context that persists across chats). Line 1 = action (list/add/edit/delete/search), rest = content. Use when user says 'remember this' about themselves, states identity facts like 'my name is <name>' / 'call me <name>' / 'I live in <place>', or asks about stored memories. DO NOT use for info about another person (their address, phone, email, birthday) — that goes in `manage_contact`. If the user pastes an address/phone with a name and says 'save this for <person>', use `manage_contact add` with the address arg, NOT manage_memory.",
     "manage_skills": "- ```manage_skills``` — Skill registry (SKILL.md format). Args (JSON): {\"action\": \"list|view|view_ref|search|add|edit|patch|publish|delete\", ...}. `list` returns the index of available skills (published + teacher-escalation drafts); `view name=foo` fetches the full SKILL.md; `view_ref name=foo path=...` loads a reference file under the skill directory. For `add`, provide an explicit kebab-case `name` and only report the exact returned name, because storage may normalize or dedupe it. Use this BEFORE doing domain work — there may already be a procedure (published or draft) that prescribes the correct steps. Drafts written by the teacher loop are authoritative guidance even though they're not yet published.",
     "manage_tasks": "- ```manage_tasks``` — Create and manage scheduled background tasks (recurring AI jobs). Args (JSON): {\"action\": \"list|create|edit|delete|pause|resume|run\", ...}",
     "manage_endpoints": "- ```manage_endpoints``` — Add, remove, or configure AI model API endpoints. Args (JSON): {\"action\": \"list|add|delete|enable|disable\", ...}. Use when user wants to add a new AI provider.",
@@ -416,7 +428,9 @@ Notes, checklists, AND user reminders. Use this for "create/add/write a note", t
 ```send_email
 {"to": "recipient@example.com", "subject": "Re: Your question", "body": "Hi, ...", "account": "gmail"}
 ```
-Send a new email via SMTP. Use `resolve_contact` first if you only have a name. If multiple email accounts exist, call `list_email_accounts` first and pass the chosen `account`.""",
+Send a new email via SMTP. Use `resolve_contact` first if you only have a name. If multiple email accounts exist, call `list_email_accounts` first and pass the chosen `account`.
+
+CRITICAL — signatures: DO NOT invent a sign-off name. End the body with just `Thanks,` or similar — never type a person's name unless the user explicitly told you what to sign as. When `agent_email_confirm` is on (default), the tool returns `{pending: true, pending_id: ...}` and stages the email for the user to approve in the chat UI instead of SMTPing immediately.""",
     "list_emails": """\
 ```list_emails
 {"folder": "INBOX", "max_results": 20, "unread_only": false, "account": "gmail"}
@@ -427,7 +441,9 @@ List recent emails from a folder, newest first, including read messages by defau
 ```reply_to_email
 {"uid": "1234", "body": "Sounds good — talk Friday.", "account": "gmail"}
 ```
-SEND a reply email immediately by UID. Do not use this for "open a reply" or "start a reply" — those should use `ui_control` with `open_email_reply <uid> <folder> reply` to open the email draft document. For follow-up requests like "reply ..." after reading/listing email where the user clearly wants to send now, use the exact UID and account from the latest `read_email`/`list_emails` result. Never invent UID `1`. Threads automatically (In-Reply-To/References handled).""",
+SEND a reply email immediately by UID. Do not use this for "open a reply" or "start a reply" — those should use `ui_control` with `open_email_reply <uid> <folder> reply` to open the email draft document. For follow-up requests like "reply ..." after reading/listing email where the user clearly wants to send now, use the exact UID and account from the latest `read_email`/`list_emails` result. Never invent UID `1`. Threads automatically (In-Reply-To/References handled).
+
+CRITICAL — signatures: DO NOT invent a sign-off name. End the body with just `Thanks,` or similar — never type a person's name unless the user explicitly told you what to sign as. When `agent_email_confirm` is on (default), the tool returns `{pending: true, pending_id: ...}` and stages the email for the user to approve in the chat UI instead of SMTPing immediately.""",
     "bulk_email": """\
 ```bulk_email
 {"action": "delete", "uids": ["10997", "10998"], "folder": "INBOX", "account": "Gmail"}
@@ -437,7 +453,7 @@ Bulk delete/archive/mark emails. Use this for "delete all those" after listing e
     "archive_email": "- ```archive_email``` — Archive one email by UID. Args (JSON): {\"uid\":\"...\", \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "mark_email_read": "- ```mark_email_read``` — Mark one email read/unread. Args (JSON): {\"uid\":\"...\", \"read\":true, \"folder\":\"INBOX\", \"account\":\"Gmail\"}. For multiple messages use bulk_email.",
     "resolve_contact": "- ```resolve_contact``` — Look up a contact's email by name. Searches CardDAV address book + sent email history. Args (JSON): {\"name\": \"...\"}. Use BEFORE send_email when the user gives only a name.",
-    "manage_contact": "- ```manage_contact``` — Create/update/delete/list CardDAV contacts. Args (JSON): {\"action\": \"list|add|update|delete\", \"name\": \"...\", \"email\": \"...\", \"uid\": \"...\"}. Use only for explicit address-book/contact requests with contact details. Do NOT use for user identity facts like 'my name is <name>'; save those with manage_memory. For update/delete, call action=list first to get the uid.",
+    "manage_contact": "- ```manage_contact``` — Create/update/delete/list CardDAV contacts. Args (JSON): {\"action\": \"list|add|update|delete\", \"name\": \"...\", \"email\": \"...\", \"phones\": [...], \"address\": \"...\", \"uid\": \"...\"}. Use for info about another person: email, phone, postal address. For 'save this for <person>' / address paste / phone next to a name, use this — NOT manage_memory. Do NOT use for user identity facts ('my name is X'); those are manage_memory. For update/delete, call action=list first for the uid.",
     "manage_calendar": """\
 ```manage_calendar
 {"action": "create_event", "summary": "<event title>", "dtstart": "<natural language or ISO datetime>"}
@@ -508,7 +524,7 @@ def get_builtin_overrides() -> dict:
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
     except Exception as e:
-        logger.warning('Failed to load builtin tool overrides: %s', e)
+        logger.warning("Failed to load builtin tool overrides, using defaults", exc_info=e)
         return {}
 
 
@@ -594,7 +610,7 @@ _API_HOSTS = frozenset([
     "api.deepseek.com", "deepseek.com",
     "api.together.xyz", "api.fireworks.ai",
     "api.perplexity.ai", "api.x.ai",
-    "ollama.com", "api.venice.ai",
+    "ollama.com", "api.venice.ai", "api.kimi.com",
     "api.githubcopilot.com",
     # Local OpenAI-compatible endpoints (llama.cpp, vLLM, LM Studio, etc.).
     # Without these, `_is_api_model` falls back to keyword sniffing on the
@@ -781,6 +797,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("documents")
     if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
         domains.add("web")
+    if has(
+        r"\b(wyszukaj|wyszukać|wyszukac)\b.*\b(internet|internecie|online|web)\b",
+        r"\b(sprawd[zź]|znajd[zź])\b.*\b(internet|internecie|online|web)\b",
+        r"\b(aktualn\w*|bieżąc\w*|biezac\w*|dzisiaj|teraz)\b.*\b(pogod\w*|temperatur\w*)\b",
+    ):
+        domains.add("web")
     if has(r"\b(research|deep dive|investigate|look into)\b"):
         domains.add("web")
     if has(r"\b(open|show|toggle|turn on|turn off|disable|enable|switch model|change model|settings|theme|panel)\b"):
@@ -791,6 +813,8 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
+    if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
+        domains.add("contacts")
 
     low_signal = not continuation and not domains
     return {
@@ -819,8 +843,11 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
         if isinstance(content, list):
             content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
         content = (content or "").strip()
-        # Skip injected tool-result envelopes — role=user but not human intent.
-        if not content or content.startswith("[Tool execution results]"):
+        # Skip injected envelopes — role=user but not human intent. Tool results
+        # are now wrapped via untrusted_context_message (metadata.trusted=False);
+        # keep the legacy "[Tool execution results]" prefix for older histories.
+        meta = msg.get("metadata") or {}
+        if not content or meta.get("trusted") is False or content.startswith("[Tool execution results]"):
             continue
         collected.append(content)
         if len(collected) >= max_user:
@@ -839,6 +866,7 @@ def _build_system_prompt(
     compact: bool = False,
     owner: Optional[str] = None,
     suppress_local_context: bool = False,
+    active_email: Optional[Dict[str, str]] = None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -904,8 +932,8 @@ def _build_system_prompt(
     try:
         from src.user_time import current_datetime_context_message
         _datetime_message = current_datetime_context_message()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to build datetime context message", exc_info=e)
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -948,8 +976,8 @@ def _build_system_prompt(
             try:
                 from src.pdf_form_doc import find_source_upload_id
                 _is_form_backed = bool(find_source_upload_id(active_document.current_content or ""))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to detect if document is form-backed, assuming plain", exc_info=e)
 
             if _is_form_backed:
                 doc_ctx = (
@@ -1030,6 +1058,66 @@ def _build_system_prompt(
             )
     else:
         set_active_document(None)
+
+    # Active email reader — frontend told us the user has an email open.
+    # Inject a context block so "reply", "summarize this", "what does it say"
+    # resolve to the real UID instead of the agent inventing a fresh .md
+    # draft with fake headers. This is the email equivalent of _doc_message.
+    _email_message = None
+    if active_email and active_email.get("uid"):
+        _em_uid = active_email.get("uid", "")
+        _em_folder = active_email.get("folder", "INBOX")
+        _em_account = active_email.get("account", "")
+        _em_subject = active_email.get("subject", "") or "(no subject)"
+        _em_from = active_email.get("from", "") or "(unknown sender)"
+        _em_preview = (active_email.get("body_preview", "") or "").strip()
+        _preview_block = f"\nBody preview:\n```\n{_em_preview[:1800]}\n```" if _em_preview else ""
+        _acct_arg = f" {_em_account}" if _em_account else ""
+        email_ctx = (
+            f"ACTIVE EMAIL OPEN (the user has this email open in a reader window right now)\n"
+            f"UID: {_em_uid}\n"
+            f"Folder: {_em_folder}\n"
+            f"Account: {_em_account or '(default)'}\n"
+            f"From: {_em_from}\n"
+            f"Subject: {_em_subject}{_preview_block}\n\n"
+            f"CRITICAL DEFAULT — every request about email this turn refers to "
+            f"THIS email unless the user names a DIFFERENT specific recipient "
+            f"(a name, an email address, or another thread). Examples that "
+            f"ALL mean reply-to-the-open-email:\n"
+            f"  • 'reply' / 'reply to this' / 'respond'\n"
+            f"  • 'write email saying X' / 'send email saying X' / 'draft something'\n"
+            f"  • 'tell them X' / 'say hi' / 'thanks' / 'ack' / 'lmk'\n"
+            f"  • 'summarize it' / 'what does it say' / 'tldr'\n"
+            f"  • 'forward this' / 'forward to <addr>'\n"
+            f"DO NOT ASK THE USER 'who do you want to send this to?' — the "
+            f"answer is ALWAYS the sender of the open email (above) unless they "
+            f"named someone else. Asking that is the wrong move every time.\n\n"
+            f"RULES for the open email:\n"
+            f"1. DRAFT a reply (default for any 'write/send/reply/tell them' "
+            f"request without a different recipient): call `ui_control` with "
+            f"`action=\"open_email_reply\"` and `extra=\"{_em_uid} {_em_folder} "
+            f"reply\"`. This opens the proper reply doc with To/Subject/"
+            f"In-Reply-To pre-filled by the backend. The user will see and edit "
+            f"it before sending. DO NOT `create_document` a markdown file with "
+            f"hand-written `To:` / `Subject:` / `In-Reply-To:` headers — that "
+            f"is wrong every time.\n"
+            f"2. SEND a reply immediately (skip the draft): call "
+            f"`reply_to_email` with the UID above. Only do this when the user "
+            f"explicitly says 'send' / 'send the reply' / 'reply and send'.\n"
+            f"3. READ the full body (the preview above may be truncated): "
+            f"call `read_email` with the UID/folder/account above.\n"
+            f"4. SUMMARIZE / answer questions about it: read it first, then "
+            f"answer in chat. Don't create a document for a summary unless "
+            f"the user explicitly asks for one.\n"
+            f"5. Never ask the user to paste the email or 'share it with you' "
+            f"— you already have its identity above and can read the full body.\n"
+            f"6. The ONLY time you ask 'who to send to?' is when the user "
+            f"explicitly says 'send a NEW email to someone else' or names a "
+            f"recipient you can't identify. A bare 'send email saying X' = the "
+            f"open email's sender.\n"
+        )
+        _email_message = untrusted_context_message("active email reader", email_ctx)
+        _email_message["_protected"] = True
 
     # Inject writing style for any email writing path. This is deliberately
     # broader than read/list: models may compose via send_email, reply_to_email,
@@ -1238,6 +1326,9 @@ def _build_system_prompt(
     if _doc_message:
         merged.insert(last_user_idx, _doc_message)
         last_user_idx += 1  # the document message is now at last_user_idx
+    if _email_message:
+        merged.insert(last_user_idx, _email_message)
+        last_user_idx += 1
     if _skills_message:
         merged.insert(last_user_idx, _skills_message)
         last_user_idx += 1
@@ -1272,12 +1363,18 @@ def _build_base_prompt(
     from src.tool_index import ALWAYS_AVAILABLE
 
     disabled = set(disabled_tools or [])
-    if not get_setting("image_gen_enabled", True):
+    if not get_setting("image_gen_enabled", False):
         disabled.add("generate_image")
 
     if relevant_tools is not None:
-        # RAG mode: include always-available + retrieved + admin (if needed)
-        tool_names = set(ALWAYS_AVAILABLE) | set(relevant_tools)
+        # RAG mode: trust the relevant_tools set as already-composed.
+        # get_tools_for_query starts from ALWAYS_AVAILABLE and may
+        # *discard* tools that conflict with the query's intent (e.g.
+        # drop manage_memory for clear contact-save patterns). Unioning
+        # ALWAYS_AVAILABLE back in here used to silently undo those
+        # drops. Only force-include the irreducible loop primitives
+        # (ask_user, update_plan) as belt-and-suspenders.
+        tool_names = set(relevant_tools) | {"ask_user", "update_plan"}
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
         agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
@@ -1468,8 +1565,14 @@ def _append_tool_results(
         if round_reasoning:
             msg["reasoning_content"] = round_reasoning
         messages.append(msg)
+        # Tool output (shell/python stdout, file reads, fetched pages, email
+        # bodies, MCP results) is sourced from outside the server. Wrap it as
+        # untrusted data so prompt-injection inside a tool result is treated as
+        # data, not instructions — same hardening as skills (#788) and the
+        # web/RAG context. THREAT_MODEL.md lists tool output as a surface that
+        # must go through untrusted_context_message.
         messages.append(
-            {"role": "user", "content": f"[Tool execution results]\n\n{tool_output_text}"}
+            untrusted_context_message("tool execution results", tool_output_text)
         )
 
 
@@ -1718,6 +1821,7 @@ async def stream_agent_loop(
     max_tool_calls: int = 0,
     context_length: int = 0,
     active_document=None,
+    active_email: Optional[Dict[str, str]] = None,
     session_id: Optional[str] = None,
     disabled_tools: Optional[Set[str]] = None,
     owner: Optional[str] = None,
@@ -1726,6 +1830,7 @@ async def stream_agent_loop(
     plan_mode: bool = False,
     approved_plan: Optional[str] = None,
     tool_policy: Optional[ToolPolicy] = None,
+    workspace: Optional[str] = None,
     _is_teacher_run: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Streaming agent loop generator.
@@ -1794,8 +1899,21 @@ async def stream_agent_loop(
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not guide_only and not _relevant_tools and bool(_intent.get("low_signal")):
         from src.tool_index import ALWAYS_AVAILABLE
-        _relevant_tools = set(ALWAYS_AVAILABLE)
-        logger.info("[tool-rag] Low-signal agent message; skipping retrieval and using always-available tools only")
+        if workspace:
+            # An active workspace IS the file-work signal: a vague "look at the
+            # project" means explore this folder. Surface only the READ-ONLY file
+            # tools (intersection with the plan-mode read-only allowlist) so the
+            # agent can investigate; write/shell tools stay out until the request
+            # actually calls for them (RAG retrieval adds those on a real ask).
+            _relevant_tools = set(ALWAYS_AVAILABLE)
+            from src.tool_security import PLAN_MODE_READONLY_TOOLS
+            _relevant_tools |= (_DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS)
+            logger.info("[tool-rag] Low-signal but workspace active; including read-only file tools")
+        else:
+            # Don't short-circuit: fall through to RAG retrieval below.
+            # Non-English queries are flagged low_signal by the English-only
+            # intent classifier, but fastembed retrieval works across languages.
+            logger.info("[tool-rag] Low-signal query; will run RAG retrieval")
     if not guide_only and not _relevant_tools:
         try:
             from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
@@ -1870,6 +1988,44 @@ async def stream_agent_loop(
     if _relevant_tools is not None and active_document is not None:
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
+    # The skill index injected by _build_system_prompt tells the model to
+    # call `manage_skills action=view`, and Jaccard-matched skills are pasted
+    # into the prompt as procedures to follow — but neither path goes through
+    # tool selection, so the model can be handed a procedure naming tools
+    # (grep, read_file, ...) that aren't in its schema list. Keep the schemas
+    # in lockstep: manage_skills is callable whenever any skill is indexed,
+    # and a matched skill's declared requires_toolsets ride along with it.
+    if not guide_only and _relevant_tools is not None:
+        try:
+            from services.memory.skills import SkillsManager
+            from src.constants import DATA_DIR
+            _skills_on = True
+            try:
+                from routes.prefs_routes import _load_for_user as _load_prefs
+                _skills_on = (_load_prefs(owner) or {}).get("skills_enabled", True)
+            except Exception:
+                pass
+            _sm = SkillsManager(DATA_DIR)
+            _owner_skills = _sm.load(owner=owner) if _skills_on else []
+            if _owner_skills:
+                _relevant_tools.add("manage_skills")
+                if _retrieval_query:
+                    # Validate against every known executable tool, not just
+                    # TOOL_SECTIONS — code-nav tools (grep/glob/ls) ship as
+                    # schemas without a prompt-prose section.
+                    from src.tool_policy import known_tool_names
+                    _known = known_tool_names()
+                    for _sk in _sm.get_relevant_skills(
+                        _retrieval_query, skills=_owner_skills,
+                        threshold=0.25, max_items=3,
+                    ):
+                        _relevant_tools.update(
+                            t for t in (_sk.get("requires_toolsets") or [])
+                            if t in _known
+                        )
+        except Exception as _e:
+            logger.debug(f"[tool-rag] skill-aware tool include skipped: {_e}")
+
     if _relevant_tools is not None:
         logger.info("[agent-intent] selected_tools=%s", sorted(_relevant_tools)[:50])
 
@@ -1920,6 +2076,10 @@ async def stream_agent_loop(
     # and can override this list for users who know their setup.
     _model_no_tools = any(kw in _model_lc for kw in (
         "deepseek-r1",
+        # Open-weight GPT-OSS models are commonly served through llama.cpp /
+        # llama-cpp-python. Their names contain "gpt-o", but they do not use
+        # OpenAI's native tool-call channel unless the endpoint opts in.
+        "gpt-oss",
     ))
     # Native Ollama endpoints (/api/chat) handle tool schemas differently from
     # the OpenAI-compat path. Models like gemma4, qwen3.5, ministral respond to
@@ -1949,6 +2109,7 @@ async def stream_agent_loop(
         compact=_is_api_model,
         owner=owner,
         suppress_local_context=guide_only,
+        active_email=active_email,
     )
     if plan_mode and not guide_only:
         # Steer the model to investigate-then-propose. Hard tool gating handles
@@ -1981,30 +2142,34 @@ async def stream_agent_loop(
     _t3 = time.time()
     try:
         from src.context_compactor import trim_for_context
-        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX
-        from src.settings import is_setting_overridden
+        from src.context_budget import compute_input_token_budget, DEFAULT_HARD_MAX, DEFAULT_BUDGET, budget_is_explicit as _budget_is_explicit
+        from src.model_context import budget_context_for_model
 
-        soft_budget = int(get_setting("agent_input_token_budget", 6000) or 0)
+        soft_budget = int(get_setting("agent_input_token_budget", DEFAULT_BUDGET) or 0)
         if soft_budget > 0:
             before_trim_tokens = estimate_tokens(messages)
             reserve_tokens = min(max(max_tokens or 1024, 512), 2048)
-            # Honour the configurable ceiling for the auto-derived budget path.
-            # No-op when the user has an explicit `agent_input_token_budget`
-            # (that branch ignores hard_max). Falls back to DEFAULT_HARD_MAX
-            # on missing/malformed values so misconfig can't zero the budget.
+            # Ceiling for the auto-derived budget (no effect on an explicit budget;
+            # see #1230). Falls back to DEFAULT_HARD_MAX on missing/malformed values
+            # so misconfig can't zero the budget.
             try:
                 hard_max = int(get_setting("agent_input_token_hard_max", DEFAULT_HARD_MAX) or DEFAULT_HARD_MAX)
             except (TypeError, ValueError):
                 hard_max = DEFAULT_HARD_MAX
             if hard_max <= 0:
                 hard_max = DEFAULT_HARD_MAX
-            # Scale the default budget to the model's context window so long-context
-            # models aren't silently capped at 6000; an explicit user setting is
-            # still honoured (clamped to the window). (#1170)
+            # Default value = auto sentinel (scale to the window); any other value =
+            # explicit cap. Value-based, not presence-based, because the save path
+            # materializes defaults so a persisted default must still read as auto (#4121).
+            budget_is_explicit = _budget_is_explicit(soft_budget)
+            # Scale only off a window we actually discovered, bound to the value it
+            # proves (else 0) — not the passed-in context_length, which can be stale
+            # or unset for some callers (#4122 review).
+            ctx_for_budget = budget_context_for_model(endpoint_url, model, fallback=context_length)
             effective_budget = compute_input_token_budget(
                 soft_budget,
-                context_length,
-                is_setting_overridden("agent_input_token_budget"),
+                ctx_for_budget,
+                budget_is_explicit,
                 hard_max=hard_max,
             )
             trimmed_messages = trim_for_context(
@@ -2079,11 +2244,12 @@ async def stream_agent_loop(
     # tool, so we don't nudge on harmless transitional text like "let me
     # know what you think".
     _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|going to|let's)\s+"
+        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
+        r"i should|we should|i must|we must|going to|let's)\s+"
         r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
         r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
         r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test)"
+        r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
         r"\b[^.\n]{0,140}",
         re.IGNORECASE,
     )
@@ -2124,9 +2290,17 @@ async def stream_agent_loop(
         elif _is_api_model:
             # Filter schemas by RAG-selected tools (if available)
             if _relevant_tools:
+                # _build_base_prompt unions _ADMIN_TOOLS into the prompt
+                # sections when admin intent fires — the schema list must
+                # offer the same names, or the model reads prose describing
+                # tools it cannot call and substitutes the nearest schema
+                # it does have (e.g. manage_memory for manage_skills).
+                _schema_names = set(_relevant_tools)
+                if _needs_admin:
+                    _schema_names |= _ADMIN_TOOLS
                 base_schemas = [
                     s for s in FUNCTION_TOOL_SCHEMAS
-                    if s.get("function", {}).get("name") in _relevant_tools
+                    if s.get("function", {}).get("name") in _schema_names
                 ]
                 _mcp_filtered = [
                     s for s in mcp_schemas
@@ -2644,6 +2818,7 @@ async def stream_agent_loop(
                             tool_policy=tool_policy,
                             owner=owner,
                             progress_cb=_push_progress,
+                            workspace=workspace,
                         )
                     finally:
                         # Sentinel so the drainer knows to stop.
@@ -2660,6 +2835,46 @@ async def stream_agent_loop(
                         f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
                     )
                 desc, result = await _tool_task
+
+            # A skill the model just loaded can prescribe tools that weren't
+            # RAG-selected this turn (declared via requires_toolsets in its
+            # frontmatter). Union them into the selection so the NEXT round's
+            # schema list includes them — otherwise the model reads "use
+            # grep" from the skill it fetched but has no grep schema to call.
+            if (
+                block.tool_type == "manage_skills"
+                and _relevant_tools is not None
+                and not result.get("error")
+            ):
+                _ms_args = {}
+                _ms_raw = (block.content or "").strip()
+                if _ms_raw.startswith("{"):
+                    try:
+                        _ms_args = json.loads(_ms_raw)
+                    except json.JSONDecodeError:
+                        _ms_args = {}
+                _ms_name = str(_ms_args.get("name", "") or "").strip()
+                if _ms_name and _ms_args.get("action") in ("view", "view_ref"):
+                    try:
+                        from services.memory.skills import SkillsManager as _SkM
+                        from src.constants import DATA_DIR as _DD
+                        from src.tool_policy import known_tool_names as _ktn
+                        _known = _ktn()
+                        for _sk in _SkM(_DD).load(owner=owner):
+                            if _sk.get("name") == _ms_name:
+                                _new = {
+                                    t for t in (_sk.get("requires_toolsets") or [])
+                                    if t in _known and t not in _relevant_tools
+                                }
+                                if _new:
+                                    _relevant_tools.update(_new)
+                                    logger.info(
+                                        "[tool-rag] skill '%s' unlocked tools for next round: %s",
+                                        _ms_name, sorted(_new),
+                                    )
+                                break
+                    except Exception as _e:
+                        logger.debug(f"skill requires_toolsets unlock skipped: {_e}")
 
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
@@ -2751,18 +2966,20 @@ async def stream_agent_loop(
                 # On a bash/python timeout the result carries error + (often
                 # empty) stdout/stderr; fall back to the error so the "timed
                 # out" reason reaches the UI instead of a blank result.
-                output_text = (result["stdout"] or result["stderr"] or result.get("error", ""))[:2000]
+                raw = result["stdout"] or result["stderr"] or result.get("error", "")
+                output_text = _truncate(raw)
             elif "output" in result:
                 # bash / python canonical result: {"output": ..., "exit_code": ...}
-                output_text = (result["output"] or "")[:2000]
+                raw = result["output"] or ""
+                output_text = _truncate(raw)
             elif "response" in result:
                 # AI interaction tools (chat_with_model, send_to_session)
                 label = result.get("model", result.get("session_name", "AI"))
-                output_text = f"{label}: {result['response']}"[:4000]
+                output_text = _truncate(f"{label}: {result['response']}")
             elif "content" in result:
-                output_text = result["content"][:2000]
+                output_text = _truncate(result["content"])
             elif "results" in result:
-                output_text = result["results"][:4000]
+                output_text = _truncate(result["results"])
             elif "session_id" in result and "name" in result:
                 output_text = f"Session created: {result['name']} (id: {result['session_id']})"
             elif "success" in result:
@@ -2772,13 +2989,25 @@ async def stream_agent_loop(
                     else f"Error: {result.get('error', '')}"
                 )
             elif "error" in result:
-                output_text = result["error"][:2000]
+                output_text = _truncate(result["error"])
 
             # Emit tool_output (include ui_event data if present)
             tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
-                for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):
+                for k in (
+                    "toggle_name", "state", "mode", "model", "endpoint_url",
+                    "theme_name", "colors",
+                    # ui_control open_email_reply payload — without these the
+                    # frontend openReplyDraft bails on undefined uid and the
+                    # reply window silently never opens.
+                    "uid", "folder", "account_id",
+                    # Optional pre-filled body for open_email_reply so the
+                    # agent can compose-and-open in one tool call.
+                    "body",
+                    # ui_control open_panel payload
+                    "panel",
+                ):
                     if k in result:
                         tool_output_data[k] = result[k]
             # Forward image data from generate_image tool

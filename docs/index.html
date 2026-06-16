@@ -25,9 +25,16 @@
     --radius: 8px;
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; scroll-snap-type: y proximity; scroll-padding-top: 60px; }
-  /* Each section is a full-viewport "page" with its content centered, so only
-     one shows at a time and the snap is obvious. */
+  html { scroll-behavior: smooth; scroll-padding-top: 60px; }
+  /* REMOVED: "scroll-snap-type: y proximity"
+     The idea was: >>Each section is a full-viewport "page" with its content centered,
+     so only one shows at a time and the snap is obvious.<<
+
+     PROBLEM: sections easily grow taller than 100vh IRL
+     This cause forced jumps mid-read. It's intrusive UX.
+     The landing-page is not a PowerPoint presentation!
+
+     Preserved: CSS snap-points to avoid destroying code meta-data*/
   .hero, section {
     scroll-snap-align: start; min-height: 100vh;
     display: flex; flex-direction: column; justify-content: center;
