@@ -238,7 +238,7 @@ if AUTH_ENABLED:
     # the token is ever checked.
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
-        _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+        _re.compile(rf"^{BASE_PATH}/api/tasks/[^/]+/webhook/[^/]+/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:

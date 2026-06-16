@@ -53,6 +53,14 @@ export function apiHttpErrorMessage(err) {
   return detail || apiErrorMessage(err);
 }
 
+/** True when a 401 should navigate to /login (not already there, not an auth endpoint). */
+function shouldRedirectToLogin(url) {
+  if (String(url).includes('/api/auth/')) return false;
+  const path = (typeof window !== 'undefined' ? window.location.pathname : '').replace(/\/+$/, '');
+  if (path.endsWith('/login')) return false;
+  return true;
+}
+
 function createApiClient() {
   const axios = window.axios;
   if (!axios) {
@@ -69,7 +77,7 @@ function createApiClient() {
     (error) => {
       const status = error.response?.status;
       const url = error.config?.url || '';
-      if (status === 401 && !String(url).includes('/api/auth/')) {
+      if (status === 401 && shouldRedirectToLogin(url)) {
         window.location.href = apiPath('/login');
       }
       console.error('[api]', apiErrorMessage(error));
@@ -95,7 +103,7 @@ export const api = {
 export async function apiFetch(path, options = {}) {
   const url = path.startsWith('http://') || path.startsWith('https://') ? path : apiPath(path);
   const res = await fetch(url, { credentials: 'same-origin', ...options });
-  if (res.status === 401 && !url.includes('/api/auth/')) {
+  if (res.status === 401 && shouldRedirectToLogin(url)) {
     window.location.href = apiPath('/login');
   }
   return res;
