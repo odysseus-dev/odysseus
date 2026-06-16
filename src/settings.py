@@ -37,6 +37,12 @@ DEFAULT_SETTINGS = {
     # have been observed inventing signatures and sending to real
     # recipients without confirmation.
     "agent_email_confirm": True,
+    # Companion bridge: gate for ADMIN-only mobile features (terminal, vault,
+    # MCP, cookbook, contacts). Off by default — an admin must explicitly opt in
+    # before a paired phone can reach any admin-privileged companion endpoint,
+    # AND the paired token's owner must itself be an admin. See
+    # companion/mobile_features.py require_companion_admin().
+    "companion_admin_enabled": False,
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
