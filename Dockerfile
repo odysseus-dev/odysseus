@@ -1,7 +1,7 @@
 # ============================================================
 # Stage 1: Builder — installs system build deps and Python packages
 # ============================================================
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
