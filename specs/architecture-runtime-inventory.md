@@ -4,6 +4,7 @@
 > **Parent issue**: [#4082](https://github.com/pewdiepie-archdaemon/odysseus/issues/4082)
 > **Last updated**: dev@b58af42 | 2026-06-16
 > **Status**: Draft — to be reviewed before follow-up slices open.
+> **Snapshot basis**: Importer / file / import-line counts are refreshed to `dev@b58af42` (2026-06-16) and are recomputable via the commands in §3.4. **Line counts** in §2.1 / §2.2 are a snapshot from an earlier baseline and drift as `dev` moves — recompute any of them with `wc -l <file>`. This inventory tracks structure and risk, not live metrics.
 
 This document maps the current runtime module structure, identifies high-risk boundaries, and recommends safe first refactor slices. It does **not** move files, change imports, or alter runtime behavior.
 
@@ -22,7 +23,7 @@ odysseus/
 │   └── search/               # Search subsystem
 ├── routes/                   # 54 flat .py files — HTTP route handlers
 ├── core/                     # 10 files — database models, auth, middleware, session
-├── mcp_servers/              # 4 files — MCP server implementations
+├── mcp_servers/              # 5 files — MCP server implementations
 ├── scripts/                  # CLI tools and one-shot scripts
 ├── static/                   # Frontend HTML/CSS/JS
 ├── tests/                    # 583 test files (~54,800 lines)
@@ -51,7 +52,7 @@ odysseus/
 | 4 | `src/agent_loop.py` | **2,961** | 0 | ~24 | **HIGH** |
 | 5 | `src/task_scheduler.py` | **2,330** | — | 5 | MEDIUM |
 | 6 | `routes/model_routes.py` | **2,266** | — | — | MEDIUM |
-| 7 | `core/database.py` | **2,265** | 27 | ~59 helpers | **HIGH** |
+| 7 | `core/database.py` | **2,265** | 28 | ~59 helpers | **HIGH** |
 | 8 | `src/builtin_actions.py` | **2,262** | 2 | ~24 | MEDIUM |
 | 9 | `src/llm_core.py` | **2,164** | — | — | MEDIUM |
 | 10 | `mcp_servers/email_server.py` | 2,197 | — | — | LOW (separate process) |
@@ -95,7 +96,7 @@ odysseus/
 
 ### 3.2 Who Depends on `src/tool_implementations.py`
 
-**18 files** import from `src.tool_implementations`:
+**17 files** import from `src.tool_implementations`:
 - `src/agent_loop.py`, `src/builtin_actions.py`, `src/tool_index.py`
 - `src/task_scheduler.py`, `src/tool_policy.py`
 - Various tests
@@ -129,7 +130,7 @@ src/tool_implementations.py ──→ routes/prefs_routes.py
 | Direction | Count | Notes |
 |-----------|-------|-------|
 | `routes/` → `src/` | **374** | Expected: HTTP handlers call domain logic |
-| `routes/` → `core/` | **124** | Expected: handlers access DB models |
+| `routes/` → `core/` | **126** | Expected: handlers access DB models |
 | `src/` → `routes/` | **31** | **Unexpected**: domain logic reaching into HTTP layer (direct grep of import lines referencing `routes/`) |
 | `src/` → `core/` | **106** | Acceptable but could be reduced with a data-access layer |
 
@@ -216,12 +217,12 @@ The 33 `do_*` functions in `tool_implementations.py` fall into natural domain gr
 
 | Priority | Target | Risk | Rationale |
 |----------|--------|------|-----------|
-| **1** | `src/tool_implementations.py` → `src/tools/*.py` | **MEDIUM** | 4,032 lines → ~10 files by tool category. Already has natural boundaries. 18 importers, tracked in #3629. Use `__init__.py` shim to keep existing imports working. |
+| **1** | `src/tool_implementations.py` → `src/tools/*.py` | **MEDIUM** | 4,032 lines → ~10 files by tool category. Already has natural boundaries. 17 importers, tracked in #3629. Use `__init__.py` shim to keep existing imports working. |
 | **2** | `routes/` → domain subdirectories (one domain per PR) | **MEDIUM** | 54 flat files. Done **one domain at a time** (e.g. a standalone PR for the email domain, then chat, …), not a broad reorganization — route modules carry helper imports, registration assumptions, and test import paths. |
 | **3** | `src/agent_loop.py` → `src/agent/loop.py` + submodules | **MEDIUM-HIGH** | 2,961 lines, 24 functions. Can extract prompt building, classification, verification, and runaway detection. Tracked in #3266. |
 | **4** | `src/` → `src/pkg/`, `src/domain/`, `src/infra/`, `src/api/` | **MEDIUM** | Structural reorganization. Split flat `src/` into layered packages. Must come after routes and tools are stable. |
 | **5** | `routes/email_*.py` consolidation | **LOW** | Already grouped by filename prefix. Low-risk cleanup within the email domain. |
-| **6** | `core/database.py` → `src/infra/database/models/*.py` | **HIGH** | 27 classes, 102 importers. Highest-risk split. Must be **last** in any sequence. Requires careful import shim strategy. |
+| **6** | `core/database.py` → `src/infra/database/models/*.py` | **HIGH** | 28 classes, 102 importers. Highest-risk split. Must be **last** in any sequence. Requires careful import shim strategy. |
 | **7** | Frontend CSS modularization | **MEDIUM** | 36,653 lines. Tracked in #2617. Separate timeline from backend work. |
 | **8** | Frontend JS modularization | **MEDIUM** | 9,776 lines in `document.js`. Introduce ES modules at minimum. |
 
@@ -392,14 +393,14 @@ core/database.py  ←── 102 importers (routes/*, src/*, core/*, tests/*)
     ├── src/tool_implementations.py (inline)
     └── ...97 more
 
-src/tool_implementations.py  ←── 18 importers
+src/tool_implementations.py  ←── 17 importers
     ↑
     ├── src/agent_loop.py
     ├── src/builtin_actions.py
     ├── src/tool_index.py
     ├── src/task_scheduler.py
     ├── src/tool_policy.py
-    └── ...13 more (mostly tests)
+    └── ...12 more (mostly tests)
 
 src/agent_loop.py  ←── 22 importers
     ↑
