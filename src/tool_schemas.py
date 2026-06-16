@@ -802,7 +802,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "serve_model",
-            "description": "Start serving a model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. If `host` is omitted, defaults to the cookbook's selected server (not localhost). For image/inpainting/diffusion models use the built-in command `python3 scripts/diffusion_server.py --model <repo> --port 8100` rather than inventing a custom diffusers API server. After launching, call list_served_models to check readiness/errors; if it reports a diagnosis with retry suggestions, retry via serve_model using the suggested adjusted cmd.",
+            "description": "Start serving ONE model with vLLM, SGLang, llama.cpp, Ollama, or Diffusers. IMPORTANT: by default only one model is loaded at a time — serving a new one STOPS the currently-loaded model (a server-side cap, default max_loaded_models=1). Do NOT loop serve_model over multiple models to 'load them all' — that is refused and would OOM the GPU; serve exactly the one the user asked for. If `host` is omitted, defaults to the cookbook's selected server (not localhost). For image/inpainting/diffusion models use the built-in command `python3 scripts/diffusion_server.py --model <repo> --port 8100` rather than inventing a custom diffusers API server. After launching, call list_served_models to check readiness/errors; if it reports a diagnosis with retry suggestions, retry via serve_model using the suggested adjusted cmd.",
             "parameters": {
                 "type": "object",
                 "properties": {

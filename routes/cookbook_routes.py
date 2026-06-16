@@ -62,6 +62,32 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'fi'
 )
 
+async def _probe_free_vram_gb(remote_host: str = "", ssh_port: str = ""):
+    """Best-effort free VRAM (GB) on the target, via nvidia-smi (local or ssh).
+
+    Returns None when nvidia-smi isn't present (e.g. AMD/ROCm or CPU hosts) so
+    the serve-safety VRAM gate is skipped rather than blocking — the loaded-model
+    count/stop guard still applies on every platform.
+    """
+    from src.serve_guard import parse_free_vram_gb
+    nvidia = "nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits"
+    if remote_host:
+        pf = f"-p {shlex.quote(str(ssh_port))} " if ssh_port and str(ssh_port) != "22" else ""
+        cmd = (f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
+               f"{pf}{shlex.quote(remote_host)} {shlex.quote(nvidia)}")
+    else:
+        cmd = nvidia
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    return parse_free_vram_gb(out.decode(errors="replace"))
+
+
 def setup_cookbook_routes() -> APIRouter:
     router = APIRouter(tags=["cookbook"])
     _cookbook_state_path = Path(COOKBOOK_STATE_FILE)
@@ -1204,6 +1230,57 @@ def setup_cookbook_routes() -> APIRouter:
         finally:
             db.close()
 
+    async def _enforce_serve_safety(repo_id: str, cmd: str, host: str, ssh_port: str):
+        """Apply the loaded-model cap + VRAM pre-flight before a serve launches.
+
+        Raises HTTPException(409) to refuse; stops the previous serve in
+        single-model mode; otherwise returns (proceed). Best-effort and
+        fail-open on its own internal errors so it can never wedge a legitimate
+        serve — but the count/stop policy itself is enforced.
+        """
+        from src.settings import load_settings
+        from src import serve_guard
+        s = load_settings()
+        max_loaded = int(s.get("max_loaded_models", 1) or 1)
+        replaces = bool(s.get("serve_replaces_previous", True))
+        headroom = float(s.get("serve_vram_headroom_gb", 2) or 0)
+
+        state = {}
+        try:
+            if _cookbook_state_path.exists():
+                state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.debug(f"serve-safety: state read failed: {e}")
+        running = serve_guard.live_serves(state if isinstance(state, dict) else {}, host or "")
+
+        action, msg = serve_guard.decide_serve(len(running), max_loaded, replaces)
+        if action == "refuse":
+            raise HTTPException(409, msg)
+        if action == "stop_previous":
+            from src.tool_implementations import _cookbook_kill_session
+            for t in running:
+                sid = t.get("sessionId") or t.get("id")
+                if not sid:
+                    continue
+                try:
+                    await _cookbook_kill_session(
+                        sid, remote_host=(t.get("remoteHost") or ""),
+                        ssh_port=(t.get("sshPort") or ""), verb="Stopped")
+                except Exception as e:
+                    logger.warning(f"serve-safety: could not stop previous serve {sid}: {e}")
+            # Give the GPU a moment to release before the new load. We skip the
+            # VRAM gate here precisely because we just freed it (an immediate
+            # probe could still read the dying process's reservation).
+            await asyncio.sleep(1.0)
+            return
+
+        # action == "proceed": VRAM pre-flight backstop (best-effort).
+        est = serve_guard.estimate_model_vram_gb(repo_id, cmd)
+        free = await _probe_free_vram_gb(host or "", ssh_port or "")
+        verdict, vmsg = serve_guard.vram_verdict(free, est, headroom)
+        if verdict == "refuse":
+            raise HTTPException(409, vmsg)
+
     @router.post("/api/model/serve")
     async def model_serve(request: Request, req: ServeRequest):
         """Launch a model server in a tmux session (or PowerShell background process on Windows).
@@ -1302,6 +1379,17 @@ def setup_cookbook_routes() -> APIRouter:
                 "error": _missing_binary_message("docker", remote or "local server"),
                 "session_id": session_id,
             }
+
+        # ── Model-serving safety guard ───────────────────────────────────────
+        # Placed after the cheap validation/rejection checks above and right
+        # before launch: real model serves only (pip installs don't load a
+        # model). Enforces a loaded-model cap (default 1 → stop the previous
+        # serve) plus a best-effort free-VRAM pre-flight, so an agent loop or
+        # accidental double-tap can't stack models and OOM the box. This
+        # endpoint is the single chokepoint for BOTH the UI and the agent's
+        # serve_model tool.
+        if not is_pip_install:
+            await _enforce_serve_safety(req.repo_id, req.cmd, remote, req.ssh_port)
 
         if is_windows and remote:
             # ── Windows remote: generate .ps1 serve runner ──

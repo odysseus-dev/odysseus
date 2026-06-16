@@ -37,6 +37,20 @@ DEFAULT_SETTINGS = {
     # have been observed inventing signatures and sending to real
     # recipients without confirmation.
     "agent_email_confirm": True,
+    # ── Model-serving safety ──
+    # Cap on how many models may be served (loaded) at once on a given host.
+    # Default 1: serving a new model stops the current one (see
+    # serve_replaces_previous) rather than stacking — the single-GPU self-host
+    # case, and the guard that stops an agent loop from OOM-ing the box.
+    "max_loaded_models": 1,
+    # When the cap is 1 and a model is already loaded, serving a new one stops
+    # the previous serve first instead of refusing. Raise max_loaded_models to
+    # run several at once (only if your VRAM allows).
+    "serve_replaces_previous": True,
+    # Free-VRAM margin (GB) the pre-flight requires beyond the model's estimate
+    # before allowing a load. Best-effort: skipped when VRAM can't be probed or
+    # the model size can't be estimated.
+    "serve_vram_headroom_gb": 2,
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",
