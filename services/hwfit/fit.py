@@ -147,6 +147,12 @@ def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     bw = _lookup_bandwidth(system)
     backend = system.get("backend", "cpu_x86")
 
+    # CPU-only inference must never inherit a GPU backend's fallback constant,
+    # even if the detected system happens to report a CUDA/Metal/ROCm backend.
+    if run_mode == "cpu_only":
+        if backend not in ("cpu_x86", "cpu_arm"):
+            backend = "cpu_x86"
+
     if bw and run_mode in ("gpu", "cpu_offload"):
         bpp = QUANT_BYTES_PER_PARAM.get(quant, 0.5)
         model_gb = pb * bpp
