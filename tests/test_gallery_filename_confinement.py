@@ -28,6 +28,22 @@ def test_gallery_image_path_allows_safe_filename(tmp_path, monkeypatch):
     assert path == image_dir / "abc123.png"
 
 
+def test_gallery_image_path_does_not_fallback_to_cwd_data_dir(tmp_path, monkeypatch):
+    gallery_routes = _gallery_module()
+    configured_dir = tmp_path / "configured" / "generated_images"
+    cwd_root = tmp_path / "cwd"
+    cwd_image_dir = cwd_root / "data" / "generated_images"
+    cwd_image_dir.mkdir(parents=True)
+    (cwd_image_dir / "abc123.png").write_bytes(b"wrong root")
+    monkeypatch.setattr(gallery_routes, "GALLERY_IMAGE_DIR", configured_dir)
+    monkeypatch.chdir(cwd_root)
+
+    path = gallery_routes._gallery_image_path("abc123.png")
+
+    assert path == configured_dir / "abc123.png"
+    assert path != cwd_image_dir / "abc123.png"
+
+
 @pytest.mark.parametrize("filename", ["../../secret.png", "..\\secret.png", None, 12345])
 def test_gallery_image_path_rejects_unsafe_stored_filenames(tmp_path, monkeypatch, filename):
     gallery_routes = _gallery_module()

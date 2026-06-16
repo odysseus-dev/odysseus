@@ -236,6 +236,29 @@ def _digest_windows(now):
     ]
 
 
+def _checkin_calendar_events(db, owner, start, end):
+    """Calendar events in [start, end] for ONE owner, for the check-in digest.
+
+    Ownership lives on CalendarCal.owner; events inherit it via calendar_id.
+    The digest query had no owner scope, so it pulled EVERY user's events into
+    one user's check-in (a cross-tenant leak of summaries/locations). Scope it
+    by joining CalendarCal, mirroring routes/calendar_routes.list_events.
+    """
+    from core.database import CalendarEvent as _CE, CalendarCal as _CC
+    return (
+        db.query(_CE)
+        .join(_CC, _CE.calendar_id == _CC.id)
+        .filter(
+            _CC.owner == owner,
+            _CE.dtstart >= start,
+            _CE.dtstart <= end,
+            _CE.status != "cancelled",
+        )
+        .order_by(_CE.dtstart)
+        .all()
+    )
+
+
 class TaskScheduler:
     def __init__(self, session_manager):
         self._session_manager = session_manager
@@ -1127,11 +1150,7 @@ class TaskScheduler:
                     # Strip timezone for naive DB comparison
                     _s = start.replace(tzinfo=None) if start.tzinfo else start
                     _e = end.replace(tzinfo=None) if end.tzinfo else end
-                    evs = _db.query(_CE).filter(
-                        _CE.dtstart >= _s,
-                        _CE.dtstart <= _e,
-                        _CE.status != "cancelled",
-                    ).order_by(_CE.dtstart).all()
+                    evs = _checkin_calendar_events(_db, task.owner, _s, _e)
                     if not evs:
                         continue
                     # Group by importance for richer output

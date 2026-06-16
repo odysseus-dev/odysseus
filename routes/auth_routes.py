@@ -144,6 +144,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 raise HTTPException(401, "Invalid 2FA code")
         # All checks passed — create session (password already verified above)
         token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
+        if not token:
+            raise HTTPException(401, "Invalid credentials")
         cookie_kwargs = dict(
             key=SESSION_COOKIE,
             value=token,
@@ -431,6 +433,23 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 rename_owner(old_username, new_username)
         except Exception as e:
             logger.warning("Failed to rename upload owner references %s -> %s: %s", old_username, new_username, e)
+
+        # direct personal RAG uploads live in per-owner directories and the
+        # vector metadata also carries the username used for owner-filtered
+        # search. Keep both in sync with the auth rename.
+        try:
+            from routes.personal_routes import rename_personal_upload_owner
+            personal_docs_manager = getattr(request.app.state, "personal_docs_manager", None)
+            if personal_docs_manager is not None:
+                rag_manager = getattr(personal_docs_manager, "rag_manager", None)
+                rename_personal_upload_owner(
+                    old_username,
+                    new_username,
+                    personal_docs_manager=personal_docs_manager,
+                    rag_manager=rag_manager,
+                )
+        except Exception as e:
+            logger.warning("Failed to rename personal RAG upload owner references %s -> %s: %s", old_username, new_username, e)
 
         # skills: SKILL.md frontmatter carries owner: <username>; the usage
         # sidecar (_usage.json) keys entries as owner::skill-name. Both must

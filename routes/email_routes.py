@@ -2171,12 +2171,10 @@ def setup_email_routes():
         try:
             conn = sqlite3.connect(SCHEDULED_DB)
             conn.row_factory = sqlite3.Row
-            # The MCP server can't easily set owner, so it stores '' — fall
-            # back to those rows in addition to the caller's owner.
             rows = conn.execute(
                 """SELECT id, to_addr, subject, body, created_at, account_id
                    FROM scheduled_emails
-                   WHERE status = 'agent_draft' AND (owner = ? OR owner = '')
+                   WHERE status = 'agent_draft' AND owner = ?
                    ORDER BY created_at DESC""",
                 (owner or "",),
             ).fetchall()
@@ -2197,7 +2195,7 @@ def setup_email_routes():
             cur = conn.execute(
                 """UPDATE scheduled_emails
                    SET status = 'pending', send_at = ?
-                   WHERE id = ? AND status = 'agent_draft' AND (owner = ? OR owner = '')""",
+                   WHERE id = ? AND status = 'agent_draft' AND owner = ?""",
                 (datetime.utcnow().isoformat(), sid, owner or ""),
             )
             conn.commit()
@@ -2218,7 +2216,7 @@ def setup_email_routes():
             conn = sqlite3.connect(SCHEDULED_DB)
             cur = conn.execute(
                 """UPDATE scheduled_emails SET status = 'cancelled'
-                   WHERE id = ? AND status = 'agent_draft' AND (owner = ? OR owner = '')""",
+                   WHERE id = ? AND status = 'agent_draft' AND owner = ?""",
                 (sid, owner or ""),
             )
             conn.commit()

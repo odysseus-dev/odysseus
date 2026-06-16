@@ -57,7 +57,13 @@ MEMORY_VECTORS_DIR = os.path.join(DATA_DIR, "memory_vectors")
 
 # Paths with an intentional dedicated env override, defaulting under DATA_DIR.
 MAIL_ATTACHMENTS_DIR = os.getenv("ODYSSEUS_MAIL_ATTACHMENTS_DIR", os.path.join(DATA_DIR, "mail-attachments"))
-FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH", os.path.join(DATA_DIR, "fastembed_cache"))
+# `or` (not os.getenv's default arg) so a PRESENT-but-EMPTY value falls back to
+# the default. docker-compose.yml injects `FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}`,
+# which sets the var to "" when the host hasn't defined it. os.getenv(name, default)
+# only returns the default when the var is ABSENT, so the empty string would win →
+# os.makedirs("") raises [Errno 2] No such file or directory: '' → FastEmbed fails to
+# init and all vector features (RAG, semantic memory, tool index) silently degrade.
+FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(DATA_DIR, "fastembed_cache")
 
 # Agent tool output limits (single source of truth — imported by tool_execution.py,
 # tool_implementations.py, agent_tools.py, and any other module that needs them)

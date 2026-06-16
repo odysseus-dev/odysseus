@@ -1,10 +1,19 @@
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 
+import routes.chat_helpers as chat_helpers
 from routes.chat_helpers import (
     _enforce_chat_privileges,
+    _session_is_research_spinoff,
+    auto_name_session,
+    build_chat_context,
     clean_thinking_for_save,
     needs_auto_name,
+    PreprocessedMessage,
+    PresetInfo,
     save_assistant_response,
 )
 
@@ -220,10 +229,6 @@ def test_save_assistant_response_preserves_actual_and_requested_model():
     assert sess.history[-1].metadata["model"] == "actual-model"
 
 
-from types import SimpleNamespace
-from routes.chat_helpers import _session_is_research_spinoff
-
-
 class _SpinMsg:
     def __init__(self, role, metadata=None):
         self.role = role
@@ -236,6 +241,57 @@ def test_spinoff_detected_from_chatmessage_history():
         _SpinMsg("user", None),
     ])
     assert _session_is_research_spinoff(sess) is True
+
+
+def test_auto_name_session_passes_session_fallback_to_task_resolver(monkeypatch):
+    import src.llm_core as llm_core
+    import src.task_endpoint as task_endpoint
+
+    resolver_calls = []
+    llm_calls = []
+
+    def fake_resolve_task_endpoint(
+        fallback_url=None,
+        fallback_model=None,
+        fallback_headers=None,
+        owner=None,
+    ):
+        resolver_calls.append((fallback_url, fallback_model, fallback_headers, owner))
+        return fallback_url, fallback_model, fallback_headers
+
+    async def fake_llm_call(url, model, messages, **kwargs):
+        llm_calls.append((url, model, messages, kwargs))
+        return "Focused Fix"
+
+    monkeypatch.setattr(task_endpoint, "resolve_task_endpoint", fake_resolve_task_endpoint)
+    monkeypatch.setattr(llm_core, "llm_call_async", fake_llm_call)
+
+    session_headers = {"Authorization": "Bearer session"}
+    sess = SimpleNamespace(
+        id="session-1",
+        owner="alice",
+        endpoint_url="http://session.example/v1/chat/completions",
+        model="session-model",
+        headers=session_headers,
+        history=[SimpleNamespace(role="user", content="Please fix the endpoint fallback bug.")],
+    )
+    updates = []
+    session_manager = SimpleNamespace(
+        update_session_name=lambda session_id, title: updates.append((session_id, title))
+    )
+
+    asyncio.run(auto_name_session(session_manager, sess))
+
+    assert resolver_calls == [(
+        "http://session.example/v1/chat/completions",
+        "session-model",
+        session_headers,
+        "alice",
+    )]
+    assert llm_calls[0][0] == "http://session.example/v1/chat/completions"
+    assert llm_calls[0][1] == "session-model"
+    assert llm_calls[0][3]["headers"] == session_headers
+    assert updates == [("session-1", "Focused Fix")]
 
 
 def test_spinoff_detected_from_dict_history():
@@ -262,3 +318,120 @@ def test_metadata_on_non_system_message_ignored():
 def test_empty_or_missing_history():
     assert _session_is_research_spinoff(SimpleNamespace(history=[])) is False
     assert _session_is_research_spinoff(SimpleNamespace()) is False
+
+
+async def _build_context_owner_probe(monkeypatch, request_state):
+    captured = {
+        "prefs_owner": None,
+        "preface_owner": None,
+        "compact_owner": None,
+    }
+
+    async def fake_preprocess(chat_handler, message, att_ids, sess, **kwargs):
+        return PreprocessedMessage(
+            enhanced_message=message,
+            user_content=message,
+            text_for_context=message,
+            youtube_transcripts=[],
+            attachment_meta=[],
+        )
+
+    def fake_extract_preset(chat_handler, preset_id):
+        return PresetInfo(
+            temperature=0.7,
+            max_tokens=1024,
+            system_prompt=None,
+            character_name=None,
+        )
+
+    def fake_add_user_message(sess, chat_handler, preprocessed, incognito=False):
+        sess.messages.append({"role": "user", "content": preprocessed.user_content})
+
+    def fake_load_prefs(owner):
+        captured["prefs_owner"] = owner
+        return {"memory_enabled": True, "skills_enabled": True}
+
+    def fake_build_context_preface(**kwargs):
+        captured["preface_owner"] = kwargs["owner"]
+        return [], [], []
+
+    async def fake_maybe_compact(sess, endpoint_url, model, messages, headers, owner=None):
+        captured["compact_owner"] = owner
+        return messages, 8192, False
+
+    monkeypatch.setattr(chat_helpers, "preprocess", fake_preprocess)
+    monkeypatch.setattr(chat_helpers, "extract_preset", fake_extract_preset)
+    monkeypatch.setattr(chat_helpers, "add_user_message", fake_add_user_message)
+    monkeypatch.setattr(chat_helpers, "load_prefs_for_user", fake_load_prefs)
+    monkeypatch.setattr(chat_helpers, "_normalize_model_id_from_cache", lambda sess: None)
+    monkeypatch.setattr(chat_helpers, "normalize_model_id", lambda endpoint_url, model, **kwargs: None)
+    monkeypatch.setattr(chat_helpers, "maybe_compact", fake_maybe_compact)
+    monkeypatch.setattr(chat_helpers, "trim_for_context", lambda messages, context_length: messages)
+
+    import src.user_time as user_time
+
+    monkeypatch.setattr(
+        user_time,
+        "current_datetime_context_message",
+        lambda now_utc=None: {"role": "user", "content": "[Context - current date/time]"},
+        raising=False,
+    )
+
+    sess = SimpleNamespace(
+        endpoint_url="http://model.local/v1/chat/completions",
+        model="test-model",
+        headers={},
+        history=[],
+        messages=[],
+    )
+    sess.get_context_messages = lambda: list(sess.messages)
+
+    request = SimpleNamespace(state=SimpleNamespace(**request_state))
+    ctx = await build_chat_context(
+        sess=sess,
+        request=request,
+        chat_handler=SimpleNamespace(),
+        chat_processor=SimpleNamespace(build_context_preface=fake_build_context_preface),
+        message="hello",
+        session_id="session-1",
+        incognito=True,
+    )
+
+    return ctx, captured
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_uses_api_token_owner_for_compaction_scope(monkeypatch):
+    ctx, captured = await _build_context_owner_probe(
+        monkeypatch,
+        {
+            "api_token": True,
+            "api_token_owner": "alice",
+            "current_user": "api",
+        },
+    )
+
+    assert ctx.user == "alice"
+    assert captured == {
+        "prefs_owner": "alice",
+        "preface_owner": "alice",
+        "compact_owner": "alice",
+    }
+
+
+@pytest.mark.asyncio
+async def test_build_chat_context_keeps_cookie_user_owner_scope(monkeypatch):
+    ctx, captured = await _build_context_owner_probe(
+        monkeypatch,
+        {
+            "api_token": False,
+            "current_user": "bob",
+        },
+    )
+
+    assert ctx.user == "bob"
+    assert captured == {
+        "prefs_owner": "bob",
+        "preface_owner": "bob",
+        "compact_owner": "bob",
+    }
