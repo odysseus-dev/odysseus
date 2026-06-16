@@ -16,6 +16,11 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+      # Dev-loop: bind-mount the patched mcp_manager.py so host edits to the
+      # lazy-connect / ODYSSEUS_MCP_HTTP_HEADERS work reach the running
+      # container without a full image rebuild. The image still carries the
+      # file as a fallback, but this overlay wins on top.
+      - ./src/mcp_manager.py:/app/src/mcp_manager.py:z
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
