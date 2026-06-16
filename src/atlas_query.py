@@ -350,7 +350,11 @@ def run_query(query: Dict[str, Any], notes: List[Dict[str, Any]]) -> Dict[str, A
         rev = (s.get("dir") or "asc").lower() == "desc"
         matched.sort(key=lambda r, f=field: _sort_key(resolve_field(r, f)), reverse=rev)
 
-    limit = min(int(query.get("limit", MAX_ROWS) or MAX_ROWS), MAX_ROWS)
+    # Don't use `or MAX_ROWS` — a legitimate limit of 0 is falsy and would be
+    # clobbered to "return everything". Treat only a missing limit as the default.
+    _lim = query.get("limit", MAX_ROWS)
+    _lim = MAX_ROWS if _lim is None else int(_lim)
+    limit = min(max(_lim, 0), MAX_ROWS)
     matched = matched[:limit]
 
     select = query.get("select")

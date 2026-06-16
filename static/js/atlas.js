@@ -264,9 +264,13 @@ async function openAtlas() {
 // an overlay. Idempotent.
 async function openAtlasDocked() {
   if (!_open) await openAtlas();
+  // Mark docked synchronously (not inside the rAF) so that if the panel is
+  // closed in the same frame, _doClose still releases the reserved
+  // --right-dock-w gutter instead of leaving a permanent blank strip.
+  _docked = true;
   // Let the modal lay out before docking so the snapshot/geometry is real.
   requestAnimationFrame(() => {
-    try { applyRightDock(_modal); _docked = true; } catch (_) {}
+    try { applyRightDock(_modal); } catch (_) { _docked = false; }
   });
 }
 

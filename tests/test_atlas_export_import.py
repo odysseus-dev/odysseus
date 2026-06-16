@@ -97,3 +97,37 @@ def test_import_skips_disallowed_types(client):
     ]
     res = client.post("/api/atlas/import", files=files, headers=_as("alice")).json()
     assert res["imported"] == 1 and res["skipped"] == 1
+
+
+def test_zip_import_strips_common_leading_folder(client):
+    """An Obsidian .zip export (every entry under one 'MyVault/' dir) lands flat."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("MyVault/Welcome.md", "# Welcome\n[[Topics/Idea]]")
+        zf.writestr("MyVault/Topics/Idea.md", "# Idea")
+    client.post("/api/atlas/import",
+                files={"files": ("MyVault.zip", buf.getvalue(), "application/zip")},
+                headers=_as("alice"))
+    paths = {n["path"] for n in client.get("/api/atlas/notes", headers=_as("alice")).json()["notes"]}
+    assert paths == {"Welcome.md", "Topics/Idea.md"}   # no "MyVault/" nesting
+
+
+def test_flat_zip_import_is_not_stripped(client):
+    """Our own /export uses flat arcnames — those must NOT lose a path component."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("A.md", "# A")
+        zf.writestr("sub/B.md", "# B")   # mixed depth, no single common top dir
+    client.post("/api/atlas/import",
+                files={"files": ("vault.zip", buf.getvalue(), "application/zip")},
+                headers=_as("alice"))
+    paths = {n["path"] for n in client.get("/api/atlas/notes", headers=_as("alice")).json()["notes"]}
+    assert paths == {"A.md", "sub/B.md"}
+
+
+def test_import_rejects_oversize_file(client):
+    big = b"x" * (ar.MAX_IMPORT_FILE_BYTES + 1)
+    res = client.post("/api/atlas/import",
+                      files={"files": ("huge.md", big, "text/markdown")},
+                      headers=_as("alice")).json()
+    assert res["imported"] == 0 and res["skipped"] >= 1

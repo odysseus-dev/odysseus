@@ -540,8 +540,12 @@ export function mdToHtml(src, opts) {
   // markdown link; upgrade it to a clean clickable link labelled with the note
   // name (decoded basename, no extension) so the user never sees a raw
   // `#atlas-…` token. Trailing sentence punctuation is left outside the link.
+  // Anchor on start-of-string or whitespace only (not the broad [^\[(] the
+  // other cases use): an Atlas anchor the model leaks into prose is always
+  // preceded by a space/newline, and this avoids mangling mid-word text like
+  // "word#atlas-x" or a user literally discussing the "#atlas-" format.
   s = s.replace(
-    /(^|[^\[(])#(atlas-[A-Za-z0-9_%./-]+)/g,
+    /(^|\s)#(atlas-[A-Za-z0-9_%./-]+)/g,
     (match, pre, anchor) => {
       const trail = (anchor.match(/[.,;:!?]+$/) || [''])[0];
       const core = trail ? anchor.slice(0, -trail.length) : anchor;

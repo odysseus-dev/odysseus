@@ -44,13 +44,28 @@ def _query_schema() -> dict:
                     "contains startswith endswith regex gt lt gte lte exists empty in."
                 ),
             },
-            "owner": {
-                "type": "string",
-                "description": "Vault owner (optional; defaults to the single-user vault).",
-            },
         },
         "required": ["query"],
     }
+
+
+def _configured_owner():
+    """Owner whose vault this server is scoped to.
+
+    Bound at launch from the environment — NEVER from caller-supplied tool
+    arguments — so an MCP client cannot read another user's vault by passing a
+    different `owner`. Mirrors mcp_servers/memory_server.py's owner gating. In
+    single-user deployments the env is unset and this returns None, which
+    resolves to the "default" vault. Multi-user operators set
+    ODYSSEUS_MCP_ATLAS_OWNER to scope the server (the in-app, per-user path is
+    the `manage_atlas` builtin tool, which scopes via the request's owner).
+    """
+    import os
+    for key in ("ODYSSEUS_MCP_ATLAS_OWNER", "ODYSSEUS_ATLAS_OWNER"):
+        owner = os.environ.get(key, "").strip()
+        if owner:
+            return owner
+    return None
 
 
 @server.list_tools()
@@ -79,7 +94,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         from routes.atlas_routes import notes_for_query
         from src.atlas_query import run_query
 
-        owner = arguments.get("owner") or None
+        # Owner is bound from the environment, not the caller — see
+        # _configured_owner. A client-supplied owner is intentionally ignored.
+        owner = _configured_owner()
         query = arguments.get("query") or {}
         if isinstance(query, str):
             query = json.loads(query)

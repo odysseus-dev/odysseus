@@ -103,6 +103,13 @@ def test_unprefixed_field_resolves_to_property():
     assert [x["file.path"] for x in run_query(q, _notes())["rows"]] == ["daily.md"]
 
 
+def test_limit_zero_returns_no_rows():
+    """limit:0 means zero rows, not 'everything' (falsy-zero must not be clobbered)."""
+    assert run_query({"limit": 0}, _notes())["rows"] == []
+    # A missing limit still returns all rows.
+    assert len(run_query({}, _notes())["rows"]) == 3
+
+
 def test_unprefixed_field_in_select_column():
     q = {"where": {"filters": [{"field": "file.title", "op": "eq", "value": "Daily"}]},
          "select": ["status"]}

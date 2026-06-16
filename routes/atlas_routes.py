@@ -54,6 +54,10 @@ ATTACH_EXTS = {
 BASE_EXT = ".base"
 # Per-note size cap (generous for prose, blocks accidental huge uploads).
 MAX_NOTE_BYTES = 5 * 1024 * 1024
+# Import caps: per-file and cumulative (uncompressed). Bounds memory/disk use
+# and defends against zip-bombs on the /import path.
+MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024
+MAX_IMPORT_TOTAL_BYTES = 250 * 1024 * 1024
 ATTACH_DIRNAME = "_attachments"
 # Directories never scanned for notes (Obsidian config, attachments, VCS, hidden).
 SKIP_DIRS = {ATTACH_DIRNAME, ".obsidian", ".git", ".trash"}
@@ -482,11 +486,18 @@ def setup_atlas_routes() -> APIRouter:
         owner = require_user(request)
         imported = 0
         skipped = 0
+        total = 0  # cumulative imported bytes, capped to bound memory/disk use
 
         def _accept(rel: str, data: bytes) -> bool:
-            nonlocal imported, skipped
+            nonlocal imported, skipped, total
             ext = os.path.splitext(rel)[1].lower()
             if ext not in NOTE_EXTS and ext not in ATTACH_EXTS:
+                skipped += 1
+                return False
+            # Cap per-file and cumulative size so a huge file or zip-bomb can't
+            # exhaust memory/disk — the normal write path enforces MAX_NOTE_BYTES,
+            # so the import path must too.
+            if len(data) > MAX_IMPORT_FILE_BYTES or total + len(data) > MAX_IMPORT_TOTAL_BYTES:
                 skipped += 1
                 return False
             try:
@@ -497,6 +508,7 @@ def setup_atlas_routes() -> APIRouter:
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_bytes(data)
             imported += 1
+            total += len(data)
             return True
 
         for up in files:
@@ -505,12 +517,20 @@ def setup_atlas_routes() -> APIRouter:
             if name.lower().endswith(".zip"):
                 try:
                     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-                        for info in zf.infolist():
-                            if info.is_dir():
-                                continue
-                            # Strip a single leading vault-name folder so an
-                            # Obsidian export ("MyVault/note.md") lands flat.
-                            entry = info.filename.replace("\\", "/")
+                        infos = [i for i in zf.infolist() if not i.is_dir()]
+                        # Strip a single common leading folder (e.g. an Obsidian
+                        # export's "MyVault/") so notes land flat. Only strip when
+                        # EVERY entry shares one top-level dir — a flat export
+                        # (our own /export) is left untouched.
+                        names = [i.filename.replace("\\", "/").lstrip("/") for i in infos]
+                        tops = {n.split("/", 1)[0] for n in names if "/" in n}
+                        strip = (len(tops) == 1 and all("/" in n for n in names))
+                        # Reject decompression bombs before reading entry bytes.
+                        if sum(i.file_size for i in infos) > MAX_IMPORT_TOTAL_BYTES:
+                            raise HTTPException(400, "Import archive too large")
+                        for info, entry in zip(infos, names):
+                            if strip:
+                                entry = entry.split("/", 1)[1]
                             _accept(entry, zf.read(info))
                 except zipfile.BadZipFile:
                     raise HTTPException(400, "Invalid zip file")
