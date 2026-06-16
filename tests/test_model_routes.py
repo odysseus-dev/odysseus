@@ -682,6 +682,9 @@ def test_lmstudio_error_for_bare_host_port_probes_v1_models(monkeypatch):
 class TestDockerLoopbackRewrite:
     def test_rewrites_loopback_when_in_docker(self, monkeypatch):
         monkeypatch.setattr(model_routes, "_docker_host_gateway_reachable", lambda: True)
+        # Host loopback is not already serving on this port inside the container
+        # (otherwise the rewrite must stay local — see test_endpoint_probing.py).
+        monkeypatch.setattr(model_routes, "_container_loopback_reachable", lambda base_url: False)
         assert (model_routes._rewrite_loopback_for_docker("http://localhost:1234/v1")
                 == "http://host.docker.internal:1234/v1")
         assert (model_routes._rewrite_loopback_for_docker("http://127.0.0.1:1234/v1")
@@ -1579,6 +1582,9 @@ def test_llm_core_list_model_ids_uses_cached_configured_proxy(monkeypatch):
 
     monkeypatch.setattr(src_database, "ModelEndpoint", _RouteModelEndpoint)
     monkeypatch.setattr(src_database, "SessionLocal", lambda: db)
+    # preserve_import_state restores conftest's src.database stub after
+    # collection; llm_core re-imports from sys.modules inside the call.
+    monkeypatch.setitem(sys.modules, "src.database", src_database)
     monkeypatch.setattr(llm_core.httpx, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("/models should not be fetched")))
 
     assert llm_core.list_model_ids("http://100.117.136.97:34521/v1/chat/completions", timeout=1) == ["cached-model"]

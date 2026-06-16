@@ -24,7 +24,7 @@ def test_email_bulk_read_unread_calls_provider_write_routes():
     assert "Local toggle for now" not in src
     assert "mark-read" in src
     assert "mark-unread" in src
-    assert "method: 'POST'" in src
+    assert "api.post(`/api/email/${endpoint}/" in src
     assert "_syncEmailReadState(uid, action === 'read')" in src
 
 

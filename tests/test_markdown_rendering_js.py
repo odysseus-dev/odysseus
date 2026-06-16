@@ -63,6 +63,10 @@ def _run_markdown_case(markdown: str, render_expr: str = "mod.mdToHtml(input)"):
           () => emojiSource
         );
         source = source.replace(
+          /import \{ api \} from ['"]\.\/axios\/api\.js['"];/,
+          'const api = { get: async () => ({ data: [] }), post: async () => ({}) };'
+        );
+        source = source.replace(
           /var escapeHtml = uiModule\.esc;/,
           `var escapeHtml = (value) => String(value ?? '')
             .replace(/&/g, '&amp;')

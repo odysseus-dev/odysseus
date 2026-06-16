@@ -88,15 +88,20 @@ function createApiClient() {
   return instance;
 }
 
-const _client = createApiClient();
+let _client = null;
+
+function getClient() {
+  if (!_client) _client = createApiClient();
+  return _client;
+}
 
 export const api = {
-  get: (...args) => _client.get(...args),
-  post: (...args) => _client.post(...args),
-  put: (...args) => _client.put(...args),
-  patch: (...args) => _client.patch(...args),
-  delete: (...args) => _client.delete(...args),
-  request: (...args) => _client.request(...args),
+  get: (...args) => getClient().get(...args),
+  post: (...args) => getClient().post(...args),
+  put: (...args) => getClient().put(...args),
+  patch: (...args) => getClient().patch(...args),
+  delete: (...args) => getClient().delete(...args),
+  request: (...args) => getClient().request(...args),
 };
 
 /** fetch() for SSE/streaming endpoints that need ReadableStream in the browser. */

@@ -25,7 +25,10 @@ def _upload_pending_body() -> str:
 
 def test_upload_pending_checks_response_and_surfaces_error():
     body = _upload_pending_body()
-    # Must guard on the HTTP status before trusting the body...
-    assert re.search(r"if\s*\(\s*!res\.ok\s*\)", body), "uploadPending must check res.ok"
+    # Must use the axios client (throws on non-2xx) and handle failures explicitly
+    # instead of blindly trusting the response body (issue #1346).
+    assert "await api.post('/api/upload', formData)" in body
+    assert "catch (err)" in body
+    assert "// clear only on success" in body
     # ...and tell the user the upload failed (not swallow it).
     assert "Upload failed" in body

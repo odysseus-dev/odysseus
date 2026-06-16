@@ -7,4 +7,4 @@ def test_memory_audit_uses_its_own_llm_timeout():
     end = source.index("\n)\n", start)
     timeout_exemptions = source[start:end]
 
-    assert '"/api/memory/audit"' in timeout_exemptions
+    assert "/api/memory/audit" in timeout_exemptions

@@ -10,7 +10,7 @@ def test_rail_delete_uses_hard_delete_endpoint():
     rail_block = source[source.index("const railDelete = el('rail-delete-session');"):]
     rail_block = rail_block[:rail_block.index("// Textarea auto-resize")]
 
-    assert "fetch(`${API_BASE}/api/session/${currentId}`, { method: 'DELETE' })" in rail_block
+    assert "await api.delete(`/api/session/${currentId}`)" in rail_block
     assert "api/session/${currentId}/archive" not in rail_block
 
 

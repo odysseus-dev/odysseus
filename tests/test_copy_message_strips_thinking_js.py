@@ -76,6 +76,10 @@ def _extract_thinking_blocks(text: str) -> dict:
           () => emojiSource
         );
         source = source.replace(
+          /import \{ api \} from ['"]\.\/axios\/api\.js['"];/,
+          'const api = { get: async () => ({ data: [] }), post: async () => ({}) };'
+        );
+        source = source.replace(
           /var escapeHtml = uiModule\.esc;/,
           `var escapeHtml = (value) => String(value ?? '')
             .replace(/&/g, '&amp;')

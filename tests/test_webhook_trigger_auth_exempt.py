@@ -18,6 +18,21 @@ import os
 import re
 
 
+def _base_path_prefix() -> str:
+    """Mirror app.get_base_path() — AUTH_EXEMPT_PATTERNS are built with BASE_PATH."""
+    raw = os.environ.get("BASE_PATH", "")
+    if not raw or raw == "/":
+        return ""
+    return raw.rstrip("/")
+
+
+def _compile_exempt_patterns(body: str) -> list[re.Pattern[str]]:
+    raw_patterns = re.findall(r'_re\.compile\(\s*r[f]?"([^"]+)"\s*\)', body)
+    assert raw_patterns, "expected at least one compiled regex in AUTH_EXEMPT_PATTERNS"
+    prefix = re.escape(_base_path_prefix())
+    return [re.compile(p.replace("{BASE_PATH}", prefix)) for p in raw_patterns]
+
+
 def _read_app_source() -> str:
     app_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -53,24 +68,20 @@ def test_webhook_trigger_path_is_in_exempt_patterns():
                 break
     assert end != -1, "could not find closing bracket for AUTH_EXEMPT_PATTERNS"
     body = src[lb + 1 : end]
-    # Pull each compiled regex literal: _re.compile(r"...").
-    patterns = re.findall(r'_re\.compile\(\s*r"([^"]+)"\s*\)', body)
-    assert patterns, (
-        "expected at least one compiled regex in AUTH_EXEMPT_PATTERNS"
-    )
-    compiled = [re.compile(p) for p in patterns]
+    compiled = _compile_exempt_patterns(body)
 
-    sample = "/api/tasks/abc123/webhook/" + "x" * 43
+    sample = f"{_base_path_prefix()}/api/tasks/abc123/webhook/" + "x" * 43
     assert any(c.match(sample) for c in compiled), (
         f"webhook trigger path {sample!r} must be auth-exempt - issue #621"
     )
 
     # Negative: routes that are NOT meant to be public must not match.
+    prefix = _base_path_prefix()
     for not_public in (
-        "/api/tasks",
-        "/api/tasks/abc123",
-        "/api/tasks/abc123/webhook-regenerate",
-        "/api/tasks/abc123/run",
+        f"{prefix}/api/tasks",
+        f"{prefix}/api/tasks/abc123",
+        f"{prefix}/api/tasks/abc123/webhook-regenerate",
+        f"{prefix}/api/tasks/abc123/run",
     ):
         assert not any(c.match(not_public) for c in compiled), (
             f"{not_public!r} must NOT be auth-exempt"

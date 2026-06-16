@@ -41,6 +41,10 @@ export async function loadMarkdown() {
     () => emoji,
   );
   src = src.replace(
+    /import \{ api \} from ['"]\.\/axios\/api\.js['"];/,
+    'const api = { get: async () => ({ data: [] }), post: async () => ({}) };',
+  );
+  src = src.replace(
     /var escapeHtml = uiModule\.esc;/,
     () =>
       `var escapeHtml = (v) => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');`,
