@@ -27,3 +27,7 @@ from src.tools.calendar import do_manage_calendar  # noqa: F401
 from src.tools.image import do_edit_image  # noqa: F401
 from src.tools.research import do_manage_research, do_trigger_research  # noqa: F401
 from src.tools.contacts import do_resolve_contact, do_manage_contact  # noqa: F401
+from src.tools.vault import (  # noqa: F401
+    _load_vault_config, _run_bw,
+    do_vault_search, do_vault_get, do_vault_unlock,
+)
