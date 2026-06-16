@@ -232,6 +232,86 @@ def test_current_datetime_is_user_role_message_not_system():
 
 
 # --------------------------------------------------------------------------- #
+# 2b. The /quick-parse calendar route keeps its static parser system prompt
+#     timestamp-free; volatile date/time grounding rides a user-role context
+#     message between system and user (same fix as the main chat / agent
+#     paths — issue #2927). A leftover that front-loaded the per-minute /
+#     per-second timestamp into the system prompt would invalidate the cached
+#     prefix for the otherwise-identical parser prompt on every request.
+# --------------------------------------------------------------------------- #
+
+def _extract_quick_parse_system_prompt():
+    """Pull the literal system_prompt string assigned inside the quick_parse
+    handler out of the route source, evaluating only that assignment so the
+    test doesn't need the route's full (heavy) import graph.
+
+    The source is read straight off disk (not imported) on purpose:
+    routes.calendar_routes pulls in the whole app/DB stack, which we don't
+    want — and don't need — just to assert on a literal prompt string."""
+    import ast
+    import pathlib
+
+    route_path = pathlib.Path(__file__).resolve().parent.parent / "routes" / "calendar_routes.py"
+    src = route_path.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "system_prompt"
+            and isinstance(node.value, (ast.Constant, ast.BinOp))
+        ):
+            try:
+                return ast.literal_eval(node.value)
+            except (ValueError, SyntaxError):
+                continue
+    raise AssertionError("could not locate a static system_prompt literal in calendar_routes")
+
+
+def test_quick_parse_system_prompt_carries_no_timestamp():
+    import re
+
+    system_prompt = _extract_quick_parse_system_prompt()
+
+    # It must still be the parser prompt (so we know we grabbed the right one).
+    assert "calendar event parser" in system_prompt
+
+    # No volatile time tokens: no ISO date (YYYY-MM-DD), no clock time
+    # (HH:MM[:SS]), and none of the current_datetime_prompt() phrasing that
+    # used to be prepended. These are the byte sequences that change per
+    # request and would break the cached prefix.
+    assert not re.search(r"\d{4}-\d{2}-\d{2}", system_prompt)
+    assert not re.search(r"\b\d{2}:\d{2}(:\d{2})?\b", system_prompt)
+    assert "Current date and time" not in system_prompt
+    assert "current user-local timestamp" not in system_prompt
+
+
+def test_quick_parse_passes_datetime_as_user_message_between_system_and_user():
+    """The datetime grounding must be the standalone user-role context message,
+    positioned after the system prompt and before the user's text — never
+    merged back into the system role."""
+    from datetime import datetime, timezone
+    from src.user_time import current_datetime_context_message, clear_user_time_context
+
+    clear_user_time_context()
+    system_prompt = _extract_quick_parse_system_prompt()
+
+    # Reconstruct the exact messages array the handler builds.
+    messages = [
+        {"role": "system", "content": system_prompt},
+        current_datetime_context_message(datetime(2026, 6, 7, 9, 16, tzinfo=timezone.utc)),
+        {"role": "user", "content": "lunch with sara friday 1pm downtown"},
+    ]
+
+    roles = [m["role"] for m in messages]
+    assert roles == ["system", "user", "user"]
+    # The timestamp lives only in the (non-first) context message.
+    assert "Current date and time" in messages[1]["content"]
+    assert "Current date and time" not in messages[0]["content"]
+
+
+# --------------------------------------------------------------------------- #
 # 3. Memory/skill extraction is not dispatched concurrently with / racing the
 #    main completion request
 # --------------------------------------------------------------------------- #

@@ -1410,8 +1410,7 @@ def setup_calendar_routes() -> APIRouter:
             raise HTTPException(400, "text is required")
         from src.user_time import (
             clear_user_time_context,
-            current_datetime_prompt,
-            now_user_local,
+            current_datetime_context_message,
             set_user_tz_name,
             set_user_tz_offset,
         )
@@ -1429,16 +1428,19 @@ def setup_calendar_routes() -> APIRouter:
         if not url or not model:
             return {"ok": False, "error": "No LLM endpoint configured"}
 
-        now = now_user_local()
-        now_iso = now.strftime("%Y-%m-%dT%H:%M:%S")
         # The model gets only the schema it needs to fill out; we re-validate
         # everything client-side too.
+        #
+        # Keep this system prompt byte-identical across requests so local
+        # OpenAI-compatible backends (llama.cpp / LM Studio) can reuse their
+        # KV-cache prefix. The volatile date/time grounding is NOT folded in
+        # here; it rides as a separate user-role context message appended
+        # below (mirroring the main chat / agent paths — see issue #2927 and
+        # current_datetime_context_message()).
         system_prompt = (
-            current_datetime_prompt()
-            + "You are a calendar event parser. Read the user's one-line "
+            "You are a calendar event parser. Read the user's one-line "
             "description and emit STRICT JSON describing the event. "
-            f"The current user-local timestamp is {now_iso}. "
-            + "Resolve relative dates (\"tomorrow\", \"friday\", \"next monday\", "
+            "Resolve relative dates (\"tomorrow\", \"friday\", \"next monday\", "
               "\"in 30 minutes\") against today. Default duration is 60 minutes "
               "when no end time is given. If the text mentions a date with no "
               "time, treat it as an all-day event.\n\n"
@@ -1460,6 +1462,7 @@ def setup_calendar_routes() -> APIRouter:
                 url=url, model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
+                    current_datetime_context_message(),
                     {"role": "user", "content": text},
                 ],
                 headers=headers,
