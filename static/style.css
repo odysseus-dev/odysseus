@@ -37759,8 +37759,6 @@ body.theme-frosted .modal {
   cursor: pointer;
   border-radius: 4px;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: background 0.08s;
 }
 .custom-select__option:hover,
