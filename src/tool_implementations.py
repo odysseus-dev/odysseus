@@ -214,6 +214,8 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
                 "exit_code": 1,
             }
         proc = args.get("procedure")
+        if isinstance(proc, str):
+            proc = [line.strip() for line in proc.splitlines() if line.strip()]
         if proc is None:
             proc = args.get("steps") or []
         if not proc and not args.get("body_extra") and not args.get("solution"):
@@ -2265,13 +2267,13 @@ def _infer_serve_port(cmd: str) -> int:
     """Infer likely listen port from a serve command."""
     if not cmd:
         return 8080
-    m = re.search(r"--port\\s+(\\d+)", cmd)
+    m = re.search(r"--port\s+(\d+)", cmd)
     if m:
         try:
             return int(m.group(1))
         except Exception:
             pass
-    m = re.search(r"OLLAMA_HOST=[^\\s]*?:(\\d+)", cmd)
+    m = re.search(r"OLLAMA_HOST=[^\s]*?:(\d+)", cmd)
     if m:
         try:
             return int(m.group(1))
@@ -3411,7 +3413,7 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
                 ep_result = await do_manage_endpoints(json.dumps({
                     "action": "add",
                     "name": display_name,
-                    "endpoint_url": endpoint_url,
+                    "base_url": endpoint_url,
                     "is_local": False,
                 }), owner=owner)
                 if isinstance(ep_result, dict) and not ep_result.get("error"):
