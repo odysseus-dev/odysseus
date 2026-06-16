@@ -6,6 +6,7 @@ double space after "Re:" on every non-ASCII subject, a spurious space in
 "Name <addr>" senders, and violated RFC 2047 6.2 which requires whitespace
 between two adjacent encoded-words to be dropped.
 """
+import json
 import sqlite3
 
 import pytest
@@ -103,6 +104,37 @@ async def test_mcp_email_requires_owner_when_multiple_account_owners_exist(tmp_p
     out = await es.call_tool("list_email_accounts", {})
 
     assert "requires an authenticated owner" in out[0].text
+
+
+def test_mcp_email_scoped_owner_without_visible_account_skips_legacy_fallback(tmp_path, monkeypatch):
+    db_path = tmp_path / "app.db"
+    settings_path = tmp_path / "settings.json"
+    _init_accounts_db(db_path)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "imap_host": "legacy-imap.example.com",
+                "imap_user": "legacy@example.com",
+                "imap_password": "legacy-secret",
+                "smtp_host": "legacy-smtp.example.com",
+                "smtp_user": "legacy@example.com",
+                "smtp_password": "legacy-secret",
+                "from_address": "legacy@example.com",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(es, "APP_DB", str(db_path))
+    monkeypatch.setattr(es, "_SETTINGS_FILE", str(settings_path))
+    es._ACCOUNT_CACHE.clear()
+
+    token = es._CURRENT_OWNER.set("charlie")
+    try:
+        with pytest.raises(ValueError, match="No email account is configured"):
+            es._load_config()
+    finally:
+        es._CURRENT_OWNER.reset(token)
+        es._ACCOUNT_CACHE.clear()
 
 
 @pytest.mark.asyncio

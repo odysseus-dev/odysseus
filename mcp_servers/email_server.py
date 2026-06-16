@@ -194,11 +194,10 @@ def _list_accounts_raw() -> list:
     return _filter_accounts_for_owner(_read_accounts_from_db())
 
 
-def _resolve_account(selector: str | None) -> dict | None:
+def _resolve_account_from_rows(rows: list[dict], selector: str | None) -> dict | None:
     """Given a selector (None = default, or a name/user/id string), return the
     matching row or None. Matching is case-insensitive substring on name +
     imap_user + from_address, plus exact id match."""
-    rows = _list_accounts_raw()
     if not rows:
         return None
     if not selector:
@@ -231,6 +230,10 @@ def _resolve_account(selector: str | None) -> dict | None:
     except Exception:
         pass
     return None
+
+
+def _resolve_account(selector: str | None) -> dict | None:
+    return _resolve_account_from_rows(_list_accounts_raw(), selector)
 
 
 def _load_config(account: str | None = None) -> dict:
@@ -270,8 +273,11 @@ def _load_config(account: str | None = None) -> dict:
         "account_name": None,
     }
 
-    rows = _list_accounts_raw()
-    row = _resolve_account(account)
+    raw_rows = _read_accounts_from_db()
+    rows = _filter_accounts_for_owner(raw_rows)
+    row = _resolve_account_from_rows(rows, account)
+    if _current_owner() and raw_rows and not rows:
+        raise ValueError("No email account is configured for the authenticated owner")
     if account and rows and not row:
         available = ", ".join(
             f"{r.get('name') or r.get('imap_user')} <{r.get('imap_user') or r.get('from_address') or '?'}>"
