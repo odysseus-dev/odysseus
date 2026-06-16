@@ -2268,6 +2268,14 @@
             <button class="admin-btn-add" id="adm-pairBtn">Generate pairing code</button>
             <div id="adm-pairResult" style="margin-top:14px;"></div>
             <div id="adm-pairMsg" style="margin-top:6px;"></div>
+
+            <div style="border-top:1px solid var(--admin-border,#2c2c35);margin:18px 0 0;padding-top:16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                <span style="font-weight:600">Admin tools on mobile</span>
+                <label class="admin-switch" style="flex-shrink:0" title="Allow a paired admin device to use the server's terminal, vault, contacts, MCP and cookbook"><input type="checkbox" id="adm-companionAdminToggle" /><span class="admin-slider"></span></label>
+              </div>
+              <span class="admin-toggle-sub" style="display:block;margin-top:6px">Let a paired <strong>admin</strong> device use Terminal, Vault, Contacts, MCP and Cookbook. Grants full shell access to admin-owned devices — leave off unless you need it.</span>
+            </div>
           </div>
 
         </div>

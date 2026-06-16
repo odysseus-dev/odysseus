@@ -293,3 +293,90 @@ def test_pair_post_html_escapes_pairing_values(monkeypatch):
     assert "host&lt;one&gt;&amp;" in body
     assert "ody_&lt;raw&gt;&amp;" in body
     assert "tok&lt;123&gt;" in body
+
+
+# --- admin-tools opt-in toggle (/api/companion/admin-access) ----------------
+#
+# The switch in Settings → "Pair a mobile device" flips the off-by-default
+# `companion_admin_enabled` setting — lock #1 of the require_companion_admin
+# triple-lock that gates a paired admin device's tools (terminal/vault/etc.).
+
+def _route(suffix, method):
+    for route in setup_companion_routes().routes:
+        path = getattr(route, "path", "")
+        if path.endswith(suffix) and method in getattr(route, "methods", set()):
+            return route.endpoint
+    raise AssertionError(f"{method} {suffix} route not found")
+
+
+def _stub_settings(monkeypatch, initial):
+    """Dict-backed src.settings so the handlers read/write companion_admin_enabled
+    without touching the real settings file. Returns the store for assertions."""
+    store = dict(initial)
+
+    def _save(s):
+        store.clear()
+        store.update(s)
+
+    mod = types.ModuleType("src.settings")
+    mod.get_setting = lambda key, default=None: store.get(key, default)
+    mod.load_settings = lambda: dict(store)
+    mod.save_settings = _save
+    monkeypatch.setitem(sys.modules, "src.settings", mod)
+    return store
+
+
+def _admin_access_request(format=None):
+    query_params = {} if format is None else {"format": format}
+    return SimpleNamespace(
+        state=SimpleNamespace(current_user="alice", api_token=False),
+        headers={},
+        app=SimpleNamespace(state=SimpleNamespace(auth_manager=_admin_mgr(True))),
+        query_params=query_params,
+    )
+
+
+def test_admin_access_get_reports_current_state(monkeypatch):
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    _stub_settings(monkeypatch, {"companion_admin_enabled": True})
+    assert _route("/admin-access", "GET")(_admin_access_request()) == {"enabled": True}
+
+
+def test_admin_access_get_defaults_off(monkeypatch):
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    _stub_settings(monkeypatch, {})
+    assert _route("/admin-access", "GET")(_admin_access_request()) == {"enabled": False}
+
+
+def test_admin_access_post_json_enables_and_persists(monkeypatch):
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    store = _stub_settings(monkeypatch, {"companion_admin_enabled": False})
+    res = _route("/admin-access", "POST")(_admin_access_request(format="json"), enabled="true")
+    assert res == {"ok": True, "enabled": True}
+    assert store["companion_admin_enabled"] is True
+
+
+def test_admin_access_post_json_disables(monkeypatch):
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    store = _stub_settings(monkeypatch, {"companion_admin_enabled": True})
+    res = _route("/admin-access", "POST")(_admin_access_request(format="json"), enabled="false")
+    assert res == {"ok": True, "enabled": False}
+    assert store["companion_admin_enabled"] is False
+
+
+def test_admin_access_post_form_redirects_to_pair(monkeypatch):
+    # A plain HTML form post (no ?format=json) lands back on the pairing page so
+    # it re-renders the new state.
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    _stub_settings(monkeypatch, {})
+    res = _route("/admin-access", "POST")(_admin_access_request(), enabled="true")
+    assert getattr(res, "status_code", None) == 303
+    assert res.headers["location"] == "/api/companion/pair"
+
+
+def test_pair_page_offers_admin_tools_toggle(monkeypatch):
+    monkeypatch.setattr(R, "require_admin", lambda request: None, raising=False)
+    _stub_settings(monkeypatch, {"companion_admin_enabled": False})
+    body = _route("/pair", "GET")(_fake_pair_request()).body.decode()
+    assert 'action="/api/companion/admin-access"' in body
+    assert "Turn on admin tools" in body  # currently off → offers to enable

@@ -2725,6 +2725,29 @@ function initBackup() {
   });
 }
 
+/* ── Companion admin-tools opt-in ── */
+function initCompanionAdminToggle() {
+  const toggle = el('adm-companionAdminToggle');
+  if (!toggle) return;
+  fetch('/api/companion/admin-access', { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(d => { toggle.checked = !!d.enabled; })
+    .catch(e => console.warn('Companion admin status fetch failed:', e));
+  toggle.addEventListener('change', async () => {
+    const want = toggle.checked;
+    try {
+      const res = await fetch('/api/companion/admin-access?format=json', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'enabled=' + (want ? 'true' : 'false'),
+      });
+      const data = await res.json();
+      toggle.checked = !!data.enabled;
+    } catch (e) { toggle.checked = !want; }
+  });
+}
+
 /* ── Mobile pairing ── */
 function initPairing() {
   const btn = el('adm-pairBtn');
@@ -3025,7 +3048,7 @@ function initAll() {
   modalEl = el('settings-modal');
   const inits = [
     initSignupToggle, initAddUser, initEndpointForm, initMcpForm,
-    initCalDAV, initBackup, initPairing, initDangerZone, initTokenForm, initLogsView,
+    initCalDAV, initBackup, initPairing, initCompanionAdminToggle, initDangerZone, initTokenForm, initLogsView,
     () => settingsModule.initIntegrations()
   ];
   for (const fn of inits) {
