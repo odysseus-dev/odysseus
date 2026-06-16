@@ -69,7 +69,7 @@ def detached_popen_kwargs() -> dict:
             subprocess, "DETACHED_PROCESS", 0x00000008
         )
         return {"creationflags": flags}
-    return {"start_new_session": True}
+    return {"start_new_session": True, "env": {**os.environ, "CMAKE_ARGS": os.environ.get("CMAKE_ARGS", "") + " -DLLAMA_CUDA=ON"}}
 
 
 def pid_alive(pid: Optional[int]) -> bool:
