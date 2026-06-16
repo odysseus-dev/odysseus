@@ -19,6 +19,34 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+# Shell/file tools a scheduled task's agent should be offered by default,
+# mirroring the chat agent (where these are on unless a privilege or global
+# setting turns them off). The RAG tool selector + ASSISTANT_ALWAYS_AVAILABLE
+# never include bash/python, so on a host with an empty/degraded tool-embedding
+# index a task could not run shell or Python even for an admin owner. Offering
+# them here is safe: stream_agent_loop's blocked_tools_for_owner() still strips
+# this whole group for non-admin multi-user owners, and only admits it for
+# admins and single-user (AUTH_ENABLED=false) deployments.
+TASK_DEFAULT_SHELL_TOOLS = frozenset({
+    "bash", "python", "read_file", "write_file", "edit_file",
+    "grep", "glob", "ls", "get_workspace",
+})
+
+
+def compose_task_relevant_tools(rag_tools, assistant_always, disabled_tools):
+    """Compose the relevant-tools set offered to a scheduled task's agent.
+
+    Unions the RAG-retrieved tools, the assistant's always-available set, and
+    the default shell/file group, then removes anything the task's crew
+    explicitly disabled via its `enabled_tools` allowlist. Per-owner admin
+    gating is applied later by stream_agent_loop (blocked_tools_for_owner).
+    """
+    tools = set(rag_tools) | set(assistant_always) | set(TASK_DEFAULT_SHELL_TOOLS)
+    if disabled_tools:
+        tools -= set(disabled_tools)
+    return tools
+
+
 # ── Shared TTL cache (singleflight) ────────────────────────────────────────
 # Multiple scheduled tasks firing in the same minute often need the same
 # external data (Miniflux unreads, MCP tool snapshots, etc.). This cache
@@ -1391,17 +1419,30 @@ class TaskScheduler:
             time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
 
-        # Compute tool filter from CrewMember.enabled_tools if set
-        disabled_tools = None
+        # Compute the disabled-tools set: the crew's enabled_tools allowlist
+        # (inverted) plus the operator's global disabled_tools setting. The
+        # global list must be merged here — chat does the same merge before
+        # entering the agent loop (routes/chat_routes.py) — otherwise an admin
+        # or AUTH_ENABLED=false scheduled task would still see and call shell/
+        # file tools after the operator disabled them globally, because the
+        # prompt/schema/execution gates only enforce what is passed in.
+        disabled_tools: set[str] = set()
         if crew and crew.enabled_tools:
             try:
                 enabled = json.loads(crew.enabled_tools)
                 if isinstance(enabled, list) and enabled:
                     from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
                     all_tools = set(BUILTIN_TOOL_DESCRIPTIONS.keys())
-                    disabled_tools = all_tools - set(enabled)
+                    disabled_tools |= all_tools - set(enabled)
             except Exception:
                 pass
+        try:
+            from src.settings import get_setting
+            _global_disabled = get_setting("disabled_tools", [])
+            if isinstance(_global_disabled, list):
+                disabled_tools.update(_global_disabled)
+        except Exception:
+            pass
 
         # RAG-select relevant tools for this prompt + always-available assistant tools.
         # Without this, all 40+ tools get sent and models hit their tool limit.
@@ -1411,10 +1452,10 @@ class TaskScheduler:
             tool_idx = get_tool_index()
             if tool_idx:
                 rag_tools = tool_idx.get_tools_for_query(task.prompt or "", k=8)
-                relevant_tools = (rag_tools | ASSISTANT_ALWAYS_AVAILABLE)
-                if disabled_tools:
-                    relevant_tools -= disabled_tools
-                logger.info(f"[assistant] RAG selected {len(rag_tools)} tools + {len(ASSISTANT_ALWAYS_AVAILABLE)} always-available = {len(relevant_tools)} total for '{task.name}'")
+                relevant_tools = compose_task_relevant_tools(
+                    rag_tools, ASSISTANT_ALWAYS_AVAILABLE, disabled_tools
+                )
+                logger.info(f"[assistant] RAG selected {len(rag_tools)} tools + {len(ASSISTANT_ALWAYS_AVAILABLE)} always-available + shell/file defaults = {len(relevant_tools)} total for '{task.name}'")
         except Exception as e:
             logger.warning(f"[assistant] RAG tool selection failed, using all: {e}")
 
@@ -1422,7 +1463,7 @@ class TaskScheduler:
         try:
             result = await self._run_agent_loop(
                 endpoint_url, model, task, session_id,
-                system_prompt=system_prompt, disabled_tools=disabled_tools,
+                system_prompt=system_prompt, disabled_tools=disabled_tools or None,
                 relevant_tools=relevant_tools,
             )
         except Exception as e:
