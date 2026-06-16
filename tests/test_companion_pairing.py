@@ -91,7 +91,10 @@ def test_mint_token_returns_raw_once_and_stores_only_a_hash(monkeypatch):
     assert _CAPTURED["token_hash"].startswith("$2")  # bcrypt
     assert _CAPTURED["token_prefix"] == raw[:8]
     assert _CAPTURED["owner"] == "alice"
-    assert _CAPTURED["scopes"] == "chat"
+    # chat lets the phone stream; companion unlocks the notes/tasks/memory
+    # data routes that gate on the narrower "companion" scope.
+    assert _CAPTURED["scopes"] == "chat,companion"
+    assert "companion" in _CAPTURED["scopes"].split(",")
     assert _CAPTURED["is_active"] is True
 
 
