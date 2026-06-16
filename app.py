@@ -122,7 +122,7 @@ app = FastAPI(
 )
 
 # ========= SEPARATE ROUTER SETUP =========
-api_router = APIRouter(prefix=f"{BASE_PATH}", tags=["api"]) # to add "/api" prefix once all routes files get updated
+api_router = APIRouter(prefix=f"{BASE_PATH}", tags=["api"]) # TODO: add "/api" prefix once all routes files get updated
 base_router = APIRouter(prefix=f"{BASE_PATH}", tags=["base"])
 
 # if BASE_PATH is not empty, have root redirect to BASE_PATH
