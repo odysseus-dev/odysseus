@@ -3225,9 +3225,12 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       createBtn.addEventListener('click', async () => {
         // Create a new session, then create a blank document in it
         try {
-          const sRes = await fetch('/api/session', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: 'Untitled Document' }) });
+          const sFd = new FormData();
+          sFd.append('name', 'Untitled Document');
+          sFd.append('skip_validation', 'true');
+          const sRes = await fetch('/api/session', { method: 'POST', credentials: 'same-origin', body: sFd });
           const sData = await sRes.json();
-          const sessionId = sData.session_id;
+          const sessionId = sData.id;
           await _createDocument(sessionId);
           // Close library and open the new session
           closeLibrary();
