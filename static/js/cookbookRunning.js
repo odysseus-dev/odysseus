@@ -15,6 +15,8 @@ import { computeProgressSignal } from './cookbookProgressSignal.js';
 function _statusLabel(status, type) {
   if (status === 'running' && type === 'download') return 'downloading';
   if (status === 'done' && type === 'download') return 'finished';
+  if (status === 'running' && type === 'install') return 'installing';
+  if (status === 'done' && type === 'install') return 'finished';
   if (status === 'error') return 'stopped';
   return status || '';
 }
@@ -1581,6 +1583,9 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     hf_token: _envState.hfToken || undefined,
     gpus: _envState.gpus || undefined,
     platform: _hplatform || undefined,
+    wheel_suffix: (fields && fields.wheel_suffix) || undefined,
+    source_wheel_hint: (fields && fields.source_wheel_hint) || undefined,
+    force_cpu_prebuilt: (fields && fields.force_cpu_prebuilt) || undefined,
   };
 
   try {
@@ -1605,7 +1610,8 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     // so the "Edit / relaunch" button can re-open the Serve panel pre-filled
     // with these precise settings (not just the last-used-for-repo state).
     const payload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _sp || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
-    _addTask(data.session_id, shortName, 'serve', payload);
+    const _taskType = /python3?\s+-m\s+pip\b/.test(cmd) ? 'install' : 'serve';
+    _addTask(data.session_id, shortName, _taskType, payload);
     uiModule.showToast(`Serving ${shortName}...`);
     // Auto-register may have enabled an existing (offline) endpoint for this
     // host:port. Refresh the picker so the row is no longer dimmed, and the
@@ -1969,7 +1975,7 @@ export function _renderRunningTab() {
         <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
-      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
+      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download' || task.type === 'install') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
       <div class="cookbook-output-wrap cookbook-task-collapsible${_mobileCollapseDefault ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(task.output || '')}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
     `;
 
@@ -1983,9 +1989,9 @@ export function _renderRunningTab() {
     }
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
-    if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && task.status === 'running') {
+    if (_uptimeEl && (task.type === 'serve' || task.type === 'download' || task.type === 'install') && task.status === 'running') {
       const _startedAt = task.ts || Date.now();
-      const _prefix = task.type === 'download' ? 'downloading' : 'uptime';
+      const _prefix = task.type === 'download' ? 'downloading' : task.type === 'install' ? 'installing' : 'uptime';
       el._uptimeInterval = setInterval(() => {
         const secs = Math.floor((Date.now() - _startedAt) / 1000);
         const h = Math.floor(secs / 3600);
@@ -3243,15 +3249,18 @@ async function _reconnectTask(el, task) {
           const codeMatch = snapshot.match(/=== Process exited with code (\d+)/);
           const code = codeMatch ? parseInt(codeMatch[1]) : -1;
           // Serve tasks that exit without reaching ready state are always errors —
-          // a serve process should run indefinitely
+          // a serve process should run indefinitely.
+          // Install tasks (pip install) are one-shot; exit 0 = done.
           const status = (task.type === 'serve' && !task._serveReady) ? 'error'
             : (code === 0 ? 'done' : 'error');
-          _updateTask(task.sessionId, { status });
+          // Persist output BEFORE re-render so the log panel shows content.
+          _updateTask(task.sessionId, { status, output: snapshot.slice(-5000) });
           const badge = el.querySelector('.cookbook-task-status');
           if (badge) { badge.textContent = status; badge.className = `cookbook-task-status cookbook-task-${status}`; }
           _renderRunningTab();
+        } else {
+          _updateTask(task.sessionId, { output: snapshot.slice(-5000) });
         }
-        _updateTask(task.sessionId, { output: snapshot.slice(-5000) });
       }
     } catch {
       failCount++;

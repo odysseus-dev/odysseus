@@ -9,6 +9,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 import tempfile
 from collections import namedtuple
@@ -43,6 +44,7 @@ from core.platform_compat import (
     find_bash,
     git_bash_path,
 )
+from routes.cookbook_helpers import resolve_llama_cpp_wheel_suffix
 
 
 def _require_admin(request: Request):
@@ -72,6 +74,268 @@ def _reject_cross_site(request: Request):
 
 _SSH_PORT_RE = re.compile(r"^\d{1,5}$")
 _SAFE_VENV_RE = re.compile(r"^[A-Za-z0-9_./~-]+$")
+_VS_BUILD_TOOLS_URL = "https://visualstudio.microsoft.com/visual-cpp-build-tools/"
+_CMAKE_DOWNLOAD_URL = "https://cmake.org/download/"
+_W64DEVKIT_URL = "https://github.com/skeeto/w64devkit"
+
+
+def _win_path_to_bash(path: str) -> str:
+    """Convert a Windows absolute path to a Git Bash (MSYS2) style path.
+
+    ``C:\\Foo\\Bar`` → ``/c/Foo/Bar``
+    Works for any drive letter; backslashes and forward slashes are both handled.
+    """
+    p = path.replace("\\", "/")
+    if len(p) >= 2 and p[1] == ":":
+        drive = p[0].lower()
+        rest = p[2:].lstrip("/")
+        return f"/{drive}/{rest}" if rest else f"/{drive}"
+    return p
+
+
+def _normalize_platform_label(platform_hint: str | None) -> str:
+    plat = (platform_hint or "").strip().lower()
+    if plat in ("windows", "win", "win32"):
+        return "windows"
+    if plat in ("darwin", "mac", "macos", "osx"):
+        return "macos"
+    if plat in ("termux",):
+        return "termux"
+    if plat:
+        return plat
+    if IS_WINDOWS:
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+def _extract_cuda_release(text: str) -> str | None:
+    if not text:
+        return None
+    m = re.search(r"release\s+([0-9]+\.[0-9]+)", text, flags=re.I)
+    return m.group(1) if m else None
+
+
+async def _probe_local_llama_wheel_context(platform_hint: str | None) -> dict:
+    platform = _normalize_platform_label(platform_hint)
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    backend = "cpu"
+    cuda_version = None
+    python_arch = ""
+    host_arch = ""
+    python_arch_mismatch = False
+
+    if shutil.which("nvidia-smi"):
+        backend = "cuda"
+        # 1. nvcc --version  (most precise — reports toolkit release)
+        if shutil.which("nvcc"):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "nvcc",
+                    "--version",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                out, _err = await asyncio.wait_for(proc.communicate(), timeout=6)
+                cuda_version = _extract_cuda_release(
+                    out.decode("utf-8", errors="replace")
+                )
+            except Exception:
+                cuda_version = None
+        # 2. nvidia-smi header (driver present, nvcc absent — runtime-only install)
+        if not cuda_version:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "nvidia-smi",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                out, _err = await asyncio.wait_for(proc.communicate(), timeout=6)
+                m = re.search(
+                    r"CUDA\s+Version[:\s]+([0-9]+\.[0-9]+)",
+                    out.decode("utf-8", errors="replace"),
+                    re.I,
+                )
+                cuda_version = m.group(1) if m else None
+            except Exception:
+                cuda_version = None
+    elif platform == "macos":
+        backend = "metal"
+    elif shutil.which("rocminfo") or shutil.which("rocm-smi") or shutil.which("hipconfig"):
+        backend = "rocm"
+    elif shutil.which("vulkaninfo"):
+        backend = "vulkan"
+
+    # Read local ROCm version for suffix accuracy
+    rocm_version = None
+    if backend == "rocm":
+        for _rpath in ("/opt/rocm/.info/version", "/opt/rocm/lib/rocm_version.txt"):
+            try:
+                with open(_rpath, encoding="utf-8") as _f:
+                    _line = _f.readline().strip()
+                    if re.search(r"\d+\.\d+", _line):
+                        rocm_version = re.search(r"\d+\.\d+", _line).group(0)
+                        break
+            except Exception:
+                pass
+
+    if platform == "macos":
+        python_arch = (os.uname().machine if hasattr(os, "uname") else "") or ""
+        host_arch = python_arch
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "sysctl",
+                "-in",
+                "hw.optional.arm64",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, _err = await asyncio.wait_for(proc.communicate(), timeout=4)
+            arm_hw = out.decode("utf-8", errors="replace").strip() == "1"
+        except Exception:
+            arm_hw = False
+        if arm_hw:
+            host_arch = "arm64"
+        python_arch_mismatch = bool(host_arch == "arm64" and python_arch in ("x86_64", "amd64"))
+
+    return {
+        "platform": platform,
+        "python_version": python_version,
+        "backend": backend,
+        "cuda_version": cuda_version,
+        "rocm_version": rocm_version,
+        "python_arch": python_arch,
+        "host_arch": host_arch,
+        "python_arch_mismatch": python_arch_mismatch,
+    }
+
+
+async def _probe_remote_llama_wheel_context(
+    host: str,
+    ssh_port: str | None,
+    venv: str | None,
+    platform_hint: str | None,
+) -> dict:
+    platform = _normalize_platform_label(platform_hint)
+    python_version = ""
+    backend = "cpu"
+    cuda_version = None
+    python_arch = ""
+    host_arch = ""
+    python_arch_mismatch = False
+
+    if platform == "windows":
+        ps = (
+            "$r=@{}; "
+            "$r.python=(python -c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\" 2>$null); "
+            "if(-not $r.python){$r.python='';}; "
+            "$r.cuda=[bool](Get-Command nvidia-smi -ErrorAction SilentlyContinue); "
+            "$r.rocm=[bool](Get-Command hipconfig -ErrorAction SilentlyContinue) -or [bool](Get-Command rocminfo -ErrorAction SilentlyContinue); "
+            "$r.vulkan=[bool](Get-Command vulkaninfo -ErrorAction SilentlyContinue); "
+            "$r.cuda_version=''; "
+            # 1. nvcc (most precise — toolkit release string)
+            "if(Get-Command nvcc -ErrorAction SilentlyContinue){"
+            "  $nv=(nvcc --version | Out-String); "
+            "  if($nv -match 'release\\s+([0-9]+\\.[0-9]+)'){ $r.cuda_version=$Matches[1]; }"
+            "}; "
+            # 2. nvidia-smi header (driver present, nvcc absent — runtime-only install)
+            "if(-not $r.cuda_version -and (Get-Command nvidia-smi -ErrorAction SilentlyContinue)){"
+            "  $ns=(nvidia-smi | Out-String); "
+            "  if($ns -match 'CUDA Version[:\\s]+([0-9]+\\.[0-9]+)'){ $r.cuda_version=$Matches[1]; }"
+            "}; "
+            # 3. Windows registry (last resort — older drivers may not print version in header)
+            "if(-not $r.cuda_version){"
+            "  $regPath='HKLM:\\SOFTWARE\\NVIDIA Corporation\\GPU Computing Toolkit\\CUDA'; "
+            "  if(Test-Path $regPath){"
+            "    $v=(Get-ItemProperty $regPath -ErrorAction SilentlyContinue | "
+            "       Select-Object -ExpandProperty Version -ErrorAction SilentlyContinue | "
+            "       Sort-Object -Descending | Select-Object -First 1); "
+            "    if($v){ $r.cuda_version=$v; }"
+            "  }"
+            "}; "
+            "$r | ConvertTo-Json -Compress"
+        )
+        argv = _ssh_base_argv(host, ssh_port) + [
+            f"powershell -NoProfile -Command {shlex.quote(ps)}"
+        ]
+    else:
+        src = _venv_activate_prefix(venv)
+        script = (
+            "PYV=$(python3 -c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\" 2>/dev/null || "
+            "python -c \"import sys;print(str(sys.version_info[0])+'.'+str(sys.version_info[1]))\" 2>/dev/null || echo ''); "
+            "PYARCH=$(python3 -c \"import platform;print(platform.machine())\" 2>/dev/null || python -c \"import platform;print(platform.machine())\" 2>/dev/null || echo ''); "
+            "HOSTARCH=$(uname -m 2>/dev/null || echo ''); "
+            "ARMHW=$(sysctl -in hw.optional.arm64 2>/dev/null || echo 0); "
+            "CUDA=false; ROCM=false; VULKAN=false; CUDAV=''; ROCMV=''; "
+            "command -v nvidia-smi >/dev/null 2>&1 && CUDA=true; "
+            "if command -v nvcc >/dev/null 2>&1; then CUDAV=$(nvcc --version 2>/dev/null | sed -n 's/.*release \\([0-9]\\+\\.[0-9]\\+\\).*/\\1/p' | head -n1); fi; "
+            # Also try the CUDA version file as a runtime-only fallback
+            "if [ -z \"$CUDAV\" ] && [ -f /usr/local/cuda/version.json ]; then "
+            "  CUDAV=$(python3 -c \"import json,sys; d=json.load(open('/usr/local/cuda/version.json')); print(d.get('cuda',{}).get('version',''))\" 2>/dev/null || true); fi; "
+            "if [ -z \"$CUDAV\" ] && [ -f /usr/local/cuda/version.txt ]; then "
+            "  CUDAV=$(head -n1 /usr/local/cuda/version.txt 2>/dev/null | grep -oP '[0-9]+\\.[0-9]+' | head -n1 || true); fi; "
+            "(command -v rocminfo >/dev/null 2>&1 || command -v rocm-smi >/dev/null 2>&1 || command -v hipconfig >/dev/null 2>&1) && ROCM=true; "
+            # Read rocm version for suffix selection
+            "if $ROCM; then ROCMV=$(cat /opt/rocm/.info/version 2>/dev/null || rocminfo 2>/dev/null | grep -i 'ROCm Runtime Version' | grep -oP '[0-9]+\\.[0-9]+' | head -n1 || true); fi; "
+            "command -v vulkaninfo >/dev/null 2>&1 && VULKAN=true; "
+            "printf '{\"python\":\"%s\",\"python_arch\":\"%s\",\"host_arch\":\"%s\",\"arm_hw\":\"%s\",\"cuda\":%s,\"rocm\":%s,\"vulkan\":%s,\"cuda_version\":\"%s\",\"rocm_version\":\"%s\"}' \"$PYV\" \"$PYARCH\" \"$HOSTARCH\" \"$ARMHW\" \"$CUDA\" \"$ROCM\" \"$VULKAN\" \"$CUDAV\" \"$ROCMV\""
+        )
+        argv = _ssh_base_argv(host, ssh_port) + [f"{src}{script}"]
+
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, _err = await asyncio.wait_for(proc.communicate(), timeout=12)
+    txt = out.decode("utf-8", errors="replace").strip()
+    payload = None
+    for line in reversed(txt.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                payload = json.loads(line)
+            except Exception:
+                payload = None
+            break
+    if not isinstance(payload, dict):
+        return {
+            "platform": platform,
+            "python_version": "",
+            "backend": "cpu",
+            "cuda_version": None,
+        }
+
+    python_version = str(payload.get("python") or "")
+    python_arch = str(payload.get("python_arch") or "")
+    host_arch = str(payload.get("host_arch") or "")
+    if platform == "macos" and str(payload.get("arm_hw") or "") == "1":
+        host_arch = "arm64"
+    if bool(payload.get("cuda")):
+        backend = "cuda"
+    elif platform == "macos":
+        backend = "metal"
+    elif bool(payload.get("rocm")):
+        backend = "rocm"
+    elif bool(payload.get("vulkan")):
+        backend = "vulkan"
+    else:
+        backend = "cpu"
+    cuda_version = str(payload.get("cuda_version") or "") or None
+    rocm_version = str(payload.get("rocm_version") or "") or None
+    python_arch_mismatch = bool(platform == "macos" and host_arch == "arm64" and python_arch in ("x86_64", "amd64"))
+
+    return {
+        "platform": platform,
+        "python_version": python_version,
+        "backend": backend,
+        "cuda_version": cuda_version,
+        "rocm_version": rocm_version,
+        "python_arch": python_arch,
+        "host_arch": host_arch,
+        "python_arch_mismatch": python_arch_mismatch,
+    }
 
 
 def _ssh_base_argv(host: str, ssh_port: str | None) -> list[str]:
@@ -369,7 +633,71 @@ def probe(n):
         mods['torch'] = mod_status('torch')
     dists = dist_status(dist_names.get(n, [n]))
     bins = {{b: shutil.which(b) for b in bin_names.get(n, [])}}
-    return {{'modules': mods, 'dists': dists, 'binaries': bins}}
+    out = {{'modules': mods, 'dists': dists, 'binaries': bins}}
+    if n == 'llama_cpp':
+        info = {{
+            'install_type': 'unknown',
+            'installed_backend': 'unknown',
+            'has_gpu_offload': None,
+            'direct_url': None,
+        }}
+        if bins.get('llama-server') and not dists.get('llama-cpp-python'):
+            info['install_type'] = 'native'
+        elif dists.get('llama-cpp-python'):
+            info['install_type'] = 'wheel'
+            try:
+                dist = md.distribution('llama-cpp-python')
+                direct_url_txt = dist.read_text('direct_url.json')
+                if direct_url_txt:
+                    du = json.loads(direct_url_txt)
+                    info['direct_url'] = du
+                    if isinstance(du, dict) and (du.get('dir_info') or du.get('vcs_info')):
+                        info['install_type'] = 'source'
+            except Exception:
+                pass
+
+        try:
+            m = mods.get('llama_cpp') or {{}}
+            locs = m.get('locations') or []
+            if locs:
+                root = locs[0]
+                names = []
+                for base, _, files in os.walk(root):
+                    if '/.git/' in base.replace('\\\\', '/'):
+                        continue
+                    for fn in files:
+                        lf = fn.lower()
+                        if ('ggml' in lf) or ('llama' in lf):
+                            names.append(lf)
+                    if len(names) > 200:
+                        break
+                joined = ' '.join(names)
+                if ('cuda' in joined) or ('cublas' in joined):
+                    info['installed_backend'] = 'cuda'
+                elif ('hip' in joined) or ('rocm' in joined) or ('hipblas' in joined):
+                    info['installed_backend'] = 'rocm'
+                elif 'vulkan' in joined:
+                    info['installed_backend'] = 'vulkan'
+                elif 'metal' in joined:
+                    info['installed_backend'] = 'metal'
+        except Exception:
+            pass
+
+        try:
+            from llama_cpp import llama_cpp as _llama_c
+            if hasattr(_llama_c, 'llama_supports_gpu_offload'):
+                gpu_offload = bool(_llama_c.llama_supports_gpu_offload())
+                info['has_gpu_offload'] = gpu_offload
+                if info['installed_backend'] == 'unknown':
+                    info['installed_backend'] = 'gpu' if gpu_offload else 'cpu'
+            elif info['installed_backend'] == 'unknown':
+                info['installed_backend'] = 'cpu'
+        except Exception:
+            if info['installed_backend'] == 'unknown':
+                info['installed_backend'] = 'cpu'
+
+        out['llama'] = info
+    return out
 
 print(json.dumps({{n: probe(n) for n in names}}))
 """
@@ -968,6 +1296,7 @@ def setup_shell_routes() -> APIRouter:
         host: str | None = None,
         ssh_port: str | None = None,
         venv: str | None = None,
+        platform: str | None = None,
     ):
         """Check which optional packages are installed.
 
@@ -1170,9 +1499,109 @@ def setup_shell_routes() -> APIRouter:
             except Exception:
                 pass
 
+        def _detected_backend_from_suffix(suffix: str | None) -> str:
+            s = str(suffix or "").lower()
+            if s.startswith("cu"):
+                return "cuda"
+            if "rocm" in s or "hip" in s:
+                return "rocm"
+            if "vulkan" in s:
+                return "vulkan"
+            if "metal" in s:
+                return "metal"
+            return "cpu"
+
+        def _backend_label(backend: str | None, suffix: str | None = None) -> str:
+            b = str(backend or "").lower()
+            if b == "cuda":
+                s = str(suffix or "").lower()
+                if s.startswith("cu") and len(s) > 2:
+                    return f"CUDA{s[2:]}".upper()
+                return "CUDA"
+            if b == "rocm":
+                return "ROCM"
+            if b == "vulkan":
+                return "VULKAN"
+            if b == "metal":
+                return "METAL"
+            if b == "gpu":
+                return "GPU"
+            if b == "native":
+                return "NATIVE"
+            return "CPU"
+
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
             probe = None
+            if pkg["name"] == "llama_cpp":
+                pkg["source_build_hint"] = (
+                    "Source build avoids prebuilt wheel constraints and compiles for this host. "
+                    "Requires cmake and a C/C++ toolchain."
+                )
+                pkg["source_build_docs_url"] = (
+                    "https://github.com/abetlen/llama-cpp-python#installation-configuration"
+                )
+                pkg["source_build_actions"] = {
+                    "prebuilt": True,
+                    "force_cpu_prebuilt": True,
+                    "source": True,
+                    "rebuild": True,
+                }
+                try:
+                    if host:
+                        ctx = await _probe_remote_llama_wheel_context(
+                            host=host,
+                            ssh_port=ssh_port,
+                            venv=venv,
+                            platform_hint=platform,
+                        )
+                    else:
+                        ctx = await _probe_local_llama_wheel_context(platform)
+                    wheel = resolve_llama_cpp_wheel_suffix(
+                        platform=ctx.get("platform"),
+                        python_version=ctx.get("python_version"),
+                        backend=ctx.get("backend"),
+                        cuda_version=ctx.get("cuda_version"),
+                        rocm_version=ctx.get("rocm_version"),
+                        force_cpu_prebuilt=False,
+                    )
+                    pkg["selected_wheel_suffix"] = wheel.get("suffix")
+                    pkg["wheel_reason"] = wheel.get("reason")
+                    pkg["detected_backend"] = _detected_backend_from_suffix(
+                        pkg.get("selected_wheel_suffix")
+                    )
+                    pkg["compatibility_flags"] = {
+                        "python_supported": bool(wheel.get("python_supported")),
+                        "backend": wheel.get("backend"),
+                        "platform": wheel.get("platform"),
+                        "cuda_version": ctx.get("cuda_version"),
+                        "rocm_version": ctx.get("rocm_version"),
+                        "python_arch": ctx.get("python_arch"),
+                        "host_arch": ctx.get("host_arch"),
+                        "python_arch_mismatch": bool(ctx.get("python_arch_mismatch")),
+                    }
+                    if bool(ctx.get("python_arch_mismatch")):
+                        pkg["wheel_reason"] = (
+                            f"{pkg['wheel_reason']} Warning: arm64 macOS host with x86_64 Python detected. "
+                            "Use a native arm64 Python for best llama-cpp compatibility/performance."
+                        )
+                    pkg["forced_cpu_note"] = "Use CPU Prebuilt to bypass failing accelerator wheel resolution without source build."
+                    pkg["can_force_cpu_prebuilt"] = True
+                except Exception:
+                    pkg["selected_wheel_suffix"] = "cpu"
+                    pkg["wheel_reason"] = "Could not probe accelerator capabilities; falling back to CPU prebuilt."
+                    pkg["detected_backend"] = "cpu"
+                    pkg["compatibility_flags"] = {
+                        "python_supported": False,
+                        "backend": "unknown",
+                        "platform": _normalize_platform_label(platform),
+                        "cuda_version": None,
+                        "python_arch": None,
+                        "host_arch": None,
+                        "python_arch_mismatch": False,
+                    }
+                    pkg["forced_cpu_note"] = "CPU Prebuilt remains available as a stable fallback."
+                    pkg["can_force_cpu_prebuilt"] = True
             if on_remote:
                 pkg["installed"] = bool(remote_status.get(pkg["name"], False))
                 probe = remote_details.get(pkg["name"])
@@ -1181,6 +1610,22 @@ def setup_shell_routes() -> APIRouter:
                     note = _package_status_note(pkg["name"], probe)
                     if note:
                         pkg["status_note"] = note
+                    if pkg["name"] == "llama_cpp":
+                        llama_info = (
+                            probe.get("llama")
+                            if isinstance(probe.get("llama"), dict)
+                            else {}
+                        )
+                        installed_backend = str(
+                            llama_info.get("installed_backend") or ""
+                        ).lower()
+                        if (
+                            llama_info.get("install_type") == "native"
+                            and installed_backend in ("", "unknown")
+                        ):
+                            installed_backend = "native"
+                        pkg["llama_install_type"] = llama_info.get("install_type")
+                        pkg["installed_backend"] = installed_backend
             elif pkg.get("kind") == "system":
                 if pkg["name"] == "APFEL":
                     pkg["applicable"] = IS_APPLE_SILICON
@@ -1194,6 +1639,8 @@ def setup_shell_routes() -> APIRouter:
                     pkg["installed"] = shutil.which(pkg["name"]) is not None
             elif pkg["name"] == "llama_cpp" and shutil.which("llama-server"):
                 pkg["installed"] = True
+                pkg["llama_install_type"] = "native"
+                pkg["installed_backend"] = "native"
                 pkg["status_note"] = (
                     f"native llama-server: {shutil.which('llama-server')}"
                 )
@@ -1223,12 +1670,30 @@ def setup_shell_routes() -> APIRouter:
                     pkg["installed"] = False
                 except importlib_metadata.PackageNotFoundError:
                     pkg["installed"] = False
-                except Exception:
+                except Exception as e:
                     # Installed but crashes on import — e.g. a CUDA build of
                     # llama-cpp-python raising FileNotFoundError when the CUDA
                     # toolkit dir is absent. One broken optional package must not
                     # 500 the entire packages panel; report it as not usable.
                     pkg["installed"] = False
+
+            if pkg["name"] == "llama_cpp":
+                detected_backend = str(pkg.get("detected_backend") or "cpu").lower()
+                installed_backend = str(pkg.get("installed_backend") or "").lower()
+                if (
+                    installed_backend
+                    and installed_backend != "unknown"
+                    and detected_backend
+                    and installed_backend != detected_backend
+                ):
+                    pkg["backend_mismatch_note"] = (
+                        f"Installed: {_backend_label(installed_backend)}, "
+                        f"Detected: {_backend_label(detected_backend, pkg.get('selected_wheel_suffix'))}"
+                    )
+                    pkg["backend_mismatch_tooltip"] = (
+                        "GPU prebuilt wheels are usually faster than CPU wheels on capable hosts. "
+                        "Custom source builds can be faster than prebuilt GPU wheels, but require a full build toolchain."
+                    )
 
             if pkg.get("installed"):
                 update_status = _package_pip_update_status(pkg, probe)
@@ -1246,6 +1711,600 @@ def setup_shell_routes() -> APIRouter:
                 pkg["applicable"] = status.applicable
                 pkg["install_hint"] = status.install_hint
         return {"packages": packages}
+
+    @router.post("/api/cookbook/llama-cpp/prereq-check")
+    async def llama_cpp_prereq_check(request: Request):
+        """Check whether the selected host has tools needed for llama-cpp-python builds.
+
+        ``mode`` controls which tools are required:
+        - ``"prebuilt"`` (default): cl.exe / g++ only — needed for any pip install on Windows.
+        - ``"source"``: cl.exe / g++ AND cmake — source builds also need cmake.
+
+        Response fields:
+        - ``ok``: True when all required tools are directly on PATH.
+        - ``needs_path_add``: True when tools exist (found via vswhere) but are NOT on PATH.
+          ``missing`` will be empty in this case; the caller should offer to add them.
+        - ``paths_to_add``: server-computed list of dirs to add (no client paths accepted).
+        - ``missing``: populated only when tools are genuinely absent from the system.
+        """
+        _require_admin(request)
+        _reject_cross_site(request)
+        body = await request.json()
+        host = str(body.get("remote_host") or "").strip()
+        ssh_port = body.get("ssh_port")
+        platform = str(body.get("platform") or "").strip().lower()
+        mode = str(body.get("mode") or "prebuilt").strip().lower()
+        source_wheel_hint = str(body.get("source_wheel_hint") or "").strip().lower()
+        if mode not in ("prebuilt", "source"):
+            mode = "prebuilt"
+
+        def _backend_from_suffix(suffix: str) -> str:
+            s = (suffix or "").strip().lower()
+            if s.startswith("cu"):
+                return "cuda"
+            if s == "hip-radeon" or s.startswith("rocm"):
+                return "hip"
+            if s == "vulkan":
+                return "vulkan"
+            if s == "metal":
+                return "metal"
+            return "cpu"
+
+        source_backend_hint = _backend_from_suffix(source_wheel_hint) if mode == "source" else "cpu"
+        is_windows = platform == "windows" or (IS_WINDOWS and not host)
+
+        if is_windows:
+            # The PowerShell script distinguishes three states per tool:
+            #   1. on PATH directly (cl_on_path / cmake_on_path)
+            #   2. found via vswhere but not on PATH (cl_dir / cmake_dir non-empty)
+            #   3. not installed at all (both false / empty)
+            # This lets Python decide whether to offer "add to PATH" vs "install tools".
+            ps_check = (
+                """
+                $r=@{}; 
+                # vswhere is at a fixed, well-known location on all VS/BuildTools installs
+                $vsw=\"${env:ProgramFiles(x86)}\\Microsoft Visual Studio\\Installer\\vswhere.exe\"; 
+                $vsInst=if(Test-Path $vsw){
+                    & $vsw -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+                }else{$null}; 
+                $r.vs_inst=if($vsInst){$vsInst}else{''}; 
+                # cl.exe — check PATH via Get-Command and where.exe fallback, then vswhere instance
+                $clCmd=Get-Command cl.exe -ErrorAction SilentlyContinue; 
+                $clWhere=''; 
+                $clOnPath=[bool]$clCmd; 
+                if(-not $clOnPath){$w=(where.exe cl.exe 2>$null | Select-Object -First 1); if($LASTEXITCODE -eq 0 -and $w){$clWhere=[string]$w; $clOnPath=$true}}; 
+                $r.vsw=$vsw; 
+                $r.cl_on_path=$clOnPath; 
+                $r.cl_path=if($clCmd){[string]$clCmd.Source}elseif($clWhere){$clWhere}else{''}; 
+                $r.cl_dir=if(-not $clOnPath -and $vsInst){
+                  $clBin=Get-ChildItem (Join-Path $vsInst 'VC\\Tools\\MSVC') -Recurse -Filter cl.exe -ErrorAction SilentlyContinue | 
+                  Where-Object{$_.FullName -match 'Hostx64\\\\x64'} | Select-Object -First 1; 
+                  if($clBin){[string]($clBin.DirectoryName)}else{''}
+                }else{''}; 
+                # cmake — check PATH first, then vswhere instance CMake component
+                $cmOnPath=[bool](Get-Command cmake -ErrorAction SilentlyContinue); 
+                $r.cmake_on_path=$cmOnPath; 
+                $r.cmake_dir=if(-not $cmOnPath -and $vsInst){
+                  $cmBin=Join-Path $vsInst 'Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe'; 
+                  if(Test-Path $cmBin){[string](Split-Path $cmBin)}else{''}
+                }else{''}; 
+                # g++ on PATH (w64devkit / MinGW alternative to MSVC)
+                $r.gxx=[bool](Get-Command g++ -ErrorAction SilentlyContinue); 
+                # Composite booleans for backwards-compat with callers that only check these
+                $r.cl=[bool]($clOnPath -or $r.cl_dir -ne '' -or $r.gxx); 
+                $r.cmake=[bool]($cmOnPath -or $r.cmake_dir -ne ''); 
+                # Accelerator/toolkit signals for backend-specific source builds
+                $r.nvcc_on_path=[bool](Get-Command nvcc -ErrorAction SilentlyContinue); 
+                $r.cuda_root=if($env:CUDAToolkit_ROOT){
+                    $env:CUDAToolkit_ROOT
+                } elseif ($env:CUDA_PATH) {
+                    $env:CUDA_PATH
+                }else{
+                    Get-ChildItem (\"${env:ProgramFiles}\\NVIDIA GPU Computing Toolkit\\CUDA\\\") -Directory -ErrorAction SilentlyContinue | 
+                        Sort-Object Name -Descending | 
+                        Select-Object -ExpandProperty FullName -First 1
+                }; 
+                $r.hipcc_on_path=[bool](Get-Command hipcc -ErrorAction SilentlyContinue); 
+                $r.hip_path=if($env:HIP_PATH){$env:HIP_PATH}elseif($env:ROCM_PATH){$env:ROCM_PATH}else{''}; 
+                $r.vulkaninfo_on_path=[bool](Get-Command vulkaninfo -ErrorAction SilentlyContinue); 
+                $r.vulkan_sdk=if($env:VULKAN_SDK){$env:VULKAN_SDK}else{''}; 
+                $r | ConvertTo-Json -Compress
+                """
+            )
+            if host:
+                try:
+                    argv = _ssh_base_argv(host, ssh_port) + [
+                        f"powershell -NoProfile -Command {shlex.quote(ps_check)}"
+                    ]
+                except ValueError as e:
+                    raise HTTPException(400, str(e))
+            else:
+                argv = ["powershell", "-NoProfile", "-Command", ps_check]
+        else:
+            sh_check = (
+                "CM=$(command -v cmake >/dev/null 2>&1; echo $?); "
+                "CC=$(command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1 || command -v c++ >/dev/null 2>&1; echo $?); "
+                "NV=$(command -v nvcc >/dev/null 2>&1; echo $?); "
+                "HP=$(command -v hipcc >/dev/null 2>&1 || command -v hipconfig >/dev/null 2>&1; echo $?); "
+                "VK=$(command -v vulkaninfo >/dev/null 2>&1; echo $?); "
+                "XR=$(command -v xcrun >/dev/null 2>&1; echo $?); "
+                "printf '{\"cmake\":%s,\"compiler\":%s,\"nvcc\":%s,\"hip\":%s,\"vulkan\":%s,\"xcrun\":%s}' \"$([ \"$CM\" = 0 ] && echo true || echo false)\" \"$([ \"$CC\" = 0 ] && echo true || echo false)\" \"$([ \"$NV\" = 0 ] && echo true || echo false)\" \"$([ \"$HP\" = 0 ] && echo true || echo false)\" \"$([ \"$VK\" = 0 ] && echo true || echo false)\" \"$([ \"$XR\" = 0 ] && echo true || echo false)\""
+            )
+            if host:
+                try:
+                    argv = _ssh_base_argv(host, ssh_port) + [sh_check]
+                except ValueError as e:
+                    raise HTTPException(400, str(e))
+            else:
+                argv = ["bash", "-lc", sh_check]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=20)
+        except asyncio.TimeoutError:
+            return {
+                "ok": False,
+                "error": "Prerequisite check timed out.",
+                "missing": [],
+            }
+
+        if proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": err.decode("utf-8", errors="replace")[-500:] or "Prerequisite check failed.",
+                "missing": [],
+            }
+
+        txt = out.decode("utf-8", errors="replace").strip()
+        payload = None
+        for line in reversed(txt.splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    payload = json.loads(line)
+                except Exception:
+                    payload = None
+                break
+        if not isinstance(payload, dict):
+            return {
+                "ok": False,
+                "error": "Could not parse prerequisite check output.",
+                "missing": [],
+                "output": txt[-500:],
+            }
+
+        missing = []
+        needs_path_add = False
+        paths_to_add: list[str] = []
+
+        if is_windows:
+            cl_on_path = bool(payload.get("cl_on_path") or payload.get("gxx"))
+            cl_dir = str(payload.get("cl_dir") or "").strip()
+            cl_found_anywhere = cl_on_path or bool(cl_dir)
+
+            cmake_on_path = bool(payload.get("cmake_on_path"))
+            cmake_dir = str(payload.get("cmake_dir") or "").strip()
+            cmake_found_anywhere = cmake_on_path or bool(cmake_dir)
+
+            # Determine which tools are required for this mode
+            need_cmake = (mode == "source")
+
+            if not cl_found_anywhere:
+                missing.append(
+                    {
+                        "tool": "c/c++ compiler (MSVC cl.exe or g++)",
+                        "hint": (
+                            "No C++ compiler was found. "
+                            "Install VS Build Tools and enable 'Desktop development with C++' "
+                            "(or the 'MSVC v143' individual component). "
+                            "Alternatively, install w64devkit/MinGW and ensure g++ is on PATH."
+                        ),
+                        "url": _VS_BUILD_TOOLS_URL,
+                    }
+                )
+            elif not cl_on_path and cl_dir:
+                # Found via vswhere but not on PATH — offer to add
+                paths_to_add.append(cl_dir)
+
+            if need_cmake and not cmake_found_anywhere:
+                missing.append(
+                    {
+                        "tool": "cmake",
+                        "hint": (
+                            "CMake was not found via Visual Studio or on PATH. "
+                            "In the VS Installer, ensure 'C++ CMake tools for Windows' is checked "
+                            "under Individual Components, or install cmake standalone and add it to PATH."
+                        ),
+                        "url": _CMAKE_DOWNLOAD_URL,
+                    }
+                )
+            elif need_cmake and not cmake_on_path and cmake_dir:
+                if cmake_dir not in paths_to_add:
+                    paths_to_add.append(cmake_dir)
+
+            if mode == "source":
+                if source_backend_hint == "cuda":
+                    nvcc_on_path = bool(payload.get("nvcc_on_path"))
+                    cuda_root = str(payload.get("cuda_root") or "").strip()
+                    cuda_ready = nvcc_on_path or bool(cuda_root)
+                    if not nvcc_on_path and cuda_root:
+                        cuda_bin_dir = os.path.join(cuda_root, "bin")
+                        # Local Windows only: if CUDA is installed but nvcc is not on PATH,
+                        # offer a PATH-add flow instead of failing immediately.
+                        if os.path.isdir(cuda_bin_dir) and cuda_bin_dir not in paths_to_add:
+                            paths_to_add.append(cuda_bin_dir)
+                    if not cuda_ready:
+                        missing.append(
+                            {
+                                "tool": "CUDA Toolkit (nvcc)",
+                                "hint": (
+                                    "CUDA source builds require NVIDIA CUDA Toolkit. "
+                                    "Install CUDA Toolkit and ensure nvcc is on PATH or set CUDAToolkit_ROOT/CUDA_PATH."
+                                ),
+                                "url": "https://developer.nvidia.com/cuda-downloads",
+                            }
+                        )
+                elif source_backend_hint == "hip":
+                    hip_ready = bool(payload.get("hipcc_on_path")) or bool(str(payload.get("hip_path") or "").strip())
+                    if not hip_ready:
+                        missing.append(
+                            {
+                                "tool": "AMD HIP/ROCm toolchain",
+                                "hint": (
+                                    "HIP source builds require AMD HIP SDK/ROCm. "
+                                    "Install HIP SDK and ensure hipcc is on PATH or set HIP_PATH/ROCM_PATH."
+                                ),
+                                "url": "https://rocm.docs.amd.com/",
+                            }
+                        )
+                elif source_backend_hint == "vulkan":
+                    vk_ready = bool(payload.get("vulkaninfo_on_path")) or bool(str(payload.get("vulkan_sdk") or "").strip())
+                    if not vk_ready:
+                        missing.append(
+                            {
+                                "tool": "Vulkan SDK",
+                                "hint": (
+                                    "Vulkan source builds require Vulkan SDK headers/libs. "
+                                    "Install Vulkan SDK and set VULKAN_SDK (or make vulkaninfo available)."
+                                ),
+                                "url": "https://vulkan.lunarg.com/sdk/home",
+                            }
+                        )
+                elif source_backend_hint == "metal":
+                    missing.append(
+                        {
+                            "tool": "macOS Metal toolchain",
+                            "hint": "Metal source builds are only supported on macOS (Xcode Command Line Tools).",
+                            "url": "https://developer.apple.com/metal/",
+                        }
+                    )
+
+            # needs_path_add: tools exist but aren't on PATH, and nothing is truly missing
+            needs_path_add = bool(paths_to_add) and not missing
+        else:
+            if not bool(payload.get("cmake")):
+                missing.append(
+                    {
+                        "tool": "cmake",
+                        "hint": "Install cmake on the selected server.",
+                        "url": _CMAKE_DOWNLOAD_URL,
+                    }
+                )
+            if not bool(payload.get("compiler")):
+                missing.append(
+                    {
+                        "tool": "c/c++ compiler",
+                        "hint": "Install gcc/clang build tools on the selected server.",
+                        "url": "https://github.com/abetlen/llama-cpp-python#installation",
+                    }
+                )
+            if mode == "source":
+                if source_backend_hint == "cuda" and not bool(payload.get("nvcc")):
+                    missing.append(
+                        {
+                            "tool": "CUDA Toolkit (nvcc)",
+                            "hint": "CUDA source builds require CUDA toolkit (nvcc) on the selected server.",
+                            "url": "https://developer.nvidia.com/cuda-downloads",
+                        }
+                    )
+                elif source_backend_hint == "hip" and not bool(payload.get("hip")):
+                    missing.append(
+                        {
+                            "tool": "HIP/ROCm toolchain",
+                            "hint": "HIP source builds require hipcc/hipconfig on the selected server.",
+                            "url": "https://rocm.docs.amd.com/",
+                        }
+                    )
+                elif source_backend_hint == "vulkan" and not bool(payload.get("vulkan")):
+                    missing.append(
+                        {
+                            "tool": "Vulkan SDK/runtime tools",
+                            "hint": "Vulkan source builds require Vulkan SDK/runtime tools (vulkaninfo) on the selected server.",
+                            "url": "https://vulkan.lunarg.com/sdk/home",
+                        }
+                    )
+                elif source_backend_hint == "metal":
+                    if platform and platform not in ("mac", "macos", "darwin"):
+                        missing.append(
+                            {
+                                "tool": "macOS Metal toolchain",
+                                "hint": "Metal source builds are only supported on macOS.",
+                                "url": "https://developer.apple.com/metal/",
+                            }
+                        )
+                    elif not bool(payload.get("xcrun")):
+                        missing.append(
+                            {
+                                "tool": "Xcode Command Line Tools",
+                                "hint": "Install Xcode Command Line Tools (`xcode-select --install`) for Metal source builds.",
+                                "url": "https://developer.apple.com/xcode/resources/",
+                            }
+                        )
+
+        all_ok = not missing and not needs_path_add
+        return {
+            "ok": all_ok,
+            "needs_path_add": needs_path_add,
+            "paths_to_add": paths_to_add,
+            "checks": payload,
+            "source_backend_hint": source_backend_hint,
+            "missing": missing,
+            "output": txt[-500:],
+        }
+
+    @router.post("/api/cookbook/llama-cpp/resolve-wheel")
+    async def llama_cpp_resolve_wheel(request: Request):
+        """Resolve best llama-cpp prebuilt wheel suffix for selected host."""
+        _require_admin(request)
+        _reject_cross_site(request)
+        body = await request.json()
+        host = str(body.get("remote_host") or "").strip()
+        ssh_port = body.get("ssh_port")
+        venv = body.get("venv")
+        platform = str(body.get("platform") or "").strip().lower()
+        force_cpu_prebuilt = bool(body.get("force_cpu_prebuilt"))
+
+        try:
+            if host:
+                ctx = await _probe_remote_llama_wheel_context(
+                    host=host,
+                    ssh_port=ssh_port,
+                    venv=venv,
+                    platform_hint=platform,
+                )
+            else:
+                ctx = await _probe_local_llama_wheel_context(platform)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": f"Wheel capability probe failed: {e}",
+                "resolution": {
+                    "suffix": "cpu",
+                    "reason": "Probe failed; defaulting to CPU prebuilt wheel.",
+                },
+            }
+
+        wheel = resolve_llama_cpp_wheel_suffix(
+            platform=ctx.get("platform"),
+            python_version=ctx.get("python_version"),
+            backend=ctx.get("backend"),
+            cuda_version=ctx.get("cuda_version"),
+            rocm_version=ctx.get("rocm_version"),
+            force_cpu_prebuilt=force_cpu_prebuilt,
+        )
+        warnings = []
+        if bool(ctx.get("python_arch_mismatch")):
+            warnings.append(
+                "Detected arm64 macOS host with x86_64 Python. Prefer native arm64 Python for llama-cpp Metal wheels."
+            )
+        return {
+            "ok": True,
+            "context": ctx,
+            "resolution": wheel,
+            "warnings": warnings,
+            "can_force_cpu_prebuilt": True,
+            "recommended_next_actions": [
+                "Use Prebuilt for the resolved accelerator wheel.",
+                "Use CPU Prebuilt when accelerator wheel import/install fails.",
+                "Use Build Src if you need host-specific compilation.",
+            ],
+        }
+
+    @router.post("/api/cookbook/llama-cpp/add-tools-to-path")
+    async def llama_cpp_add_to_path(request: Request):
+        """Permanently add known tool directories to the current user's PATH.
+
+        Local Windows only. The client may request one or more known tools, and
+        all candidate directories are discovered server-side and validated before
+        PATH is updated.
+
+        Supported tools:
+        - ``cl``: MSVC cl.exe (via vswhere)
+        - ``cmake``: CMake (via PATH, VS CMake component, common install root)
+        - ``nvcc``: NVIDIA CUDA Toolkit nvcc.exe (via env + common install roots)
+        """
+        _require_admin(request)
+        _reject_cross_site(request)
+        body = await request.json()
+        host = str(body.get("remote_host") or "").strip()
+        if host:
+            raise HTTPException(
+                400,
+                "add-tools-to-path is only supported for local Windows. "
+                "On a remote server, add tool directories to PATH manually via System Properties > Environment Variables.",
+            )
+        if not IS_WINDOWS:
+            raise HTTPException(400, "add-tools-to-path is only supported on Windows.")
+
+        requested = body.get("tools")
+        if isinstance(requested, str):
+            requested_tools = [requested]
+        elif isinstance(requested, list):
+            requested_tools = [str(t) for t in requested]
+        else:
+            requested_tools = ["cl"]
+
+        requested_tools = [t.strip().lower() for t in requested_tools if str(t).strip()]
+        requested_tools = list(dict.fromkeys(requested_tools))
+        known_tools = {"cl", "cmake", "nvcc"}
+        invalid = [t for t in requested_tools if t not in known_tools]
+        if invalid:
+            raise HTTPException(400, f"Unsupported tools: {', '.join(invalid)}. Allowed: cl, cmake, nvcc")
+
+        # Compute trusted candidate directories server-side only.
+        ps_find = f"""
+$req=@({", ".join(f"'{t}'" for t in requested_tools)});
+$r=@{{
+    cl=@();
+    cmake=@();
+    nvcc=@()
+}};
+
+$vsw="${{env:ProgramFiles(x86)}}\\Microsoft Visual Studio\\Installer\\vswhere.exe";
+$vsInst = if (Test-Path $vsw) {{
+    & $vsw -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+}} else {{
+    $null
+}};
+
+if ($req -contains 'cl') {{
+    if ($vsInst) {{
+        $clBin = Get-ChildItem (Join-Path $vsInst 'VC\\Tools\\MSVC') -Recurse -Filter cl.exe -ErrorAction SilentlyContinue |
+                 Where-Object {{ $_.FullName -match 'Hostx64\\\\x64' }} |
+                 Select-Object -First 1;
+        if ($clBin) {{ $r.cl += [string]$clBin.DirectoryName }}
+    }}
+}}
+
+if ($req -contains 'cmake') {{
+    $cmCmd = Get-Command cmake.exe -ErrorAction SilentlyContinue;
+    if ($cmCmd) {{ $r.cmake += [string](Split-Path $cmCmd.Source) }}
+
+    if ($vsInst) {{
+        $cmBin = Join-Path $vsInst 'Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe';
+        if (Test-Path $cmBin) {{ $r.cmake += [string](Split-Path $cmBin) }}
+    }}
+
+    $pf = $env:ProgramFiles;
+    if ($pf) {{
+        $cmBase = Join-Path $pf 'CMake\\bin';
+        if (Test-Path (Join-Path $cmBase 'cmake.exe')) {{ $r.cmake += [string]$cmBase }}
+    }}
+}}
+
+if ($req -contains 'nvcc') {{
+    $nvccCmd = Get-Command nvcc.exe -ErrorAction SilentlyContinue;
+    if ($nvccCmd) {{ $r.nvcc += [string](Split-Path $nvccCmd.Source) }}
+
+    $cudaRoots = @($env:CUDAToolkit_ROOT, $env:CUDA_PATH) | Where-Object {{ $_ }};
+    foreach ($root in $cudaRoots) {{
+        $b = Join-Path $root 'bin';
+        if (Test-Path (Join-Path $b 'nvcc.exe')) {{ $r.nvcc += [string]$b }}
+    }}
+
+    $pf = $env:ProgramFiles;
+    if ($pf) {{
+        $cudaBase = Join-Path $pf 'NVIDIA GPU Computing Toolkit\\CUDA';
+        if (Test-Path $cudaBase) {{
+            Get-ChildItem $cudaBase -Directory -ErrorAction SilentlyContinue | ForEach-Object {{
+                $b = Join-Path $_.FullName 'bin';
+                if (Test-Path (Join-Path $b 'nvcc.exe')) {{ $r.nvcc += [string]$b }}
+            }}
+        }}
+    }}
+}}
+
+$r.cl    = @($r.cl    | Where-Object {{ $_ }} | Select-Object -Unique);
+$r.cmake = @($r.cmake | Where-Object {{ $_ }} | Select-Object -Unique);
+$r.nvcc  = @($r.nvcc  | Where-Object {{ $_ }} | Select-Object -Unique);
+
+$r | ConvertTo-Json -Compress
+"""
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "powershell", "-NoProfile", "-Command", ps_find,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            out, err = await asyncio.wait_for(proc.communicate(), timeout=20)
+        except asyncio.TimeoutError:
+            raise HTTPException(500, "tool lookup timed out.")
+
+        if proc.returncode != 0:
+            err_txt = err.decode("utf-8", errors="replace")[-400:]
+            return {"ok": False, "error": f"tool lookup failed: {err_txt}", "paths_added": [], "bash_exports": []}
+
+        raw = out.decode("utf-8", errors="replace").strip()
+        found_by_tool: dict[str, list[str]] = {"cl": [], "cmake": [], "nvcc": []}
+        for line in reversed(raw.splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    parsed = json.loads(line)
+                    if isinstance(parsed, dict):
+                        found_by_tool = {
+                            "cl": [str(p) for p in (parsed.get("cl") or []) if p],
+                            "cmake": [str(p) for p in (parsed.get("cmake") or []) if p],
+                            "nvcc": [str(p) for p in (parsed.get("nvcc") or []) if p],
+                        }
+                except Exception:
+                    pass
+                break
+
+        # Keep requested tool order when building the final add list.
+        computed_dirs: list[str] = []
+        for t in requested_tools:
+            for p in found_by_tool.get(t, []):
+                if p not in computed_dirs:
+                    computed_dirs.append(p)
+
+        valid_dirs = [p for p in computed_dirs if p and os.path.isdir(p)]
+        if not valid_dirs:
+            return {
+                "ok": False,
+                "error": "No matching tool directories were found for the requested tools, or nothing needed adding.",
+                "paths_added": [],
+                "bash_exports": [],
+                "requested_tools": requested_tools,
+                "found_by_tool": found_by_tool,
+            }
+
+        # Build the new User PATH: prepend new dirs, dedupe, keep existing entries.
+        ps_add = f"""
+$dirs=@({", ".join(f"'{d}'" for d in valid_dirs)});
+$cur=[Environment]::GetEnvironmentVariable('PATH','User') -split ';' | Where-Object {{ $_ }};
+$new=@($dirs | Where-Object {{ $_ -notin $cur }}) + @($cur);
+[Environment]::SetEnvironmentVariable('PATH', ($new -join ';'), 'User');
+Write-Output 'ok'
+"""
+
+        try:
+            proc2 = await asyncio.create_subprocess_exec(
+                "powershell", "-NoProfile", "-Command", ps_add,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _out2, err2 = await asyncio.wait_for(proc2.communicate(), timeout=15)
+        except asyncio.TimeoutError:
+            raise HTTPException(500, "PATH update timed out.")
+
+        if proc2.returncode != 0:
+            err_txt = err2.decode("utf-8", errors="replace")[-400:]
+            return {"ok": False, "error": f"PATH update failed: {err_txt}", "paths_added": [], "bash_exports": []}
+
+        bash_exports = [_win_path_to_bash(p) for p in valid_dirs]
+        return {
+            "ok": True,
+            "paths_added": valid_dirs,
+            "bash_exports": bash_exports,
+            "requested_tools": requested_tools,
+            "found_by_tool": found_by_tool,
+        }
 
     @router.post("/api/cookbook/packages/install")
     async def install_package(request: Request):

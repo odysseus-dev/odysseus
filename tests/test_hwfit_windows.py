@@ -6,6 +6,9 @@ FP8 safetensors repos — must be filtered out on Windows so the Cookbook does
 not recommend models the user cannot actually serve.
 """
 
+import json
+
+from services.hwfit import hardware
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
 
@@ -72,3 +75,75 @@ def test_gguf_alternate_still_recommended_on_windows():
     still appear on Windows even though the AWQ variant is hidden."""
     names = {r["name"] for r in rank_models(_windows_system(), limit=900)}
     assert "Qwen/Qwen2.5-3B-Instruct" in names
+
+
+def test_detect_windows_parses_nvidia_payload(monkeypatch):
+    """_detect_windows should preserve CUDA backend and split aggregate VRAM
+    evenly across reported device count when nvidia-smi data is present."""
+    payload = {
+        "ram_gb": 64.0,
+        "avail_gb": 40.0,
+        "cpu_name": "AMD Ryzen 9 9950X",
+        "cpu_cores": 32.0,
+        "gpu_name": "NVIDIA RTX 5090",
+        "gpu_vram_gb": 48.0,
+        "gpu_count": 2.0,
+        "gpu_backend": "cuda",
+    }
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware, "_run", lambda _cmd: json.dumps(payload))
+
+    info = hardware._detect_windows()
+    assert info is not None
+    assert info["backend"] == "cuda"
+    assert info["gpu_count"] == 2
+    assert info["gpu_vram_gb"] == 48.0
+    assert info["rdna_gen"] == 2
+    assert len(info["gpus"]) == 2
+    assert info["gpus"][0]["vram_gb"] == 24.0
+    assert info["gpu_groups"][0]["count"] == 2
+
+
+def test_detect_windows_parses_amd_payload_with_rdna3(monkeypatch):
+    """AMD ROCm payload should carry through rdna_gen=3 for RDNA3/4 cards."""
+    payload = {
+        "ram_gb": 32.0,
+        "avail_gb": 20.0,
+        "cpu_name": "AMD Ryzen 7 9700X",
+        "cpu_cores": 16,
+        "gpu_name": "AMD Radeon RX 9070 XT",
+        "gpu_vram_gb": 16.0,
+        "gpu_count": 1,
+        "gpu_backend": "rocm",
+        "rdna_gen": 3,
+    }
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware, "_run", lambda _cmd: json.dumps(payload))
+
+    info = hardware._detect_windows()
+    assert info is not None
+    assert info["backend"] == "rocm"
+    assert info["gpu_name"] == "AMD Radeon RX 9070 XT"
+    assert info["gpu_vram_gb"] == 16.0
+    assert info["rdna_gen"] == 3
+
+
+def test_detect_windows_non_amd_payload_defaults_rdna(monkeypatch):
+    """Non-AMD payloads should keep rdna_gen safely defaulted to 2."""
+    payload = {
+        "ram_gb": 32.0,
+        "avail_gb": 18.0,
+        "cpu_name": "Intel Core Ultra 9",
+        "cpu_cores": 16,
+        "gpu_name": "Intel Arc B580",
+        "gpu_vram_gb": 12.0,
+        "gpu_count": 1,
+        "gpu_backend": "cpu_x86",
+    }
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware, "_run", lambda _cmd: json.dumps(payload))
+
+    info = hardware._detect_windows()
+    assert info is not None
+    assert info["backend"] == "cpu_x86"
+    assert info["rdna_gen"] == 2

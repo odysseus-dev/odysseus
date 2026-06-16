@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 from routes.cookbook_helpers import (
     _SESSION_ID_RE, _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_token,
     _validate_local_dir, _validate_gpus, _shell_path,
+    _validate_llama_cpp_wheel_suffix,
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
@@ -47,9 +48,9 @@ from routes.cookbook_helpers import (
     _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
     _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _diagnose_serve_output, run_ssh_command_async,
-    _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
-    _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
     _normalize_llama_cpp_python_cache_types,
+    _normalize_llama_cpp_pip_cmd, _llama_cpp_whl_index_url,
+    _EXPORT_PATH_PREFIX_RE,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -1220,6 +1221,8 @@ def setup_cookbook_routes() -> APIRouter:
         validate_remote_host(req.remote_host)
         req.ssh_port = validate_ssh_port(req.ssh_port)
         req.gpus = _validate_gpus(req.gpus)
+        req.wheel_suffix = _validate_llama_cpp_wheel_suffix(req.wheel_suffix)
+        req.source_wheel_hint = _validate_llama_cpp_wheel_suffix(req.source_wheel_hint)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
         # Normalize away backslash-newline continuations (multi-line pasted
@@ -1230,12 +1233,44 @@ def setup_cookbook_routes() -> APIRouter:
         # `TypeError: argument of type 'NoneType'` (a 500 instead of a clean 400).
         req.cmd = _validate_serve_cmd(req.cmd) or ""
         req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or ""
-        req.cmd = _venv_safe_local_pip_install_cmd(
-            req.cmd,
+        # Strip the optional export PATH=... && prefix before _venv_safe_local_pip_install_cmd
+        # so shlex.split/join doesn't quote '&&' into a literal argument to export.
+        _path_pfx_m = _EXPORT_PATH_PREFIX_RE.match(req.cmd) if req.cmd else None
+        _path_pfx = _path_pfx_m.group(0) if _path_pfx_m else ""
+        _cmd_body = req.cmd[len(_path_pfx):]
+        _cmd_body = _venv_safe_local_pip_install_cmd(
+            _cmd_body,
             local=not bool(req.remote_host),
             in_venv=sys.prefix != sys.base_prefix,
         )
+        req.cmd = _path_pfx + _cmd_body
         is_pip_install = bool(req.cmd and "pip install" in req.cmd)
+        is_llama_cpp_source_build = bool(
+            "llama-cpp-python" in req.cmd and "--no-binary llama-cpp-python" in req.cmd
+        )
+        def _source_cmake_args_for_suffix(suffix: str | None) -> str | None:
+            s = (suffix or "").strip().lower()
+            if not s:
+                return None
+            if s.startswith("cu"):
+                return "-DGGML_CUDA=on"
+            if s == "hip-radeon" or s.startswith("rocm"):
+                return "-DGGML_HIP=on"
+            if s == "vulkan":
+                return "-DGGML_VULKAN=on"
+            if s == "metal":
+                return "-DGGML_METAL=on"
+            return None
+
+        source_suffix = req.source_wheel_hint or req.wheel_suffix
+        source_cmake_args = _source_cmake_args_for_suffix(source_suffix) if is_llama_cpp_source_build else None
+        remote = req.remote_host
+        is_windows = req.platform == "windows"
+        local_windows = IS_WINDOWS and not remote
+        if is_windows or local_windows:
+            if req.cmd.startswith("python3 "):
+                req.cmd = "python " + req.cmd[len("python3 "):]
+
         if is_pip_install:
             # Keep big dependency wheel builds (vLLM, …) off the home filesystem's
             # pip cache so they don't fail mid-build with "No space left" (#1219)
@@ -1243,10 +1278,27 @@ def setup_cookbook_routes() -> APIRouter:
             req.cmd = _pip_install_no_cache(req.cmd)
             # Accept common aliases and enforce server extras for llama-cpp so
             # `python -m llama_cpp.server` has all runtime dependencies.
-            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])", "llama-cpp-python[server]", req.cmd)
-            req.cmd = re.sub(r"(?<![A-Za-z0-9_.-])llama-cpp-python(?!\[)", "llama-cpp-python[server]", req.cmd)
-            if "llama-cpp-python" in req.cmd and "--extra-index-url" not in req.cmd:
-                req.cmd += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+            req.cmd = _normalize_llama_cpp_pip_cmd(
+                req.cmd,
+                add_prebuilt_index=not is_llama_cpp_source_build,
+                wheel_suffix=req.wheel_suffix,
+                force_cpu_prebuilt=bool(req.force_cpu_prebuilt),
+            )
+            # Inject user-supplied CMake build args for source builds.
+            # Each arg must be a safe -DVAR=value token (no shell metacharacters).
+            if req.cmake_args_extra and is_llama_cpp_source_build:
+                _VALID_CMAKE_ARG = re.compile(r'^-D[A-Za-z_][A-Za-z0-9_]+=[\w/:.=,+\-]+$')
+                for _cmake_arg in req.cmake_args_extra.split():
+                    if not _VALID_CMAKE_ARG.match(_cmake_arg):
+                        raise HTTPException(400, f"Invalid cmake arg: {_cmake_arg!r}")
+                _cmake_prefix = f'CMAKE_ARGS="{req.cmake_args_extra}" '
+                # If the command already has an export PATH=... && prefix, insert
+                # CMAKE_ARGS after the && so it is scoped to the pip invocation.
+                _m_epp = _EXPORT_PATH_PREFIX_RE.match(req.cmd)
+                if _m_epp:
+                    req.cmd = req.cmd[:_m_epp.end()] + _cmake_prefix + req.cmd[_m_epp.end():]
+                else:
+                    req.cmd = _cmake_prefix + req.cmd
             # PEP-508-style package spec — letters, digits, `.-_` for the
             # name; `[` `]` for extras; `<>=!~,` for version specifiers.
             # v2 review HIGH-14: tightened from the previous regex which
@@ -1315,6 +1367,9 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
+            if source_cmake_args:
+                ps_lines.append(f"$env:CMAKE_ARGS = '{_ps_squote(source_cmake_args)}'")
+                ps_lines.append(f"Write-Host \"[odysseus] llama.cpp source build CMAKE_ARGS: {source_cmake_args}\"")
             # Auto-install ollama if the command uses it
             if "ollama" in req.cmd:
                 ps_lines.append('# Check if ollama is available')
@@ -1323,11 +1378,20 @@ def setup_cookbook_routes() -> APIRouter:
                 ps_lines.append('  exit 1')
                 ps_lines.append('}')
             elif "llama_cpp" in req.cmd or "llama-server" in req.cmd:
-                ps_lines.append('# Auto-install llama-cpp-python if missing')
+                ps_lines.append('# Auto-install llama-cpp-python server package when llama.cpp is missing.')
                 ps_lines.append('try { python -c "import llama_cpp" 2>$null } catch {}')
                 ps_lines.append('if ($LASTEXITCODE -ne 0) {')
-                ps_lines.append('  Write-Host "Installing llama-cpp-python..."')
-                ps_lines.append('  python -m pip install llama-cpp-python[server]')
+                ps_lines.append('  $llamaBin = "$env:LOCALAPPDATA\\llama-cpp\\bin\\llama-server.exe"')
+                ps_lines.append('  if (Test-Path $llamaBin) {')
+                ps_lines.append('    $env:PATH = "$env:LOCALAPPDATA\\llama-cpp\\bin;$env:PATH"')
+                ps_lines.append('    Write-Host "llama-server already installed — using existing binary."')
+                ps_lines.append('  } else {')
+                ps_lines.append('    Write-Host "Installing llama-cpp-python[server] (prebuilt wheel)..."')
+                ps_lines.append(f'    python -m pip install llama-cpp-python[server] --extra-index-url {_llama_cpp_whl_index_url()}')
+                ps_lines.append('    if ($LASTEXITCODE -ne 0) {')
+                ps_lines.append('      Write-Host "Install failed. Open Cookbook -> Dependencies and use llama_cpp Build Source for prerequisite checks and full logs."')
+                ps_lines.append('    }')
+                ps_lines.append('  }')
                 ps_lines.append('}')
             elif "vllm" in req.cmd:
                 ps_lines.append('Write-Host "ERROR: vLLM is not supported on Windows. Use Ollama or llama.cpp instead."')
@@ -1387,6 +1451,9 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:
                 runner_lines.append("deactivate 2>/dev/null; hash -r")
+            if source_cmake_args:
+                runner_lines.append(f"export CMAKE_ARGS='{_bash_squote(source_cmake_args)}'")
+                runner_lines.append(f"echo \"[odysseus] llama.cpp source build CMAKE_ARGS: {source_cmake_args}\"")
             # Show whether the HF token reached this server (masked) — a gated
             # model vLLM has to download will be denied without it.
             runner_lines.append(_HF_TOKEN_STATUS_SNIPPET)
@@ -1402,45 +1469,70 @@ def setup_cookbook_routes() -> APIRouter:
                 # ollama is found (otherwise macOS falls back to a slow source build).
                 # /opt/homebrew = Apple Silicon, /usr/local = Intel; harmless on Linux.
                 runner_lines.append('export PATH="$HOME/.local/bin:$HOME/bin:$HOME/llama.cpp/build/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"')
-                runner_lines.append('if [ -d /data/data/com.termux ]; then')
-                runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
-                runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
-                runner_lines.append('    pkg install -y cmake 2>/dev/null')
-                runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
-                runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
-                runner_lines.append('  fi')
-                runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
-                runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
-                runner_lines.append('  mkdir -p ~/bin')
-                runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
-                # Build with the right accelerator: Metal on macOS (llama.cpp
-                # enables it automatically, no flag), CUDA on Linux when present,
-                # else a plain CPU build. nproc is Linux-only — fall back to
-                # `sysctl hw.ncpu` on macOS. (Tip: `brew install llama.cpp` ships
-                # a prebuilt llama-server and skips this whole source build.)
-                runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
-                runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
-                runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
-                # Start from a clean cache: a prior failed configure (e.g. a CUDA
-                # attempt) poisons build/CMakeCache.txt, so a plain `cmake -B build`
-                # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is
-                # explicit so the binary is optimized (Metal auto-enables on macOS).
-                runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
-                runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
-                runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
-                runner_lines.append('  else')
-                _append_llama_cpp_linux_accel_build_lines(runner_lines)
-                runner_lines.append('  fi')
-                runner_lines.append('  # If the native build failed, fall back to the Python bindings.')
-                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
-                runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
-                runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='pip')} || true")
-                runner_lines.append('  fi')
-                runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
-                runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
-                runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
-                runner_lines.append('  fi')
-                runner_lines.append('fi')
+                if local_windows:
+                    # Disable AVX-512 VNNI tensor repacking on Windows. The precompiled
+                    # llama-cpp-python wheel enables CPU_REPACK by default and uses
+                    # AVX-512 VNNI (q4_K_8x8 format) which causes STATUS_ILLEGAL_INSTRUCTION
+                    # (0xc000001d) on CPUs where AVX-512 is absent or fused off (e.g.
+                    # Intel 12th-gen consumer/desktop, many VMs). AVX2 may report as
+                    # supported while AVX-512 is not — this env var is always safe to set.
+                    runner_lines.append('export GGML_CPU_REPACK=0')
+                    # LOCAL Windows: this path installs/reuses prebuilt
+                    # llama-cpp-python[server] only (no automatic source build).
+                    # If the import fails (SIGILL / unsupported CPU), we surface a
+                    # clear message directing the user to Dependencies -> Build Source.
+                    runner_lines.append('if ! command -v llama-server &>/dev/null && ! python -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('  echo "llama-server not found — installing Python bindings..."')
+                    runner_lines.append(f"  {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='python -m pip')} || true")
+                    runner_lines.append('  if ! python -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    echo "Prebuilt wheel import failed on this CPU/VM. Open Cookbook -> Dependencies and run llama_cpp Build Source (it checks toolchain prerequisites and shows full build diagnostics)."')
+                    runner_lines.append('  fi')
+                    runner_lines.append('fi')
+                    runner_lines.append('if ! command -v llama-server &>/dev/null && ! python -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('  echo "ERROR: llama.cpp serving is not available after install attempts."')
+                    runner_lines.append('  echo "  Tip: install Visual Studio Build Tools (C++ workload) or MinGW so llama-cpp-python can be compiled for your CPU."')
+                    runner_lines.append('  ODYSSEUS_PREFLIGHT_EXIT=127')
+                    runner_lines.append('fi')
+                else:
+                    runner_lines.append('if [ -d /data/data/com.termux ]; then')
+                    runner_lines.append('  # Termux: no native build — use the Python bindings (CPU).')
+                    runner_lines.append('  if ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    pkg install -y cmake 2>/dev/null')
+                    runner_lines.append('    pip install numpy diskcache jinja2 2>/dev/null')
+                    runner_lines.append('    CMAKE_ARGS="-DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF" pip install \'llama-cpp-python[server]\' --no-build-isolation --no-cache-dir 2>&1 || true')
+                    runner_lines.append('  fi')
+                    runner_lines.append('elif ! command -v llama-server &>/dev/null; then')
+                    runner_lines.append('  echo "Native llama-server not found — building from source (one-time, may take a few minutes)..."')
+                    runner_lines.append('  mkdir -p ~/bin')
+                    runner_lines.append('  cd ~ && [ -d llama.cpp ] || git clone --depth 1 https://github.com/ggml-org/llama.cpp')
+                    # Build with the right accelerator: Metal on macOS (llama.cpp
+                    # enables it automatically, no flag), CUDA on Linux when present,
+                    # else a plain CPU build. nproc is Linux-only — fall back to
+                    # `sysctl hw.ncpu` on macOS. (Tip: `brew install llama.cpp` ships
+                    # a prebuilt llama-server and skips this whole source build.)
+                    runner_lines.append('  NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"')
+                    runner_lines.append('  if [ "$(uname -s)" = "Darwin" ]; then')
+                    runner_lines.append('    command -v cmake >/dev/null 2>&1 || echo "WARNING: cmake not found — install it with: brew install cmake (or: brew install llama.cpp for a prebuilt llama-server)."')
+                    # Start from a clean cache: a prior failed configure (e.g. a CUDA
+                    # attempt) poisons build/CMakeCache.txt, so a plain `cmake -B build`
+                    # would reuse the bad settings and fail again. CMAKE_BUILD_TYPE is
+                    # explicit so the binary is optimized (Metal auto-enables on macOS).
+                    runner_lines.append('    cd ~/llama.cpp && rm -rf build && cmake -B build -DCMAKE_BUILD_TYPE=Release \\')
+                    runner_lines.append('      && cmake --build build -j"$NPROC" --target llama-server \\')
+                    runner_lines.append('      && ln -sf ~/llama.cpp/build/bin/llama-server ~/bin/llama-server')
+                    runner_lines.append('  else')
+                    _append_llama_cpp_linux_accel_build_lines(runner_lines)
+                    runner_lines.append('  fi')
+                    # If the native build failed, fall back to the Python bindings.
+                    runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    echo "llama-server build failed — installing Python bindings as fallback..."')
+                    runner_lines.append(f"    {_pip_install_fallback_chain('llama-cpp-python[server]', python_cmd='pip')} || true")
+                    runner_lines.append('  fi')
+                    runner_lines.append('  if ! command -v llama-server &>/dev/null && ! python3 -c "import llama_cpp" 2>/dev/null; then')
+                    runner_lines.append('    echo "ERROR: llama.cpp serving is not available after install/build attempts."')
+                    runner_lines.append('    ODYSSEUS_PREFLIGHT_EXIT=127')
+                    runner_lines.append('  fi')
+                    runner_lines.append('fi')
             elif re.search(r"\bollama\s+serve\b", req.cmd):
                 handled_ollama_serve = True
                 _ollama_default_host = "0.0.0.0" if remote else "127.0.0.1"
@@ -3084,7 +3176,7 @@ def setup_cookbook_routes() -> APIRouter:
                 if has_exit and task_type == "serve":
                     # Serve tasks that exit are always errors — they should run indefinitely
                     status = "error"
-                elif has_exit and task_type == "download":
+                elif has_exit and task_type in ("download", "install"):
                     # Dependency installs are tracked as download tasks but only
                     # emit the generic runner exit marker, not HF download markers.
                     if download_has_incomplete_evidence and not download_has_ok:

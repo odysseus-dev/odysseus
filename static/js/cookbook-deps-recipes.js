@@ -49,16 +49,6 @@ const _RECIPES = [
     },
   },
 
-  // ── llama.cpp ─────────────────────────────────────────────────────────
-  {
-    backend: 'llama_cpp',
-    label: 'Any GGUF model',
-    match: () => true,
-    variants: {
-      pip:    { commands: ['CMAKE_ARGS="-DGGML_CUDA=on" uv pip install -U "llama-cpp-python[server]"'] },
-      docker: { commands: ['docker pull ghcr.io/ggerganov/llama.cpp:server-cuda'] },
-    },
-  },
 ];
 
 export const RECIPE_VARIANTS = ['pip', 'docker'];
@@ -75,7 +65,7 @@ export function recipeCommands(recipe, variant) {
 // Backends we surface a recipe panel for. Other rows in the Dependencies
 // list keep the existing flat Install/Reinstall button without an expand
 // affordance.
-export const RECIPE_BACKENDS = new Set(['vllm', 'sglang', 'llama_cpp']);
+export const RECIPE_BACKENDS = new Set(['vllm', 'sglang']);
 
 // All recipe entries for a given backend, in catalog order. The first one
 // is the model-specific match (when present); the last is always the

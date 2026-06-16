@@ -570,7 +570,7 @@ export function el(id) {
  * Styled confirm dialog — replaces native browser confirm().
  * Returns a Promise<boolean>.
  */
-export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+export function styledConfirm(message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false, title = 'Confirm', html = false } = {}) {
   return new Promise(resolve => {
     // Reuse or create the modal
     let overlay = document.getElementById('styled-confirm-overlay');
@@ -580,8 +580,8 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       overlay.className = 'modal';
       overlay.innerHTML =
         '<div class="modal-content styled-confirm-box" role="dialog" aria-modal="true" aria-labelledby="styled-confirm-title" aria-describedby="styled-confirm-msg">' +
-          '<div class="modal-header"><h4 id="styled-confirm-title">Confirm</h4></div>' +
-          '<div class="modal-body"><p id="styled-confirm-msg"></p></div>' +
+          '<div class="modal-header"><h4 id="styled-confirm-title"></h4></div>' +
+          '<div class="modal-body"><div id="styled-confirm-msg"></div></div>' +
           '<div class="modal-footer">' +
             '<button id="styled-confirm-cancel"></button>' +
             '<button id="styled-confirm-ok"></button>' +
@@ -590,11 +590,14 @@ export function styledConfirm(message, { confirmText = 'Confirm', cancelText = '
       document.body.appendChild(overlay);
     }
 
+    const titleEl = document.getElementById('styled-confirm-title');
     const msgEl = document.getElementById('styled-confirm-msg');
     const okBtn = document.getElementById('styled-confirm-ok');
     const cancelBtn = document.getElementById('styled-confirm-cancel');
 
-    msgEl.textContent = message;
+    titleEl.textContent = title;
+    if (html) msgEl.innerHTML = String(message || '');
+    else msgEl.textContent = message;
     okBtn.textContent = confirmText;
     cancelBtn.textContent = cancelText;
     okBtn.className = danger ? 'confirm-btn confirm-btn-danger' : 'confirm-btn confirm-btn-primary';

@@ -52,6 +52,151 @@ _GPU_LIST_RE = re.compile(r"^\d+(?:,\d+)*$")
 _LOCAL_DIR_RE = re.compile(r"^~?(?:/[\w. -]*)+$|^~$")
 _WINDOWS_LOCAL_DIR_RE = re.compile(r"^[A-Za-z]:[\\/](?:[\w. -]+(?:[\\/][\w. -]+)*[\\/]?)?$")
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+_LLAMA_CPP_WHL_SUFFIX_RE = re.compile(r"^(cpu|metal|vulkan|hip-radeon|cu\d+|rocm\d+)$")
+_LLAMA_CPP_WHL_BASE = "https://abetlen.github.io/llama-cpp-python/whl"
+_LLAMA_CPP_DEFAULT_WHL_SUFFIX = "cpu"
+
+
+def _parse_python_major_minor(version: str | None) -> tuple[int, int] | None:
+    if not version:
+        return None
+    m = re.search(r"(\d+)\.(\d+)", str(version))
+    if not m:
+        return None
+    try:
+        return int(m.group(1)), int(m.group(2))
+    except Exception:
+        return None
+
+
+def _cuda_version_to_wheel_suffix(cuda_version: str | None) -> str | None:
+    """Map a CUDA toolkit version string to the closest available wheel suffix.
+
+    Patch variants (12.4.1, 12.4.0) are normalised to major.minor before lookup
+    so they resolve identically to the base release (12.4 → cu124).
+    """
+    if not cuda_version:
+        return None
+    # Strip patch/build suffix — "12.4.1" and "12.4" both become (12, 4).
+    m = re.search(r"(\d+)\.(\d+)", str(cuda_version))
+    if not m:
+        return None
+    major = int(m.group(1))
+    minor = int(m.group(2))
+    explicit = {
+        (11, 8): "cu118",
+        (12, 1): "cu121",
+        (12, 2): "cu122",
+        (12, 3): "cu123",
+        (12, 4): "cu124",
+        (12, 5): "cu125",
+        (13, 0): "cu130",
+        (13, 2): "cu132",
+    }
+    if (major, minor) in explicit:
+        return explicit[(major, minor)]
+    # Unknown minor: clamp to nearest documented wheel within the same major.
+    if major == 11:
+        return "cu118"  # oldest / most compatible 11.x wheel
+    if major == 12:
+        # cu125 is the highest 12.x wheel; cu118 is the lowest published 12.x-compat.
+        return "cu125" if minor > 5 else "cu124"
+    if major == 13:
+        return "cu132" if minor >= 2 else "cu130"
+    return None
+
+
+def resolve_llama_cpp_wheel_suffix(
+    *,
+    platform: str | None,
+    python_version: str | None,
+    backend: str | None,
+    cuda_version: str | None = None,
+    rocm_version: str | None = None,
+    force_cpu_prebuilt: bool = False,
+) -> dict:
+    """Resolve llama-cpp-python wheel suffix from platform/runtime signals.
+
+    Returns a dict with: suffix, reason, python_supported, platform, backend.
+    """
+    plat = (platform or "").strip().lower()
+    if plat in ("darwin", "mac", "macos", "osx"):
+        plat = "macos"
+    elif plat in ("win", "win32"):
+        plat = "windows"
+    elif plat in ("", "linux2"):
+        plat = "linux"
+
+    be = (backend or "").strip().lower()
+    py_mm = _parse_python_major_minor(python_version)
+    py_ok = bool(py_mm is None or py_mm[0] >= 3)
+
+    if force_cpu_prebuilt:
+        return {
+            "suffix": "cpu",
+            "reason": "Forced CPU prebuilt selected by user.",
+            "python_supported": py_ok,
+            "platform": plat,
+            "backend": be or "unknown",
+        }
+
+    if plat == "macos":
+        return {
+            "suffix": "metal",
+            "reason": "macOS prebuilt defaults to Metal wheel.",
+            "python_supported": True,
+            "platform": plat,
+            "backend": "metal",
+        }
+
+    if be == "cuda":
+        mapped = _cuda_version_to_wheel_suffix(cuda_version)
+        if mapped:
+            return {
+                "suffix": mapped,
+                "reason": f"Detected CUDA {cuda_version}; selected {mapped} wheel.",
+                "python_supported": True,
+                "platform": plat,
+                "backend": be,
+            }
+        return {
+            "suffix": "cu124",
+            "reason": "CUDA detected but toolkit version was unavailable; using conservative cu124 wheel.",
+            "python_supported": True,
+            "platform": plat,
+            "backend": be,
+        }
+
+    if be == "rocm":
+        # hip-radeon is the Windows HIP wheel; on Linux use rocm72 which is the
+        # most widely supported prebuilt. An older ROCm stack may need an older
+        # wheel but no older suffix is published, so rocm72 is the floor.
+        suffix = "hip-radeon" if plat == "windows" else "rocm72"
+        ver_note = f" (ROCm {rocm_version})" if rocm_version else ""
+        return {
+            "suffix": suffix,
+            "reason": f"Detected AMD ROCm/HIP backend{ver_note}.",
+            "python_supported": True,
+            "platform": plat,
+            "backend": be,
+        }
+
+    if be == "vulkan":
+        return {
+            "suffix": "vulkan",
+            "reason": "Detected Vulkan backend.",
+            "python_supported": True,
+            "platform": plat,
+            "backend": be,
+        }
+
+    return {
+        "suffix": "cpu",
+        "reason": "No accelerator backend detected; using CPU prebuilt wheel.",
+        "python_supported": True,
+        "platform": plat,
+        "backend": be or "cpu",
+    }
 
 
 def _git_bash_path(path: str) -> str:
@@ -137,6 +282,18 @@ def _validate_gpus(v: str | None) -> str | None:
     return str(v)
 
 
+def _validate_llama_cpp_wheel_suffix(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    vv = str(v).strip().lower()
+    if not _LLAMA_CPP_WHL_SUFFIX_RE.fullmatch(vv):
+        raise HTTPException(
+            400,
+            "Invalid wheel_suffix — expected one of cpu|metal|vulkan|hip-radeon|cu*|rocm*",
+        )
+    return vv
+
+
 def _shell_path(p: str) -> str:
     """Render a validated path for a double-quoted shell context, expanding a
     leading ~ to $HOME (single quotes wouldn't expand it). Safe because
@@ -194,6 +351,51 @@ def _pip_install_no_cache(cmd: str) -> str:
     return cmd.replace("pip install", "pip install --no-cache-dir", 1)
 
 
+def _normalize_llama_cpp_pip_cmd(
+    cmd: str,
+    *,
+    add_prebuilt_index: bool = True,
+    wheel_suffix: str | None = None,
+    force_cpu_prebuilt: bool = False,
+) -> str:
+    """Normalize llama-cpp install commands to the server extra variant.
+
+    This enforces ``llama-cpp-python[server]`` for both ``llama_cpp`` aliases
+    and bare ``llama-cpp-python`` specs. Optionally appends the abetlen wheel
+    index URL for prebuilt installs.
+
+    Source-build workflows should pass ``add_prebuilt_index=False`` so pip does
+    not use the prebuilt wheel index.
+    """
+    if not cmd:
+        return cmd
+    if "llama_cpp" not in cmd and "llama-cpp-python" not in cmd:
+        return cmd
+
+    wheel_suffix = _validate_llama_cpp_wheel_suffix(wheel_suffix)
+
+    norm = re.sub(
+        r"(?<![A-Za-z0-9_.:/-])llama_cpp(?![A-Za-z0-9_.:/-])",
+        "llama-cpp-python[server]",
+        cmd,
+    )
+    norm = re.sub(
+        r"(?<![A-Za-z0-9_.:/-])llama-cpp-python(?!\[)(?![A-Za-z0-9_.:/-])",
+        "llama-cpp-python[server]",
+        norm,
+    )
+    if add_prebuilt_index and "--extra-index-url" not in norm:
+        suffix = _LLAMA_CPP_DEFAULT_WHL_SUFFIX if force_cpu_prebuilt else (wheel_suffix or _LLAMA_CPP_DEFAULT_WHL_SUFFIX)
+        norm += f" --extra-index-url {_llama_cpp_whl_index_url(suffix)}"
+    return norm
+
+
+def _llama_cpp_whl_index_url(suffix: str | None = None) -> str:
+    """Return the managed llama-cpp-python wheel index URL for a suffix."""
+    use_suffix = _validate_llama_cpp_wheel_suffix(suffix) or _LLAMA_CPP_DEFAULT_WHL_SUFFIX
+    return f"{_LLAMA_CPP_WHL_BASE}/{use_suffix}"
+
+
 def _pip_install_attempt(pip_cmd: str) -> str:
     """Wrap a single pip install command so its exit status survives the
     fallback chain and its stderr is visible in the tmux log on failure.
@@ -238,7 +440,6 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     exit code is preserved (no ``| tail`` masking) and the last 5 lines of
     pip output appear in the Cookbook log on failure.
     """
-    from core.platform_compat import IS_WINDOWS
     upgrade_flag = " -U" if upgrade else ""
     # Shell-quote the package spec: an extras spec like ``llama-cpp-python[server]``
     # contains brackets that bash would treat as a glob, so it must be quoted
@@ -249,7 +450,7 @@ def _pip_install_fallback_chain(package: str, *, python_cmd: str = "python3 -m p
     # stacks (common on WSL images). Prefer the prebuilt wheel index whenever
     # this package is requested so dependency-install tasks are reliable.
     if "llama-cpp-python" in package:
-        pkg += " --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu"
+        pkg += f" --extra-index-url {_llama_cpp_whl_index_url()}"
 
     pip_cmd = _pip_command(python_cmd)
     base = _pip_install_attempt(f"{pip_cmd} install -q{upgrade_flag} {pkg}")
@@ -577,6 +778,10 @@ _SERVE_CMD_ALLOWLIST = {
 _GGUF_PRELUDE_RE = re.compile(
     r'^MODEL_FILE=\$\([^\n]*?\)\s*&&\s*\{[^{}]*\}\s*\|\|\s*\{[^{}]*\}\s*&&\s*'
 )
+# Windows tool-PATH prefix injected by the client after add-tools-to-path:
+#   export PATH="/c/MSVC/bin:/c/cmake/bin:$PATH" && python3 -m pip install ...
+# Backticks, semicolons, pipes are excluded from the PATH value.
+_EXPORT_PATH_PREFIX_RE = re.compile(r'^export\s+PATH="[^"`\n;|]*"\s*&&\s*')
 _OLLAMA_HOST_ASSIGNMENT_RE = re.compile(r"(?:^|\s)OLLAMA_HOST=([^\s]+)")
 _OLLAMA_BIND_RE = re.compile(r"^\[([^\]]+)\]:(\d+)$|^([^:]+):(\d+)$")
 _OLLAMA_BIND_HOST_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
@@ -706,6 +911,23 @@ def _validate_serve_cmd(v: str | None) -> str | None:
         # rest is `[ENV=…] python3 -m llama_cpp.server … || [ENV=…] llama-server …`
         for part in rest.split("||"):
             _check_serve_binary(part.strip())
+        return v
+
+    # Windows tool-PATH prefix from add-tools-to-path:
+    #   export PATH="/c/MSVC/bin:$PATH" && python3 -m pip install ...
+    # The PATH value is server-generated (no user content past the shell-safe chars
+    # already excluded by the regex). Validate that the rest is a pip/python command.
+    m_path = _EXPORT_PATH_PREFIX_RE.match(v)
+    if m_path:
+        rest = v[m_path.end():]
+        if not re.match(
+            r'^(?:[A-Za-z_][A-Za-z0-9_]*=[^;&|`\n]*\s+)*(?:python|python3|pip)\s',
+            rest,
+        ):
+            raise HTTPException(400, "export PATH prefix only allowed before pip/python commands")
+        if any(c in rest for c in (";", "||", "`", "$(")):
+            raise HTTPException(400, "Invalid characters after PATH prefix")
+        _check_serve_binary(rest)
         return v
 
     # Otherwise: a single invocation — no shell metacharacters allowed.
@@ -878,6 +1100,10 @@ class ServeRequest(BaseModel):
     hf_token: str | None = None
     gpus: str | None = None
     platform: str | None = None    # "linux", "termux", or "windows"
+    wheel_suffix: str | None = None
+    source_wheel_hint: str | None = None
+    force_cpu_prebuilt: bool = False
+    cmake_args_extra: str | None = None  # e.g. "-DGGML_CUDA=on -DGGML_BLAS=ON"
 
 
 def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:

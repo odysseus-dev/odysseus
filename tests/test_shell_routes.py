@@ -10,7 +10,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
+import routes.shell_routes as shell_routes
 from routes.shell_routes import (
     _find_line_break,
     _import_optional_dependency_for_status,
@@ -479,3 +482,219 @@ class TestRejectCrossSite:
 
     def test_missing_header_allowed(self):
         assert _reject_cross_site(self._req({})) is None
+
+
+def _shell_client() -> TestClient:
+    app = FastAPI()
+    app.include_router(shell_routes.setup_shell_routes())
+    return TestClient(app)
+
+
+def test_resolve_wheel_endpoint_returns_force_cpu(monkeypatch):
+    async def _fake_probe(_platform_hint):
+        return {
+            "platform": "linux",
+            "python_version": "3.11",
+            "backend": "cuda",
+            "cuda_version": "12.4",
+            "python_arch": "x86_64",
+            "host_arch": "x86_64",
+            "python_arch_mismatch": False,
+        }
+
+    monkeypatch.setattr(shell_routes, "_probe_local_llama_wheel_context", _fake_probe)
+
+    with _shell_client() as client:
+        res = client.post(
+            "/api/cookbook/llama-cpp/resolve-wheel",
+            json={"platform": "linux", "force_cpu_prebuilt": True},
+        )
+
+    assert res.status_code == 200
+    payload = res.json()
+    assert payload["ok"] is True
+    assert payload["resolution"]["suffix"] == "cpu"
+
+
+def test_packages_endpoint_llama_metadata_exposes_arch_mismatch(monkeypatch):
+    async def _fake_probe(_platform_hint):
+        return {
+            "platform": "macos",
+            "python_version": "3.11",
+            "backend": "metal",
+            "cuda_version": None,
+            "python_arch": "x86_64",
+            "host_arch": "arm64",
+            "python_arch_mismatch": True,
+        }
+
+    monkeypatch.setattr(shell_routes, "_probe_local_llama_wheel_context", _fake_probe)
+
+    with _shell_client() as client:
+        res = client.get("/api/cookbook/packages?platform=macos")
+
+    assert res.status_code == 200
+    payload = res.json()
+    llama = next((p for p in payload.get("packages", []) if p.get("name") == "llama_cpp"), None)
+    assert llama is not None
+    assert llama.get("selected_wheel_suffix") == "metal"
+    flags = llama.get("compatibility_flags") or {}
+    assert flags.get("python_arch_mismatch") is True
+    assert "native arm64 Python" in str(llama.get("wheel_reason") or "")
+
+
+# ---------------------------------------------------------------------------
+# _win_path_to_bash helper
+# ---------------------------------------------------------------------------
+
+def test_win_path_to_bash_converts_drive_letter():
+    from routes.shell_routes import _win_path_to_bash
+    assert _win_path_to_bash(r"C:\Foo\Bar") == "/c/Foo/Bar"
+    assert _win_path_to_bash(r"D:\VC\Tools\MSVC\bin") == "/d/VC/Tools/MSVC/bin"
+    assert _win_path_to_bash("C:/Foo/Bar") == "/c/Foo/Bar"
+
+
+def test_win_path_to_bash_non_windows_path_passthrough():
+    from routes.shell_routes import _win_path_to_bash
+    assert _win_path_to_bash("/usr/bin") == "/usr/bin"
+
+
+# ---------------------------------------------------------------------------
+# prereq-check endpoint — Windows path
+# ---------------------------------------------------------------------------
+
+def _prereq_client_with_ps_output(monkeypatch, ps_json: str, returncode: int = 0):
+    """Return a TestClient whose prereq-check endpoint gets its subprocess
+    output from ``ps_json`` without actually spawning PowerShell."""
+    import asyncio
+
+    class _FakeProc:
+        def __init__(self, out, rc):
+            self._out = out
+            self.returncode = rc
+
+        async def communicate(self):
+            return self._out.encode(), b""
+
+    async def _fake_exec(*args, **kwargs):
+        return _FakeProc(ps_json, returncode)
+
+    monkeypatch.setattr(shell_routes.asyncio, "create_subprocess_exec", _fake_exec)
+    return _shell_client()
+
+
+def test_prereq_check_tools_on_path_returns_ok(monkeypatch):
+    """cl.exe and cmake both on PATH → ok=True, needs_path_add=False."""
+    ps_out = (
+        '{"cl_on_path":true,"cl_dir":"","cmake_on_path":true,"cmake_dir":"",'
+        '"vs_inst":"C:\\\\VS","gxx":false,"cl":true,"cmake":true}'
+    )
+    with _prereq_client_with_ps_output(monkeypatch, ps_out) as client:
+        res = client.post(
+            "/api/cookbook/llama-cpp/prereq-check",
+            json={"platform": "windows", "mode": "source"},
+        )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is True
+    assert data["needs_path_add"] is False
+    assert data["missing"] == []
+    assert data["paths_to_add"] == []
+
+
+def test_prereq_check_cl_via_vswhere_returns_needs_path_add(monkeypatch):
+    """cl.exe found via vswhere but not on PATH, cmake on PATH (prebuilt mode)
+    → ok=False, needs_path_add=True, paths_to_add contains cl_dir."""
+    import json as _json
+    cl_dir = r"C:\VS\VC\Tools\MSVC\14.40\bin\Hostx64\x64"
+    ps_out = _json.dumps({
+        "cl_on_path": False, "cl_dir": cl_dir,
+        "cmake_on_path": True, "cmake_dir": "",
+        "vs_inst": r"C:\VS", "gxx": False, "cl": True, "cmake": True,
+    })
+    with _prereq_client_with_ps_output(monkeypatch, ps_out) as client:
+        res = client.post(
+            "/api/cookbook/llama-cpp/prereq-check",
+            json={"platform": "windows", "mode": "prebuilt"},
+        )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is False
+    assert data["needs_path_add"] is True
+    assert cl_dir in data["paths_to_add"]
+    assert data["missing"] == []
+
+
+def test_prereq_check_source_needs_cmake_path_add(monkeypatch):
+    """cl.exe on PATH, cmake found via vswhere only (source mode)
+    → ok=False, needs_path_add=True, cmake_dir in paths_to_add."""
+    import json as _json
+    cmake_dir = r"C:\VS\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+    ps_out = _json.dumps({
+        "cl_on_path": True, "cl_dir": "",
+        "cmake_on_path": False, "cmake_dir": cmake_dir,
+        "vs_inst": r"C:\VS", "gxx": False, "cl": True, "cmake": True,
+    })
+    with _prereq_client_with_ps_output(monkeypatch, ps_out) as client:
+        res = client.post(
+            "/api/cookbook/llama-cpp/prereq-check",
+            json={"platform": "windows", "mode": "source"},
+        )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is False
+    assert data["needs_path_add"] is True
+    assert cmake_dir in data["paths_to_add"]
+    assert data["missing"] == []
+
+
+def test_prereq_check_tools_missing_returns_missing(monkeypatch):
+    """No compiler found anywhere → ok=False, needs_path_add=False, missing populated."""
+    ps_out = (
+        '{"cl_on_path":false,"cl_dir":"","cmake_on_path":false,"cmake_dir":"",'
+        '"vs_inst":"","gxx":false,"cl":false,"cmake":false}'
+    )
+    with _prereq_client_with_ps_output(monkeypatch, ps_out) as client:
+        res = client.post(
+            "/api/cookbook/llama-cpp/prereq-check",
+            json={"platform": "windows", "mode": "source"},
+        )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is False
+    assert data["needs_path_add"] is False
+    assert data["paths_to_add"] == []
+    tool_names = [m["tool"] for m in data["missing"]]
+    assert any("compiler" in t for t in tool_names)
+    assert any("cmake" in t for t in tool_names)
+
+
+def test_prereq_check_prebuilt_does_not_require_cmake(monkeypatch):
+    """In prebuilt mode, missing cmake alone must not populate missing[] (cmake not required)."""
+    ps_out = (
+        '{"cl_on_path":true,"cl_dir":"","cmake_on_path":false,"cmake_dir":"",'
+        '"vs_inst":"C:\\\\VS","gxx":false,"cl":true,"cmake":false}'
+    )
+    with _prereq_client_with_ps_output(monkeypatch, ps_out) as client:
+        res = client.post(
+            "/api/cookbook/llama-cpp/prereq-check",
+            json={"platform": "windows", "mode": "prebuilt"},
+        )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["ok"] is True
+    assert data["missing"] == []
+    assert data["paths_to_add"] == []
+
+
+# ---------------------------------------------------------------------------
+# add-to-path endpoint
+# ---------------------------------------------------------------------------
+
+def test_add_to_path_rejects_remote_host():
+    with _shell_client() as client:
+        res = client.post(
+            "/api/cookbook/llama-cpp/add-tools-to-path",
+            json={"remote_host": "myserver.local"},
+        )
+    assert res.status_code == 400

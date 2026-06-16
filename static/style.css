@@ -19583,6 +19583,9 @@ body.gallery-selecting .gallery-dl-btn,
   border-left: 1px solid color-mix(in srgb, var(--green, #50fa7b) 35%, transparent);
 }
 .cookbook-dep-installed-btn:hover { filter: brightness(1.15); }
+.cookbook-dep-install.cookbook-dep-installed-btn .cookbook-dep-caret {
+  border-left: 1px solid rgba(255, 255, 255, 0.4);
+}
 .hwfit-serve-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));

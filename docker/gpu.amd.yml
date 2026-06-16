@@ -1,3 +1,10 @@
+# NOTE: This overlay is Linux-only. The /dev/kfd and /dev/dri paths are Linux
+# kernel device drivers. They do not exist in WSL2 or Docker Desktop on Windows
+# — Docker will refuse to map these devices and the container starts with no GPU
+# access. For AMD GPU acceleration on Windows, use native mode: run Odysseus
+# directly with Python (not Docker) and let Cookbook install the appropriate
+# llama.cpp binary (HIP for RDNA3+/RDNA4, Vulkan for RDNA2).
+#
 # AMD ROCm GPU overlay. Enable by setting COMPOSE_FILE in .env:
 #   COMPOSE_FILE=docker-compose.yml:docker/gpu.amd.yml
 #   RENDER_GID=<numeric output of: getent group render | cut -d: -f3>

@@ -19,12 +19,15 @@ from routes.cookbook_helpers import (
     _pip_install_attempt,
     _pip_install_fallback_chain,
     _ollama_bind_from_cmd,
+    _normalize_llama_cpp_pip_cmd,
+    resolve_llama_cpp_wheel_suffix,
     _safe_env_prefix,
     _user_shell_path_bootstrap,
     _venv_safe_local_pip_install_cmd,
     _normalize_llama_cpp_python_cache_types,
     _validate_gpus,
     _validate_local_dir,
+    _validate_llama_cpp_wheel_suffix,
     _validate_repo_id,
     _validate_serve_cmd,
     _validate_serve_model_id,
@@ -196,6 +199,24 @@ def test_validate_gpus_accepts_indexes_only():
         _validate_gpus("0; rm -rf /")
 
 
+def test_validate_llama_cpp_wheel_suffix_accepts_allowed_values():
+    assert _validate_llama_cpp_wheel_suffix("cpu") == "cpu"
+    assert _validate_llama_cpp_wheel_suffix("Cu124") == "cu124"
+    assert _validate_llama_cpp_wheel_suffix("rocm72") == "rocm72"
+    assert _validate_llama_cpp_wheel_suffix("hip-radeon") == "hip-radeon"
+    assert _validate_llama_cpp_wheel_suffix("vulkan") == "vulkan"
+    assert _validate_llama_cpp_wheel_suffix(None) is None
+
+
+def test_validate_llama_cpp_wheel_suffix_rejects_injection_payloads():
+    with pytest.raises(HTTPException):
+        _validate_llama_cpp_wheel_suffix("cpu;rm -rf /")
+    with pytest.raises(HTTPException):
+        _validate_llama_cpp_wheel_suffix("../../evil")
+    with pytest.raises(HTTPException):
+        _validate_llama_cpp_wheel_suffix("cu124 --extra-index-url https://evil")
+
+
 def test_validate_repo_id_stays_strict_for_hf_downloads():
     assert _validate_repo_id("Qwen/Qwen3-8B") == "Qwen/Qwen3-8B"
     with pytest.raises(HTTPException):
@@ -348,9 +369,137 @@ def test_serve_pip_install_normalizes_llama_cpp_alias_and_adds_wheel_index():
     src = (pathlib.Path(__file__).resolve().parent.parent
         / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
 
-    assert "re.sub(r\"(?<![A-Za-z0-9_.-])llama_cpp(?![A-Za-z0-9_.-])\", \"llama-cpp-python[server]\", req.cmd)" in src
-    assert "if \"llama-cpp-python\" in req.cmd and \"--extra-index-url\" not in req.cmd:" in src
-    assert "https://abetlen.github.io/llama-cpp-python/whl/cpu" in src
+    assert "_normalize_llama_cpp_pip_cmd(" in src
+    assert "_llama_cpp_whl_index_url()" in src
+
+
+def test_normalize_llama_cpp_pip_cmd_enforces_server_extra_and_index():
+    cmd = 'python -m pip install llama_cpp'
+    out = _normalize_llama_cpp_pip_cmd(cmd)
+    assert "llama-cpp-python[server]" in out
+    assert "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu" in out
+
+
+def test_normalize_llama_cpp_pip_cmd_source_build_skips_prebuilt_index():
+    cmd = 'python -m pip install --no-binary llama-cpp-python "llama-cpp-python[server]"'
+    out = _normalize_llama_cpp_pip_cmd(cmd, add_prebuilt_index=False)
+    assert "llama-cpp-python[server]" in out
+    assert "--extra-index-url" not in out
+
+
+def test_normalize_llama_cpp_pip_cmd_uses_explicit_wheel_suffix():
+    cmd = 'python -m pip install llama-cpp-python[server]'
+    out = _normalize_llama_cpp_pip_cmd(cmd, wheel_suffix="cu124")
+    assert "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124" in out
+
+
+def test_normalize_llama_cpp_pip_cmd_force_cpu_overrides_wheel_suffix():
+    cmd = 'python -m pip install llama-cpp-python[server]'
+    out = _normalize_llama_cpp_pip_cmd(cmd, wheel_suffix="cu124", force_cpu_prebuilt=True)
+    assert "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu" in out
+    assert "/cu124" not in out
+
+
+def test_normalize_llama_cpp_pip_cmd_does_not_rewrite_existing_index_url_value():
+    cmd = (
+        "python -m pip install llama_cpp "
+        "--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124"
+    )
+    out = _normalize_llama_cpp_pip_cmd(cmd)
+    assert "llama-cpp-python[server]" in out
+    assert "https://abetlen.github.io/llama-cpp-python/whl/cu124" in out
+    assert "llama-cpp-python[server]/whl" not in out
+
+
+def test_normalize_llama_cpp_pip_cmd_rejects_invalid_wheel_suffix():
+    cmd = 'python -m pip install llama_cpp'
+    with pytest.raises(HTTPException):
+        _normalize_llama_cpp_pip_cmd(cmd, wheel_suffix='cpu;rm -rf /')
+
+
+def test_resolve_llama_cpp_wheel_suffix_cuda_mapping():
+    out = resolve_llama_cpp_wheel_suffix(
+        platform="windows",
+        python_version="3.11",
+        backend="cuda",
+        cuda_version="12.4",
+    )
+    assert out["suffix"] == "cu124"
+
+
+def test_resolve_llama_cpp_wheel_suffix_cuda_patch_version_normalised():
+    """12.4.1 (patch-version string from nvcc) must resolve to cu124, same as 12.4."""
+    for patch_ver in ("12.4.1", "12.4.0", "12.4.300"):
+        out = resolve_llama_cpp_wheel_suffix(
+            platform="linux",
+            python_version="3.11",
+            backend="cuda",
+            cuda_version=patch_ver,
+        )
+        assert out["suffix"] == "cu124", f"Expected cu124 for {patch_ver!r}, got {out['suffix']!r}"
+
+
+def test_resolve_llama_cpp_wheel_suffix_cuda_11_unknown_minor_clamps():
+    """An unknown CUDA 11.x minor (e.g. 11.9) should fall back to the cu118 wheel."""
+    out = resolve_llama_cpp_wheel_suffix(
+        platform="linux",
+        python_version="3.11",
+        backend="cuda",
+        cuda_version="11.9",
+    )
+    assert out["suffix"] == "cu118"
+
+
+def test_resolve_llama_cpp_wheel_suffix_rocm_version_included_in_reason():
+    """rocm_version string should appear in the returned reason text on Linux."""
+    out = resolve_llama_cpp_wheel_suffix(
+        platform="linux",
+        python_version="3.11",
+        backend="rocm",
+        rocm_version="7.2",
+    )
+    assert out["suffix"] == "rocm72"
+    assert "7.2" in out["reason"]
+
+
+def test_resolve_llama_cpp_wheel_suffix_windows_amd_uses_hip_radeon():
+    out = resolve_llama_cpp_wheel_suffix(
+        platform="windows",
+        python_version="3.11",
+        backend="rocm",
+    )
+    assert out["suffix"] == "hip-radeon"
+
+
+def test_resolve_llama_cpp_wheel_suffix_macos_prefers_metal():
+    out = resolve_llama_cpp_wheel_suffix(
+        platform="macos",
+        python_version="3.11",
+        backend="cpu",
+    )
+    assert out["suffix"] == "metal"
+
+
+def test_resolve_llama_cpp_wheel_suffix_python_version_does_not_force_cpu_fallback():
+    out = resolve_llama_cpp_wheel_suffix(
+        platform="linux",
+        python_version="3.14",
+        backend="cuda",
+        cuda_version="12.4",
+    )
+    assert out["suffix"] == "cu124"
+    assert out["python_supported"] is True
+
+
+def test_resolve_llama_cpp_wheel_suffix_force_cpu_override():
+    out = resolve_llama_cpp_wheel_suffix(
+        platform="linux",
+        python_version="3.11",
+        backend="cuda",
+        cuda_version="12.4",
+        force_cpu_prebuilt=True,
+    )
+    assert out["suffix"] == "cpu"
 
 
 def test_vllm_preflight_reports_cli_and_version():

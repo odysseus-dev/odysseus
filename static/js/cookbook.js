@@ -1,4 +1,4 @@
-// ============================================
+﻿// ============================================
 // COOKBOOK MODULE (v2 — simplified)
 // What Fits? + Saved presets, inline action panels
 // ============================================
@@ -771,16 +771,43 @@ async function _fetchDependencies() {
       if (_depPort) _pkgParams.set('ssh_port', _depPort);
       if (_depVenv) _pkgParams.set('venv', _depVenv);
     }
+    if (_envState.platform) _pkgParams.set('platform', _envState.platform);
     const resp = await fetch('/api/cookbook/packages' + (_pkgParams.toString() ? '?' + _pkgParams.toString() : ''));
     const data = await resp.json();
     const pkgs = data.packages || [];
     if (!pkgs.length) { list.innerHTML = '<div class="hwfit-loading">No packages found</div>'; return; }
     const _winUnsupported = new Set(['hf_transfer', 'vllm', 'rembg', 'gfpgan']);
 
+    // Build a set of package names that currently have an active (running/queued) task,
+    // so the status button can show "Running…" instead of the stale Installed/Install state.
+    const _runningDepNames = new Set();
+    for (const _t of _loadTasks()) {
+      if (!['running', 'queued'].includes(_t.status)) continue;
+      const _tn = (_t.name || '').toLowerCase();
+      if (_tn.includes('llama')) _runningDepNames.add('llama_cpp');
+      if (_tn.includes('vllm')) _runningDepNames.add('vllm');
+      if (_tn.includes('sglang')) _runningDepNames.add('sglang');
+    }
+
     const _statusTag = (pkg, isLocal, isSystemDep, winBlocked) => {
       if (winBlocked) return `<span class="cookbook-dep-tag cookbook-dep-na">N/A</span>`;
-      if (pkg.installed && isSystemDep) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
-      if (pkg.installed && pkg.pip_update_available === false) {
+      // If an install/reinstall task is actively running for this package, show Running… state.
+      if (_runningDepNames.has(pkg.name)) {
+        if (pkg.name === 'llama_cpp') {
+          return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn cookbook-dep-llama-menu-btn" disabled style="opacity:0.65;cursor:default;" title="A task is currently running for llama.cpp — check the Running tab"><span class="cookbook-dep-installed-label">Running…</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
+        }
+        return `<button class="cookbook-dep-tag cookbook-dep-installed cookbook-dep-installed-btn" disabled style="opacity:0.65;cursor:default;" title="A task is currently running for this package — check the Running tab"><span class="cookbook-dep-installed-label">Running…</span></button>`;
+      }
+      const hasCustomInstall = !!pkg.install_cmd;
+      const hasCustomUpdate = !!pkg.update_cmd;
+      if (pkg.name === 'llama_cpp') {
+        const lbl = pkg.installed ? 'Installed' : 'Install';
+        const tt = pkg.installed ? 'Installed - click for actions' : 'Install - click for options';
+        const stateClass = pkg.installed ? 'cookbook-dep-installed' : 'cookbook-dep-install';
+        return `<button class="cookbook-dep-tag ${stateClass} cookbook-dep-installed-btn cookbook-dep-llama-menu-btn" title="${tt}"><span class="cookbook-dep-installed-label">${lbl}</span><span class="cookbook-dep-caret">&#9662;</span></button>`;
+      }
+      if (pkg.installed && isSystemDep && !hasCustomUpdate) return `<span class="cookbook-dep-tag cookbook-dep-installed" title="Found on selected server">Installed</span>`;
+      if (pkg.installed && pkg.pip_update_available === false && !hasCustomUpdate) {
         const tip = esc(pkg.update_note || pkg.status_note || 'Found externally; update outside Odysseus.');
         return `<span class="cookbook-dep-tag cookbook-dep-installed" title="${tip}">Installed</span>`;
       }
@@ -814,7 +841,16 @@ async function _fetchDependencies() {
       const isSystemDep = pkg.kind === 'system';
       const winBlocked = !isLocal && _isWindows() && _winUnsupported.has(pkg.name);
       const note = pkg.status_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.65;margin-top:3px;">${esc(pkg.status_note)}</div>` : '';
+      const wheelNote = (pkg.name === 'llama_cpp' && pkg.selected_wheel_suffix)
+        ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.6;margin-top:3px;">Wheel: ${esc(pkg.selected_wheel_suffix)}${pkg.wheel_reason ? ` - ${esc(pkg.wheel_reason)}` : ''}</div>`
+        : '';
+      const backendMismatchNote = (pkg.name === 'llama_cpp' && pkg.backend_mismatch_note)
+        ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.72;margin-top:3px;" title="${esc(pkg.backend_mismatch_tooltip || '')}">${esc(pkg.backend_mismatch_note)}</div>`
+        : '';
       const updateNote = pkg.installed && pkg.pip_update_available === false && pkg.update_note ? `<div class="memory-item-meta" style="font-size:10px;opacity:0.55;margin-top:3px;">${esc(pkg.update_note)}</div>` : '';
+      const archMismatchTag = (pkg.name === 'llama_cpp' && pkg.compatibility_flags?.python_arch_mismatch)
+        ? `<span class="cookbook-dep-tag cookbook-dep-na" title="Host is arm64 but Python is ${esc(pkg.compatibility_flags?.python_arch || 'x86_64')} - prebuilt wheels may be wrong arch. Install an arm64 Python for best results.">⚠ arch</span>`
+        : '';
       // Inline rebuild/reinstall tag. Styled as a .cookbook-dep-tag so it
       // matches the LLM category tag's pill look, and lives to the LEFT of the
       // category tag. llama_cpp uses the /api/cookbook/rebuild-engine flow
@@ -823,7 +859,10 @@ async function _fetchDependencies() {
       // so the user can watch the pip install in the Running tab.
       let _rebuildBtn = '';
       if (pkg.name === 'llama_cpp') {
-        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild" id="cookbook-rebuild-engine" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Rebuild</button>`;
+        _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-llama-rebuild" style="display:none" title="Clear the cached llama.cpp build so the next serve recompiles from source (use after installing a CUDA/ROCm toolkit to turn a CPU-only build into a GPU build).">Clear Build Cache</button>`
+          + `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-llama-build-source" style="display:none" title="Build llama-cpp-python[server] from source (no prebuilt wheel index). Checks required tools first and shows full logs in Running.">Build Src</button>`
+          + `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-llama-install-prebuilt" style="display:none" title="Install/reinstall llama-cpp-python[server] from the managed prebuilt wheel index.">Prebuilt</button>`
+          + `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-llama-install-prebuilt-cpu" style="display:none" title="Force-install CPU prebuilt wheels. Use this if accelerated prebuilt resolution fails and you do not want a source build.">CPU Prebuilt</button>`;
       } else if (pkg.name === 'vllm' && pkg.installed) {
         _rebuildBtn = `<button type="button" class="cookbook-dep-tag cookbook-dep-rebuild cookbook-dep-reinstall" data-reinstall-pkg="vllm" title="Force-reinstall vLLM (pulls a matching torch). Runs as a tmux task in the Running tab.">Reinstall</button>`;
       } else if (pkg.name === 'sglang' && pkg.installed) {
@@ -836,14 +875,17 @@ async function _fetchDependencies() {
         ? `<button class="cookbook-dep-tag cookbook-dep-recipe-caret" data-dep-recipe-toggle="${esc(pkg.name)}" title="Pick a model to see the exact install commands" aria-expanded="false" style="background:none;border:1px solid var(--border);padding:2px 6px;display:inline-flex;align-items:center;cursor:pointer;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.15s"><polyline points="6 9 12 15 18 9"/></svg></button>`
         : '';
       const recipePanel = hasRecipe ? _recipePanelHtml(pkg.name) : '';
-      return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}">`
+      return `<div class="cookbook-dep-row${winBlocked ? ' cookbook-dep-blocked' : ''}" data-pkg-name="${esc(pkg.name)}" data-dep-pip="${esc(pkg.pip || '')}" data-dep-install-cmd="${esc(pkg.install_cmd || '')}" data-dep-update-cmd="${esc(pkg.update_cmd || '')}" data-dep-target="${isLocal ? 'local' : 'remote'}" data-dep-kind="${esc(pkg.kind || 'python')}" data-dep-installed="${pkg.installed ? '1' : '0'}" data-selected-wheel="${esc(pkg.selected_wheel_suffix || '')}">`
         + `<div class="cookbook-dep-info">`
         + `<div class="memory-item-title">${_depGlyphHtml(pkg.name)}${esc(pkg.name)}</div>`
         + `<div class="memory-item-meta" style="font-size:10px;opacity:0.5;margin-top:2px;">${esc(pkg.desc)}</div>`
         + note
+        + wheelNote
+        + backendMismatchNote
         + updateNote
         + `</div>`
         + _rebuildBtn
+        + archMismatchTag
         + `<span class="cookbook-dep-tag cookbook-dep-cat">${esc(pkg.category)}</span>`
         + _statusTag(pkg, isLocal, isSystemDep, winBlocked)
         + recipeCaret
@@ -1144,6 +1186,8 @@ async function _fetchDependencies() {
       document.querySelectorAll('.cookbook-dep-menu').forEach(d => d.remove());
       const row = anchor.closest('.cookbook-dep-row');
       if (!row) return;
+      const pkgKey = row.dataset.pkgName || '';
+      const isInstalled = row.dataset.depInstalled === '1';
       const pipName = row.dataset.depPip;
       const pkgName = row.querySelector('.memory-item-title')?.textContent || pipName;
       const isLocalOnly = row.dataset.depTarget === 'local';
@@ -1154,17 +1198,49 @@ async function _fetchDependencies() {
       let left = Math.min(rect.right - minW, window.innerWidth - minW - 8);
       left = Math.max(8, left);
       dropdown.style.cssText = `position:fixed;display:block;z-index:10001;top:${rect.bottom + 6}px;left:${left}px;right:auto;min-width:${minW}px;max-width:calc(100vw - 16px);background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:6px;font-size:11px;`;
+      const addItem = (label, title, onClick, iconSvg = '') => {
+        const it = document.createElement('div');
+        it.className = 'dropdown-item-compact';
+        it.innerHTML = `<span class="dropdown-icon">${iconSvg}</span><span>${label}</span>`;
+        if (title) it.title = title;
+        it.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          dropdown.remove();
+          await onClick();
+        });
+        dropdown.appendChild(it);
+      };
       const upIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>';
-      const it = document.createElement('div');
-      it.className = 'dropdown-item-compact';
-      it.innerHTML = `<span class="dropdown-icon">${upIco}</span><span>Update</span>`;
-      it.title = `Update ${pkgName} to the latest version (pip install -U)`;
-      it.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        dropdown.remove();
-        await _installDep(pipName, pkgName, isLocalOnly, true, null);
-      });
-      dropdown.appendChild(it);
+      const dlIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+      const cpuIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M15 20v2M9 2v2M9 20v2M2 9h2M20 9h2M2 15h2M20 15h2"/><rect x="4" y="4" width="16" height="16" rx="2"/></svg>';
+      const wrenchIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
+      const trashIco = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+
+      if (pkgKey === 'llama_cpp') {
+        addItem('Install (Prebuilt)', 'Resolve best prebuilt wheel suffix and install', async () => {
+          row.querySelector('.cookbook-dep-llama-install-prebuilt')?.click();
+        }, dlIco);
+        addItem('Install (CPU Prebuilt)', 'Force CPU prebuilt wheel install', async () => {
+          row.querySelector('.cookbook-dep-llama-install-prebuilt-cpu')?.click();
+        }, cpuIco);
+        addItem('Build From Source', 'Build llama-cpp-python[server] from source', async () => {
+          row.querySelector('.cookbook-dep-llama-build-source')?.click();
+        }, wrenchIco);
+        addItem('Clear Build Cache', 'Remove the cached llama-server binary so the next serve recompiles (e.g. after installing CUDA/ROCm)', async () => {
+          row.querySelector('.cookbook-dep-llama-rebuild')?.click();
+        }, trashIco);
+        if (isInstalled) {
+          addItem('Update', row.dataset.depUpdateCmd ? `Update ${pkgName} using its custom command` : `Update ${pkgName} to the latest version (pip install -U)`, async () => {
+            const updateCmd = row.dataset.depUpdateCmd || '';
+            await _installDep(pipName, pkgName, isLocalOnly, true, null, updateCmd);
+          }, upIco);
+        }
+      } else {
+        addItem('Update', row.dataset.depUpdateCmd ? `Update ${pkgName} using its custom command` : `Update ${pkgName} to the latest version (pip install -U)`, async () => {
+          const updateCmd = row.dataset.depUpdateCmd || '';
+          await _installDep(pipName, pkgName, isLocalOnly, true, null, updateCmd);
+        }, upIco);
+      }
       document.body.appendChild(dropdown);
       const close = (ev) => {
         if (!dropdown.contains(ev.target) && ev.target !== anchor && !anchor.contains(ev.target)) {
@@ -1417,44 +1493,475 @@ function _wireTabEvents(body) {
   // so a host that first built CPU-only (no nvcc at build time) keeps reusing
   // that binary forever; this is the lever to force a fresh GPU build after a
   // CUDA/ROCm toolkit is installed.
-  const rebuildBtn = document.getElementById('cookbook-rebuild-engine');
-  if (rebuildBtn && !rebuildBtn._wired) {
-    rebuildBtn._wired = true;
-    rebuildBtn.addEventListener('click', async () => {
-      // Match _installDep: honor the Dependencies server selector so the clear
-      // runs on the same host the build runs on.
-      const sel = document.getElementById('hwfit-deps-server');
-      if (sel) _applyServerSelection(sel.value);
-      const host = _envState.remoteHost || '';
-      const where = host || 'this server';
-      if (!confirm(`Rebuild the llama.cpp engine on ${where}?\n\nThis clears the cached llama-server build so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.`)) return;
-      const _label = rebuildBtn.textContent;
-      rebuildBtn.disabled = true;
-      rebuildBtn.textContent = 'Clearing...';
+  // Cache for resolve-wheel responses: keyed by "<host>|<platform>" so switching
+  // servers invalidates stale entries.
+  if (!document._cookbookWheelResolveCache) document._cookbookWheelResolveCache = new Map();
+
+  /**
+   * Run prereq-check and, if tools are found via vswhere but not on PATH,
+   * offer to add them permanently.  Returns true when the caller should proceed
+   * with the install/build; false when it should stop (tools missing or user
+   * cancelled the PATH-add dialog).
+   *
+   * @param {string} host  - remoteHost or '' for local
+   * @param {'prebuilt'|'source'} mode
+   * @param {string[]} [bashExportsRef] - OUT param: if PATH was added, filled
+   *        with Git-Bash-style dirs to prepend in the build command
+   */
+  async function _winLlamaPrereqCheck(host, mode, bashExportsRef, sourceWheelHint = '') {
+    const where = host || 'this server';
+    const _renderToolListHtml = (items) => {
+      const arr = Array.isArray(items) ? items : [];
+      if (!arr.length) return '<div style="opacity:0.75;">No specific tools listed.</div>';
+      return `<ul style="margin:6px 0 0 18px;padding:0;">${arr
+        .map((m) => `<li><strong>${esc(m.tool || 'tool')}</strong>: ${esc(m.hint || '')}${m.url ? ` <a href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">${esc(m.url)}</a>` : ''}</li>`)
+        .join('')}</ul>`;
+    };
+    const _componentFromToolLabel = (toolName) => {
+      const t = String(toolName || '').toLowerCase();
+      if (t.includes('nvcc') || t.includes('cuda')) {
+        return {
+          summary: 'CUDA Toolkit (nvcc)',
+          intro: 'CUDA acceleration requires the NVIDIA CUDA Toolkit and nvcc to be discoverable from the build environment.',
+          url: 'https://developer.nvidia.com/cuda-downloads',
+        };
+      }
+      if (t.includes('cmake')) {
+        return {
+          summary: 'CMake',
+          intro: 'Source builds require CMake to generate and configure native build files.',
+          url: 'https://cmake.org/download/',
+        };
+      }
+      if (t.includes('compiler') || t.includes('cl') || t.includes('g++')) {
+        return {
+          summary: 'C/C++ Compiler Toolchain',
+          intro: 'A native compiler is required to compile llama-cpp-python from source or install build-dependent wheels.',
+          url: 'https://visualstudio.microsoft.com/visual-cpp-build-tools/',
+        };
+      }
+      if (t.includes('vulkan')) {
+        return {
+          summary: 'Vulkan SDK',
+          intro: 'Vulkan builds require SDK headers/libraries and runtime tooling to be installed and discoverable.',
+          url: 'https://vulkan.lunarg.com/sdk/home',
+        };
+      }
+      if (t.includes('hip') || t.includes('rocm')) {
+        return {
+          summary: 'AMD HIP/ROCm Toolchain',
+          intro: 'HIP/ROCm builds require the AMD toolchain to be installed and visible to the compiler environment.',
+          url: 'https://rocm.docs.amd.com/',
+        };
+      }
+      return {
+        summary: String(toolName || 'Required Component'),
+        intro: 'This component is required to complete the selected build workflow.',
+        url: '',
+      };
+    };
+    const _renderComponentDetails = (items, { forPathAdd = false } = {}) => {
+      const arr = Array.isArray(items) ? items : [];
+      if (!arr.length) return '';
+      return arr.map((m) => {
+        const meta = _componentFromToolLabel(m.tool || '');
+        const link = m.url || meta.url;
+        const intro = m.hint || meta.intro;
+        const step2 = forPathAdd
+          ? 'Click the <strong>Add to PATH</strong> button below this dialog to register the discovered directory.'
+          : 'After install, re-run this action and use the <strong>Add to PATH</strong> button if prompted.';
+        return [
+          '<details style="margin-top:10px;">',
+          `<summary><strong>${esc(meta.summary)}</strong></summary>`,
+          `<p style="margin:8px 0 4px 0;opacity:0.9;">${esc(intro)}</p>`,
+          '<ol style="margin:6px 0 0 18px;padding:0;">',
+          `<li>Download/install ${esc(meta.summary)}${link ? `: <a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(link)}</a>` : '.'}</li>`,
+          `<li>${step2}</li>`,
+          '</ol>',
+          '</details>',
+        ].join('');
+      }).join('');
+    };
+    const _renderDebugOutputHtml = (obj) => {
+      const lines = [];
+      if (obj?.error) lines.push(`error: ${String(obj.error)}`);
+      if (obj?.source_backend_hint) lines.push(`source_backend_hint: ${String(obj.source_backend_hint)}`);
+      if (obj?.checks && typeof obj.checks === 'object') {
+        try { lines.push(`checks: ${JSON.stringify(obj.checks, null, 2)}`); } catch { }
+      }
+      if (obj?.output) lines.push(`output:\n${String(obj.output)}`);
+      const txt = lines.join('\n\n').trim() || 'No debug output provided.';
+      return `<pre style="white-space:pre-wrap;max-height:260px;overflow:auto;margin:8px 0 0 0;padding:10px;border-radius:8px;background:rgba(120,120,120,0.08);border:1px solid rgba(120,120,120,0.25);">${esc(txt)}</pre>`;
+    };
+    let cdata;
+    try {
+      const chk = await fetch('/api/cookbook/llama-cpp/prereq-check', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          remote_host: host || undefined,
+          ssh_port: _getPort(host) || undefined,
+          platform: _envState.platform || undefined,
+          mode,
+          source_wheel_hint: sourceWheelHint || undefined,
+        }),
+      });
+      cdata = await chk.json().catch(() => ({}));
+    } catch (err) {
+      uiModule.showToast('Prerequisite check failed: ' + err.message);
+      return false;
+    }
+
+    // State 1: all required tools on PATH — proceed immediately
+    if (cdata.ok) return true;
+
+    // State 2: tools found but not on PATH — offer permanent PATH add
+    if (cdata.needs_path_add && Array.isArray(cdata.paths_to_add) && cdata.paths_to_add.length) {
+      const dirList = cdata.paths_to_add.map(d => `  • ${d}`).join('\n');
+      const checks = (cdata && typeof cdata.checks === 'object') ? cdata.checks : {};
+      const toolsToAdd = [];
+      if (!checks.cl_on_path) toolsToAdd.push('cl');
+      if (mode === 'source' && !checks.cmake_on_path) toolsToAdd.push('cmake');
+      if (mode === 'source' && String(cdata.source_backend_hint || '').toLowerCase() === 'cuda' && !checks.nvcc_on_path) {
+        toolsToAdd.push('nvcc');
+      }
+      if (!toolsToAdd.length) toolsToAdd.push('cl');
+      const pathItems = toolsToAdd.map((t) => {
+        if (t === 'cl') return { tool: 'C/C++ Compiler Toolchain', hint: 'Compiler tools were found but are not currently available on PATH.', url: 'https://visualstudio.microsoft.com/visual-cpp-build-tools/' };
+        if (t === 'cmake') return { tool: 'CMake', hint: 'CMake was found but is not currently available on PATH.', url: 'https://cmake.org/download/' };
+        if (t === 'nvcc') return { tool: 'CUDA Toolkit (nvcc)', hint: 'CUDA Toolkit was found but nvcc is not currently available on PATH.', url: 'https://developer.nvidia.com/cuda-downloads' };
+        return { tool: t, hint: 'Tool was found but is not currently available on PATH.' };
+      });
+      const html = [
+        `<div>Required build tools were found on ${esc(where)} but are not currently on PATH.</div>`,
+        '<div style="margin-top:10px;">',
+        '<strong>Next Steps</strong>',
+        '<ol style="margin:6px 0 0 18px;padding:0;">',
+        '<li>Review the component sections below.</li>',
+        '<li>Click the <strong>Add to PATH</strong> button below to register these directories.</li>',
+        '</ol>',
+        `<pre style="white-space:pre-wrap;margin:8px 0 0 0;padding:10px;border-radius:8px;background:rgba(120,120,120,0.08);border:1px solid rgba(120,120,120,0.25);">${esc(dirList)}</pre>`,
+        '</div>',
+        _renderComponentDetails(pathItems, { forPathAdd: true }),
+        '<details style="margin-top:10px;">',
+        '<summary><strong>Output (debugging)</strong></summary>',
+        _renderDebugOutputHtml(cdata),
+        '</details>',
+      ].join('');
+      const confirmed = await uiModule.styledConfirm(
+        html,
+        { confirmText: 'Add to PATH', cancelText: 'Cancel', title: 'Tools Found (Not on PATH)', html: true },
+      );
+      if (!confirmed) return false;
+      uiModule.showToast('Adding tools to PATH…');
+
+      let addData;
       try {
-        const res = await fetch('/api/cookbook/rebuild-engine', {
+        const res = await fetch('/api/cookbook/llama-cpp/add-tools-to-path', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            engine: 'llamacpp',
-            remote_host: host || undefined,
-            ssh_port: _getPort(host) || undefined,
-          }),
+          body: JSON.stringify({ remote_host: host || undefined, tools: toolsToAdd }),
         });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-          const reason = data.detail || data.error || `HTTP ${res.status}`;
-          uiModule.showToast('Rebuild failed: ' + String(reason).slice(0, 200));
-        } else {
-          uiModule.showToast(`Cleared llama.cpp build on ${where}. Re-launch the serve task to rebuild with GPU support.`);
-        }
+        addData = await res.json().catch(() => ({}));
       } catch (err) {
-        uiModule.showToast('Rebuild failed: ' + err.message);
-      } finally {
-        rebuildBtn.disabled = false;
-        rebuildBtn.textContent = _label;
+        uiModule.showToast('Failed to update PATH: ' + err.message);
+        return false;
       }
+      if (!addData.ok) {
+        uiModule.showToast('PATH update failed: ' + (addData.error || 'unknown error'));
+        return false;
+      }
+      uiModule.showToast('Tools added to PATH — starting build.');
+      // Pass Git-Bash-format dirs back to caller so the immediate build command
+      // works without restarting Git Bash / the tmux session.
+      if (Array.isArray(addData.bash_exports) && bashExportsRef) {
+        bashExportsRef.push(...addData.bash_exports);
+      }
+      return true;
+    }
+
+    // State 3: tools genuinely missing — show install guidance, do not proceed
+    const miss = Array.isArray(cdata.missing) ? cdata.missing : [];
+    const reason = cdata.error || (miss.length ? 'Required tools are missing.' : 'Prerequisite check failed.');
+    const missingHtml = [
+      `<div>Cannot install llama-cpp-python on ${esc(where)} - required build tools are missing.</div>`,
+      `<div style="margin-top:8px;opacity:0.9;">${esc(reason)}</div>`,
+      _renderComponentDetails(miss, { forPathAdd: false }) || _renderToolListHtml(miss),
+      '<div style="margin-top:10px;">',
+      '<strong>Next Steps</strong>',
+      '<ol style="margin:6px 0 0 18px;padding:0;">',
+      '<li>Install the missing tools listed above.</li>',
+      '<li>Re-run the same action (Prebuilt or Build Src) from Dependencies.</li>',
+      '<li>If a tool is installed but still not detected, use the <strong>Add to PATH</strong> button when prompted.</li>',
+      '</ol>',
+      '</div>',
+      '<details style="margin-top:10px;">',
+      '<summary><strong>Output (debugging)</strong></summary>',
+      _renderDebugOutputHtml(cdata),
+      '</details>',
+    ].join('');
+    await uiModule.styledConfirm(
+      missingHtml,
+      { confirmText: 'Got it', cancelText: 'Close', title: 'Build Tools Missing', html: true },
+    );
+    return false;
+  }
+
+  // Return the default CMake args string for a wheel suffix (mirrors the server-side logic).
+  function _defaultCmakeArgsForSuffix(suffix) {
+    const s = (suffix || '').trim().toLowerCase();
+    if (s.startsWith('cu')) return '-DGGML_CUDA=on';
+    if (s === 'hip-radeon' || s.startsWith('rocm')) return '-DGGML_HIP=on';
+    if (s === 'vulkan') return '-DGGML_VULKAN=on';
+    if (s === 'metal') return '-DGGML_METAL=on';
+    return '';
+  }
+
+  // Show the "Build From Source" configuration popup. Pre-populates the CMake args
+  // field from the detected backend suffix so users can see what would be applied
+  // and add/change flags before confirming. Returns { cmakeArgs } or null on cancel.
+  async function _showLlamaBuildArgsDialog(suffix, venvPy) {
+    const detectedArgs = _defaultCmakeArgsForSuffix(suffix);
+    const pipCmd = `CMAKE_ARGS="<args below>" ${venvPy} -m pip install --upgrade --force-reinstall --no-cache-dir --no-binary llama-cpp-python "llama-cpp-python[server]"`;
+    const html = [
+      `<p style="margin:0 0 10px 0;">Build <strong>llama-cpp-python[server]</strong> from source. CMake args are passed as the <code>CMAKE_ARGS</code> environment variable before pip.</p>`,
+      `<div style="margin-bottom:10px;">`,
+      `<div style="font-size:10px;opacity:0.6;margin-bottom:4px;">Command preview</div>`,
+      `<pre style="margin:0;padding:8px;background:rgba(120,120,120,0.1);border:1px solid var(--border);border-radius:6px;font-size:10px;white-space:pre-wrap;word-break:break-all;">${esc(pipCmd)}</pre>`,
+      `</div>`,
+      `<div>`,
+      `<label for="llama-cmake-args-input" style="display:block;font-weight:600;margin-bottom:4px;">CMake Args</label>`,
+      `<div style="font-size:10px;opacity:0.65;margin-bottom:6px;">Space-separated <code>-DVAR=value</code> flags. Pre-populated from detected hardware — add or modify as needed.</div>`,
+      `<input id="llama-cmake-args-input" type="text" value="${esc(detectedArgs)}" placeholder="-DGGML_CUDA=on -DGGML_BLAS=ON" autocomplete="off" spellcheck="false"`,
+      ` style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg,#1e1e1e);color:var(--fg,#f0f0f0);font-family:monospace;font-size:12px;box-sizing:border-box;">`,
+      `</div>`,
+    ].join('');
+    const confirmed = await uiModule.styledConfirm(html, {
+      title: 'Build From Source',
+      confirmText: 'Build',
+      cancelText: 'Cancel',
+      html: true,
     });
+    if (!confirmed) return null;
+    const input = document.getElementById('llama-cmake-args-input');
+    const rawArgs = (input?.value || '').trim();
+    if (rawArgs) {
+      const validArg = /^-D[A-Za-z_][A-Za-z0-9_]+=[\w/:.=,+\-]+$/;
+      for (const tok of rawArgs.split(/\s+/).filter(Boolean)) {
+        if (!validArg.test(tok)) {
+          uiModule.showToast(`Invalid CMake arg: "${tok}". Use -DVAR=value format (letters, digits, /:.=,+-).`);
+          return null;
+        }
+      }
+    }
+    return { cmakeArgs: rawArgs };
+  }
+
+  if (!document._cookbookLlamaBuildWired) {
+    document._cookbookLlamaBuildWired = true;
+    document.addEventListener('click', async (ev) => {
+      const rebuildBtn = ev.target.closest?.('.cookbook-dep-llama-rebuild');
+      if (rebuildBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const sel = document.getElementById('hwfit-deps-server');
+        if (sel) _applyServerSelection(sel.value);
+        const host = _envState.remoteHost || '';
+        const where = host || 'this server';
+        if (!confirm(`Clear the llama.cpp build cache on ${where}?\n\nThis removes the cached llama-server binary so the next serve recompiles from source (with CUDA/HIP if a toolchain is present). It does not download or install anything.`)) return;
+        const _label = rebuildBtn.textContent;
+        rebuildBtn.disabled = true;
+        rebuildBtn.textContent = 'Clearing...';
+        try {
+          const res = await fetch('/api/cookbook/rebuild-engine', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              engine: 'llamacpp',
+              remote_host: host || undefined,
+              ssh_port: _getPort(host) || undefined,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) {
+            const reason = data.detail || data.error || `HTTP ${res.status}`;
+            uiModule.showToast('Clear failed: ' + String(reason).slice(0, 200));
+          } else {
+            uiModule.showToast(`Cleared llama.cpp build cache on ${where}. Re-launch the serve task to rebuild with GPU support.`);
+            await _fetchDependencies();
+          }
+        } catch (err) {
+          uiModule.showToast('Clear failed: ' + err.message);
+        } finally {
+          rebuildBtn.disabled = false;
+          rebuildBtn.textContent = _label;
+        }
+        return;
+      }
+
+      const srcBtn = ev.target.closest?.('.cookbook-dep-llama-build-source');
+      if (srcBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const sel = document.getElementById('hwfit-deps-server');
+        if (sel) _applyServerSelection(sel.value);
+        const host = _envState.remoteHost || '';
+        const where = host || 'this server';
+
+        const _venvPy = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`
+          : (_isWindows() ? 'python' : 'python3');
+        // Resolve the same suffix used by prebuilt installs and pass it to the
+        // backend so source builds can set matching CMAKE_ARGS (CUDA/HIP/Vulkan/Metal).
+        let suffix = 'cpu';
+        let reason = '';
+        const _cacheKey = `${host || 'local'}|${_envState.platform || ''}`;
+        const _cached = document._cookbookWheelResolveCache.get(_cacheKey);
+        if (_cached) {
+          suffix = _cached.suffix;
+          reason = _cached.reason;
+        } else {
+          try {
+            const r = await fetch('/api/cookbook/llama-cpp/resolve-wheel', {
+              method: 'POST', credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                remote_host: host || undefined,
+                ssh_port: _getPort(host) || undefined,
+                venv: _envState.envPath || undefined,
+                platform: _envState.platform || undefined,
+                force_cpu_prebuilt: false,
+              }),
+            });
+            const data = await r.json().catch(() => ({}));
+            if (r.ok && data?.ok && data?.resolution?.suffix) {
+              suffix = String(data.resolution.suffix || 'cpu').trim() || 'cpu';
+              reason = String(data.resolution.reason || '').trim();
+              document._cookbookWheelResolveCache.set(_cacheKey, { suffix, reason });
+            } else {
+              reason = String(data?.error || 'Wheel resolution unavailable; using cpu fallback.');
+            }
+          } catch (err) {
+            reason = `Wheel resolution failed: ${err.message}`;
+          }
+        }
+        // Prereq check first (may show "Add to PATH" dialog) — run before the build
+        // args dialog so the user doesn't fill in args only to hit a tool-missing block.
+        const bashExports = [];
+        const ok = await _winLlamaPrereqCheck(host, 'source', bashExports, suffix);
+        if (!ok) return;
+        // Now show the build args popup (lets user review/customise CMake args).
+        const buildArgs = await _showLlamaBuildArgsDialog(suffix, _venvPy);
+        if (!buildArgs) return;
+        const _pathPrefix = bashExports.length ? `export PATH="${bashExports.join(':')}:$PATH" && ` : '';
+        _launchServeTask(
+          'llama-cpp-source-build',
+          'pip-install',
+          `${_pathPrefix}${_venvPy} -m pip install --upgrade --force-reinstall --no-cache-dir --no-binary llama-cpp-python "llama-cpp-python[server]"`,
+          { source_wheel_hint: suffix, cmake_args_extra: buildArgs.cmakeArgs || undefined },
+        );
+        uiModule.showToast(`Started llama.cpp source build on ${where} (${suffix}).${reason ? ` ${reason}` : ''} Open Running for full output.`);
+        // Immediately reflect running state in the dep row without waiting for a full re-render
+        { const _mb = document.querySelector('#cookbook-deps-list .cookbook-dep-llama-menu-btn'); if (_mb) { const _l = _mb.querySelector('.cookbook-dep-installed-label'); if (_l) _l.textContent = 'Running…'; _mb.disabled = true; _mb.style.opacity = '0.65'; _mb.style.cursor = 'default'; } }
+        return;
+      }
+
+      const preBtn = ev.target.closest?.('.cookbook-dep-llama-install-prebuilt');
+      if (preBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const sel = document.getElementById('hwfit-deps-server');
+        if (sel) _applyServerSelection(sel.value);
+        const host = _envState.remoteHost || '';
+        const where = host || 'this server';
+
+        const _isWin = _isWindows() || (_envState.platform || '').toLowerCase() === 'windows';
+        const bashExports = [];
+        if (_isWin) {
+          const ok = await _winLlamaPrereqCheck(host, 'prebuilt', bashExports);
+          if (!ok) return;
+        }
+
+        if (!confirm(`Install/reinstall llama-cpp-python[server] prebuilt wheels on ${where}?\n\nOdysseus will resolve the best available prebuilt wheel suffix for this host.`)) return;
+        const _venvPy = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`
+          : (_isWindows() ? 'python' : 'python3');
+        // Disable button and show spinner while resolving
+        const _origLabel = preBtn.textContent;
+        preBtn.disabled = true;
+        preBtn.textContent = 'Detecting…';
+        const row = preBtn.closest?.('.cookbook-dep-row');
+        let suffix = (row?.dataset?.selectedWheel || '').trim() || 'cpu';
+        let reason = '';
+        const _cacheKey = `${host || 'local'}|${_envState.platform || ''}`;
+        const _cached = document._cookbookWheelResolveCache.get(_cacheKey);
+        if (_cached) {
+          suffix = _cached.suffix;
+          reason = _cached.reason;
+          preBtn.disabled = false;
+          preBtn.textContent = _origLabel;
+        } else {
+        try {
+          const r = await fetch('/api/cookbook/llama-cpp/resolve-wheel', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              remote_host: host || undefined,
+              ssh_port: _getPort(host) || undefined,
+              venv: _envState.envPath || undefined,
+              platform: _envState.platform || undefined,
+              force_cpu_prebuilt: false,
+            }),
+          });
+          const data = await r.json().catch(() => ({}));
+          if (r.ok && data?.ok && data?.resolution?.suffix) {
+            suffix = String(data.resolution.suffix || 'cpu').trim() || 'cpu';
+            reason = String(data.resolution.reason || '').trim();
+            document._cookbookWheelResolveCache.set(_cacheKey, { suffix, reason });
+          } else {
+            reason = String(data?.error || 'Wheel resolution unavailable; using cpu fallback.');
+          }
+        } catch (err) {
+          reason = `Wheel resolution failed: ${err.message}`;
+        }
+        preBtn.disabled = false;
+        preBtn.textContent = _origLabel;
+        }
+        const _pathPrefix = bashExports.length ? `export PATH="${bashExports.join(':')}:$PATH" && ` : '';
+        _launchServeTask('llama-cpp-prebuilt', 'pip-install', `${_pathPrefix}${_venvPy} -m pip install --upgrade --force-reinstall --no-cache-dir "llama-cpp-python[server]"`, { wheel_suffix: suffix });
+        uiModule.showToast(`Started llama.cpp prebuilt install on ${where} (${suffix}).${reason ? ` ${reason}` : ''} Open Running for full output.`);
+        // Immediately reflect running state in the dep row without waiting for a full re-render
+        { const _mb = document.querySelector('#cookbook-deps-list .cookbook-dep-llama-menu-btn'); if (_mb) { const _l = _mb.querySelector('.cookbook-dep-installed-label'); if (_l) _l.textContent = 'Running…'; _mb.disabled = true; _mb.style.opacity = '0.65'; _mb.style.cursor = 'default'; } }
+        return;
+      }
+
+      const cpuPreBtn = ev.target.closest?.('.cookbook-dep-llama-install-prebuilt-cpu');
+      if (cpuPreBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const sel = document.getElementById('hwfit-deps-server');
+        if (sel) _applyServerSelection(sel.value);
+        const host = _envState.remoteHost || '';
+        const where = host || 'this server';
+
+        const _isWin = _isWindows() || (_envState.platform || '').toLowerCase() === 'windows';
+        const bashExports = [];
+        if (_isWin) {
+          const ok = await _winLlamaPrereqCheck(host, 'prebuilt', bashExports);
+          if (!ok) return;
+        }
+
+        if (!confirm(`Force-install llama-cpp-python[server] CPU prebuilt wheels on ${where}?\n\nUse this when the resolved accelerated prebuilt path fails and you do not want to source-build.`)) return;
+        const _venvPy = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3`
+          : (_isWindows() ? 'python' : 'python3');
+        const _pathPrefix = bashExports.length ? `export PATH="${bashExports.join(':')}:$PATH" && ` : '';
+        _launchServeTask('llama-cpp-cpu-prebuilt', 'pip-install', `${_pathPrefix}${_venvPy} -m pip install --upgrade --force-reinstall --no-cache-dir "llama-cpp-python[server]"`, { force_cpu_prebuilt: true });
+        uiModule.showToast(`Started llama.cpp CPU prebuilt install on ${where}. Open Running for full output.`);
+        // Immediately reflect running state in the dep row without waiting for a full re-render
+        { const _mb = document.querySelector('#cookbook-deps-list .cookbook-dep-llama-menu-btn'); if (_mb) { const _l = _mb.querySelector('.cookbook-dep-installed-label'); if (_l) _l.textContent = 'Running…'; _mb.disabled = true; _mb.style.opacity = '0.65'; _mb.style.cursor = 'default'; } }
+      }
+    }, true);
   }
 
   // "Reinstall" buttons for pip-based serving stacks (vllm, sglang). The
