@@ -7,7 +7,9 @@ dist/
 build/
 !static/js/editor/build/
 venv/
+venv
 .venv/
+.venv
 *.egg
 
 # Environment

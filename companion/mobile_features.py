@@ -102,6 +102,67 @@ def has_companion_scope(request: Request) -> bool:
     return "companion" in scopes or "chat" in scopes
 
 
+def companion_admin_available(request: Request) -> bool:
+    """Whether ADMIN-only companion features are reachable for this caller.
+
+    A pure-ish predicate (no raise) the status endpoint uses to tell a paired
+    phone whether to even show admin tabs (terminal/vault/mcp/cookbook/contacts).
+    True only when ALL hold — the same triple lock require_companion_admin
+    enforces:
+      1. an admin flipped on the ``companion_admin_enabled`` server setting,
+      2. the caller carries the explicit ``companion`` scope — a plain ``chat``
+         token (which CAN read data, since has_companion_scope is relaxed) must
+         NEVER reach admin surface; admin demands the narrower scope, and
+      3. the caller's real owner is a server admin.
+    Fail-closed: any missing piece (no auth_manager, unknown owner) → False.
+    """
+    from src.settings import get_setting
+
+    if not get_setting("companion_admin_enabled", False):
+        return False
+    # Admin requires the explicit companion scope (stricter than data reads,
+    # which accept chat). A cookie session is the logged-in user — allow it.
+    if getattr(request.state, "api_token", False):
+        scopes = getattr(request.state, "api_token_scopes", None) or []
+        if "companion" not in scopes:
+            return False
+    owner = token_owner(request)
+    if not owner:
+        return False
+    auth_manager = getattr(request.app.state, "auth_manager", None)
+    if auth_manager is None:
+        return False
+    try:
+        return bool(auth_manager.is_admin(owner))
+    except Exception:
+        return False
+
+
+def require_companion_admin(request: Request) -> str:
+    """Gate for ADMIN-only companion endpoints. Returns the owner, or raises 403.
+
+    This is the ONLY sanctioned way to expose an admin-privileged server
+    capability (shell exec, vault export, MCP/cookbook admin, contacts) to a
+    paired phone. The stock routes hard-block the bearer pseudo-user ``api`` by
+    design (``current_user == "api"`` → 403, "RCE-after-signup"); we do NOT
+    bypass that loosely. Instead we re-establish privilege from the token's real
+    OWNER, behind an explicit, off-by-default admin opt-in:
+
+      1. ``companion_admin_enabled`` must be on (an admin set it deliberately),
+      2. the token must carry the ``companion`` scope (never a plain ``chat`` token),
+      3. the resolved owner must be a server admin (``auth_manager.is_admin``).
+
+    Fail-closed and non-disclosive: every failure raises the same generic 403 so
+    a caller can't probe which lock stopped them. Never call a stock admin route's
+    own ``_require_admin`` from here — that checks ``current_user`` (always ``api``
+    for a bearer caller) and would always 403.
+    """
+    if not companion_admin_available(request):
+        raise HTTPException(403, "Companion admin access is not enabled")
+    return token_owner(request)
+
+
+
 def setup_mobile_companion_routes() -> APIRouter:
     """Additive router with the mobile-only companion feature endpoints."""
     router = APIRouter(prefix="/api/companion", tags=["companion-mobile"])
@@ -777,5 +838,174 @@ def setup_mobile_companion_routes() -> APIRouter:
         if md is None:
             raise HTTPException(404, "Skill source unavailable")
         return {"name": match.get("name"), "markdown": md}
+
+    @router.get("/admin/status")
+    def admin_status(request: Request):
+        """Coarse booleans telling a paired phone whether ADMIN-only companion
+        features (terminal/vault/mcp/cookbook/contacts) are reachable, so it can
+        show or hide those tabs. Returns ONLY booleans — never secrets or admin
+        internals. `enabled` = the server opt-in; `is_admin` = the token owner is
+        a server admin; `available` = both, i.e. the gate would let them through."""
+        from src.settings import get_setting
+
+        owner = token_owner(request)
+        auth_manager = getattr(request.app.state, "auth_manager", None)
+        is_admin = False
+        if owner and auth_manager is not None:
+            try:
+                is_admin = bool(auth_manager.is_admin(owner))
+            except Exception:
+                is_admin = False
+        return {
+            "enabled": bool(get_setting("companion_admin_enabled", False)),
+            "is_admin": is_admin,
+            "available": companion_admin_available(request),
+        }
+
+
+
+    # ---- Admin-only features (behind require_companion_admin) -------------
+    # Each endpoint below re-establishes ADMIN privilege from the token's real
+    # owner via require_companion_admin (off-by-default setting + companion
+    # scope + owner-is-admin). The stock routes hard-block the bearer "api" user
+    # by design; we NEVER call their _require_admin (it always 403s a bearer).
+    # contacts/mcp/cookbook/vault are read-only here; terminal is full exec.
+
+    @router.get("/contacts")
+    def contacts_list(request: Request, q: str = ""):
+        """List/search the address book (admin-gated). Contacts are a single
+        shared store, so the gate is the only access control."""
+        require_companion_admin(request)
+        from routes.contacts_routes import _fetch_contacts
+
+        contacts = _fetch_contacts() or []
+        if q:
+            ql = q.lower()
+            contacts = [
+                c for c in contacts
+                if ql in (c.get("name") or "").lower()
+                or any(ql in (e or "").lower() for e in (c.get("emails") or []))
+            ][:50]
+        return {"items": contacts, "count": len(contacts)}
+
+    @router.post("/terminal/exec")
+    def terminal_exec(request: Request, command: str = Form(...), timeout: int = Form(60)):
+        """Run a shell command on the server and return its output (admin-gated).
+        This is full RCE by design — reachable ONLY when an admin has enabled
+        companion admin access AND the paired token's owner is an admin AND the
+        token carries the companion scope (require_companion_admin enforces all
+        three). The stock /api/shell/exec refuses the bearer 'api' user; this is
+        the sanctioned, explicitly-opted-in path."""
+        require_companion_admin(request)
+        import subprocess
+
+        cmd = (command or "").strip()
+        if not cmd:
+            raise HTTPException(400, "command is required")
+        timeout = max(1, min(int(timeout or 60), 300))
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, timeout=timeout,
+            )
+            return {
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+                "exit_code": proc.returncode,
+            }
+        except subprocess.TimeoutExpired:
+            raise HTTPException(504, f"Command timed out after {timeout}s")
+
+    @router.get("/vault/status")
+    def vault_status(request: Request):
+        """Whether the Bitwarden/Vaultwarden vault is unlocked (admin-gated).
+        Read-only: never returns the session key or any secret."""
+        require_companion_admin(request)
+        from routes.vault_routes import _load_config
+
+        cfg = _load_config() or {}
+        return {
+            "unlocked": bool(cfg.get("session")),
+            "unlocked_at": cfg.get("unlocked_at", ""),
+            "configured": bool(cfg.get("email") or cfg.get("url")),
+        }
+
+    @router.post("/vault/unlock")
+    async def vault_unlock(request: Request, master_password: str = Form(...)):
+        """Unlock the vault and persist the session (admin-gated). Does NOT
+        export any secret to the phone — only flips the unlocked state. The
+        master password rides the environment (not argv), mirroring the stock
+        route."""
+        require_companion_admin(request)
+        from datetime import datetime as _dt
+        from routes.vault_routes import _load_config, _save_config, _run_bw
+
+        stdout, stderr, rc = await _run_bw(
+            ["unlock", "--passwordenv", "BW_PASSWORD", "--raw"],
+            bw_password=master_password,
+        )
+        if rc != 0:
+            return {"ok": False, "error": f"Unlock failed: {(stderr or '')[:300]}"}
+        cfg = _load_config() or {}
+        cfg["session"] = (stdout or "").strip()
+        cfg["unlocked_at"] = _dt.utcnow().isoformat()
+        _save_config(cfg)
+        return {"ok": True, "unlocked": True, "unlocked_at": cfg["unlocked_at"]}
+
+    @router.get("/mcp/servers")
+    def mcp_servers(request: Request):
+        """List configured MCP servers (admin-gated, read-only). Strips env vars
+        and OAuth config so no server secrets reach the phone."""
+        require_companion_admin(request)
+        from core.database import SessionLocal, McpServer
+
+        out = []
+        db = SessionLocal()
+        try:
+            for s in db.query(McpServer).all():
+                out.append({
+                    "id": s.id,
+                    "name": s.name,
+                    "transport": s.transport,
+                    "command": s.command,
+                    "url": s.url,
+                    "enabled": bool(s.is_enabled),
+                })
+        finally:
+            db.close()
+        return {"items": out}
+
+    @router.get("/cookbook/state")
+    def cookbook_state(request: Request):
+        """Read the cookbook state (admin-gated, read-only), with secrets
+        stripped — drops the env block and any secret/token/password/key fields
+        from tasks so nothing sensitive reaches the phone."""
+        require_companion_admin(request)
+        import json as _json
+        import os
+        from core.constants import DATA_DIR
+
+        path = os.path.join(DATA_DIR, "cookbook_state.json")
+        if not os.path.isfile(path):
+            return {"state": {}}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                state = _json.load(f)
+        except (ValueError, OSError):
+            return {"state": {}}
+
+        def _sanitize(obj):
+            if isinstance(obj, dict):
+                clean = {}
+                for k, v in obj.items():
+                    kl = str(k).lower()
+                    if kl == "env" or any(s in kl for s in ("secret", "token", "password", "api_key", "apikey")):
+                        continue
+                    clean[k] = _sanitize(v)
+                return clean
+            if isinstance(obj, list):
+                return [_sanitize(x) for x in obj]
+            return obj
+
+        return {"state": _sanitize(state)}
 
     return router
