@@ -18,8 +18,11 @@ on a GET would be unsafe (Lax cookies ride top-level GET navigations), so GET
 """
 
 import html
+import json as _json
+import time
+import uuid
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from core.middleware import require_admin
@@ -81,6 +84,50 @@ def has_companion_scope(request: Request) -> bool:
         return True
     scopes = getattr(request.state, "api_token_scopes", None) or []
     return "companion" in scopes
+
+
+def require_companion_scope(request: Request) -> None:
+    """Raise 403 unless the caller may touch the companion data views. The
+    write handlers gate on this exactly like the reads gate on
+    has_companion_scope, so a plain ``chat`` token can neither read nor mutate
+    notes/memory."""
+    if not has_companion_scope(request):
+        raise HTTPException(403, "This token is not allowed to access companion data.")
+
+
+def writer_owner(request: Request) -> str | None:
+    """Owner to stamp on a new/mutated row.
+
+    Cookie sessions and single-user mode resolve to a username or None (None =
+    legacy shared row, the long-standing behaviour). A BEARER token, however,
+    must have a resolvable owner: a null-owner token would otherwise fall
+    through to mutating shared/null-owner rows it doesn't own, so we refuse it
+    (401) rather than widen its scope. Mirrors the reasoning in the desktop
+    note/memory routes.
+    """
+    owner = token_owner(request)
+    if owner is None and getattr(request.state, "api_token", False):
+        raise HTTPException(401, "Token owner could not be resolved.")
+    return owner
+
+
+# Categories the mobile composer offers; anything else coerces to "fact". Mirrors
+# the server allowlist in src/request_models.py so companion-created memories are
+# indistinguishable from desktop ones.
+_MEMORY_CATEGORIES = {"fact", "identity", "preference", "contact", "project", "goal", "task"}
+
+
+def _serialize_note(n) -> dict:
+    """The exact shape GET /notes returns, so a created/updated note round-trips
+    into the mobile list without a refetch."""
+    try:
+        items = _json.loads(n.items) if n.items else None
+    except (ValueError, TypeError):
+        items = None
+    return {
+        "id": n.id, "title": n.title, "content": n.content,
+        "items": items, "pinned": bool(n.pinned),
+    }
 
 
 def mint_pairing_token(owner: str, invalidate=None) -> tuple[str, str]:
@@ -267,7 +314,7 @@ def setup_companion_routes() -> APIRouter:
 
     @router.get("/notes")
     def notes(request: Request):
-        """The caller's own notes (read-only). Requires the companion scope."""
+        """List the caller's own notes. Requires the companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read notes.")
         import json as _json
@@ -323,7 +370,7 @@ def setup_companion_routes() -> APIRouter:
 
     @router.get("/memory")
     def memory(request: Request):
-        """The caller's own long-term memories (read-only). Requires the companion scope."""
+        """List the caller's own long-term memories. Requires the companion scope."""
         if not has_companion_scope(request):
             raise HTTPException(403, "This token is not allowed to read memory.")
         from core.database import SessionLocal, Memory
@@ -342,5 +389,163 @@ def setup_companion_routes() -> APIRouter:
         finally:
             db.close()
         return {"items": out}
+
+    # ---- Writes -----------------------------------------------------------
+    # The reads above are the established pattern; these add the phone's
+    # create/delete/toggle affordances. Each write requires the companion scope
+    # and a resolvable owner, stamps that owner on new rows, and enforces strict
+    # ownership on mutate/delete (404 — never confirm a row's existence to a
+    # non-owner), exactly like the desktop note/memory routes. Writes hit the
+    # same tables the matching GET reads, so the mobile list stays consistent.
+
+    def _owned_note(db, note_id: str, owner):
+        from core.database import Note
+        note = db.query(Note).filter(Note.id == note_id).first()
+        if not note or note.owner != owner:
+            raise HTTPException(404, "Note not found")
+        return note
+
+    @router.post("/notes")
+    def add_note(
+        request: Request,
+        title: str = Form(""),
+        content: str = Form(None),
+        items: str = Form(None),
+        pinned: bool = Form(False),
+    ):
+        """Create a note or checklist. `items`, when given, is a JSON array of
+        {text, done} objects (a checklist); otherwise it's a plain text note."""
+        require_companion_scope(request)
+        owner = writer_owner(request)
+
+        checklist_json = None
+        note_type = "note"
+        if items:
+            try:
+                parsed = _json.loads(items)
+            except (ValueError, TypeError):
+                raise HTTPException(400, "items must be a JSON array")
+            if not isinstance(parsed, list):
+                raise HTTPException(400, "items must be a JSON array")
+            norm = [
+                {"text": str(it.get("text", "")), "done": bool(it.get("done", False))}
+                for it in parsed if isinstance(it, dict)
+            ]
+            checklist_json = _json.dumps(norm)
+            note_type = "checklist"
+
+        if not (title or "").strip() and not (content or "") and not checklist_json:
+            raise HTTPException(400, "empty note")
+
+        from core.database import SessionLocal, Note
+        db = SessionLocal()
+        try:
+            note = Note(
+                id=str(uuid.uuid4()), owner=owner, title=title or "", content=content,
+                items=checklist_json, note_type=note_type, pinned=bool(pinned), source="mobile",
+            )
+            db.add(note)
+            db.commit()
+            db.refresh(note)
+            return _serialize_note(note)
+        finally:
+            db.close()
+
+    @router.delete("/notes/{note_id}")
+    def delete_note(request: Request, note_id: str):
+        """Delete one of the caller's notes."""
+        require_companion_scope(request)
+        owner = writer_owner(request)
+        from core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            db.delete(_owned_note(db, note_id, owner))
+            db.commit()
+            return {"ok": True}
+        finally:
+            db.close()
+
+    @router.post("/notes/{note_id}/pin")
+    def toggle_note_pin(request: Request, note_id: str):
+        """Flip a note's pinned flag."""
+        require_companion_scope(request)
+        owner = writer_owner(request)
+        from core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            note = _owned_note(db, note_id, owner)
+            note.pinned = not note.pinned
+            db.commit()
+            return {"ok": True, "pinned": note.pinned}
+        finally:
+            db.close()
+
+    @router.post("/notes/{note_id}/items/{index}/toggle")
+    def toggle_note_item(request: Request, note_id: str, index: int):
+        """Toggle the done state of one checklist item by index."""
+        require_companion_scope(request)
+        owner = writer_owner(request)
+        from core.database import SessionLocal
+        from sqlalchemy.orm.attributes import flag_modified
+        db = SessionLocal()
+        try:
+            note = _owned_note(db, note_id, owner)
+            try:
+                checklist = _json.loads(note.items) if note.items else None
+            except (ValueError, TypeError):
+                checklist = None
+            if not isinstance(checklist, list):
+                raise HTTPException(400, "Note has no checklist items")
+            if index < 0 or index >= len(checklist):
+                raise HTTPException(400, f"Item index {index} out of range")
+            checklist[index]["done"] = not checklist[index].get("done", False)
+            note.items = _json.dumps(checklist)
+            flag_modified(note, "items")
+            db.commit()
+            return {"ok": True, "items": checklist}
+        finally:
+            db.close()
+
+    @router.post("/memory")
+    def add_memory(request: Request, text: str = Form(...), category: str = Form("fact")):
+        """Create a memory owned by the caller. Writes the same `memories` table
+        GET /memory reads, so it appears in the mobile list immediately."""
+        require_companion_scope(request)
+        owner = writer_owner(request)
+        text = (text or "").strip()
+        if not text:
+            raise HTTPException(400, "empty memory")
+        cat = category if category in _MEMORY_CATEGORIES else "fact"
+
+        from core.database import SessionLocal, Memory
+        db = SessionLocal()
+        try:
+            row = Memory(
+                id=str(uuid.uuid4()), text=text, category=cat,
+                source="mobile", owner=owner, timestamp=int(time.time()),
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return {"id": row.id, "text": row.text, "category": row.category}
+        finally:
+            db.close()
+
+    @router.delete("/memory/{memory_id}")
+    def delete_memory(request: Request, memory_id: str):
+        """Delete one of the caller's memories."""
+        require_companion_scope(request)
+        owner = writer_owner(request)
+        from core.database import SessionLocal, Memory
+        db = SessionLocal()
+        try:
+            row = db.query(Memory).filter(Memory.id == memory_id).first()
+            if not row or row.owner != owner:
+                raise HTTPException(404, "Memory not found")
+            db.delete(row)
+            db.commit()
+            return {"ok": True}
+        finally:
+            db.close()
 
     return router

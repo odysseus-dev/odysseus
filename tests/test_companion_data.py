@@ -56,7 +56,13 @@ def _install_core_database(rows, monkeypatch):
     monkeypatch.setitem(sys.modules, "core.database", m)
 
 
-from companion.routes import has_companion_scope, owner_can_see, setup_companion_routes  # noqa: E402
+from companion.routes import (  # noqa: E402
+    has_companion_scope,
+    owner_can_see,
+    require_companion_scope,
+    setup_companion_routes,
+    writer_owner,
+)
 
 
 def _req(*, api_token, current_user=None, owner=None, scopes=None):
@@ -133,16 +139,29 @@ def test_notes_handler_rejects_chat_only_token(monkeypatch):
     assert exc.value.status_code == 403
 
 
-# --- read-only: the data views are GET, no mutation verbs ------------------
+# --- route surface: tasks stays read-only; notes/memory gain writes --------
 
-def test_data_endpoints_are_read_only():
+def _methods_for(router, path_suffix):
+    methods = set()
+    for r in router.routes:
+        if getattr(r, "path", "").endswith(path_suffix):
+            methods |= set(getattr(r, "methods", set()) or set())
+    return methods
+
+
+def test_tasks_stays_read_only():
+    # Tasks have no mobile write affordance; keep the surface minimal.
+    assert _methods_for(setup_companion_routes(), "/tasks") == {"GET"}
+
+
+def test_notes_and_memory_expose_writes():
     router = setup_companion_routes()
-    for path_suffix in ("/notes", "/tasks", "/memory"):
-        methods = set()
-        for r in router.routes:
-            if getattr(r, "path", "").endswith(path_suffix):
-                methods |= set(getattr(r, "methods", set()) or set())
-        assert methods == {"GET"}, f"{path_suffix} must be GET-only, got {methods}"
+    assert _methods_for(router, "/notes") == {"GET", "POST"}
+    assert _methods_for(router, "/notes/{note_id}") == {"DELETE"}
+    assert _methods_for(router, "/notes/{note_id}/pin") == {"POST"}
+    assert _methods_for(router, "/notes/{note_id}/items/{index}/toggle") == {"POST"}
+    assert _methods_for(router, "/memory") == {"GET", "POST"}
+    assert _methods_for(router, "/memory/{memory_id}") == {"DELETE"}
 
 
 # --- end-to-end: the MINTED pairing scope matches this consumer -------------
@@ -203,3 +222,108 @@ def test_all_data_routes_accept_paired_token(suffix, monkeypatch):
     req = _req(api_token=True, owner="alice", scopes=_paired_scopes())
     result = _data_handler(suffix)(req)
     assert isinstance(result, dict) and "items" in result
+
+
+# --- write gates: scope + resolvable owner ---------------------------------
+
+def test_require_companion_scope_blocks_chat_only_token():
+    from fastapi import HTTPException
+    import pytest
+    # A chat-only bearer token may not mutate companion data.
+    with pytest.raises(HTTPException) as exc:
+        require_companion_scope(_req(api_token=True, owner="alice", scopes=["chat"]))
+    assert exc.value.status_code == 403
+    # A companion-scoped token and a cookie session pass.
+    require_companion_scope(_req(api_token=True, owner="alice", scopes=["companion"]))
+    require_companion_scope(_req(api_token=False, current_user="alice"))
+
+
+def test_writer_owner_refuses_ownerless_bearer_token():
+    from fastapi import HTTPException
+    import pytest
+    # A bearer token with no resolvable owner must NOT fall through to mutating
+    # shared null-owner rows — refuse it.
+    with pytest.raises(HTTPException) as exc:
+        writer_owner(_req(api_token=True, owner=None, scopes=["companion"]))
+    assert exc.value.status_code == 401
+    # A real owner resolves; a cookie/single-user (None) is allowed.
+    assert writer_owner(_req(api_token=True, owner="alice", scopes=["companion"])) == "alice"
+    assert writer_owner(_req(api_token=False, current_user=None)) is None
+
+
+# --- delete is strictly owner-scoped (404, never confirm existence) --------
+
+class _WriteQuery:
+    def __init__(self, rows):
+        self._rows = rows
+        self._pred = None
+
+    def filter(self, *a, **k):
+        # The handlers filter by id==X; we only need to resolve .first(), so
+        # match on the row whose id appears in the filter's repr is overkill —
+        # tests pass a single-row DB and assert via owner, so just return self.
+        return self
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _WriteDB:
+    def __init__(self, rows):
+        self._rows = rows
+        self.deleted = []
+        self.committed = False
+
+    def query(self, *a, **k):
+        return _WriteQuery(self._rows)
+
+    def delete(self, row):
+        self.deleted.append(row)
+
+    def commit(self):
+        self.committed = True
+
+    def close(self):
+        pass
+
+
+def _delete_note_handler():
+    router = setup_companion_routes()
+    for r in router.routes:
+        if getattr(r, "path", "").endswith("/notes/{note_id}") and "DELETE" in (r.methods or set()):
+            return r.endpoint
+    raise AssertionError("DELETE /notes/{note_id} not found")
+
+
+def test_delete_note_rejects_cross_owner_with_404(monkeypatch):
+    from fastapi import HTTPException
+    import pytest
+    # The row belongs to bob; alice's token must get a 404 and NOT delete it.
+    bobs_note = SimpleNamespace(id="n1", owner="bob")
+    db = _WriteDB([bobs_note])
+    _install_write_db(db, monkeypatch)
+    handler = _delete_note_handler()
+    req = _req(api_token=True, owner="alice", scopes=["companion"])
+    with pytest.raises(HTTPException) as exc:
+        handler(req, "n1")
+    assert exc.value.status_code == 404
+    assert db.deleted == []  # never touched another owner's row
+
+
+def test_delete_note_allows_owner(monkeypatch):
+    alices_note = SimpleNamespace(id="n1", owner="alice")
+    db = _WriteDB([alices_note])
+    _install_write_db(db, monkeypatch)
+    handler = _delete_note_handler()
+    req = _req(api_token=True, owner="alice", scopes=["companion"])
+    assert handler(req, "n1") == {"ok": True}
+    assert db.deleted == [alices_note] and db.committed
+
+
+def _install_write_db(db, monkeypatch):
+    class _DBStub(types.ModuleType):
+        def __getattr__(self, name):
+            return MagicMock()
+    m = _DBStub("core.database")
+    m.SessionLocal = lambda: db
+    monkeypatch.setitem(sys.modules, "core.database", m)
