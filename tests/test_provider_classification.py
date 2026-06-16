@@ -48,6 +48,12 @@ class TestDetectProvider:
         ("https://generativelanguage.googleapis.com/v1beta/openai", "openai"),
         # Ollama's OpenAI-compatible /v1 surface is generic, not native ollama.
         ("http://localhost:11434/v1", "openai"),
+        # OpenCode Zen/Go are identified by host + path (not hostname alone).
+        ("https://opencode.ai/zen/v1", "opencode-zen"),
+        ("https://api.opencode.ai/zen/v1", "opencode-zen"),
+        ("https://opencode.ai/zen/go/v1", "opencode-go"),
+        # Trailing-slash variant of /zen (no v1) is still Zen.
+        ("https://opencode.ai/zen/", "opencode-zen"),
     ])
     def test_known_providers(self, url, expected):
         assert _detect_provider(url) == expected
@@ -60,6 +66,24 @@ class TestDetectProvider:
     def test_provider_domain_in_path_is_not_matched(self):
         # The provider domain appears only in the path, not the host.
         assert _detect_provider("https://proxy.example.com/anthropic.com/v1") == "openai"
+
+    def test_opencode_lookalike_host_is_not_matched(self):
+        # The host is a sibling/look-alike, not opencode.ai or a subdomain.
+        assert _detect_provider("https://opencode.ai.example/zen/v1") == "openai"
+
+    def test_opencode_domain_in_proxy_path_is_not_matched(self):
+        # opencode.ai appears in the path of an unrelated proxy host.
+        assert _detect_provider("https://proxy.example.com/opencode.ai/zen/v1") == "openai"
+
+    @pytest.mark.parametrize("url", [
+        "https://opencode.ai/zen/goblin",
+        "https://opencode.ai/zen/goevil",
+        "https://opencode.ai/zenith",
+    ])
+    def test_opencode_weird_path_prefixes_are_not_matched(self, url):
+        # Prefix-only matches like /zen/goblin, /zen/goevil, or /zenith must not
+        # be classified as OpenCode.
+        assert _detect_provider(url) == "openai"
 
     def test_trailing_dot_host_still_matches(self):
         # A fully-qualified host with a trailing dot is still that host.
@@ -89,6 +113,8 @@ class TestProviderLabel:
         ("https://api.together.ai/v1", "Together"),
         ("https://api.fireworks.ai/inference/v1", "Fireworks"),
         ("http://localhost:11434/api", "Ollama"),
+        ("https://opencode.ai/zen/v1", "OpenCode Zen"),
+        ("https://opencode.ai/zen/go/v1", "OpenCode Go"),
     ])
     def test_known_labels(self, url, expected):
         assert _provider_label(url) == expected

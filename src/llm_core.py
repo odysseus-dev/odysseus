@@ -443,6 +443,30 @@ def _host_match(url: str, *domains: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
+def _opencode_provider_from_url(url: str) -> Optional[str]:
+    """Return 'opencode-go' or 'opencode-zen' for true OpenCode URLs.
+
+    Detection is host + path based: the endpoint must live on opencode.ai or a
+    subdomain, and the path must start with the correct Zen prefix. This avoids
+    misclassifying look-alike hosts or proxy paths that contain 'opencode.ai'.
+    """
+    if not url:
+        return None
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return None
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if not host or (host != "opencode.ai" and not host.endswith(".opencode.ai")):
+        return None
+    path = parsed.path or ""
+    if path == "/zen/go" or path.startswith("/zen/go/"):
+        return "opencode-go"
+    if path in ("/zen", "/zen/", "/zen/v1") or path.startswith("/zen/v1/"):
+        return "opencode-zen"
+    return None
+
+
 # Kimi Code subscription keys (api.kimi.com/coding/v1) require a whitelisted
 # coding-agent User-Agent; otherwise the API returns 403 access_terminated_error.
 # Tried in order; first success is cached per base URL for later requests.
@@ -596,10 +620,9 @@ def _detect_provider(url: str) -> str:
         return "ollama"
     if _host_match(url, "anthropic.com"):
         return "anthropic"
-    if _host_match(url, "opencode.ai/zen/go"):
-        return "opencode-go"
-    if _host_match(url, "opencode.ai/zen"):
-        return "opencode-zen"
+    opencode_provider = _opencode_provider_from_url(url)
+    if opencode_provider:
+        return opencode_provider
     if _host_match(url, "openrouter.ai"):
         return "openrouter"
     if _host_match(url, "groq.com"):
@@ -691,8 +714,11 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "x.ai"): return "xAI"
     if _host_match(url, "openai.com"): return "OpenAI"
     if _host_match(url, "openrouter.ai"): return "OpenRouter"
-    if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
-    if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
+    opencode_provider = _opencode_provider_from_url(url)
+    if opencode_provider == "opencode-go":
+        return "OpenCode Go"
+    if opencode_provider == "opencode-zen":
+        return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
