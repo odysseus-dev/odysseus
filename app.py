@@ -663,9 +663,6 @@ app.include_router(setup_hwfit_routes())
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))
 
-# System service health probes
-from routes.system_status_routes import setup_system_status_routes
-app.include_router(setup_system_status_routes())
 
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes

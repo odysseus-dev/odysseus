@@ -2331,7 +2331,7 @@ async function loadServiceStatus() {
   if (!list) return;
   list.innerHTML = '<div class="admin-empty">Checking services…</div>';
   try {
-    const res = await fetch('/api/system/status', { credentials: 'same-origin' });
+    const res = await fetch('/api/diagnostics/services', { credentials: 'same-origin' });
     if (!res.ok) {
       list.innerHTML = '<div class="admin-error">Failed to load service status</div>';
       return;
@@ -2342,22 +2342,19 @@ async function loadServiceStatus() {
       return;
     }
     list.innerHTML = data.services.map(svc => {
-      const color = svc.ok === true
-        ? 'var(--green)'
-        : svc.ok === false
-          ? 'var(--red)'
-          : 'color-mix(in srgb, var(--fg) 50%, transparent)';
+      const st = svc.status;
+      const color = st === 'ok'       ? 'var(--green)'
+                  : st === 'degraded' ? 'var(--warn)'
+                  : st === 'down'     ? 'var(--red)'
+                  : 'color-mix(in srgb, var(--fg) 50%, transparent)';
       const dot = `<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="4" cy="4" r="4" fill="${color}"/></svg>`;
-      const latency = (svc.ok === true && Number.isFinite(+svc.latency_ms))
-        ? `<span style="font-size:10px;opacity:0.4;margin-left:6px;">${+svc.latency_ms}ms</span>`
-        : '';
       const detail = svc.detail
         ? `<div style="font-size:11px;opacity:0.45;margin-top:2px;">${esc(svc.detail)}</div>`
         : '';
       return `<div class="admin-toggle-row" style="padding:6px 0;border-bottom:1px solid var(--border);align-items:flex-start;gap:8px;">
         ${dot}
         <div style="flex:1;min-width:0;">
-          <span style="font-size:12px;">${esc(svc.name)}</span>${latency}
+          <span style="font-size:12px;">${esc(svc.name)}</span>
           ${detail}
         </div>
       </div>`;
@@ -2548,7 +2545,7 @@ function initServiceStatusRefresh() {
 
 function initAll() {
   modalEl = el('settings-modal');
-  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTokenForm, () => settingsModule.initIntegrations()];
+  const inits = [initSignupToggle, initAddUser, initEndpointForm, initMcpForm, initCalDAV, initBackup, initDangerZone, initTokenForm, initServiceStatusRefresh, () => settingsModule.initIntegrations()];
   for (const fn of inits) {
     try { fn(); } catch (e) { console.error('Admin init error in', fn.name || 'anonymous', e); }
   }
@@ -2562,6 +2559,7 @@ function refreshAll() {
   loadBuiltinTools();
   loadMcpServers();
   loadTokens();
+  loadServiceStatus();
 }
 
 /* ═══════════════════════════════════════════
