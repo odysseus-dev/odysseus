@@ -100,8 +100,13 @@ class UploadHandler:
         # need an additional file-level lock (flock) or a database;
         # the atomic-rename write below keeps on-disk state consistent
         # on its own but does not serialise writers across processes.
-        self._index_lock = threading.Lock()
-        
+        self._index_lock = threading.RLock()
+        # Mtime-cached O(1) upload index. Keyed by upload id (file_id).
+        # All reads go through _get_cached_index(); all writes reset
+        # _index_mtime inside _atomic_write_json so the next read reloads.
+        self._index_cache: Dict[str, Any] = {}   # file_id -> record
+        self._index_mtime: float = 0.0
+
         # Create upload directory
         os.makedirs(self.upload_dir, exist_ok=True)
         
@@ -317,6 +322,12 @@ class UploadHandler:
                 except OSError:
                     pass
             os.replace(tmp, path)
+            # Invalidate the mtime cache: the next read will reload from disk.
+            # Acquire under _index_lock only if the lock exists (i.e. after
+            # __init__ has run past that line).
+            if hasattr(self, "_index_lock"):
+                with self._index_lock:
+                    self._index_mtime = 0.0
         except Exception:
             try:
                 os.unlink(tmp)
@@ -343,14 +354,61 @@ class UploadHandler:
                 continue
         return {}
 
+    def _get_cached_index_nolock(self) -> Dict[str, Any]:
+        """Return the upload index keyed by file_id, rebuilding from disk only
+        when the uploads.json mtime has changed.
+
+        MUST be called with ``self._index_lock`` already held by the caller.
+        Use ``_get_cached_index()`` when the lock is not yet held.
+        """
+        uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
+        try:
+            current_mtime = os.path.getmtime(uploads_db_path)
+        except OSError:
+            return {}
+        if current_mtime == self._index_mtime and self._index_cache:
+            return self._index_cache
+        raw = self._load_upload_index()
+        new_cache: Dict[str, Any] = {
+            record["id"]: record
+            for record in raw.values()
+            if isinstance(record, dict) and "id" in record
+        }
+        self._index_cache = new_cache
+        self._index_mtime = current_mtime
+        return self._index_cache
+
+    def _get_cached_index(self) -> Dict[str, Any]:
+        """Return the upload index keyed by file_id, rebuilding from disk only
+        when the uploads.json mtime has changed.
+
+        Must be called under ``self._index_lock`` by callers that need
+        atomicity across the check + read.  Here the lock is acquired
+        internally so external callers that just need the index dict can
+        call this directly without wrapping.
+        """
+        with self._index_lock:
+            return self._get_cached_index_nolock()
+
     def get_upload_info(self, upload_id: str) -> Optional[Dict[str, Any]]:
-        """Return the uploads.json metadata row for an upload ID, if present."""
+        """Return the uploads.json metadata row for an upload ID, if present.
+
+        O(1) dict lookup via the mtime-cached index.
+        """
         if not self.validate_upload_id(upload_id):
             return None
-        for info in self._load_upload_index().values():
-            if isinstance(info, dict) and info.get("id") == upload_id:
-                return dict(info)
-        return None
+        record = self._get_cached_index().get(upload_id)
+        if record is None:
+            return None
+        return dict(record)  # return a copy to prevent caller mutation
+
+    async def get_upload_info_async(self, upload_id: str) -> Optional[Dict[str, Any]]:
+        """Async wrapper: runs get_upload_info in a thread-pool worker so the
+        asyncio event loop is not blocked by the lock acquisition or the
+        (rare) disk read on a cold or invalidated cache.
+        """
+        import asyncio
+        return await asyncio.to_thread(self.get_upload_info, upload_id)
 
     def _renamed_upload_index_key(self, key: str, info: Dict[str, Any], old_owner: str, new_owner: str) -> str:
         """Return the storage key to use after renaming an owned upload row."""
@@ -433,10 +491,23 @@ class UploadHandler:
             return renamed
 
     def _find_upload_path(self, upload_id: str) -> Optional[str]:
-        """Find an upload file by ID while staying inside upload_dir."""
+        """Find an upload file by ID while staying inside upload_dir.
+
+        Fast path: return the stored path from the mtime cache if it exists
+        and is still on disk inside the upload directory.
+        Fallback: direct path check + full os.walk (for legacy or moved files).
+        """
         if not self.validate_upload_id(upload_id):
             return None
 
+        # Fast path: cached path from uploads.json
+        cached = self._get_cached_index().get(upload_id)
+        if cached:
+            p = cached.get("path")
+            if p and os.path.exists(p) and self._inside_upload_dir(p):
+                return p
+
+        # Slow fallback: direct hit then full walk
         direct = os.path.join(self.upload_dir, upload_id)
         if os.path.exists(direct) and self._inside_upload_dir(direct):
             return direct
@@ -537,23 +608,21 @@ class UploadHandler:
         logger.info(f"Rate-limit cleanup: removed {removed_ips} IPs, {removed_timestamps} timestamps.")
     
     def get_upload_stats(self) -> Dict[str, Any]:
-        """Get statistics about uploaded files."""
+        """Get statistics about uploaded files.
+
+        Uses the mtime-cached index (via ``_get_cached_index``) rather than
+        reading uploads.json directly, avoiding a synchronous disk read on
+        every admin stats poll (PERF-P6-02).
+        """
         try:
-            total_files = 0
+            files = self._get_cached_index()
+            total_files = len(files)
             total_size = 0
-            file_types = {}
-            
-            uploads_db_path = os.path.join(self.upload_dir, "uploads.json")
-            if os.path.exists(uploads_db_path):
-                with open(uploads_db_path, "r", encoding="utf-8") as f:
-                    files = json.load(f)
-                
-                total_files = len(files)
-                for file_info in files.values():
-                    total_size += file_info.get("size", 0)
-                    mime = file_info.get("mime", "unknown")
-                    file_types[mime] = file_types.get(mime, 0) + 1
-            
+            file_types: Dict[str, int] = {}
+            for file_info in files.values():
+                total_size += file_info.get("size", 0)
+                mime = file_info.get("mime", "unknown")
+                file_types[mime] = file_types.get(mime, 0) + 1
             return {
                 "total_files": total_files,
                 "total_size": total_size,
@@ -631,22 +700,33 @@ class UploadHandler:
         existing_file = None
         existing_key = None
         with self._index_lock:
-            existing_files = self._load_upload_index()
-            stale_keys = []
-            for key, info in existing_files.items():
+            # Use the mtime-cached index for the dup scan to avoid an
+            # unconditional disk read on every upload (PERF-P6-01).
+            # _get_cached_index_nolock() is safe here because we already
+            # hold _index_lock.  The cache is keyed by file_id; records
+            # contain hash/owner/path, so the dup scan works unchanged.
+            cached_index = self._get_cached_index_nolock()
+            stale_file_ids = []
+            for file_id_key, info in cached_index.items():
                 if info.get("hash") == file_hash and info.get("owner") == owner:
                     stored_path = info.get("path")
                     if stored_path and os.path.exists(stored_path) and self._inside_upload_dir(stored_path):
-                        existing_key = key
+                        existing_key = file_id_key
                         existing_file = info
                         break
-                    stale_keys.append(key)
-            if stale_keys:
-                for key in stale_keys:
-                    existing_files.pop(key, None)
+                    stale_file_ids.append(file_id_key)
+            if stale_file_ids:
+                # Need the raw (storage-key) index to remove stale entries
+                # and write back atomically.
+                raw_index = self._load_upload_index()
+                stale_count = 0
+                for raw_key, rec in list(raw_index.items()):
+                    if isinstance(rec, dict) and rec.get("id") in stale_file_ids:
+                        del raw_index[raw_key]
+                        stale_count += 1
                 try:
-                    self._atomic_write_json(uploads_db_path, existing_files)
-                    logger.info("Removed %d stale upload index entries for missing duplicates", len(stale_keys))
+                    self._atomic_write_json(uploads_db_path, raw_index)
+                    logger.info("Removed %d stale upload index entries for missing duplicates", stale_count)
                 except Exception as e:
                     logger.warning(f"Failed to remove stale upload index entries: {e}")
         if existing_file:
@@ -655,12 +735,12 @@ class UploadHandler:
             existing_file["last_accessed"] = datetime.now().isoformat()
             with self._index_lock:
                 try:
-                    current = self._load_upload_index()
-                    # Re-resolve the key inside the lock: a concurrent
-                    # insert can have changed the dict's keys.
+                    # Re-resolve inside the lock using the cache: a concurrent
+                    # insert can have changed entries since the outer scan.
+                    current_cache = self._get_cached_index_nolock()
                     live_key = existing_key
-                    if live_key not in current:
-                        for k, v in current.items():
+                    if live_key not in current_cache:
+                        for k, v in current_cache.items():
                             if v.get("hash") == file_hash and v.get("owner") == owner:
                                 live_key = k
                                 existing_file = v
@@ -671,7 +751,18 @@ class UploadHandler:
                         # fresh-insert path below; release the lock first.
                         raise LookupError("upload entry vanished mid-dedupe")
                     existing_file["last_accessed"] = datetime.now().isoformat()
-                    current[live_key] = existing_file
+                    # Write needs the raw index (storage-key format).
+                    current = self._load_upload_index()
+                    # Find the raw storage key whose record id matches.
+                    raw_key_for_dup = next(
+                        (rk for rk, rv in current.items()
+                         if isinstance(rv, dict) and rv.get("id") == live_key),
+                        None,
+                    )
+                    if raw_key_for_dup is None:
+                        raise LookupError("upload entry vanished mid-dedupe (raw key missing)")
+                    existing_file = dict(existing_file)
+                    current[raw_key_for_dup] = existing_file
                     self._atomic_write_json(uploads_db_path, current)
                 except LookupError:
                     existing_file = None
@@ -737,6 +828,11 @@ class UploadHandler:
         # Update uploads database
         with self._index_lock:
             try:
+                # Load raw index for the atomic write; the cache (by file_id)
+                # can't be used for the write because the on-disk format is
+                # keyed by storage_key (owner:hash).  We still benefit from
+                # the cache on the reads above; here we must read from disk
+                # to get the authoritative write target.
                 current = self._load_upload_index() if os.path.exists(uploads_db_path) else {}
                 storage_key = f"{owner}:{file_hash}" if owner else file_hash
                 current[storage_key] = file_metadata
