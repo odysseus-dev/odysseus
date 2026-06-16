@@ -81,9 +81,9 @@ function _buildModal() {
       #atlas-modal .atlas-row .twisty { width:12px; flex:0 0 auto; opacity:.6; font-size:10px; }
       #atlas-modal .atlas-row .label { overflow:hidden; text-overflow:ellipsis; flex:1; }
       #atlas-modal .atlas-row .base-badge { font-size:9px; opacity:.55; border:1px solid currentColor; border-radius:3px; padding:0 3px; letter-spacing:.5px; }
-      #atlas-modal .atlas-menu { position:fixed; z-index:1000; background:var(--input-bg,#222); border:1px solid var(--input-border,#444); border-radius:8px; padding:4px; min-width:170px; box-shadow:0 6px 20px rgba(0,0,0,.4); }
-      #atlas-modal .atlas-menu div { padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; }
-      #atlas-modal .atlas-menu div:hover { background:rgba(127,127,127,.18); }
+      .atlas-menu { position:fixed; z-index:100000; background:var(--input-bg,#222); border:1px solid var(--input-border,#444); border-radius:8px; padding:4px; min-width:170px; box-shadow:0 6px 20px rgba(0,0,0,.4); }
+      .atlas-menu div { padding:7px 10px; border-radius:6px; cursor:pointer; font-size:13px; }
+      .atlas-menu div:hover { background:rgba(127,127,127,.18); }
       #atlas-modal .atlas-preview a.atlas-tag { color:var(--brand-color,#6cf); background:rgba(110,140,255,.14); border-radius:10px; padding:0 7px; font-size:.9em; text-decoration:none; white-space:nowrap; }
       #atlas-modal .atlas-preview a.atlas-tag:hover { background:rgba(110,140,255,.28); }
       #atlas-modal .atlas-center { position:relative; }
@@ -315,6 +315,7 @@ function _doClose() {
   if (_saveTimer) { clearTimeout(_saveTimer); _saveCurrent(); }
   if (_graph) { _graph.stop(); }
   _open = false;
+  document.querySelector('.atlas-menu')?.remove();  // body-level "+" menu, if open
   document.removeEventListener('keydown', _escHandler);
   window.removeEventListener('atlas-refresh', _onExternalRefresh);
   // Release the reserved right-dock space so the chat/composer reflow back.
@@ -475,7 +476,7 @@ async function openNote(path) {
 // The "+" button: a small menu so creating a note no longer demands you
 // decide its folder up front, and template insertion lives here too.
 function _openPlusMenu(anchor) {
-  const existing = _modal.querySelector('.atlas-menu');
+  const existing = document.querySelector('.atlas-menu');
   if (existing) { existing.remove(); return; }
   const menu = document.createElement('div');
   menu.className = 'atlas-menu';
@@ -488,7 +489,11 @@ function _openPlusMenu(anchor) {
   const r = anchor.getBoundingClientRect();
   menu.style.top = (r.bottom + 4) + 'px';
   menu.style.left = Math.max(8, r.right - 175) + 'px';
-  _modal.appendChild(menu);
+  // Append to <body>, not the modal: when Atlas is edge-docked the modal
+  // content gets a high z-index/stacking context that would paint over (and
+  // swallow clicks to) a menu nested inside it. Body-level + a high z-index
+  // keeps it on top and clickable everywhere.
+  document.body.appendChild(menu);
   const close = () => { menu.remove(); document.removeEventListener('click', onDoc, true); };
   const onDoc = (e) => { if (!menu.contains(e.target) && e.target !== anchor) close(); };
   setTimeout(() => document.addEventListener('click', onDoc, true), 0);
