@@ -781,16 +781,21 @@ async def _execute_tool_block_impl(
     elif tool in ("chat_with_model", "ask_teacher", "list_models"):
         # Migrated to the agent_tools registry (#3629): dispatched through
         # TOOL_HANDLERS with the owner/session ctx these tools need, instead
-        # of the legacy dispatch_ai_tool elif. The do_* impls stay in
-        # ai_interaction.py (dispatch_ai_tool + the owner-scope test use them).
+        # of the legacy dispatch_ai_tool elif. The impls live in
+        # src/agent_tools/model_interaction_tools.py.
         first_line = content.split(chr(10))[0].strip()[:60]
         desc = f"{tool}: {first_line}" if first_line else tool
         result = await _document_tool_dispatch(tool, content, session_id, owner) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
-    elif tool in ("create_session", "list_sessions",
-                  "send_to_session", "pipeline",
-                  "manage_session", "manage_memory",
-                  "ui_control"):
+    elif tool in ("create_session", "list_sessions", "send_to_session", "manage_session"):
+        # Migrated to the agent_tools registry (#3629): dispatched through
+        # TOOL_HANDLERS with the owner/session ctx these tools need. The impls
+        # live in src/agent_tools/session_tools.py.
+        first_line = content.split(chr(10))[0].strip()[:60]
+        desc = f"{tool}: {first_line}" if first_line else tool
+        result = await _document_tool_dispatch(tool, content, session_id, owner) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool in ("pipeline", "manage_memory", "ui_control"):
         from src.ai_interaction import dispatch_ai_tool
         desc, result = await dispatch_ai_tool(tool, content, session_id, owner=owner)
     elif tool == "manage_tasks":

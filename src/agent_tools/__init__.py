@@ -24,6 +24,7 @@ from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool,
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
+from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -46,6 +47,10 @@ TOOL_HANDLERS = {
     "ask_teacher": AskTeacherTool().execute,
     "list_models": ListModelsTool().execute,
     "manage_bg_jobs": ManageBgJobsTool().execute,
+    "create_session": CreateSessionTool().execute,
+    "list_sessions": ListSessionsTool().execute,
+    "send_to_session": SendToSessionTool().execute,
+    "manage_session": ManageSessionTool().execute,
 }
 
 # ---------------------------------------------------------------------------
