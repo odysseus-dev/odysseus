@@ -43,8 +43,40 @@ def _stream_timeout(read_timeout) -> httpx.Timeout:
     return httpx.Timeout(connect=LLMConfig.CONNECT_TIMEOUT, read=float(read_timeout), write=30.0, pool=5.0)
 
 
+def _retry_delay(attempt: int, response: Optional[object] = None) -> float:
+    """Compute retry delay with exponential backoff and optional Retry-After header.
+
+    Base delay: 1s, 2s, 4s for attempts 1, 2, 3 (capped at 30s).
+    If response has a Retry-After header, that value wins (capped at 60s).
+    """
+    if response is not None:
+        retry_after = None
+        try:
+            retry_after = response.headers.get("Retry-After")
+        except Exception:
+            pass
+        if retry_after is not None:
+            # Try integer seconds first
+            try:
+                return float(min(int(retry_after.strip()), 60))
+            except (ValueError, AttributeError):
+                pass
+            # Try HTTP-date format
+            try:
+                import email.utils
+                import datetime as _dt
+                dt = email.utils.parsedate_to_datetime(retry_after)
+                now = _dt.datetime.now(_dt.timezone.utc)
+                delta = (dt - now).total_seconds()
+                return float(max(0.0, min(delta, 60.0)))
+            except Exception:
+                pass
+    # Exponential backoff: 1s, 2s, 4s, ... capped at 30s
+    return min(1.0 * (2 ** (attempt - 1)), 30.0)
+
+
 # Cache for LLM responses
-def _get_cache_key(url: str, model: str, messages: List[Dict], 
+def _get_cache_key(url: str, model: str, messages: List[Dict],
                    temperature: float, max_tokens: int) -> str:
     """Generate cache key for LLM requests."""
     hashable_messages = []
@@ -1653,7 +1685,7 @@ async def llm_call_async(
                     f"(attempt {attempt}): HTTP {r.status_code} {friendly}"
                 )
                 if r.status_code in (429, 502, 503, 504) and attempt < max_retries:
-                    await asyncio.sleep(LLMConfig.RETRY_DELAY)
+                    await asyncio.sleep(_retry_delay(attempt, r))
                     continue
                 raise HTTPException(r.status_code, friendly)
             logger.info(f"LLM async call to {target_url} succeeded in {duration:.2f}s (attempt {attempt})")
@@ -1678,13 +1710,13 @@ async def llm_call_async(
             logger.warning(f"LLM async connect to {target_url} failed after {duration:.2f}s: {e}{_tail}")
             if _cooled or attempt >= max_retries:
                 raise HTTPException(503, f"Cannot reach {_host_key(target_url)}: {e}")
-            await asyncio.sleep(LLMConfig.RETRY_DELAY)
+            await asyncio.sleep(_retry_delay(attempt))
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             duration = time.time() - start
             logger.warning(f"LLM async call attempt {attempt} failed after {duration:.2f}s: {e}")
             if attempt >= max_retries:
                 raise HTTPException(502, f"POST {target_url} failed after {max_retries} attempts: {e}")
-            await asyncio.sleep(LLMConfig.RETRY_DELAY)
+            await asyncio.sleep(_retry_delay(attempt))
 
 async def stream_llm(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
