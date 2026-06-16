@@ -872,6 +872,12 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes(memory_manager=memory_manager, research_handler=research_handler))
+# Additive overlay: owner-scoped, read-only mobile-feature endpoints (documents,
+# gallery, calendar, email, skills, assistant, compare history). Self-contained
+# module — it never imports companion.routes, so it works regardless of the
+# companion bridge's state.
+from companion.mobile_features import setup_mobile_companion_routes
+app.include_router(setup_mobile_companion_routes())
 
 # ========= ROUTES (kept in app.py) =========
 
