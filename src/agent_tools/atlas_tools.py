@@ -83,7 +83,7 @@ class ManageAtlasTool:
                     items = [n for n in items
                              if q in n["path"].lower() or q in n["title"].lower()]
                 items = items[: int(args.get("limit", 50))]
-                lines = [f"- {_link(n['path'], n['title'])} (`{n['path']}`)"
+                lines = [f"- {_link(n['path'], n['title'])}"
                          + (f" #{' #'.join(n['tags'])}" if n["tags"] else "")
                          for n in items]
                 return {
@@ -109,7 +109,7 @@ class ManageAtlasTool:
                 truncated = len(md) > preview_limit
                 body = md[:preview_limit] + (f"\n... (truncated, {len(md)} chars)" if truncated else "")
                 return {
-                    "response": f"{_link(rel, note_title(rel, md))} (`{rel}`)\n\n{body}",
+                    "response": f"{_link(rel, note_title(rel, md))}\n\n{body}",
                     "note": {
                         "path": rel,
                         "title": note_title(rel, md),

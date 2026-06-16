@@ -391,16 +391,4 @@ export function snapModalToZone(modal, zone) {
   _applySnap(content, zone.rect, zone.name);
 }
 
-// Dock a modal to the right half of the workspace (same geometry + animation as
-// an edge-drag right-snap). Used to "append" a tool panel beside the chat.
-export function snapModalRight(modal) {
-  const safe = _viewportSafeRect();
-  const W = safe.right - safe.left;
-  const H = safe.bottom - safe.top;
-  snapModalToZone(modal, {
-    name: 'right-half',
-    rect: { left: safe.left + W / 2, top: safe.top, width: W / 2, height: H },
-  });
-}
-
 export {};

@@ -16,7 +16,7 @@ import * as Modals from './modalManager.js';
 import { mdToHtml } from './markdown.js';
 import { showToast, showError, styledPrompt } from './ui.js';
 import { makeWindowDraggable } from './windowDrag.js';
-import { snapModalRight } from './tileManager.js';
+import { applyRightDock, clearDockSide } from './modalSnap.js';
 
 // Width (px) the graph panel adds to the dialog when docked open.
 const GRAPH_PANEL_W = 460;
@@ -35,6 +35,7 @@ let _dirty = false;
 let _saveTimer = null;
 let _graphOpen = false;   // graph docked as a right-side panel
 let _graph = null;        // GraphView instance (lazy)
+let _docked = false;      // edge-docked to the right (reserves chat space)
 
 // ── tiny fetch helpers ──────────────────────────────────────────────────
 async function apiGet(path, params) {
@@ -256,15 +257,17 @@ async function openAtlas() {
   if (_graphOpen) _openGraph();
 }
 
-// Open Atlas docked to the right half of the workspace (the composer "Atlas"
-// entry, and the target for chat note-links). Idempotent: re-docks if already
-// open. Uses the shared tile-snap so it animates like any other right-snap.
+// Open Atlas docked to the right edge (the composer "Atlas" entry, and the
+// target for chat note-links). Uses Odysseus's edge-dock — the same mechanism
+// a manual drag-to-right-edge triggers — so the chat/composer REFLOW to reserve
+// space (body.right-dock-active + --right-dock-w) instead of being clipped by
+// an overlay. Idempotent.
 async function openAtlasDocked() {
-  const fresh = !_open;
-  if (fresh) await openAtlas();
-  // Let the modal lay out before snapping so the animation starts from its
-  // real geometry rather than the flex-centered default.
-  requestAnimationFrame(() => { try { snapModalRight(_modal); } catch (_) {} });
+  if (!_open) await openAtlas();
+  // Let the modal lay out before docking so the snapshot/geometry is real.
+  requestAnimationFrame(() => {
+    try { applyRightDock(_modal); _docked = true; } catch (_) {}
+  });
 }
 
 // Open a specific note in the docked panel and pulse-highlight it — used by the
@@ -314,6 +317,12 @@ function _doClose() {
   _open = false;
   document.removeEventListener('keydown', _escHandler);
   window.removeEventListener('atlas-refresh', _onExternalRefresh);
+  // Release the reserved right-dock space so the chat/composer reflow back.
+  if (_docked && _modal) {
+    try { clearDockSide('right', _modal); } catch (_) {}
+    _modal.classList.remove('modal-right-docked');
+    _docked = false;
+  }
   if (_modal) { _modal.style.display = 'none'; _modal.classList.add('hidden'); }
 }
 function closeAtlas() { _doClose(); }

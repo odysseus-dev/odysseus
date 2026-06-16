@@ -534,6 +534,23 @@ export function mdToHtml(src, opts) {
     new RegExp(`(^|[^\\[(])#(${ANCHOR_KIND}-[A-Za-z0-9_-]+)\\b`, 'g'),
     '$1[#$2](#$2)',
   );
+  // Case D: Atlas note anchors (`#atlas-<url-encoded-path>`). Separate from the
+  // kinds above because vault paths carry '/', '.', and %-escapes. A weak model
+  // sometimes drops the bare anchor into prose instead of keeping the returned
+  // markdown link; upgrade it to a clean clickable link labelled with the note
+  // name (decoded basename, no extension) so the user never sees a raw
+  // `#atlas-…` token. Trailing sentence punctuation is left outside the link.
+  s = s.replace(
+    /(^|[^\[(])#(atlas-[A-Za-z0-9_%./-]+)/g,
+    (match, pre, anchor) => {
+      const trail = (anchor.match(/[.,;:!?]+$/) || [''])[0];
+      const core = trail ? anchor.slice(0, -trail.length) : anchor;
+      let label = core.slice('atlas-'.length);
+      try { label = decodeURIComponent(label); } catch (_) {}
+      label = label.split('/').pop().replace(/\.(md|markdown|base)$/i, '');
+      return `${pre}[${label}](#${core})${trail}`;
+    },
+  );
 
   // Convert markdown links [text](url) to clickable links
   // Internal #hash links navigate in-page; external links open in new tab
