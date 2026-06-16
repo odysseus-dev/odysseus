@@ -9,7 +9,7 @@ def test_cleanup_zero_byte_incomplete_removes_zero_byte_files(tmp_path):
     # Run the cleanup function
     removed_count = _cleanup_zero_byte_incomplete(repo_id="test/repo", download_path=str(tmp_path))
 
-    # Check that the zero-byte file was removed and the non-zero-byte file was preserved
+    # Check that the zero-byte file was removed
     assert not zero_byte_file.exists(), "Zero-byte .incomplete file should be removed"
     assert removed_count == 1, "Exactly one zero-byte .incomplete file should be removed"
 

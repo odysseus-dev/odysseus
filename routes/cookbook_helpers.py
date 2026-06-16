@@ -386,11 +386,11 @@ def _append_zero_byte_incomplete_cleanup_lines(
     partials so resume remains possible for interrupted downloads.
     """
     repo_cache = repo_id.replace("/", "--")
-    repo_leaf = repo_id.split("/")[-1] if "/" in repo_id else repo_id
+    hub_models = f"models--{repo_cache}"
     local_target = None
     if local_dir:
         base = local_dir.rstrip("/") or "/"
-        local_target = f"{base}/{repo_leaf}" if base != "/" else f"/{repo_leaf}"
+        local_target = f"{base}/hub/{hub_models}" if base != "/" else f"/hub/{hub_models}"
 
     runner_lines.append('ODYSSEUS_INCOMPLETE_PRUNED=0')
     runner_lines.append('_od_prune_zero_incomplete() {')
@@ -401,8 +401,10 @@ def _append_zero_byte_incomplete_cleanup_lines(
     runner_lines.append('    rm -f "$_od_file" && ODYSSEUS_INCOMPLETE_PRUNED=$((ODYSSEUS_INCOMPLETE_PRUNED+1))')
     runner_lines.append('  done < <(find "$_od_root" -type f -name "*.incomplete" -size 0c -print0 2>/dev/null)')
     runner_lines.append('}')
-    runner_lines.append(f'_od_prune_zero_incomplete "$HOME/.cache/huggingface/hub/models--{repo_cache}"')
-    runner_lines.append(f'_od_prune_zero_incomplete "/app/.cache/huggingface/hub/models--{repo_cache}"')
+    runner_lines.append(f'_od_prune_zero_incomplete "$HOME/.cache/huggingface/hub/{hub_models}"')
+    runner_lines.append(f'_od_prune_zero_incomplete "/app/.cache/huggingface/hub/{hub_models}"')
+    runner_lines.append(f'[ -n "$HF_HOME" ] && _od_prune_zero_incomplete "$HF_HOME/hub/{hub_models}"')
+    runner_lines.append(f'[ -n "$HUGGINGFACE_HUB_CACHE" ] && _od_prune_zero_incomplete "$HUGGINGFACE_HUB_CACHE/{hub_models}"')
     if local_target:
         runner_lines.append(f'_od_prune_zero_incomplete {_shell_path(local_target)}')
     runner_lines.append('if [ "$ODYSSEUS_INCOMPLETE_PRUNED" -gt 0 ]; then')
@@ -418,14 +420,15 @@ def _append_zero_byte_incomplete_cleanup_ps_lines(
 ) -> None:
     """Append PowerShell lines that delete stale zero-byte ``.incomplete`` files."""
     repo_cache = repo_id.replace("/", "--")
-    repo_leaf = repo_id.split("/")[-1] if "/" in repo_id else repo_id
+    hub_models = f"models--{repo_cache}"
     local_target = None
     if local_dir:
         base = local_dir.rstrip("/") or "/"
-        local_target = f"{base}/{repo_leaf}" if base != "/" else f"/{repo_leaf}"
+        local_target = f"{base}/hub/{hub_models}" if base != "/" else f"/hub/{hub_models}"
 
     roots = [
-        f"$HOME/.cache/huggingface/hub/models--{repo_cache}",
+        f"$HOME/.cache/huggingface/hub/{hub_models}",
+        f"/app/.cache/huggingface/hub/{hub_models}",
     ]
     if local_target:
         roots.append(local_target)
@@ -433,6 +436,8 @@ def _append_zero_byte_incomplete_cleanup_ps_lines(
 
     runner_lines.append('    $odPruned = 0')
     runner_lines.append(f'    $odRoots = @({roots_expr})')
+    runner_lines.append(f'    if ($env:HF_HOME) {{ $odRoots += Join-Path $env:HF_HOME "hub/{hub_models}" }}')
+    runner_lines.append(f'    if ($env:HUGGINGFACE_HUB_CACHE) {{ $odRoots += Join-Path $env:HUGGINGFACE_HUB_CACHE "{hub_models}" }}')
     runner_lines.append('    foreach ($odRoot in $odRoots) {')
     runner_lines.append('      if (-not $odRoot) { continue }')
     runner_lines.append('      if (-not (Test-Path -LiteralPath $odRoot)) { continue }')
