@@ -154,7 +154,7 @@
   <footer class="version-label" id="version-label"></footer>
 
   <!-- Axios needs to be loaded first to ensure it is available for other modules -->
-  <script type="module" src="{{BASE_PATH}}/static/lib/axios.min.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/axios@1.18.0/dist/axios.min.js"></script>
   <script nonce="{{CSP_NONCE}}" type="module">
     (async () => {
       const { api, apiPath } = await import('{{BASE_PATH}}/static/js/axios/api.js');

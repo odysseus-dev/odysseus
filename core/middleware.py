@@ -120,7 +120,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "font-src 'self' https://cdn.jsdelivr.net; "
                 "img-src 'self' data: blob:; "
                 "media-src 'self' blob:; "
-                "connect-src 'self'; "
+                # CDN scripts (axios, katex, mermaid, pyodide) may fetch source
+                # maps or runtime assets from the same origin at load time.
+                "connect-src 'self' https://cdn.jsdelivr.net; "
                 "frame-src 'self'; "
                 "frame-ancestors 'none'"
             )

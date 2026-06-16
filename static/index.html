@@ -8,7 +8,8 @@
   <meta name="theme-color" content="#282c34">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <script type="module" src="{{BASE_PATH}}/static/lib/axios.min.js"></script> <!-- Axios needs to be loaded first to ensure it is available for other modules -->
+  <!-- Axios needs to be loaded first to ensure it is available for other modules -->
+  <script type="module" src="https://cdn.jsdelivr.net/npm/axios@1.18.0/dist/axios.min.js"></script>
   <!-- Disable iOS / Android auto-linkifying of numbers (phone/date/address)
        in email bodies — was wrapping random digits in <a href="tel:..."> with
        browser-default styling that didn't match the Odysseus theme. -->
