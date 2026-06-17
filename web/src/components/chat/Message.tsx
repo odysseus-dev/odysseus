@@ -14,7 +14,7 @@ function Reasoning({ text, live }: { text: string; live: boolean }) {
         <Brain className="size-3.5" />
         {live ? "Thinking…" : "Reasoning"}
       </button>
-      {open && <div className="border-t px-3 py-2 whitespace-pre-wrap text-muted-foreground">{text}</div>}
+      {open && <div className="whitespace-pre-wrap border-t px-3 py-2 text-muted-foreground">{text}</div>}
     </div>
   )
 }
@@ -27,6 +27,7 @@ export function Message({ m }: { m: ChatMessage }) {
       </div>
     )
   }
+  const mt = m.metrics
   return (
     <div className="space-y-3">
       {m.reasoning && <Reasoning text={m.reasoning} live={!!m.streaming && !m.content} />}
@@ -35,10 +36,16 @@ export function Message({ m }: { m: ChatMessage }) {
       {m.sources && m.sources.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {m.sources.slice(0, 8).map((s, i) => (
-            <a key={i} href={s.url} target="_blank" rel="noreferrer" className="max-w-[220px] truncate rounded-md border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground">
-              {s.title || s.url}
-            </a>
+            <a key={i} href={s.url} target="_blank" rel="noreferrer" className="max-w-[220px] truncate rounded-md border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground">{s.title || s.url}</a>
           ))}
+        </div>
+      )}
+      {!m.streaming && (m.model || mt) && (
+        <div className="flex flex-wrap items-center gap-3 pt-0.5 text-[11px] text-muted-foreground">
+          {m.model && <span>{m.model}</span>}
+          {mt?.tokens_out != null && <span>{mt.tokens_out} tok</span>}
+          {mt?.tok_per_sec != null && <span>{Math.round(mt.tok_per_sec)} tok/s</span>}
+          {mt?.cost != null && <span>${Number(mt.cost).toFixed(4)}</span>}
         </div>
       )}
     </div>

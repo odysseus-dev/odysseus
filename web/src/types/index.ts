@@ -18,6 +18,7 @@ export interface ToolEvent { name: string; input?: unknown; output?: string; pro
 export interface ChatMessage {
   role: "user" | "assistant"; content: string; reasoning?: string; model?: string;
   tools?: ToolEvent[]; sources?: Source[]; streaming?: boolean;
+  metrics?: { tokens_in?: number; tokens_out?: number; cost?: number; tok_per_sec?: number };
 }
 export interface Memory {
   id: string; text: string; category?: string; categories?: string[];

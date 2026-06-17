@@ -94,6 +94,8 @@ export function useChat(sessionId?: string) {
           case "tool_progress": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], progress: ev.progress_text as string }; return { ...m, tools: t } }); break
           case "web_sources": case "sources": case "research_sources":
             patchAi((m) => ({ ...m, sources: [...(m.sources || []), ...((ev.data as []) || [])] })); break
+          case "metrics":
+            patchAi((m) => ({ ...m, metrics: { tokens_in: ev.tokens_in as number, tokens_out: ev.tokens_out as number, cost: ev.cost as number, tok_per_sec: ev.tok_per_sec as number } })); break
         }
       }, ctrl.signal)
     } catch {
