@@ -49,3 +49,63 @@ def test_app_db_created_with_0600(tmp_path):
         check=True,
     )
     assert db_file.stat().st_mode & 0o777 == 0o600, "existing 0644 DB not re-locked on startup"
+
+
+def test_sqlite_db_path_handles_driver_and_query_forms():
+    """The path fed to chmod must come from SQLAlchemy's parsed URL, not a naive
+    replace("sqlite:///"). A driver-qualified URL (sqlite+pysqlite://) or one
+    carrying query args (?cache=shared) would otherwise resolve to the wrong
+    path and leave the real file world-readable. Pure logic — runs everywhere.
+    """
+    from sqlalchemy.engine import make_url
+
+    from core.database import _sqlite_db_path
+
+    # Plain forms (relative + absolute) resolve to the file path.
+    assert _sqlite_db_path(make_url("sqlite:///data/app.db")) == "data/app.db"
+    assert _sqlite_db_path(make_url("sqlite:////abs/app.db")) == "/abs/app.db"
+    # A driver qualifier must not defeat detection...
+    assert _sqlite_db_path(make_url("sqlite+pysqlite:///data/app.db")) == "data/app.db"
+    # ...and query args must be stripped from the path.
+    assert _sqlite_db_path(make_url("sqlite:///data/app.db?cache=shared")) == "data/app.db"
+    assert _sqlite_db_path(make_url("sqlite+pysqlite:////abs/app.db?mode=ro")) == "/abs/app.db"
+    # Nothing to lock for non-file-backed or non-sqlite databases.
+    assert _sqlite_db_path(make_url("sqlite:///:memory:")) is None
+    assert _sqlite_db_path(make_url("sqlite://")) is None
+    assert _sqlite_db_path(make_url("postgresql+psycopg2://u:p@h/db")) is None
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX mode bits (0o600) don't exist on Windows; safe_chmod no-ops there.",
+)
+def test_app_db_sidecars_relocked(tmp_path):
+    """Stale SQLite sidecars (-wal/-shm) left by an older 0o644 install hold
+    copies of DB pages, so startup must re-lock them too — not just app.db.
+
+    The default -journal is transient (SQLite deletes it after the create_all
+    commit), so it isn't asserted on here; -wal/-shm persist and are the real
+    exposure once WAL has ever been enabled.
+    """
+    import sqlite3
+
+    db_file = tmp_path / "app.db"
+    sqlite3.connect(db_file).close()  # a real, pre-existing DB ...
+    db_file.chmod(0o644)
+    sidecars = [tmp_path / f"app.db{sfx}" for sfx in ("-wal", "-shm")]
+    for s in sidecars:
+        s.write_bytes(b"")
+        s.chmod(0o644)
+
+    env = {**os.environ, "DATABASE_URL": f"sqlite:///{db_file}"}
+    repo_root = Path(__file__).resolve().parents[1]
+    subprocess.run(
+        [sys.executable, "-c", "import core.database"],
+        env=env,
+        cwd=repo_root,
+        check=True,
+    )
+
+    assert db_file.stat().st_mode & 0o777 == 0o600
+    for s in sidecars:
+        assert s.stat().st_mode & 0o777 == 0o600, f"{s.name} not re-locked on startup"
