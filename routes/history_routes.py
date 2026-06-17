@@ -490,7 +490,13 @@ def setup_history_routes(session_manager) -> APIRouter:
             # Copy messages up to keep_count
             msgs_to_copy = source.history[:keep_count]
             for msg in msgs_to_copy:
-                new_session.add_message(ChatMessage(msg.role, msg.content, msg.metadata))
+                # Copy the metadata dict. Sharing it would let the fork's
+                # persistence (add_message -> _persist_message stamps
+                # _db_id/timestamp onto the dict) mutate the SOURCE session's
+                # in-memory messages, corrupting their _db_id and breaking
+                # edit/delete-by-id on the original conversation.
+                meta = dict(msg.metadata) if isinstance(msg.metadata, dict) else None
+                new_session.add_message(ChatMessage(msg.role, msg.content, meta))
             try:
                 from src.event_bus import fire_event
                 fire_event("session_created", getattr(source, 'owner', None))

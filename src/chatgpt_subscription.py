@@ -17,8 +17,6 @@ from typing import Any, Dict, Optional
 import httpx
 from fastapi import HTTPException
 
-from core.database import ProviderAuthSession, SessionLocal, utcnow_naive
-
 DEFAULT_CHATGPT_SUBSCRIPTION_BASE_URL = (
     os.getenv("CHATGPT_SUBSCRIPTION_BASE_URL", "").strip().rstrip("/")
     or "https://chatgpt.com/backend-api/codex"
@@ -31,6 +29,11 @@ CHATGPT_OAUTH_REDIRECT_URI = f"{CHATGPT_OAUTH_ISSUER}/deviceauth/callback"
 CHATGPT_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
 _AUTH_REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _AUTH_REFRESH_LOCKS_GUARD = threading.Lock()
+
+
+def _database_handles():
+    from core.database import ProviderAuthSession, SessionLocal, utcnow_naive
+    return ProviderAuthSession, SessionLocal, utcnow_naive
 
 
 def _refresh_lock_for(auth_id: str) -> threading.Lock:
@@ -249,6 +252,7 @@ def access_token_is_expiring(access_token: str, skew_seconds: int = CHATGPT_ACCE
 
 
 def resolve_runtime_credentials(auth_id: str, owner: Optional[str] = None, *, force_refresh: bool = False) -> Dict[str, Any]:
+    ProviderAuthSession, SessionLocal, utcnow_naive = _database_handles()
     db = SessionLocal()
     try:
         q = db.query(ProviderAuthSession).filter(

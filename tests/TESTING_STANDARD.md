@@ -24,7 +24,7 @@ The goal is not only to reorganize `tests/`. The goal is for the suite to be a
 reliable foundation for future development: deterministic, modular, informative,
 behavior-focused, and complete enough to replace manual QA wherever practical.
 
-Run tests with the project virtualenv interpreter (`.venv/bin/python -m pytest`).
+Run tests with the project virtualenv interpreter (`./venv/bin/python -m pytest`).
 The system `python3` may be missing pinned dependencies (e.g. `nh3`), which
 shows up as import/collection errors that are environmental, not real failures.
 
@@ -51,10 +51,11 @@ Every new or refactored test should be:
 
 ## Test taxonomy
 
-Tests are classified by the categories below. Today the suite is flat under
-`tests/`; the **Target dir** column is the phased layout from #2523 that we move
-toward *after* helpers and determinism are stable. Until a category is moved,
-new tests in that category stay in flat `tests/` but should still follow this
+Tests are classified by the categories below. Today the suite is mostly flat
+under `tests/` (the current `area_cli` set has moved to `tests/cli/`); the
+**Target dir** column is the phased layout from #2523 that we move toward
+*after* helpers and determinism are stable. Until a category is moved, new
+tests in that category stay in flat `tests/` but should still follow this
 standard.
 
 | Category | What it covers | Examples today | Target dir |
@@ -73,6 +74,16 @@ standard.
 A test that genuinely spans categories (e.g. a route test that also pins a
 security invariant) is classified by its **primary** assertion target and may be
 split if it grows.
+
+## Fast lane policy
+
+The fast lane is `not slow`: `tests/run_focus.py --fast` selects every test that
+is not marked `slow`. The `slow` marker is **opt-in**, and slow marks must be
+**evidence-driven from `--durations` output** - mark a test slow only when its
+measured duration shows it is genuinely expensive, never by guessing. The fast
+lane exists for quick local and reviewer feedback; it is **not** a replacement
+for broader focused or full-suite validation before merge, and a test must never
+be marked `slow` to hide a failure or skip coverage.
 
 ## Determinism & isolation rules
 
@@ -161,10 +172,10 @@ Prefer tests that exercise real behavior over tests that inspect source code.
 Run locally before opening or approving a refactor PR:
 
 - `git diff --check` - whitespace and conflict-marker errors.
-- `python3 -m py_compile <changed .py files>` - changed files compile.
-- Focused `pytest` on the changed files (use `.venv/bin/python -m pytest`).
-- `pytest` on neighboring / order-sensitive groups that share import state with
-  the changed files.
+- `./venv/bin/python -m py_compile <changed .py files>` - changed files compile.
+- Focused `./venv/bin/python -m pytest` on the changed files.
+- `./venv/bin/python -m pytest` on neighboring / order-sensitive groups that
+  share import state with the changed files.
 - When replacing boilerplate, `grep` for the old pattern to confirm no stragglers.
 - When changing a helper itself, validate in a fresh worktree so stale
   `__pycache__` or import state cannot mask a regression.

@@ -12,6 +12,7 @@ let _envState;
 let _sshCmd;
 let _getPort;
 let _getPlatform;
+let _serverByVal;
 let _isWindows;
 let _buildEnvPrefix;
 let _buildServeCmd;
@@ -118,7 +119,7 @@ export function _buildDownloadCmd(model, backend) {
       const includeArg = includePattern ? `, allow_patterns=["${includePattern.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]` : '';
       // Reflect the server's download target in the preview (matches the real
       // download path built server-side). '' = default HF cache.
-      const _dlDir = (_envState.servers.find(s => s.host === (_envState.remoteHost || '')) || {}).downloadDir || '';
+      const _dlDir = (_serverByVal?.(_envState.remoteServerKey || _envState.remoteHost || '') || {}).downloadDir || '';
       const _localDirArg = _dlDir ? `, local_dir=os.path.expanduser('${_dlDir.replace(/\/$/, '')}/${repo.split('/').pop()}')` : '';
       const _py = _isWindows() ? 'python' : 'python3';
       cmd = `${_py} -u -c "
@@ -241,11 +242,7 @@ export function _wirePanelEvents(panel, model, backend) {
   const dlBtn = panel.querySelector('.hwfit-dl-btn');
   if (dlBtn) {
     dlBtn.addEventListener('click', () => {
-      if (backend === 'ollama') {
-        _runPanelCmd(panel, _buildDownloadCmd(model, backend), { timeout: 0 });
-      } else {
-        _runModelDownload(panel, model, backend);
-      }
+      _runModelDownload(panel, model, backend)
     });
   }
 
@@ -458,7 +455,9 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     uiModule.showToast(_missingGgufMessage(model));
     return;
   }
-  const repo = ggufSource?.repo || model.quant_repo || model.name;
+  const repo = backend === 'ollama'
+    ? (model.ollama || model.ollama_name || model.name)
+    : (ggufSource?.repo || model.quant_repo || model.name);
   const include = backend === 'llamacpp' ? _ggufIncludePattern(model, ggufSource) : null;
 
   _syncEnvFromPanel(panel);
@@ -475,10 +474,10 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     // No explicit host passed: resolve from the visible server dropdown rather
     // than _envState.remoteHost (unreliable — multiple state copies disagree).
     const ssEl = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
-    // Dropdown values are host strings now ('local' for local); resolve by host
-    // (numeric fallback for any stale value).
+    // Dropdown values are profile keys now ('local' for local); stale host
+    // strings and numeric indices still resolve for backwards compatibility.
     const _ssv = ssEl ? ssEl.value : null;
-    const _dsrv = (_ssv && _ssv !== 'local') ? (_envState.servers.find(s => s.host === _ssv) || _envState.servers[parseInt(_ssv)]) : null;
+    const _dsrv = (_ssv && _ssv !== 'local') ? (_serverByVal?.(_ssv) || _envState.servers[parseInt(_ssv)]) : null;
     if (_dsrv) {
       host = _dsrv.host;
     } else if (ssEl && ssEl.value === 'local') {
@@ -487,13 +486,13 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
       host = _envState.remoteHost || '';
     }
   }
-  const srv = _envState.servers.find(s => s.host === host) || {};
+  const srv = _serverByVal?.(_envState.remoteServerKey || host) || {};
   const env = host ? (srv.env || 'none') : (_envState.env || 'none');
   const envPath = host ? (srv.envPath || '') : (_envState.envPath || '');
   const platform = host ? (srv.platform || '') : (_envState.platform || '');
   const isWin = host ? (platform === 'windows') : _isWindows();
 
-  const payload = { repo_id: repo };
+  const payload = { repo_id: repo, backend };
   if (include) payload.include = include;
   // Large downloads are where hf_transfer most often dies near the end. Use the
   // plain HuggingFace downloader up front for big model files; it is slower, but
@@ -546,7 +545,8 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
   if (zombieCandidate) {
     try {
       const _zh = zombieCandidate.remoteHost || '';
-      const _zPort = (_envState.servers || []).find(s => s.host === _zh)?.port;
+      const _zPort = (_serverByVal?.(_envState.remoteServerKey || _zh)
+        || (_envState.servers || []).find(s => s.host === _zh) || {}).port;
       const _sshPf = _zh ? `ssh ${_zPort && _zPort !== '22' ? `-p ${_zPort} ` : ''}${_zh} '` : '';
       const _sshSf = _zh ? `'` : '';
       const _probeCmd = `${_sshPf}tmux has-session -t ${zombieCandidate.sessionId} 2>/dev/null${_sshSf}`;
@@ -615,6 +615,7 @@ export function initDownload(shared) {
   _sshCmd = shared._sshCmd;
   _getPort = shared._getPort;
   _getPlatform = shared._getPlatform;
+  _serverByVal = shared._serverByVal;
   _isWindows = shared._isWindows;
   _buildEnvPrefix = shared._buildEnvPrefix;
   _buildServeCmd = shared._buildServeCmd;

@@ -118,6 +118,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)together\.(ai|xyz)$/i, "Together"],
   [/(^|\.)fireworks\.ai$/i, "Fireworks"],
   [/(^|\.)perplexity\.ai$/i, "Perplexity"],
+  [/(^|\.)nvidia\.com$/i, "NVIDIA"],
   [/(^|\.)x\.ai$/i, "xAI"],
 ];
 
@@ -146,4 +147,31 @@ export function providerLabel(endpointUrl) {
   return host.replace(/^api\./i, "");
 }
 
-export default { providerLogo, providerLabel };
+// Map endpoint URL → logo SVG using the same model-id regex catalog.
+// Tests host + port + path so loopback servers (e.g. Ollama on
+// localhost:11434) still match by port. Falls back to null when nothing
+// recognises the URL, so callers can render a neutral placeholder.
+export function providerLogoFromUrl(url) {
+  if (!url) return null;
+  let host = '', port = '', path = '';
+  try {
+    const u = new URL(url);
+    host = u.hostname; port = u.port; path = u.pathname || '';
+  } catch (_) {
+    const raw = String(url).replace(/^[a-z]+:\/\//i, '');
+    const slashIdx = raw.indexOf('/');
+    const hostport = slashIdx >= 0 ? raw.slice(0, slashIdx) : raw;
+    path = slashIdx >= 0 ? raw.slice(slashIdx) : '';
+    const colon = hostport.lastIndexOf(':');
+    host = colon >= 0 ? hostport.slice(0, colon) : hostport;
+    port = colon >= 0 ? hostport.slice(colon + 1) : '';
+  }
+  // Build candidate strings to test against the provider catalog.
+  const candidates = [host, port ? `${host}:${port}` : '', port ? `:${port}` : '', path].filter(Boolean);
+  for (const [re, svg] of _PROVIDERS) {
+    if (candidates.some(c => re.test(c))) return svg;
+  }
+  return null;
+}
+
+export default { providerLogo, providerLabel, providerLogoFromUrl };

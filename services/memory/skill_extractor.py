@@ -66,41 +66,57 @@ def _has_duplicate_title(skills, title: str) -> bool:
 def _extract_json_object(text: str) -> Optional[dict]:
     """Best-effort extraction of a JSON object from an LLM response.
 
-    The response may be wrapped in code fences or surrounded by prose, and some
-    models emit a stray brace in the prose before the real object
-    (e.g. "uses {placeholder} then {...}"). Slicing first-'{' .. last-'}' then
-    grabs an unparseable span and the skill is silently lost. Try the whole
-    string first, then each '{' start position in turn, returning the first
-    candidate that parses to a JSON object (dict). Returns None if none do.
+    The response may be wrapped in code fences or surrounded by prose. Uses
+    json.JSONDecoder().raw_decode() to locate the boundaries of complete JSON
+    objects starting at each '{' position. Nested objects are filtered out to
+    keep only top-level candidates. If multiple non-overlapping valid JSON
+    objects are found, it is treated as ambiguous and returns None. Otherwise,
+    returns the single valid candidate dictionary.
     """
     if not text:
         return None
     s = text.strip()
     if s.startswith("```"):
         s = s.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    end = s.rfind("}")
-    if end == -1:
+
+    decoder = json.JSONDecoder()
+    candidates = []
+
+    start = s.find("{")
+    while start != -1:
+        try:
+            obj, idx = decoder.raw_decode(s[start:])
+            end_pos = start + idx
+            if isinstance(obj, dict):
+                candidates.append((start, end_pos, obj))
+        except (json.JSONDecodeError, ValueError):
+            pass
+        start = s.find("{", start + 1)
+
+    # Filter out nested candidates to identify top-level dictionaries
+    top_level = []
+    for c in candidates:
+        is_nested = False
+        for other in candidates:
+            if other == c:
+                continue
+            if other[0] <= c[0] and c[1] <= other[1]:
+                is_nested = True
+                break
+        if not is_nested:
+            top_level.append(c)
+
+    if not top_level:
         return None
 
-    def _as_dict(candidate):
-        try:
-            obj = json.loads(candidate)
-        except (json.JSONDecodeError, ValueError):
-            return None
-        return obj if isinstance(obj, dict) else None
+    if len(top_level) > 1:
+        logger.debug(
+            "[skill-extract] Found multiple non-overlapping JSON objects: %s",
+            [item[2].get("title") for item in top_level]
+        )
+        return None
 
-    # The clean, common case: the whole (de-fenced) string is the object.
-    obj = _as_dict(s)
-    if obj is not None:
-        return obj
-    # Otherwise scan each '{' candidate up to the last '}'.
-    start = s.find("{")
-    while 0 <= start < end:
-        obj = _as_dict(s[start : end + 1])
-        if obj is not None:
-            return obj
-        start = s.find("{", start + 1)
-    return None
+    return top_level[0][2]
 
 
 async def maybe_extract_skill(
@@ -243,6 +259,20 @@ async def maybe_extract_skill(
             logger.debug("[skill-extract] '%s' already exists — dropped as duplicate", title)
             return None
 
+        # Auto-publish gate: if the user has `auto_approve_skills` on, the
+        # newly-extracted skill is created `published` immediately rather
+        # than waiting for the next audit batch. The audit still runs later
+        # and can demote it back to `draft` (or delete) on failure. Default
+        # ON matches the UI label "Auto-approve skills".
+        _initial_status = "draft"
+        try:
+            from routes.prefs_routes import _load_for_user as _load_prefs
+            _prefs = _load_prefs(owner) or {}
+            if _prefs.get("auto_approve_skills", True):
+                _initial_status = "published"
+        except Exception:
+            pass
+
         entry = skills_manager.add_skill(
             title=title,
             problem=data.get("problem", ""),
@@ -253,6 +283,7 @@ async def maybe_extract_skill(
             confidence=data.get("confidence", 0.7),
             session_id=getattr(session, "session_id", None),
             owner=owner,
+            status=_initial_status,
         )
         try:
             from src.event_bus import fire_event

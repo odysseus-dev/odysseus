@@ -12,21 +12,45 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from src.constants import MAX_OUTPUT_CHARS, MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.tool_utils import get_mcp_manager
 from core.constants import internal_api_base
 
-
-def get_mcp_manager():
-    from src import agent_tools
-    return agent_tools.get_mcp_manager()
-
-
-def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
-    if len(text) > limit:
-        return text[:limit] + f"\n... (truncated, {len(text)} chars total)"
-    return text
-
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Active email state
+# ---------------------------------------------------------------------------
+
+# When the user has an email reader window open, the frontend tells the
+# backend about it on each chat submit. Email tools can resolve "this email"
+# without guessing a UID. Cleared between requests by chat_routes.
+_active_email_ref: Optional[Dict[str, str]] = None
+
+
+def set_active_email(uid: Optional[str], folder: Optional[str] = None, account: Optional[str] = None,
+                     subject: Optional[str] = None, sender: Optional[str] = None) -> None:
+    """Stash the email currently open in the UI. None clears it."""
+    global _active_email_ref
+    if not uid:
+        _active_email_ref = None
+        return
+    _active_email_ref = {
+        "uid": str(uid),
+        "folder": str(folder or "INBOX"),
+        "account": str(account or ""),
+        "subject": str(subject or ""),
+        "from": str(sender or ""),
+    }
+
+
+def get_active_email() -> Optional[Dict[str, str]]:
+    return _active_email_ref
+
+
+def clear_active_email() -> None:
+    global _active_email_ref
+    _active_email_ref = None
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -63,486 +87,6 @@ def _parse_tool_args(content):
     ):
         args = args["body"]
     return args
-
-
-# ---------------------------------------------------------------------------
-# Active document state
-# ---------------------------------------------------------------------------
-
-_active_document_id: Optional[str] = None
-_active_model: Optional[str] = None
-
-
-def set_active_document(doc_id: Optional[str]):
-    """Set the active document ID for document tool execution."""
-    global _active_document_id
-    _active_document_id = doc_id
-
-
-def set_active_model(model: Optional[str]):
-    """Set the current model name for version summaries."""
-    global _active_model
-    _active_model = model
-
-
-def get_active_document():
-    return _active_document_id
-
-
-def clear_active_document(doc_id: Optional[str] = None) -> bool:
-    """Clear the in-memory active-document pointer.
-
-    With ``doc_id`` given, only clears when it matches the current pointer, so a
-    different active document is left untouched. Returns True if it was cleared.
-
-    Called when a document is detached from its session or deleted (its tab is
-    closed): without this, the stale pointer makes the last-resort doc-injection
-    path re-surface a closed document in a later, unrelated chat — even one whose
-    session no longer matches — because an unlinked doc has session_id NULL (#1160).
-    """
-    global _active_document_id
-    if doc_id is None or _active_document_id == doc_id:
-        _active_document_id = None
-        return True
-    return False
-
-
-def _owned_document_query(query, Document, owner: Optional[str]):
-    if owner is None:
-        # A bare Python `False` is not a valid SQL expression — SQLAlchemy 1.4
-        # deprecates it and 2.0 raises ArgumentError. Use the SQL `false()`
-        # literal to return zero rows for an unscoped (owner-less) query.
-        from sqlalchemy import false
-        return query.filter(false())
-    return query.filter(Document.owner == owner)
-
-
-def _get_owned_document(db, Document, doc_id: str, owner: Optional[str], active_only: bool = False):
-    q = db.query(Document).filter(Document.id == doc_id)
-    if active_only:
-        q = q.filter(Document.is_active == True)
-    q = _owned_document_query(q, Document, owner)
-    return q.first()
-
-
-def _most_recent_owned_document(db, Document, owner: Optional[str], active_only: bool = False):
-    q = db.query(Document)
-    if active_only:
-        q = q.filter(Document.is_active == True)
-    q = _owned_document_query(q, Document, owner)
-    return q.order_by(Document.updated_at.desc()).first()
-
-
-# ---------------------------------------------------------------------------
-# Document tools — create/update/edit/suggest living documents
-# ---------------------------------------------------------------------------
-
-def _sniff_doc_language(text: str) -> str:
-    """Best-effort detect a document's language from its content when the model
-    didn't specify one. Defaults to 'markdown' (prose). Recognizes the common
-    markup/code types the editor supports so e.g. an SVG isn't saved as markdown."""
-    import json as _json, re as _re2
-    s = (text or "").strip()
-    if not s:
-        return "markdown"
-    head = s[:600]
-    hl = head.lower()
-    if _looks_like_email_document(s):
-        return "email"
-    # Markup (unambiguous)
-    if "<svg" in hl:
-        return "svg"
-    if hl.startswith("<?xml"):
-        return "xml"
-    if (hl.startswith("<!doctype html") or hl.startswith("<html")
-            or _re2.search(r"<(div|body|head|p|span|table|button|h[1-6]|ul|ol|li|img)\b", hl)):
-        return "html"
-    # JSON
-    if s[0] in "{[":
-        try:
-            _json.loads(s)
-            return "json"
-        except Exception:
-            pass
-    # Shebang
-    first = s.split("\n", 1)[0].strip().lower()
-    if first.startswith("#!"):
-        return "python" if "python" in first else "bash"
-    # Code by strong leading signals (line-anchored so prose with stray words won't match)
-    if _re2.search(r"(?m)^\s*(def \w|class \w|import \w|from \w[\w.]* import )", s):
-        return "python"
-    if _re2.search(r"(?m)^\s*(function \w|const \w|let \w|export |import .* from )", s):
-        return "javascript"
-    if _re2.search(r"(?mi)^\s*(select .* from |create table |insert into |update \w)", s):
-        return "sql"
-    if _re2.search(r"(?m)^[.#]?[\w-]+\s*\{[^{}]*:[^{}]*;", s):
-        return "css"
-    return "markdown"
-
-
-def _looks_like_email_document(text: str = "", title: str = "") -> bool:
-    import re as _re
-    title_l = (title or "").strip().lower()
-    if title_l in {"new email", "new mail", "new message"}:
-        return True
-    s = (text or "").lstrip()
-    if "\n---\n" in s and _re.search(r"(?im)^To:\s*", s) and _re.search(r"(?im)^Subject:\s*", s):
-        return True
-    return bool(_re.search(r"(?im)^To:\s*", s) and _re.search(r"(?im)^Subject:\s*", s))
-
-
-def _coerce_email_document_content(existing: str, incoming: str) -> str:
-    """Keep email docs in the To/Subject/---/body shape even if a model writes
-    only the body or dumps header labels without the separator."""
-    import re as _re
-    old = existing or ""
-    new = (incoming or "").strip()
-    if "\n---\n" in new:
-        return new
-    header = old.split("\n---\n", 1)[0] if "\n---\n" in old else "To: \nSubject: "
-    if _looks_like_email_document(new):
-        lines = new.splitlines()
-        last_header_idx = -1
-        header_re = _re.compile(r"^(To|Cc|Bcc|Subject|In-Reply-To|References|X-Source-UID|X-Source-Folder|X-Attachments):", _re.I)
-        for i, line in enumerate(lines):
-            if header_re.match(line.strip()):
-                last_header_idx = i
-        body_lines = lines[last_header_idx + 1:] if last_header_idx >= 0 else lines
-        while body_lines and not body_lines[0].strip():
-            body_lines.pop(0)
-        body = "\n".join(body_lines).strip()
-    else:
-        body = new
-    return header.rstrip() + "\n---\n" + body
-
-
-async def do_create_document(content_block: str, session_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
-    """Create a new document. Supports two formats:
-      1) Line-based: line 1 = title, line 2 (optional) = language, rest = content
-      2) XML-like tags: <title>...</title><language>...</language><content>...</content>
-    Some models mix them — strip any XML-style tags and fall back to line parsing."""
-    import uuid, re as _re
-    from src.database import SessionLocal, Document, DocumentVersion, Session as DbSession
-
-    raw = content_block or ""
-
-    # Known languages the editor understands (match the <select> in HTML)
-    _KNOWN_LANGS = {
-        "python", "javascript", "typescript", "html", "css", "markdown", "json",
-        "yaml", "bash", "sql", "rust", "go", "java", "c", "cpp", "xml", "toml",
-        "ini", "ruby", "php", "csv", "email", "text", "plain", "svg",
-    }
-
-    # Try XML tag extraction first
-    title = None
-    language = None
-    content = None
-    mt = _re.search(r"<title>\s*(.*?)\s*</title>", raw, _re.DOTALL | _re.IGNORECASE)
-    ml = _re.search(r"<language>\s*(.*?)\s*</language>", raw, _re.DOTALL | _re.IGNORECASE)
-    mc = _re.search(r"<content>\s*(.*?)\s*</content>", raw, _re.DOTALL | _re.IGNORECASE)
-    if mt or mc:
-        title = mt.group(1).strip() if mt else None
-        language = ml.group(1).strip().lower() if ml else None
-        content = mc.group(1) if mc else None
-
-    # Fall back to line-based parsing. First strip any stray XML-ish tags.
-    if title is None or content is None:
-        cleaned = _re.sub(r"</?(?:title|language|content)>", "", raw)
-        lines = cleaned.strip().split("\n")
-        if title is None:
-            title = lines[0].strip() if lines else "Untitled"
-            lines = lines[1:]
-        # Only consume second line as language if it looks like a valid short lang token
-        if language is None and lines:
-            candidate = lines[0].strip().lower()
-            if candidate and len(candidate) < 20 and " " not in candidate and candidate in _KNOWN_LANGS:
-                language = candidate
-                lines = lines[1:]
-        if content is None:
-            content = "\n".join(lines)
-
-    # Validate language: must be in known set, else default based on content
-    if language and language not in _KNOWN_LANGS:
-        language = None
-    if not language:
-        # No explicit language — sniff it from the content so an SVG / HTML / JSON
-        # / code document isn't silently saved as markdown. Prose → markdown.
-        language = _sniff_doc_language(content)
-    if _looks_like_email_document(content, title):
-        language = "email"
-
-    if not title:
-        title = "Untitled"
-
-    if not session_id:
-        return {"error": "No session context for document creation"}
-
-    db = SessionLocal()
-    try:
-        doc_id = str(uuid.uuid4())
-        ver_id = str(uuid.uuid4())
-
-        # Inherit ownership from the chat session so the doc survives that
-        # session later being deleted (session_id → NULL).
-        _sess = db.query(DbSession).filter(DbSession.id == session_id).first()
-        if owner is not None and (not _sess or _sess.owner != owner):
-            return {"error": "Cannot create document in another user's session"}
-        _owner = _sess.owner if _sess else None
-
-        doc = Document(
-            id=doc_id,
-            session_id=session_id,
-            title=title,
-            language=language,
-            current_content=content,
-            version_count=1,
-            is_active=True,
-            owner=_owner,
-        )
-        ver = DocumentVersion(
-            id=ver_id,
-            document_id=doc_id,
-            version_number=1,
-            content=content,
-            summary=f"Created by {_active_model or 'AI'}",
-            source="ai",
-        )
-        db.add(doc)
-        db.add(ver)
-        db.commit()
-
-        set_active_document(doc_id)
-        try:
-            from src.event_bus import fire_event
-            fire_event("document_created", _owner)
-        except Exception:
-            logger.debug("document_created event dispatch failed", exc_info=True)
-
-        return {
-            "action": "create",
-            "doc_id": doc_id,
-            "title": title,
-            "language": language,
-            "content": content,
-            "version": 1,
-        }
-    except Exception as e:
-        db.rollback()
-        return {"error": f"Failed to create document: {e}"}
-    finally:
-        db.close()
-
-
-async def do_update_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
-    """Update an existing document. Content = full new document text."""
-    import uuid
-    from src.database import SessionLocal, Document, DocumentVersion
-
-    target_id = doc_id or _active_document_id
-
-    db = SessionLocal()
-    try:
-        doc = None
-        if target_id:
-            doc = _get_owned_document(db, Document, target_id, owner)
-        if not doc:
-            doc = _most_recent_owned_document(db, Document, owner)
-            if doc:
-                target_id = doc.id
-                set_active_document(target_id)
-                logger.info(f"update_document: fell back to most recent doc id={target_id}")
-        if not doc:
-            return {"error": "No documents exist to update"}
-
-        is_email_doc = doc.language == "email" or _looks_like_email_document(doc.current_content or "", doc.title or "")
-        new_content = _coerce_email_document_content(doc.current_content or "", content) if is_email_doc else content.strip()
-        if is_email_doc:
-            doc.language = "email"
-
-        new_ver = doc.version_count + 1
-        ver = DocumentVersion(
-            id=str(uuid.uuid4()),
-            document_id=target_id,
-            version_number=new_ver,
-            content=new_content,
-            summary=f"Updated by {_active_model or 'AI'}",
-            source="ai",
-        )
-        doc.current_content = new_content
-        doc.version_count = new_ver
-        db.add(ver)
-        db.commit()
-
-        return {
-            "action": "update",
-            "doc_id": target_id,
-            "title": doc.title,
-            "language": doc.language,
-            "content": new_content,
-            "version": new_ver,
-        }
-    except Exception as e:
-        db.rollback()
-        return {"error": f"Failed to update document: {e}"}
-    finally:
-        db.close()
-
-
-def parse_edit_blocks(content: str) -> list:
-    """Parse <<<FIND>>>...<<<REPLACE>>>...<<<END>>> blocks."""
-    edits = []
-    pattern = r'<<<FIND>>>\n(.*?)\n<<<REPLACE>>>\n(.*?)\n<<<END>>>'
-    for m in re.finditer(pattern, content, re.DOTALL):
-        edits.append({"find": m.group(1), "replace": m.group(2)})
-    return edits
-
-
-async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Optional[str] = None) -> Dict:
-    """Apply targeted FIND/REPLACE edits to an existing document."""
-    import uuid
-    from src.database import SessionLocal, Document, DocumentVersion
-
-    target_id = doc_id or _active_document_id
-
-    edits = parse_edit_blocks(content)
-    if not edits:
-        return {"error": "No valid <<<FIND>>>...<<<REPLACE>>>...<<<END>>> blocks found"}
-
-    db = SessionLocal()
-    try:
-        doc = None
-        if target_id:
-            doc = _get_owned_document(db, Document, target_id, owner)
-        if not doc:
-            # Fallback: most recently updated document. Avoids "no active doc" errors
-            # after server restart or when the agent loses track of which doc to edit.
-            doc = _most_recent_owned_document(db, Document, owner)
-            if doc:
-                target_id = doc.id
-                set_active_document(target_id)
-                logger.info(f"edit_document: fell back to most recent doc id={target_id} title={doc.title!r}")
-        if not doc:
-            return {"error": "No documents exist to edit"}
-
-        updated_content = doc.current_content
-        applied = 0
-        skipped = 0
-        for edit in edits:
-            _find = edit["find"]
-            if _find in updated_content:
-                updated_content = updated_content.replace(_find, edit["replace"], 1)
-                applied += 1
-            else:
-                # Defensive: the active-doc context shows a "N\t" line-number
-                # gutter for reference. Weaker models sometimes copy that prefix
-                # into FIND. If the exact match failed, retry with a leading
-                # "<digits><tab>" stripped from each FIND line — but only use it
-                # when that stripped form actually matches, so we never corrupt a
-                # legitimately tab-prefixed document.
-                _stripped = "\n".join(re.sub(r"^\d+\t", "", _l) for _l in _find.split("\n"))
-                if _stripped != _find and _stripped in updated_content:
-                    updated_content = updated_content.replace(_stripped, edit["replace"], 1)
-                    applied += 1
-                    logger.info("edit_document: matched after stripping line-number gutter from FIND")
-                else:
-                    logger.warning(f"edit_document: FIND text not found, skipping: {_find[:80]!r}")
-                    skipped += 1
-
-        if applied == 0:
-            return {"error": f"No edits applied — none of the FIND blocks matched the document content (skipped {skipped})"}
-
-        new_ver = doc.version_count + 1
-        ver = DocumentVersion(
-            id=str(uuid.uuid4()),
-            document_id=target_id,
-            version_number=new_ver,
-            content=updated_content,
-            summary=f"Edited by {_active_model or 'AI'} ({applied} edit(s))",
-            source="ai",
-        )
-        doc.current_content = updated_content
-        doc.version_count = new_ver
-        db.add(ver)
-        db.commit()
-
-        return {
-            "action": "edit",
-            "doc_id": target_id,
-            "title": doc.title,
-            "language": doc.language,
-            "content": updated_content,
-            "version": new_ver,
-            "applied": applied,
-            "skipped": skipped,
-        }
-    except Exception as e:
-        db.rollback()
-        return {"error": f"Failed to edit document: {e}"}
-    finally:
-        db.close()
-
-
-def parse_suggest_blocks(content: str) -> list:
-    """Parse <<<FIND>>>...<<<SUGGEST>>>...<<<REASON>>>...<<<END>>> blocks."""
-    suggestions = []
-    _skip_phrases = ["no change", "clear", "fine as", "looks good", "no improvement", "keep as"]
-    pattern = r'<<<FIND>>>\n(.*?)\n<<<SUGGEST>>>\n(.*?)\n<<<REASON>>>\n(.*?)\n<<<END>>>'
-    for m in re.finditer(pattern, content, re.DOTALL):
-        find_text = m.group(1)
-        replace_text = m.group(2)
-        reason = m.group(3).strip()
-        # Skip no-op suggestions where find == replace or reason says no change
-        if find_text.strip() == replace_text.strip():
-            continue
-        if any(phrase in reason.lower() for phrase in _skip_phrases):
-            continue
-        suggestions.append({
-            "id": f"sugg-{len(suggestions)+1}",
-            "find": find_text,
-            "replace": replace_text,
-            "reason": reason,
-        })
-    return suggestions
-
-
-async def do_suggest_document(content: str, doc_id: str = None, owner: Optional[str] = None) -> Dict:
-    """Create inline suggestions for the active document WITHOUT modifying it."""
-    from src.database import SessionLocal, Document
-
-    target_id = doc_id or _active_document_id
-    if not target_id:
-        return {"error": "No active document to suggest on"}
-
-    suggestions = parse_suggest_blocks(content)
-    if not suggestions:
-        return {"error": "No valid <<<FIND>>>...<<<SUGGEST>>>...<<<REASON>>>...<<<END>>> blocks found"}
-
-    db = SessionLocal()
-    try:
-        doc = _get_owned_document(db, Document, target_id, owner)
-        if not doc:
-            return {"error": f"Document {target_id} not found"}
-
-        # Validate that FIND text exists in document
-        valid = []
-        for s in suggestions:
-            if s["find"] in doc.current_content:
-                valid.append(s)
-            else:
-                logger.warning(f"suggest_document: FIND text not found, skipping: {s['find'][:80]!r}")
-
-        if not valid:
-            return {"error": "No suggestions matched the document content"}
-
-        return {
-            "action": "suggest",
-            "doc_id": target_id,
-            "suggestions": valid,
-            "count": len(valid),
-        }
-    finally:
-        db.close()
-
 
 # ---------------------------------------------------------------------------
 # Search chats
@@ -674,6 +218,17 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             proc = args.get("steps") or []
         if not proc and not args.get("body_extra") and not args.get("solution"):
             return {"error": "procedure (or solution body) is required", "exit_code": 1}
+        # Same auto-publish gate as the extractor path — when the user
+        # has auto_approve_skills on and the caller didn't pin an explicit
+        # status, publish immediately. Audit later demotes/removes on fail.
+        _status_arg = args.get("status")
+        if not _status_arg:
+            try:
+                from routes.prefs_routes import _load_for_user as _load_prefs
+                _prefs = _load_prefs(owner) or {}
+                _status_arg = "published" if _prefs.get("auto_approve_skills", True) else "draft"
+            except Exception:
+                _status_arg = "draft"
         entry = sm.add_skill(
             name=args.get("name"),
             description=(args.get("description") or args.get("title") or "").strip(),
@@ -687,7 +242,7 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             procedure=proc,
             pitfalls=args.get("pitfalls") or [],
             verification=args.get("verification") or [],
-            status=args.get("status") or "draft",
+            status=_status_arg,
             version=args.get("version") or "1.0.0",
             confidence=args.get("confidence", 0.8),
             source=args.get("source", "learned"),
@@ -1090,6 +645,137 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 # MCP server management tool
 # ---------------------------------------------------------------------------
 
+# Parallel to routes/cookbook_helpers._validate_serve_cmd but deliberately the
+# opposite policy: that gate guards an admin-only serve command and allows
+# interpreters (python3/etc) because model-serving needs them, whereas this is
+# the model/prompt-injection-reachable manage_mcp path, so interpreters and
+# runners are denied here.
+#
+# Commands that can execute arbitrary code regardless of their arguments. These
+# are NEVER accepted on the manage_mcp agent path, even if an operator lists one
+# in ODYSSEUS_MCP_ALLOWED_COMMANDS -- a stdio server that genuinely needs an
+# interpreter or package runner must be registered via the trusted admin route.
+_MCP_DENIED_COMMANDS = frozenset({
+    "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "ash", "busybox",
+    "cmd", "command.com", "powershell", "pwsh",
+    "python", "pypy", "node", "nodejs", "deno", "bun", "ruby", "jruby",
+    "perl", "raku", "php", "lua", "luajit", "tclsh", "wish", "expect", "rscript",
+    "groovy", "scala", "elixir", "erl", "iex", "java", "javac", "jshell", "jbang",
+    "kotlin", "kotlinc", "dotnet", "mono", "swift", "osascript", "tsx", "ts-node",
+    "npx", "bunx", "uvx", "pipx", "npm", "pnpm", "yarn", "pip", "uv",
+    "gem", "cargo", "go", "bundle", "poetry", "conda", "mamba", "brew",
+    "apt", "apt-get", "yum", "dnf", "pacman", "apk",
+    "env", "xargs", "nohup", "setsid", "nice", "ionice", "time", "timeout",
+    "watch", "stdbuf", "unbuffer", "script", "ssh", "scp", "sshpass", "sudo",
+    "doas", "su", "make", "cmake", "docker", "podman", "kubectl", "find",
+    "awk", "gawk", "sed", "vi", "vim", "nvim", "emacs", "ed", "tee", "eval",
+})
+
+# Argv flags that make even an allowlisted binary execute inline code. Matched
+# by prefix so glued forms (-cimport os, --eval=...) are caught, not just the
+# exact-token form.
+_MCP_CODE_EXEC_SHORT_FLAGS = ("-c", "-e", "-m")
+_MCP_CODE_EXEC_LONG_FLAGS = ("--eval", "--exec", "--print", "--module", "--command", "--require")
+
+_MCP_URL_SCHEMES = ("http://", "https://", "ftp://", "ftps://", "file://", "data:", "jar:", "blob:")
+
+# Shell metacharacters refused in command/args. Args are passed as an argv list
+# (no shell), but refusing these keeps the surface narrow and obvious.
+_MCP_SHELL_METACHARS = set(";|&$`><\n\r")
+
+# Env vars that let a child process load attacker-supplied code before main().
+_MCP_DANGEROUS_ENV = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "PYTHONPATH", "PYTHONSTARTUP",
+    "PYTHONHOME", "PYTHONEXECUTABLE", "NODE_OPTIONS", "NODE_PATH", "BASH_ENV",
+    "ENV", "SHELLOPTS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB", "GEM_PATH",
+    "R_PROFILE", "R_HOME", "PATH", "IFS", "PROMPT_COMMAND",
+})
+
+
+def _mcp_allowed_commands() -> set:
+    """Operator-configured allowlist of safe MCP launcher basenames for the agent
+    path. Empty by default; set ODYSSEUS_MCP_ALLOWED_COMMANDS (comma-separated)
+    to opt specific trusted binaries in. Denied commands are rejected even if
+    listed here."""
+    raw = os.environ.get("ODYSSEUS_MCP_ALLOWED_COMMANDS", "")
+    return {c.strip().lower() for c in raw.split(",") if c.strip()}
+
+
+def _validate_mcp_command(command, args, env) -> Optional[str]:
+    """Validate a model-supplied stdio MCP registration. Returns an error string
+    if it must be rejected, else None.
+
+    Closes the RCE where manage_mcp 'add' passed prompt-injection-controlled
+    command/args/env straight to a subprocess spawn (issue #438): a payload
+    smuggled into a skill description, memory entry, fetched page, or email body
+    could register a stdio server running arbitrary code as the app UID.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return "command must be a non-empty string"
+    command = command.strip()
+    if "/" in command or "\\" in command:
+        return "command must be a bare executable name, not a path"
+    if any(ch in _MCP_SHELL_METACHARS for ch in command):
+        return "command contains shell metacharacters"
+    base = command.lower()
+    if base.endswith(".exe") or base.endswith(".cmd") or base.endswith(".bat"):
+        base = base.rsplit(".", 1)[0]
+    # Canonicalize a trailing version suffix so versioned aliases collapse to the
+    # family name (python3.11 -> python, node18 -> node, pip3 -> pip); both the
+    # raw basename and the canonical form are denied, so an operator cannot
+    # accidentally allowlist a runtime alias back into the path.
+    canon = re.sub(r"[-_.]?\d+(?:\.\d+)*$", "", base)
+    if base in _MCP_DENIED_COMMANDS or canon in _MCP_DENIED_COMMANDS:
+        return (
+            f"command '{command}' is not allowed on the agent MCP path: "
+            "interpreters, runtimes, package runners, and shells can execute "
+            "arbitrary code. Register such a server via the admin route instead."
+        )
+    if base not in _mcp_allowed_commands():
+        return (
+            f"command '{command}' is not in the MCP allowlist. Add it to "
+            "ODYSSEUS_MCP_ALLOWED_COMMANDS if you trust it, or register the "
+            "server via the admin route."
+        )
+
+    if args is not None:
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                return "args must be a JSON list"
+        if not isinstance(args, list):
+            return "args must be a list"
+        for a in args:
+            if not isinstance(a, str):
+                return "args must all be strings"
+            s = a.strip()
+            low = s.lower()
+            if any(s == f or s.startswith(f) for f in _MCP_CODE_EXEC_SHORT_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low == f or low.startswith(f + "=") for f in _MCP_CODE_EXEC_LONG_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low.startswith(u) for u in _MCP_URL_SCHEMES):
+                return f"arg '{a}' is a remote URL and is not allowed"
+            if any(ch in _MCP_SHELL_METACHARS for ch in a):
+                return f"arg '{a}' contains shell metacharacters"
+
+    if env:
+        if isinstance(env, str):
+            try:
+                env = json.loads(env)
+            except Exception:
+                return "env must be a JSON object"
+        if not isinstance(env, dict):
+            return "env must be an object"
+        for k in env:
+            if str(k).strip().upper() in _MCP_DANGEROUS_ENV:
+                return f"env var '{k}' can inject code into the child process and is not allowed"
+
+    return None
+
+
 async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
     """Manage MCP servers: list, add, delete, enable, disable, reconnect."""
     try:
@@ -1129,6 +815,12 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         env = args.get("env", {})
         if not name or not command:
             return {"error": "name and command are required", "exit_code": 1}
+        # Validate BEFORE any DB write or spawn: a rejected registration must
+        # leave no enabled row (which would otherwise auto-reconnect on restart)
+        # and must not attempt a connection.
+        _mcp_err = _validate_mcp_command(command, cmd_args, env)
+        if _mcp_err:
+            return {"error": f"manage_mcp: refused unsafe server registration: {_mcp_err}", "exit_code": 1}
         sid = str(_uuid.uuid4())[:8]
         db = SessionLocal()
         try:
@@ -1359,129 +1051,6 @@ async def do_manage_tokens(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": str(e), "exit_code": 1}
     finally:
         db.close()
-
-
-# ---------------------------------------------------------------------------
-# Document management tool (delete, list, organize)
-# ---------------------------------------------------------------------------
-
-async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict:
-    """Manage documents: list, read/view/open, delete, tidy.
-
-    Output format mirrors `manage_session`: list rows include a
-    clickable `[Title](#document-<id>)` anchor + relative timestamps
-    so the user can click straight from chat to open the editor.
-    """
-    from core.database import SessionLocal, Document
-    from datetime import datetime, timezone
-
-    try:
-        args = _parse_tool_args(content)
-    except ValueError:
-        return {"error": "Invalid JSON arguments", "exit_code": 1}
-
-    action = args.get("action", "list")
-    db = SessionLocal()
-
-    def _rel(ts):
-        if not ts:
-            return 'never'
-        try:
-            now = datetime.now(timezone.utc) if ts.tzinfo is not None else datetime.utcnow()
-            diff = (now - ts).total_seconds()
-        except Exception:
-            return 'unknown'
-        if diff < 60: return 'just now'
-        if diff < 3600: return f'{int(diff / 60)}m ago'
-        if diff < 86400: return f'{int(diff / 3600)}h ago'
-        if diff < 86400 * 7: return f'{int(diff / 86400)}d ago'
-        return ts.strftime('%Y-%m-%d')
-
-    try:
-        if action == "list":
-            q = db.query(Document).filter(Document.is_active == True)
-            q = _owned_document_query(q, Document, owner)
-            if args.get("search"):
-                q = q.filter(Document.title.ilike(f"%{args['search']}%"))
-            if args.get("language"):
-                q = q.filter(Document.language == args["language"])
-            docs = q.order_by(Document.updated_at.desc()).limit(args.get("limit", 50)).all()
-            if not docs:
-                msg = "No documents found" + (f" matching '{args['search']}'" if args.get("search") else "") + "."
-                return {"response": msg, "documents": [], "exit_code": 0}
-            lines = []
-            items = []
-            for i, d in enumerate(docs):
-                size = len(d.current_content or "")
-                lang = d.language or "text"
-                ts = getattr(d, 'updated_at', None) or getattr(d, 'created_at', None)
-                marker = " ← most recent" if i == 0 else ""
-                lines.append(
-                    f"- [{d.title}](#document-{d.id}) — {lang}, {size} chars, updated {_rel(ts)}{marker}"
-                )
-                items.append({"id": d.id, "title": d.title, "language": lang, "size": size})
-            header = f"Found {len(docs)} document(s), sorted most-recent first. Click a title to open:"
-            return {
-                "response": header + "\n" + "\n".join(lines),
-                "documents": items,
-                "exit_code": 0,
-            }
-
-        elif action in ("read", "view", "open", "get"):
-            doc_id = args.get("document_id") or args.get("id") or args.get("uid")
-            if not doc_id:
-                return {"error": "Need document_id (use action=list to find one)", "exit_code": 1}
-            doc = _get_owned_document(db, Document, doc_id, owner, active_only=True)
-            if not doc:
-                return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
-            body = doc.current_content or ""
-            preview_limit = int(args.get("limit", MAX_READ_CHARS))
-            truncated = len(body) > preview_limit
-            preview = body[:preview_limit] + (f"\n... (truncated, {len(body)} chars total)" if truncated else "")
-            anchor = f"[{doc.title}](#document-{doc.id})"
-            return {
-                "response": f"{anchor} — click to open in editor.\n\n```{doc.language or ''}\n{preview}\n```",
-                "document": {
-                    "id": doc.id,
-                    "title": doc.title,
-                    "language": doc.language,
-                    "size": len(body),
-                    "content": preview,
-                    "truncated": truncated,
-                },
-                "exit_code": 0,
-            }
-
-        elif action == "delete":
-            doc_id = args.get("document_id") or args.get("id") or args.get("uid") or _active_document_id
-            doc = None
-            if doc_id:
-                doc = _get_owned_document(db, Document, doc_id, owner)
-            if not doc:
-                # Fallback: most recently updated doc (likely what the user means)
-                doc = _most_recent_owned_document(db, Document, owner, active_only=True)
-            if not doc:
-                return {"error": "No document to delete", "exit_code": 1}
-            title = doc.title
-            doc.is_active = False
-            db.commit()
-            if _active_document_id == doc.id:
-                set_active_document(None)
-            return {"response": f"Deleted document '{title}'", "exit_code": 0}
-
-        elif action == "tidy":
-            from src.document_actions import run_document_tidy
-            result = await run_document_tidy(owner or "")
-            return {"response": result, "exit_code": 0}
-
-        else:
-            return {"error": f"Unknown action: {action}", "exit_code": 1}
-    except Exception as e:
-        logger.error(f"manage_documents error: {e}")
-        return {"error": str(e), "exit_code": 1}
-    finally:
-        db.close()
-
 
 # ---------------------------------------------------------------------------
 # Settings/preferences management tool
@@ -2047,13 +1616,57 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from routes.calendar_routes import (
+        _ensure_default_calendar,
+        _parse_dt,
+        _parse_dt_pair,
+        parse_due_for_user,
+        _resolve_base_uid,
+        _push_caldav_event_after_commit,
+        _record_caldav_delete_tombstone,
+    )
     import uuid as _uuid
 
     try:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
+
+    # ── Batch normalization ──
+    # Some models (e.g. deepseek-v4-flash) emit {"events": [{...}, ...]}
+    # instead of individual create_event calls. Iterate and create each.
+    if isinstance(args.get("events"), list) and not args.get("action"):
+        results = []
+        for ev in args["events"]:
+            if not isinstance(ev, dict):
+                continue
+            # Normalize start/end from {dateTime: "..."} object to flat string
+            for field, target in [("start", "dtstart"), ("end", "dtend")]:
+                val = ev.pop(field, None)
+                if val and target not in ev:
+                    ev[target] = val.get("dateTime", val) if isinstance(val, dict) else val
+            ev.setdefault("action", "create_event")
+            r = await do_manage_calendar(json.dumps(ev), owner=owner)
+            results.append(r)
+        created = [r for r in results if r.get("exit_code") == 0 and not r.get("error")]
+        failed = [r for r in results if r.get("error")]
+
+        if not results:
+            return {"error": "No events to create", "exit_code": 1}
+
+        # Surface both successes and failures
+        parts = []
+        if created:
+            summaries = [r.get("response", "") for r in created]
+            parts.append(f"Created {len(created)} event(s):\n" + "\n".join(summaries))
+        if failed:
+            first_error = failed[0].get("error", "Unknown error")
+            parts.append(f"Failed to create {len(failed)} event(s). First error: {first_error}")
+
+        response = "\n\n".join(parts)
+        # Non-zero exit code for partial or total failure
+        exit_code = 0 if not failed else 1
+        return {"response": response, "exit_code": exit_code, "created_count": len(created), "failed_count": len(failed)}
 
     # Normalize action — some models emit hyphens ("list-calendars") instead
     # of underscores. Treat them as equivalent so we don't bounce a
@@ -2103,10 +1716,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         text = str(raw).strip().lower()
         if text in {"none", "no", "off", "false"}:
             return None
-        m = re.search(r"(\d+)\s*(?:m|min|minute|minutes)\b", text)
+        m = re.search(r"(\d+)\s*(?:minutes?|mins?|m)\b", text)
         if m:
             return max(0, int(m.group(1)))
-        m = re.search(r"(\d+)\s*(?:h|hr|hour|hours)\b", text)
+        m = re.search(r"(\d+)\s*(?:hours?|hrs?|h)\b", text)
         if m:
             return max(0, int(m.group(1)) * 60)
         if text.isdigit():
@@ -2119,7 +1732,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             return desc
         reminder_only = re.compile(
             r"^\s*(?:remind(?:er)?|alarm)\s*:?\s*\d+\s*"
-            r"(?:m|min|minute|minutes|h|hr|hour|hours)\b.*$",
+            r"(?:minutes?|mins?|m|hours?|hrs?|h)\b.*$",
             re.I,
         )
         return "" if reminder_only.match(desc) else desc
@@ -2208,6 +1821,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
+
+            if end_dt <= start_dt:
+                end_dt = start_dt + timedelta(days=1)
 
             q = _event_query().filter(
                 CalendarEvent.dtstart < end_dt,
@@ -2388,6 +2004,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 rrule=args.get("rrule", "") or "",
                 event_type=event_type,
                 importance=importance,
+                caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
             reminder_note_id = None
@@ -2402,6 +2019,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     dtstart_is_utc and not all_day,
                 )
             db.commit()
+            if cal.source == "caldav":
+                await _push_caldav_event_after_commit(owner, uid, "create")
             tag_blurb = f" [{event_type}]" if event_type else ""
             if minutes_before is None:
                 reminder_blurb = ""
@@ -2459,7 +2078,12 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.event_type = _tag or None
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
+            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_caldav:
+                ev.caldav_sync_pending = "update"
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "update")
             return {"response": f"Updated event {uid}", "exit_code": 0}
 
         elif action == "delete_event":
@@ -2473,8 +2097,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
+            is_caldav = ev.calendar and ev.calendar.source == "caldav" and ev.remote_href
+            if is_caldav:
+                _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "delete")
             return {"response": f"Deleted event {uid}", "exit_code": 0}
 
         else:
@@ -2620,19 +2249,102 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
         else:
             env_prefix = f'eval "$(conda shell.bash hook)" && conda activate {env_path}'
 
+    from routes.cookbook_helpers import load_stored_hf_token
     return {
         "env_prefix": env_prefix,
         "env_type": env_kind,
         "env_path": env_path,
         "gpus": env_root.get("gpus") or "",
         "platform": platform,
-        "hf_token": env_root.get("hfToken") or "",
+        "hf_token": load_stored_hf_token(),
         "ssh_port": ssh_port,
     }
 
 
-async def _cookbook_register_task(session_id: str, model: str, host: str,
-                                  cmd: str, task_type: str = "serve") -> bool:
+def _infer_serve_port(cmd: str) -> int:
+    """Infer likely listen port from a serve command."""
+    if not cmd:
+        return 8080
+    m = re.search(r"--port\\s+(\\d+)", cmd)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            pass
+    m = re.search(r"OLLAMA_HOST=[^\\s]*?:(\\d+)", cmd)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            pass
+    if "ollama" in cmd:
+        return 11434
+    return 8080
+
+
+def _infer_serve_host(host: str | None) -> tuple[str, bool]:
+    """Return (host, container_local) for registering a served endpoint."""
+    if not (host or "").strip():
+        return "localhost", True
+    base_host = host.split("@", 1)[-1] if "@" in host else host
+    return base_host, False
+
+
+async def _ensure_served_endpoint(
+    *,
+    model: str,
+    cmd: str,
+    host: str | None,
+) -> Dict[str, Any]:
+    """Register/fetch a model endpoint for a running serve session."""
+    import httpx
+    endpoint_host, container_local = _infer_serve_host(host)
+    port = _infer_serve_port(cmd)
+    base_url = f"http://{endpoint_host}:{port}/v1"
+    short_name = model.split("/")[-1] if "/" in model else model
+    is_image = "diffusion_server.py" in (cmd or "")
+    payload = {
+        "name": short_name if not is_image else f"{short_name} (image)",
+        "base_url": base_url,
+        "skip_probe": "true",
+        "model_type": "image" if is_image else "llm",
+        "container_local": "true" if container_local else "false",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{_INTERNAL_BASE}/api/model-endpoints",
+                data=payload,
+                headers=_internal_headers(),
+            )
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+        if resp.status_code >= 400:
+            logger.debug(
+                f"ensure endpoint failed for {model!r}: status={resp.status_code} data={data}"
+            )
+            return {"added": False, "endpoint_id": "", "base_url": base_url, "error": data}
+        ep_id = data.get("id") if isinstance(data, dict) else None
+        return {
+            "added": bool(ep_id),
+            "endpoint_id": ep_id or "",
+            "base_url": base_url,
+            "data": data,
+        }
+    except Exception as e:
+        logger.debug(f"ensure endpoint exception for {model!r}: {e}")
+        return {"added": False, "endpoint_id": "", "base_url": base_url, "error": str(e)}
+
+
+async def _cookbook_register_task(
+    session_id: str,
+    model: str,
+    host: str,
+    cmd: str,
+    task_type: str = "serve",
+    *,
+    endpoint_added: bool = False,
+    endpoint_id: str = "",
+) -> bool:
     """Append a task entry to cookbook_state.json after the agent
     launches via /api/model/serve or /api/model/download. The route
     spawns tmux but leaves state-writing to the UI; the agent needs to
@@ -2682,7 +2394,8 @@ async def _cookbook_register_task(session_id: str, model: str, host: str,
         "sshPort": "",
         "platform": "linux",
         "_serveReady": False,
-        "_endpointAdded": False,
+        "_endpointAdded": bool(endpoint_added),
+        "_endpointId": endpoint_id or "",
     })
     state["tasks"] = tasks
     try:
@@ -3018,7 +2731,12 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
         if _servers.get("default_host"):
             host = _servers["default_host"]
             _host_defaulted = True
+    backend = (args.get("backend") or "").strip().lower()
+    if not backend and "/" not in repo_id and ":" in repo_id:
+        backend = "ollama"
     payload = {"repo_id": repo_id}
+    if backend:
+        payload["backend"] = backend
     if host:
         payload["remote_host"] = host
     if args.get("include"):
@@ -3038,12 +2756,20 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
             sid = data.get("session_id", "?")
             registered = await _cookbook_register_task(
                 session_id=sid, model=repo_id, host=host,
-                cmd=f"hf download {repo_id}", task_type="download",
+                cmd=(f"ollama pull {repo_id}" if backend == "ollama" else f"hf download {repo_id}"),
+                task_type="download",
             )
             note = "" if registered else " (state-write failed — download may not show in UI)"
             where = host or "local"
             default_note = " (defaulted to the cookbook's selected server — pass host= or local=true to override)" if _host_defaulted else ""
-            return {"output": f"Download started: {repo_id} on {where} (session: {sid}){note}{default_note}", "session_id": sid, "host": host, "exit_code": 0}
+            return {
+                "output": f"Download started: {repo_id} on {where} (session: {sid}){note}{default_note}",
+                "session_id": sid,
+                "host": host,
+                "task_type": "download",
+                "phase": "running",
+                "exit_code": 0,
+            }
         return {"error": data.get("error", "Download failed"), "exit_code": 1}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
@@ -3112,12 +2838,28 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
+            endpoint_id = data.get("endpoint_id") or ""
+            if endpoint_id:
+                endpoint_added = True
+            else:
+                endpoint_meta = await _ensure_served_endpoint(model=repo_id, cmd=cmd, host=host)
+                endpoint_added = bool(endpoint_meta.get("added"))
+                endpoint_id = endpoint_meta.get("endpoint_id", "") or endpoint_id
             registered = await _cookbook_register_task(
                 session_id=sid, model=repo_id,
                 host=host, cmd=cmd, task_type="serve",
+                endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
-            return {"output": f"Serving {repo_id} (session: {sid}){note}", "session_id": sid, "exit_code": 0}
+            return {
+                "output": f"Serving {repo_id} (session: {sid}){note}",
+                "session_id": sid,
+                "task_type": "serve",
+                "phase": "running",
+                "host": host,
+                "endpoint_id": endpoint_id,
+                "exit_code": 0,
+            }
         # FastAPI HTTPException puts the message under `detail`, not `error`.
         # Surface BOTH so the agent sees "Invalid characters in cmd" (from
         # _validate_serve_cmd rejecting `&&`/`source`/`cd`) instead of
@@ -3814,7 +3556,8 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
     if env_cfg.get("gpus"):       payload["gpus"]       = env_cfg["gpus"]
     if env_cfg.get("hf_token"):   payload["hf_token"]   = env_cfg["hf_token"]
     if env_cfg.get("platform"):   payload["platform"]   = env_cfg["platform"]
-    if env_cfg.get("ssh_port"):   payload["ssh_port"]   = env_cfg["ssh_port"]
+    if env_cfg.get("ssh_port"):
+        payload["ssh_port"] = env_cfg["ssh_port"]
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -3823,12 +3566,20 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
             data = resp.json()
         if data.get("ok"):
             sid = data.get("session_id", "?")
+            endpoint_id = data.get("endpoint_id") or ""
+            if endpoint_id:
+                endpoint_added = True
+            else:
+                endpoint_meta = await _ensure_served_endpoint(model=repo_id, cmd=cmd, host=host)
+                endpoint_added = bool(endpoint_meta.get("added"))
+                endpoint_id = endpoint_meta.get("endpoint_id", "") or endpoint_id
             registered = await _cookbook_register_task(
                 session_id=sid, model=repo_id, host=host,
                 cmd=cmd, task_type="serve",
+                endpoint_added=endpoint_added, endpoint_id=endpoint_id or "",
             )
             note = "" if registered else " (state-write failed — task may not show in UI)"
-            return {"output": f"Launched preset {chosen.get('name')!r}: {repo_id} on {host or 'local'} (session: {sid}){note}", "session_id": sid, "exit_code": 0}
+            return {"output": f"Launched preset {chosen.get('name')!r}: {repo_id} on {host or 'local'} (session: {sid}){note}", "session_id": sid, "host": host, "endpoint_id": endpoint_id, "exit_code": 0}
         return {"error": data.get("error", "Serve failed"), "exit_code": 1}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
@@ -4183,7 +3934,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     if not name:
         return {"error": "name is required", "exit_code": 1}
 
-    contacts = {}  # email -> {name, source}
+    contacts = {}  # email_or_phone -> {name, source, phone?}
 
     # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
     # server-side httpx GET to /api/contacts/search carries no session
@@ -4198,10 +3949,18 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
             match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
             if not match:
                 continue
+            has_email = False
             for email in (c.get("emails") or []):
                 email = (email or "").strip().lower()
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+                    has_email = True
+            # Fall back to phone numbers when the contact has no email address
+            if not has_email:
+                for phone in (c.get("phones") or []):
+                    phone = (phone or "").strip()
+                    if phone:
+                        contacts[phone] = {"name": c.get("name") or phone, "source": "contacts", "phone": phone}
     except Exception:
         pass
 
@@ -4221,8 +3980,11 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
         return {"output": f"No contacts found matching '{name}'.", "exit_code": 0}
 
     lines = [f"Contacts matching '{name}':"]
-    for email, info in contacts.items():
-        lines.append(f"- {info['name']} <{email}> ({info['source']})")
+    for key, info in contacts.items():
+        if info.get("phone"):
+            lines.append(f"- {info['name']} — phone: {info['phone']} ({info['source']})")
+        else:
+            lines.append(f"- {info['name']} <{key}> ({info['source']})")
     return {"output": "\n".join(lines), "exit_code": 0}
 
 
