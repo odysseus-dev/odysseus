@@ -8,6 +8,7 @@ import { MemoryRoute } from "@/routes/MemoryRoute"
 import { ComingSoon } from "@/routes/ComingSoon"
 import { NotesRoute } from "@/routes/NotesRoute"
 import { TasksRoute } from "@/routes/TasksRoute"
+import { SettingsRoute } from "@/routes/SettingsRoute"
 import { useUi } from "@/stores/ui"
 
 function ThemedApp() {
@@ -25,7 +26,7 @@ function ThemedApp() {
         <Route path="/notes" element={<NotesRoute />} />
         <Route path="/tasks" element={<TasksRoute />} />
         <Route path="/cookbook" element={<ComingSoon title="Cookbook" />} />
-        <Route path="/settings" element={<ComingSoon title="Settings" />} />
+        <Route path="/settings" element={<SettingsRoute />} />
         <Route path="*" element={<Navigate to="/chat" replace />} />
       </Routes>
     </AppShell>
