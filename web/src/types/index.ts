@@ -16,6 +16,6 @@ export interface HistoryMsg { role: string; content: unknown; model?: string; at
 export interface Source { url?: string; title?: string; snippet?: string }
 export interface ToolEvent { name: string; input?: unknown; output?: string; progress?: string }
 export interface ChatMessage {
-  role: "user" | "assistant"; content: string; model?: string;
+  role: "user" | "assistant"; content: string; reasoning?: string; model?: string;
   tools?: ToolEvent[]; sources?: Source[]; streaming?: boolean;
 }

@@ -1,6 +1,23 @@
+import { useState } from "react"
+import { ChevronRight, Brain } from "lucide-react"
 import { Markdown } from "./Markdown"
 import { ToolThread } from "./ToolThread"
+import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/types"
+
+function Reasoning({ text, live }: { text: string; live: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-lg border bg-card text-xs">
+      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-3 py-2 text-muted-foreground hover:text-foreground">
+        <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+        <Brain className="size-3.5" />
+        {live ? "Thinking…" : "Reasoning"}
+      </button>
+      {open && <div className="border-t px-3 py-2 whitespace-pre-wrap text-muted-foreground">{text}</div>}
+    </div>
+  )
+}
 
 export function Message({ m }: { m: ChatMessage }) {
   if (m.role === "user") {
@@ -12,8 +29,9 @@ export function Message({ m }: { m: ChatMessage }) {
   }
   return (
     <div className="space-y-3">
+      {m.reasoning && <Reasoning text={m.reasoning} live={!!m.streaming && !m.content} />}
       {m.tools && m.tools.length > 0 && <ToolThread tools={m.tools} />}
-      {m.content ? <Markdown>{m.content}</Markdown> : m.streaming ? <div className="text-sm text-muted-foreground">Thinking…</div> : null}
+      {m.content ? <Markdown>{m.content}</Markdown> : m.streaming && !m.reasoning ? <div className="text-sm text-muted-foreground">Thinking…</div> : null}
       {m.sources && m.sources.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {m.sources.slice(0, 8).map((s, i) => (

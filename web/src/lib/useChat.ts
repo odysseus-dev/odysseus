@@ -30,8 +30,6 @@ export function useChat(sessionId?: string) {
 
   useEffect(() => { sidRef.current = sessionId }, [sessionId])
 
-  // Seed from persisted history, but never clobber an in-flight stream or a
-  // session we're already managing optimistically (seededRef).
   useEffect(() => {
     if (streaming) return
     const sid = sessionId || null
@@ -61,7 +59,7 @@ export function useChat(sessionId?: string) {
     } else {
       seededRef.current = sid
     }
-    setMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "", tools: [], sources: [], streaming: true }])
+    setMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
     setStreaming(true)
 
     const fd = new FormData()
@@ -81,7 +79,12 @@ export function useChat(sessionId?: string) {
     try {
       await streamChat(fd, (e: SseEvent) => {
         const ev = e as Record<string, unknown>
-        if (typeof ev.delta === "string") { const d = ev.delta as string; patchAi((m) => ({ ...m, content: m.content + d })); return }
+        if (typeof ev.delta === "string") {
+          const d = ev.delta as string
+          if (ev.thinking) patchAi((m) => ({ ...m, reasoning: (m.reasoning || "") + d }))
+          else patchAi((m) => ({ ...m, content: m.content + d }))
+          return
+        }
         switch (e.type) {
           case "model_info": patchAi((m) => ({ ...m, model: ev.model as string })); break
           case "tool_start": patchAi((m) => ({ ...m, tools: [...(m.tools || []), { name: (ev.tool_name as string) || "tool", input: ev.tool_input }] })); break
