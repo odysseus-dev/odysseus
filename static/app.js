@@ -1129,7 +1129,10 @@ function initializeEventListeners() {
               <div id="pkg-panel-body" style="padding:16px"></div>
             </div>`;
           document.body.appendChild(modal);
-          makeWindowDraggable(modal.querySelector('.modal-content'), modal.querySelector('#pkg-modal-header'));
+          makeWindowDraggable(modal, {
+            content: modal.querySelector('.modal-content'),
+            header:  modal.querySelector('#pkg-modal-header'),
+          });
           modal.querySelector('#pkg-modal-close').addEventListener('click', () => { Modals.close('packages-modal'); });
           Modals.register('packages-modal', {
             sidebarBtnId: 'tool-packages-btn',
