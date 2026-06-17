@@ -17,9 +17,26 @@ import { CompareRoute } from "@/routes/CompareRoute"
 import { CookbookRoute } from "@/routes/CookbookRoute"
 import { useUi } from "@/stores/ui"
 
+const FONT_STACKS: Record<string, string> = {
+  sans: "",
+  serif: 'Georgia, "Times New Roman", serif',
+  mono: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+}
+const DENSITY_PX: Record<string, string> = { compact: "14px", comfortable: "16px", spacious: "17px" }
+
 function ThemedApp() {
   const theme = useUi((s) => s.theme)
+  const accent = useUi((s) => s.accent)
+  const font = useUi((s) => s.font)
+  const density = useUi((s) => s.density)
   useEffect(() => { document.documentElement.classList.toggle("dark", theme === "dark") }, [theme])
+  useEffect(() => {
+    const root = document.documentElement
+    if (accent) { root.style.setProperty("--primary", accent); root.style.setProperty("--ring", accent); root.style.setProperty("--primary-foreground", "#ffffff"); root.style.setProperty("--sidebar-primary", accent) }
+    else { for (const v of ["--primary", "--ring", "--primary-foreground", "--sidebar-primary"]) root.style.removeProperty(v) }
+    root.style.fontFamily = FONT_STACKS[font] || ""
+    root.style.fontSize = DENSITY_PX[density] || "16px"
+  }, [accent, font, density])
   return (
     <AppShell>
       <Routes>

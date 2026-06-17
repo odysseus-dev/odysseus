@@ -88,7 +88,7 @@ function AddEndpointForm() {
 }
 
 export function SettingsRoute() {
-  const { theme, setTheme } = useUi()
+  const { theme, setTheme, accent, setAccent, font, setFont, density, setDensity } = useUi()
   const { data: status } = useAuthStatus()
   const { data: models } = useModels()
   const { data: def } = useDefaultChat()
@@ -119,12 +119,41 @@ export function SettingsRoute() {
       <div className="flex-1 space-y-6 overflow-y-auto p-4">
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Appearance</h2>
-          <div className="flex items-center justify-between rounded-lg border bg-card p-3">
-            <span className="text-sm">Theme</span>
-            <div className="flex rounded-lg bg-muted p-0.5">
-              {(["light", "dark"] as const).map((t) => (
-                <button key={t} onClick={() => setTheme(t)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", theme === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{t}</button>
-              ))}
+          <div className="space-y-3 rounded-lg border bg-card p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Theme</span>
+              <div className="flex rounded-lg bg-muted p-0.5">
+                {(["light", "dark"] as const).map((t) => (
+                  <button key={t} onClick={() => setTheme(t)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", theme === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{t}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Accent</span>
+              <div className="flex items-center gap-1.5">
+                {["", "#2563eb", "#7c3aed", "#db2777", "#059669", "#ea580c"].map((c) => (
+                  <button key={c || "default"} onClick={() => setAccent(c)} title={c || "Default (zinc)"}
+                    className={cn("size-6 rounded-full border", accent === c && "ring-2 ring-ring ring-offset-2 ring-offset-card")}
+                    style={{ background: c || "var(--muted-foreground)" }} />
+                ))}
+                <input type="color" value={accent || "#000000"} onChange={(e) => setAccent(e.target.value)} title="Custom" className="size-6 cursor-pointer rounded-full border bg-transparent p-0" />
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Font</span>
+              <div className="flex rounded-lg bg-muted p-0.5">
+                {(["sans", "serif", "mono"] as const).map((f) => (
+                  <button key={f} onClick={() => setFont(f)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", font === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{f}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">Density</span>
+              <div className="flex rounded-lg bg-muted p-0.5">
+                {(["compact", "comfortable", "spacious"] as const).map((d) => (
+                  <button key={d} onClick={() => setDensity(d)} className={cn("rounded-md px-2.5 py-1 text-sm capitalize transition-colors", density === d ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{d}</button>
+                ))}
+              </div>
             </div>
           </div>
         </section>
