@@ -6482,9 +6482,22 @@ import * as Modals from './modalManager.js';
       // (and DON'T auto-detect: that would mis-colour CSV/email content).
       codeEl.className = '';
     } else if (window.hljs && _hlLang) {
-      codeEl.className = `language-${_hlLang}`;
-      codeEl.removeAttribute('data-highlighted');
-      window.hljs.highlightElement(codeEl);
+      // Use hljs.highlight(...).value + innerHTML rather than highlightElement().
+      // highlightElement() left this overlay flat/monochrome, while the SAME
+      // window.hljs highlights chat and library code blocks fine via .highlight()
+      // (see documentLibrary.js / chatRenderer.js). Mirror that working path.
+      try {
+        const r = window.hljs.highlight(text + '\n', { language: _hlLang, ignoreIllegals: true });
+        codeEl.className = 'hljs';
+        codeEl.innerHTML = r.value;
+      } catch (_) {
+        // Language not registered in this hljs build — auto-detect instead.
+        try {
+          const r2 = window.hljs.highlightAuto(text + '\n');
+          codeEl.className = 'hljs';
+          codeEl.innerHTML = r2.value;
+        } catch (_e) { codeEl.className = ''; }
+      }
     } else if (window.hljs && text.trim()) {
       // No usable language on the dropdown — happens when a doc was stored with
       // a language hljs/the editor doesn't list (e.g. an AI-created script saved

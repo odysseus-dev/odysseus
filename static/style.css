@@ -12884,6 +12884,13 @@ mark.doc-find-mark.current {
   z-index: 1;
   background: transparent !important;
   color: transparent !important;
+  /* `color: transparent` alone isn't enough on Blink (Chromium/Zen): the
+     textarea's own glyphs can still paint via -webkit-text-fill-color
+     (defaults to currentColor) ON TOP of the highlighted overlay, hiding it and
+     leaving the code looking flat/monochrome. Pin the text-fill transparent too
+     so only the coloured overlay below is visible. The caret stays via
+     caret-color. */
+  -webkit-text-fill-color: transparent !important;
   color-scheme: dark;
   caret-color: var(--fg);
   border: none;
