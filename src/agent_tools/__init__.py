@@ -22,6 +22,7 @@ from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+from .workspace_tools import CreateWorkspaceTool, ListWorkspacesTool, ExecuteInWorkspaceTool, StopWorkspaceTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -40,6 +41,10 @@ TOOL_HANDLERS = {
     "suggest_document": SuggestDocumentTool().execute,
     "manage_documents": ManageDocumentTool().execute,
     "get_workspace": GetWorkspaceTool().execute,
+    "create_workspace": CreateWorkspaceTool().execute,
+    "list_workspaces": ListWorkspacesTool().execute,
+    "execute_in_workspace": ExecuteInWorkspaceTool().execute,
+    "stop_workspace": StopWorkspaceTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -84,7 +89,8 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_fi
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.
-             "app_api"}
+             "app_api",
+             "create_workspace", "list_workspaces", "execute_in_workspace", "stop_workspace"}
 
 ToolBlock = namedtuple("ToolBlock", ["tool_type", "content"])
 

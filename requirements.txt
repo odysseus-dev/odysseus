@@ -47,3 +47,11 @@ pytest-asyncio
 # TestClient import when only classic httpx is present. Runtime code keeps
 # using `httpx` above; this is test-client only.
 httpx2
+# Platform extension dependencies
+# Docker SDK for Python — workspace container management. Fails gracefully if
+# Docker daemon is not running; workspace features are disabled without it.
+docker>=7.0.0
+# System metrics (CPU, RAM, disk, temperatures, network interfaces).
+# Used by hardware_routes.py / host_bridge.py. Optional — metrics return an
+# error dict if psutil is missing, app continues normally.
+psutil>=5.9.0

@@ -1188,6 +1188,61 @@ FUNCTION_TOOL_SCHEMAS = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_workspace",
+            "description": "Create a persistent Docker workspace container for running code, experiments, or long-lived processes. The workspace persists independently of chat history. Returns a workspace_id for use with execute_in_workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short name for the workspace (e.g. 'data-analysis')"},
+                    "image": {"type": "string", "description": "Docker image (default: python:3.11-alpine)"},
+                    "description": {"type": "string", "description": "What this workspace is for (optional)"},
+                    "memory": {"type": "string", "description": "Memory limit e.g. '512m', '1g' (default: 512m)"},
+                    "cpu": {"type": "number", "description": "CPU limit as fractional cores e.g. 0.5 (default: 0.5)"}
+                },
+                "required": ["name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_workspaces",
+            "description": "List your Docker workspaces and their current status (running, stopped, etc). Takes no arguments.",
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_in_workspace",
+            "description": "Run a shell command inside a running Docker workspace and return the output. Dangerous commands (rm -rf /, privilege escalation) are blocked by security policy.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "The workspace id from create_workspace or list_workspaces"},
+                    "command": {"type": "string", "description": "Shell command to run inside the workspace container"}
+                },
+                "required": ["workspace_id", "command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_workspace",
+            "description": "Stop a running Docker workspace (container is stopped but data on the volume is preserved). Use this when you're done with a workspace temporarily.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "workspace_id": {"type": "string", "description": "The workspace id to stop"}
+                },
+                "required": ["workspace_id"]
+            }
+        }
+    },
 ]
 
 

@@ -1,0 +1,12 @@
+{
+  "id": "prompt-enhancer",
+  "name": "Prompt Enhancer",
+  "version": "1.0.0",
+  "author": "Example",
+  "description": "Adds a ✨ Enhance button to the chat input that uses AI to rewrite your draft prompt.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": [],
+  "frontend_hooks": {
+    "chatInputWidget": "widget.js"
+  }
+}

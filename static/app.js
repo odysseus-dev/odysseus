@@ -45,6 +45,12 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+// Package runtime API — must load before any package widget scripts so that
+// window.OdysseusPkg is available when widget modules execute.
+import './js/pkg-api.js';
+import HardwarePanel from './js/hardware.js';
+import WorkspaceManager from './js/workspaces.js';
+import PackageManager from './js/packages.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -1100,6 +1106,139 @@ function initializeEventListeners() {
       const tm = document.getElementById('theme-modal');
       if (tm) tm.classList.remove('hidden');
     });
+  }
+
+  // ── Hardware panel ──────────────────────────────────────────────────────────
+  {
+    let _hwInited = false;
+    const toolHardwareBtn = el('tool-hardware-btn');
+    if (toolHardwareBtn) {
+      toolHardwareBtn.addEventListener('click', async () => {
+        const Modals = await import('./js/modalManager.js');
+        if (Modals.toggle('hardware-modal')) return;
+        let modal = document.getElementById('hardware-modal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'hardware-modal';
+          modal.className = 'modal';
+          modal.innerHTML = `
+            <div class="modal-content" role="dialog" aria-label="Hardware &amp; System"
+                 style="width:min(680px,95vw);max-height:85vh;overflow-y:auto;padding:0">
+              <div class="modal-header" id="hardware-modal-header">
+                <h4>Hardware &amp; System</h4>
+                <button class="close-btn" id="hw-modal-close" aria-label="Close">&#x2716;</button>
+              </div>
+              <div id="hw-panel-body" style="padding:16px"></div>
+            </div>`;
+          document.body.appendChild(modal);
+          makeWindowDraggable(modal.querySelector('.modal-content'), modal.querySelector('#hardware-modal-header'));
+          const _hwClose = () => { Modals.close('hardware-modal'); };
+          modal.querySelector('#hw-modal-close').addEventListener('click', _hwClose);
+          Modals.register('hardware-modal', {
+            sidebarBtnId: 'tool-hardware-btn',
+            restoreFn: () => { modal.classList.remove('hidden', 'modal-minimized'); },
+            closeFn: () => {
+              HardwarePanel.destroy();
+              modal.remove();
+              _hwInited = false;
+            },
+          });
+        }
+        if (!_hwInited) {
+          HardwarePanel.init(modal.querySelector('#hw-panel-body'), { isAdmin: !!window._isAdmin });
+          _hwInited = true;
+        }
+        modal.classList.remove('hidden', 'modal-minimized');
+      });
+    }
+  }
+
+  // ── Docker Workspaces panel ────────────────────────────────────────────────
+  {
+    let _wsInited = false;
+    const toolWorkspacesBtn = el('tool-docker-workspaces-btn');
+    if (toolWorkspacesBtn) {
+      toolWorkspacesBtn.addEventListener('click', async () => {
+        const Modals = await import('./js/modalManager.js');
+        if (Modals.toggle('docker-workspaces-modal')) return;
+        let modal = document.getElementById('docker-workspaces-modal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'docker-workspaces-modal';
+          modal.className = 'modal';
+          modal.innerHTML = `
+            <div class="modal-content" role="dialog" aria-label="AI Workspaces"
+                 style="width:min(720px,95vw);max-height:85vh;overflow-y:auto;padding:0">
+              <div class="modal-header" id="ws-modal-header">
+                <h4>AI Workspaces</h4>
+                <button class="close-btn" id="ws-modal-close" aria-label="Close">&#x2716;</button>
+              </div>
+              <div id="ws-panel-body" style="padding:16px"></div>
+            </div>`;
+          document.body.appendChild(modal);
+          makeWindowDraggable(modal.querySelector('.modal-content'), modal.querySelector('#ws-modal-header'));
+          modal.querySelector('#ws-modal-close').addEventListener('click', () => { Modals.close('docker-workspaces-modal'); });
+          Modals.register('docker-workspaces-modal', {
+            sidebarBtnId: 'tool-docker-workspaces-btn',
+            restoreFn: () => { modal.classList.remove('hidden', 'modal-minimized'); },
+            closeFn: () => {
+              modal.remove();
+              _wsInited = false;
+            },
+          });
+        }
+        if (!_wsInited) {
+          WorkspaceManager.init(modal.querySelector('#ws-panel-body'));
+          _wsInited = true;
+        }
+        modal.classList.remove('hidden', 'modal-minimized');
+      });
+    }
+  }
+
+  // ── Package Manager panel ─────────────────────────────────────────────────
+  {
+    let _pkgInited = false;
+    const toolPackagesBtn = el('tool-packages-btn');
+    if (toolPackagesBtn) {
+      toolPackagesBtn.addEventListener('click', async () => {
+        const Modals = await import('./js/modalManager.js');
+        if (Modals.toggle('packages-modal')) return;
+        let modal = document.getElementById('packages-modal');
+        if (!modal) {
+          modal = document.createElement('div');
+          modal.id = 'packages-modal';
+          modal.className = 'modal';
+          modal.innerHTML = `
+            <div class="modal-content" role="dialog" aria-label="Package Manager"
+                 style="width:min(680px,95vw);max-height:85vh;overflow-y:auto;padding:0">
+              <div class="modal-header" id="pkg-modal-header">
+                <h4>Package Manager</h4>
+                <button class="close-btn" id="pkg-modal-close" aria-label="Close">&#x2716;</button>
+              </div>
+              <div id="pkg-panel-body" style="padding:16px"></div>
+            </div>`;
+          document.body.appendChild(modal);
+          makeWindowDraggable(modal.querySelector('.modal-content'), modal.querySelector('#pkg-modal-header'));
+          modal.querySelector('#pkg-modal-close').addEventListener('click', () => { Modals.close('packages-modal'); });
+          Modals.register('packages-modal', {
+            sidebarBtnId: 'tool-packages-btn',
+            restoreFn: () => { modal.classList.remove('hidden', 'modal-minimized'); },
+            closeFn: () => {
+              modal.remove();
+              _pkgInited = false;
+            },
+          });
+        }
+        if (!_pkgInited) {
+          PackageManager.init(modal.querySelector('#pkg-panel-body'));
+          _pkgInited = true;
+        }
+        modal.classList.remove('hidden', 'modal-minimized');
+      });
+    }
+    // Load package frontend hooks on startup
+    PackageManager.loadFrontendHooks().catch(() => {});
   }
 
   // Sidebar toggle
