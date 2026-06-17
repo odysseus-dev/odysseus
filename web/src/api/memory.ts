@@ -20,9 +20,14 @@ export function useMemoryMutations() {
       },
       onSuccess: inv,
     }),
-    remove: useMutation({
-      mutationFn: async (id: string) => { await apiFetch(`/api/memory/${id}`, { method: "DELETE" }) },
+    update: useMutation({
+      mutationFn: async (v: { id: string; text: string; category?: string }) => {
+        const fd = new FormData(); fd.set("text", v.text); if (v.category) fd.set("category", v.category)
+        const r = await apiFetch(`/api/memory/${v.id}`, { method: "PUT", body: fd })
+        if (!r.ok) throw new Error("update failed"); return r.json()
+      },
       onSuccess: inv,
     }),
+    remove: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/memory/${id}`, { method: "DELETE" }) }, onSuccess: inv }),
   }
 }
