@@ -34,3 +34,5 @@ export interface Task {
   schedule?: string; cron?: string; model?: string;
   next_run_at?: string; last_run_at?: string; enabled?: boolean;
 }
+export interface Skill { id?: string; name: string; description?: string; published?: boolean }
+export interface BuiltinSkill { name: string; description?: string; is_overridden?: boolean }

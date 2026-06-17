@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom"
-import { MessageSquare, Brain, Image, Calendar, Mail, StickyNote, ListChecks, FlaskConical, Settings } from "lucide-react"
+import { MessageSquare, Brain, Image, Calendar, Mail, StickyNote, ListChecks, FlaskConical, Sparkles, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const items = [
@@ -11,6 +11,7 @@ const items = [
   { to: "/notes", icon: StickyNote, label: "Notes" },
   { to: "/tasks", icon: ListChecks, label: "Tasks" },
   { to: "/cookbook", icon: FlaskConical, label: "Cookbook" },
+  { to: "/skills", icon: Sparkles, label: "Skills" },
 ]
 
 const itemCls = ({ isActive }: { isActive: boolean }) =>
