@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { streamChat, streamResume, type SseEvent } from "@/lib/sse"
 import { useComposer } from "@/stores/composer"
+import { usePanel } from "@/stores/panel"
 import { createSession, useHistory } from "@/api/sessions"
 import type { ChatMessage, HistoryMsg, Source } from "@/types"
 
@@ -76,6 +77,9 @@ export function useChat(sessionId?: string) {
     switch (e.type) {
       case "model_info": patchAi((m) => ({ ...m, model: ev.model as string })); break
       case "model_actual": patchAi((m) => ({ ...m, modelActual: ev.model as string, model: m.model || (ev.requested_model as string) })); break
+      case "doc_stream_open": usePanel.getState().showDoc((ev.title as string) || "Document", ev.language as string); break
+      case "doc_stream_delta": usePanel.getState().setDocContent((ev.content as string) || ""); break
+      case "doc_update": if (ev.doc_id) usePanel.getState().setDocId(ev.doc_id as string); break
       case "tool_start": patchAi((m) => ({ ...m, tools: [...(m.tools || []), { name: (ev.tool_name as string) || "tool", input: ev.tool_input }] })); break
       case "tool_output": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], output: ev.tool_output as string }; return { ...m, tools: t } }); break
       case "tool_progress": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], progress: ev.progress_text as string }; return { ...m, tools: t } }); break
