@@ -10,6 +10,7 @@ import { NotesRoute } from "@/routes/NotesRoute"
 import { TasksRoute } from "@/routes/TasksRoute"
 import { SettingsRoute } from "@/routes/SettingsRoute"
 import { SkillsRoute } from "@/routes/SkillsRoute"
+import { CalendarRoute } from "@/routes/CalendarRoute"
 import { useUi } from "@/stores/ui"
 
 function ThemedApp() {
@@ -22,7 +23,7 @@ function ThemedApp() {
         <Route path="/chat/:sessionId?" element={<ChatConsole />} />
         <Route path="/memory" element={<MemoryRoute />} />
         <Route path="/gallery" element={<ComingSoon title="Gallery" />} />
-        <Route path="/calendar" element={<ComingSoon title="Calendar" />} />
+        <Route path="/calendar" element={<CalendarRoute />} />
         <Route path="/email" element={<ComingSoon title="Email" />} />
         <Route path="/notes" element={<NotesRoute />} />
         <Route path="/tasks" element={<TasksRoute />} />
