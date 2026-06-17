@@ -26,6 +26,31 @@ if ! getent passwd "$PUID" >/dev/null 2>&1; then
     useradd -u "$PUID" -g "$PGID" -M -s /bin/sh -d /app odysseus
 fi
 
+# AI Workspaces (docker-workspaces package): when the host Docker socket is
+# bind-mounted in (see docker-compose.yml), the app talks to it via the
+# docker-py SDK. The socket is group-owned on the host (gid varies by distro),
+# so the non-root user we drop to needs membership in a group with that gid or
+# it gets EACCES and the UI shows "Docker is not running". Create/find a
+# matching group and add the app user; gosu replicates the user's group list,
+# so the privilege drop keeps socket access. No-op when the socket isn't mounted.
+DOCKER_SOCK="/var/run/docker.sock"
+if [ -S "$DOCKER_SOCK" ]; then
+    SOCK_GID="$(stat -c '%g' "$DOCKER_SOCK" 2>/dev/null || echo '')"
+    if [ -n "$SOCK_GID" ]; then
+        SOCK_GROUP="$(getent group "$SOCK_GID" | cut -d: -f1)"
+        if [ -z "$SOCK_GROUP" ]; then
+            SOCK_GROUP="dockerhost"
+            groupadd -g "$SOCK_GID" "$SOCK_GROUP" 2>/dev/null \
+                || SOCK_GROUP="$(getent group "$SOCK_GID" | cut -d: -f1)"
+        fi
+        APP_USER="$(getent passwd "$PUID" | cut -d: -f1)"
+        if [ -n "$APP_USER" ] && [ -n "$SOCK_GROUP" ]; then
+            usermod -aG "$SOCK_GROUP" "$APP_USER" 2>/dev/null || true
+            echo "AI Workspaces: granted '$APP_USER' access to Docker socket (group '$SOCK_GROUP', gid $SOCK_GID)" >&2
+        fi
+    fi
+fi
+
 mount_root_for() {
     awk -v target="$1" '$5 == target { print $4; exit }' /proc/self/mountinfo 2>/dev/null || true
 }

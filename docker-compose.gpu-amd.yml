@@ -28,6 +28,12 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+      # AI Workspaces (docker-workspaces package): expose the HOST Docker daemon
+      # so the app can create/manage workspace containers. Without this there is
+      # no /var/run/docker.sock in the container and the UI reports "Docker is
+      # not running". The entrypoint grants the non-root app user socket access.
+      # No `:z` — relabeling the live host socket can break the host's Docker.
+      - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
