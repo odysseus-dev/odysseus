@@ -4,6 +4,8 @@ import logging
 from typing import Dict
 from cryptography.fernet import Fernet, InvalidToken
 
+from core.platform_compat import safe_chmod
+
 logger = logging.getLogger(__name__)
 
 class APIKeyManager:
@@ -15,12 +17,20 @@ class APIKeyManager:
     def get_or_create_key(self) -> bytes:
         """Get or create encryption key for API keys"""
         if os.path.exists(self.key_file):
+            # Older versions wrote .key with the process umask (often 0o644,
+            # i.e. group/world-readable). Re-restrict on read so existing
+            # installs heal without needing the key to be regenerated.
+            safe_chmod(self.key_file, 0o600)
             with open(self.key_file, 'rb') as f:
                 return f.read()
         else:
             key = Fernet.generate_key()
             with open(self.key_file, 'wb') as f:
                 f.write(key)
+            # This key decrypts every stored provider credential, so restrict it
+            # to the owner (0o600) — it must not be group/world-readable. No-op
+            # on Windows (files there are ACL-restricted to the user already).
+            safe_chmod(self.key_file, 0o600)
             return key
     
     def encrypt_api_key(self, api_key: str) -> str:
