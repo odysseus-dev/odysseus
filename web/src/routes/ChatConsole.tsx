@@ -1,11 +1,7 @@
 import { useEffect, useRef } from "react"
 import { useParams } from "react-router-dom"
-import { Moon, Sun } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { useUi } from "@/stores/ui"
 import { useChat } from "@/lib/useChat"
-import { SessionsSidebar } from "@/components/chat/SessionsSidebar"
-import { ConfigPanel } from "@/components/shell/ConfigPanel"
+import { useSessions } from "@/api/sessions"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
 
@@ -17,19 +13,18 @@ const SUGGESTIONS = [
 ]
 
 export function ChatConsole() {
-  const { theme, toggleTheme } = useUi()
   const { sessionId } = useParams()
   const { messages, streaming, send, stop } = useChat(sessionId)
+  const { data: sessions } = useSessions()
+  const title = sessions?.find((s) => s.id === sessionId)?.name
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages])
 
   return (
     <div className="flex h-full min-w-0 flex-1">
-      <SessionsSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-13 shrink-0 items-center justify-between border-b px-4">
-          <div className="text-sm font-semibold">Odysseus <span className="font-normal text-muted-foreground">/ v2</span></div>
-          <Button variant="ghost" size="icon" onClick={toggleTheme} title="Toggle theme">{theme === "dark" ? <Sun /> : <Moon />}</Button>
+        <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-medium text-foreground">
+          <span className="truncate">{title || "New chat"}</span>
         </header>
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (
@@ -53,7 +48,6 @@ export function ChatConsole() {
         </div>
         <Composer onSend={send} onStop={stop} streaming={streaming} />
       </div>
-      <ConfigPanel />
     </div>
   )
 }

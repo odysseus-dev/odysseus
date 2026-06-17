@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { uploadFiles } from "@/api/upload"
 import { useVoiceCaps, transcribe } from "@/api/voice"
 import { useSlashCatalog, invokeSkill } from "@/api/skills"
+import { ModePicker, ModelPicker, ToolsMenu } from "./ComposerControls"
 import { cn } from "@/lib/utils"
 
 export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, ids?: string[], sendAs?: string) => void; onStop: () => void; streaming: boolean }) {
@@ -113,35 +114,40 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2">
-          <button onClick={() => fileRef.current?.click()} title="Attach files" className="mb-0.5 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+        <textarea
+          ref={ref} value={text} rows={1} placeholder={uploading ? "Uploading…" : "Message Odysseus…  (/ for skills)"}
+          onChange={(e) => { setText(e.target.value); setSlashSel(0); grow() }}
+          onKeyDown={(e) => {
+            if (slashOpen) {
+              if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((s) => Math.min(s + 1, slashMatches.length - 1)); return }
+              if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel((s) => Math.max(s - 1, 0)); return }
+              if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickSlash(slashMatches[sel].name); return }
+              if (e.key === "Escape") { e.preventDefault(); setText(""); return }
+            }
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit() }
+          }}
+          className="max-h-[200px] w-full resize-none bg-transparent px-1 py-1.5 text-[15px] outline-none placeholder:text-muted-foreground"
+        />
+        <div className="mt-1 flex items-center gap-1">
+          <button onClick={() => fileRef.current?.click()} title="Attach files" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">
             <Paperclip className="size-4" />
           </button>
           <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => onFiles(e.target.files)} />
           {caps?.stt && (
-            <button onClick={toggleMic} disabled={transcribing} title={recording ? "Stop recording" : "Dictate"} className={cn("mb-0.5 rounded-md p-1.5 hover:bg-accent hover:text-foreground", recording ? "animate-pulse bg-destructive/15 text-destructive" : "text-muted-foreground")}>
+            <button onClick={toggleMic} disabled={transcribing} title={recording ? "Stop recording" : "Dictate"} className={cn("rounded-md p-1.5 hover:bg-accent hover:text-foreground", recording ? "animate-pulse bg-destructive/15 text-destructive" : "text-muted-foreground")}>
               {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
             </button>
           )}
-          <textarea
-            ref={ref} value={text} rows={1} placeholder={uploading ? "Uploading…" : "Message Odysseus…  (/ for skills)"}
-            onChange={(e) => { setText(e.target.value); setSlashSel(0); grow() }}
-            onKeyDown={(e) => {
-              if (slashOpen) {
-                if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((s) => Math.min(s + 1, slashMatches.length - 1)); return }
-                if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel((s) => Math.max(s - 1, 0)); return }
-                if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickSlash(slashMatches[sel].name); return }
-                if (e.key === "Escape") { e.preventDefault(); setText(""); return }
-              }
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit() }
-            }}
-            className="max-h-[200px] flex-1 resize-none bg-transparent py-1.5 text-[15px] outline-none placeholder:text-muted-foreground"
-          />
-          {streaming ? (
-            <Button size="icon" variant="secondary" onClick={onStop} title="Stop" className="size-8 rounded-lg"><Square className="size-4" /></Button>
-          ) : (
-            <Button size="icon" onClick={submit} disabled={(!text.trim() && atts.length === 0) || uploading} title="Send" className="size-8 rounded-lg"><ArrowUp className="size-4" /></Button>
-          )}
+          <ToolsMenu />
+          <div className="ml-auto flex items-center gap-2">
+            <ModePicker />
+            <ModelPicker />
+            {streaming ? (
+              <Button size="icon" variant="secondary" onClick={onStop} title="Stop" className="size-8 rounded-lg"><Square className="size-4" /></Button>
+            ) : (
+              <Button size="icon" onClick={submit} disabled={(!text.trim() && atts.length === 0) || uploading} title="Send" className="size-8 rounded-lg"><ArrowUp className="size-4" /></Button>
+            )}
+          </div>
         </div>
       </div>
       <p className="mt-2 text-center text-[11px] text-muted-foreground">Odysseus can make mistakes. Verify important info.</p>
