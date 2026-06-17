@@ -14,6 +14,7 @@ import { CalendarRoute } from "@/routes/CalendarRoute"
 import { GalleryRoute } from "@/routes/GalleryRoute"
 import { EmailRoute } from "@/routes/EmailRoute"
 import { DocumentsRoute } from "@/routes/DocumentsRoute"
+import { CompareRoute } from "@/routes/CompareRoute"
 import { useUi } from "@/stores/ui"
 
 function ThemedApp() {
@@ -24,6 +25,7 @@ function ThemedApp() {
       <Routes>
         <Route path="/" element={<Navigate to="/chat" replace />} />
         <Route path="/chat/:sessionId?" element={<ChatConsole />} />
+        <Route path="/compare" element={<CompareRoute />} />
         <Route path="/memory" element={<MemoryRoute />} />
         <Route path="/gallery" element={<GalleryRoute />} />
         <Route path="/calendar" element={<CalendarRoute />} />

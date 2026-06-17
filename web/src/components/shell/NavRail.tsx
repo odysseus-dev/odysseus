@@ -1,9 +1,10 @@
 import { NavLink } from "react-router-dom"
-import { MessageSquare, Brain, Image, Calendar, Mail, StickyNote, ListChecks, FlaskConical, Sparkles, FileText, Settings } from "lucide-react"
+import { MessageSquare, GitCompareArrows, Brain, Image, Calendar, Mail, StickyNote, ListChecks, FlaskConical, Sparkles, FileText, Settings } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const items = [
   { to: "/chat", icon: MessageSquare, label: "Chat" },
+  { to: "/compare", icon: GitCompareArrows, label: "Compare" },
   { to: "/memory", icon: Brain, label: "Memory" },
   { to: "/gallery", icon: Image, label: "Gallery" },
   { to: "/calendar", icon: Calendar, label: "Calendar" },
