@@ -38121,6 +38121,13 @@ body.theme-frosted .modal {
   padding: 4px 6px 8px;
 }
 
+/* Packages settings panel: cards stack full-width like every other settings
+   tab. (Replaces the old .pkg-panel wrapper that centered content at 900px.) */
+.pkg-settings-stack {
+  display: block;
+  width: 100%;
+}
+
 /* Kill the page-style outer padding/centering — the modal body already pads,
    and the modal width already constrains the panel. */
 .pkg-panel, .ws-panel, .hw-panel {
