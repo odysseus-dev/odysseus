@@ -69,11 +69,11 @@ function selectMessages(message) {
   const pairKey = JSON.stringify({ assistantId: dbId, userId: userDbId });
 
   if (!message.selected) {
-    message.style.border = "2px solid green";
+    message.style.border = "3px solid";
     message.selected = true;
     selectedMessages.add(pairKey);
 
-    if (closestUserMsg) closestUserMsg.style.border = "2px solid green";
+    if (closestUserMsg) closestUserMsg.style.border = "3px solid";
   } else {
     message.style.border = "";
     message.selected = false;
