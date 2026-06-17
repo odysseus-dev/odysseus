@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from typing import Literal, List, Optional
 from pydantic import BaseModel
 
-# Adjust these imports to match your project structure
+# Reference the module directly to prevent un-patchable snapshot copies
 import services.trace_export
 
 # --- App Setup ---
@@ -31,7 +31,7 @@ async def value_error_handler(request, exc):
 def mock_export_endpoint(payload: TraceExportRequest):
     data = services.trace_export.build_trace_records(
         db=None, 
-        current_user="admin",  # Simulated active user
+        current_user="admin",  
         message_ids=payload.message_ids, 
         session_id=payload.session_id, 
         label=payload.label,
@@ -46,18 +46,20 @@ def client():
 # --- Tests ---
 
 def test_redact_sensitive_data():
-    # Setup our exact settings dictionary fallback
+    # FIX: Replaced high-entropy string tokens with repetitive dummy text.
+    # This prevents Gitleaks from mistaking our test inputs for real keys.
     mock_settings = json.dumps({
-        "brave_api_key": "brave-dummy-key-for-testing"
+        "brave_api_key": "brave-dummy-key-value-abcde",
+        "tavily_api_key": "tavily-dummy-key-value-abcde"
     })
     
-    # Add an intensive payload containing generic sensitive infrastructure items
     test_payload = {
         "messages": [
             {
-                "id": "msg_1",
-                "content": "Check out my key brave-dummy-key-for-testing or log in via Authorization: Bearer secrettoken123456.",
+                "id": "msg_1", 
+                "content": "Check out my key brave-dummy-key-value-abcde or log in via Authorization: Bearer mocktokenvalue11111.", 
                 "metadata": {
+                    "used_key": "tavily-dummy-key-value-abcde",
                     "local_url": "http://localhost:8000/api/v1/internal",
                     "log_path": "C:\\Users\\Admin\\AppData\\local\\temp_log.txt"
                 }
@@ -70,31 +72,27 @@ def test_redact_sensitive_data():
 
     scrubbed_msg = result["messages"][0]
 
-    # Verify Configured Key is redacted
-    assert "brave-dummy-key-for-testing" not in scrubbed_msg["content"]
+    # 1. Assert exact settings keys were redacted
+    assert "brave-dummy-key-value-abcde" not in scrubbed_msg["content"]
+    assert "tavily-dummy-key-value-abcde" not in scrubbed_msg["metadata"]["used_key"]
     
-    # Verify Bearer Token string pattern is redacted
-    assert "secrettoken123456" not in scrubbed_msg["content"]
-    
-    # Verify internal host urls are redacted
+    # 2. Assert broad generic DLP patterns were successfully redacted
+    assert "mocktokenvalue11111" not in scrubbed_msg["content"]
     assert "localhost:8000" not in scrubbed_msg["metadata"]["local_url"]
-    
-    # Verify sensitive Windows filesystems structures are hidden
     assert "AppData" not in scrubbed_msg["metadata"]["log_path"]
     
-    # Confirm they all cleanly mapped into generic placeholders
+    # 3. Assert all replacements converted nicely into placeholders
     assert "[REDACTED]" in scrubbed_msg["content"]
+    assert scrubbed_msg["metadata"]["used_key"] == "[REDACTED]"
     assert scrubbed_msg["metadata"]["local_url"] == "[REDACTED]"
     assert scrubbed_msg["metadata"]["log_path"] == "[REDACTED]"
 
 def test_build_trace_records_owner_mismatch():
-    """FIXED: Verify that an owner mismatch explicitly raises a PermissionError instead of returning None."""
     db_mock = MagicMock()
     mock_session_row = MagicMock()
     mock_session_row.owner = "hacker"
     db_mock.query.return_value.filter.return_value.first.return_value = mock_session_row
 
-    # We now expect a PermissionError to explode outward cleanly
     with pytest.raises(PermissionError, match="permission to access this session"):
         services.trace_export.build_trace_records(db_mock, "admin", ["msg_1"], "session_1", "success")
 
@@ -129,7 +127,6 @@ def test_export_trace_route_handles_validation_error(mock_build_trace, client):
     assert "Mismatch" in response.json()["detail"]
 
 def test_export_trace_route_rejects_invalid_label(client):
-    """FIXED: Added the client fixture dependency so Pydantic validation executes correctly."""
     payload = {
         "session_id": "session_1",
         "message_ids": ["msg_1"],
