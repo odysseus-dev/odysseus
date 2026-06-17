@@ -34,3 +34,8 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.6
+
+# Chat Gateway: WebSocket client for realtime platform adapters (Mattermost/SimpleX).
+# Optional, lazy-imported; only needed when an enabled adapter uses WebSocket.
+# Matrix and IRC do not require it.
+websockets>=12.0

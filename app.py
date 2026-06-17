@@ -960,6 +960,13 @@ async def _startup_event():
             logger.warning(f"MCP startup failed (non-critical): {type(e).__name__}: {e}")
 
     _startup_tasks.append(asyncio.create_task(_startup_mcp_connections()))
+    # Chat Gateway: converse with the Odysseus agent from messaging platforms.
+    # No-op unless data/chat_gateway.yaml enables it.
+    try:
+        from src.chat_gateway import start_chat_gateway
+        _startup_tasks.extend(start_chat_gateway(session_manager))
+    except Exception as _e:
+        logger.warning("Chat gateway failed to start (non-critical): %s", _e)
 
     # Pre-warm the RAG tool index off the request path. Loading the local
     # embedding model + opening ChromaDB + indexing the built-in tools is a
@@ -1172,6 +1179,12 @@ async def _shutdown_event():
         await mcp_manager.disconnect_all()
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
+    # Stop chat gateway adapters
+    try:
+        from src.chat_gateway import stop_chat_gateway
+        await stop_chat_gateway()
+    except Exception:
+        pass
     logger.info("Application shutdown complete")
 
 
