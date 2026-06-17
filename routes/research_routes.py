@@ -381,6 +381,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[str] = None
+        hardware_preset: Optional[str] = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -451,8 +452,53 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             if body.model:
                 ep_model = body.model
 
-        # max_rounds=0 → "Auto", let AI decide; pass 20 as the safety cap.
-        effective_max_rounds = body.max_rounds if body.max_rounds > 0 else 20
+        # Resolve hardware preset if passed, or auto-detect if "auto"
+        preset = (body.hardware_preset or "").lower()
+        if not preset or preset == "auto":
+            try:
+                from services.hwfit.hardware import detect_system
+                sys_info = detect_system()
+                if sys_info and not sys_info.get("error"):
+                    total_ram = sys_info.get("total_ram_gb") or 0.0
+                    has_gpu = sys_info.get("has_gpu") or False
+                    gpu_vram = sys_info.get("gpu_vram_gb") or 0.0
+                    if not has_gpu or gpu_vram < 8.0 or total_ram < 16.0:
+                        preset = "small"
+                    elif gpu_vram > 16.0 or sys_info.get("gpu_count", 0) > 1:
+                        preset = "large"
+                    else:
+                        preset = "medium"
+            except Exception:
+                preset = "medium"
+
+        # Apply preset defaults
+        effective_max_rounds = body.max_rounds
+        if effective_max_rounds == 0:
+            if preset == "small":
+                effective_max_rounds = 3
+            elif preset == "large":
+                effective_max_rounds = 8
+            else:
+                effective_max_rounds = 5
+
+        extraction_concurrency = body.extraction_concurrency
+        if extraction_concurrency is None:
+            if preset == "small":
+                extraction_concurrency = 1
+            elif preset == "large":
+                extraction_concurrency = 4
+            else:
+                extraction_concurrency = 3
+
+        extraction_timeout = body.extraction_timeout
+        if extraction_timeout is None:
+            if preset == "small":
+                extraction_timeout = 60
+            elif preset == "large":
+                extraction_timeout = 120
+            else:
+                extraction_timeout = 90
+
         research_handler.start_research(
             session_id=session_id,
             query=body.query,
@@ -463,8 +509,8 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             max_rounds=effective_max_rounds,
             search_provider=body.search_provider or None,
             category=body.category or None,
-            extraction_timeout=body.extraction_timeout,
-            extraction_concurrency=body.extraction_concurrency,
+            extraction_timeout=extraction_timeout,
+            extraction_concurrency=extraction_concurrency,
             owner=user,
         )
         return {"session_id": session_id, "status": "running", "query": body.query}

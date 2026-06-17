@@ -75,6 +75,7 @@ function _saveSettingsToStorage() {
       endpoint_id: document.getElementById('research-endpoint')?.value || '',
       model: document.getElementById('research-model')?.value || '',
       category: document.getElementById('research-category')?.value || '',
+      hardware_preset: document.getElementById('research-preset')?.value || 'auto',
     }));
   } catch {}
 }
@@ -385,6 +386,15 @@ function _buildPanelHTML() {
         </button>
         <div id="research-settings-body" class="research-settings-row"${settingsHidden}>
           <label class="research-setting">
+            <span class="research-setting-label">Preset <span class="hwfit-help-chip hwfit-help-chip-inline" title="Hardware preset. Auto profiles the system.">?</span></span>
+            <select id="research-preset">
+              <option value="auto" selected>Auto</option>
+              <option value="small">Small (Low VRAM/CPU)</option>
+              <option value="medium">Medium (8-16GB VRAM)</option>
+              <option value="large">Large (>16GB VRAM)</option>
+            </select>
+          </label>
+          <label class="research-setting">
             <span class="research-setting-label">Rounds <span class="hwfit-help-chip hwfit-help-chip-inline" title="How many search → read → reflect rounds the agent runs. More rounds = deeper coverage, longer wait, more tokens.">?</span></span>
             <select id="research-rounds">${roundOpts}</select>
           </label>
@@ -482,6 +492,14 @@ function _wireEvents(pane) {
   const endpointSelect = pane.querySelector('#research-endpoint');
   endpointSelect.addEventListener('change', () => _populateModels(endpointSelect.value));
 
+  const presetSelect = pane.querySelector('#research-preset');
+  if (presetSelect) {
+    presetSelect.addEventListener('change', () => {
+      _applyPreset(presetSelect.value);
+      _saveSettingsToStorage();
+    });
+  }
+
   _renderJobs();
 }
 
@@ -493,6 +511,7 @@ function _readSettings() {
     endpoint_id: document.getElementById('research-endpoint')?.value || undefined,
     model: document.getElementById('research-model')?.value || undefined,
     category: category || undefined,
+    hardware_preset: document.getElementById('research-preset')?.value || 'auto',
   };
   const epSel = document.getElementById('research-endpoint');
   if (epSel && epSel.value) {
@@ -616,8 +635,13 @@ function _restoreSavedSettings() {
     const catSel = document.getElementById('research-category');
     if (catSel) catSel.value = saved.category;
   }
-  // Rounds intentionally defaults to "Auto" on every open — don't restore.
-  // Users can pick a specific cap each time if needed.
+  if (saved.hardware_preset !== undefined) {
+    const presetSel = document.getElementById('research-preset');
+    if (presetSel) {
+      presetSel.value = saved.hardware_preset;
+      _applyPreset(saved.hardware_preset);
+    }
+  }
   const search = document.getElementById('research-search-provider');
   if (search && saved.search_provider !== undefined) search.value = saved.search_provider;
   const ep = document.getElementById('research-endpoint');
@@ -649,6 +673,75 @@ async function _loadEndpoints() {
   } catch {}
 }
 
+let _detectedPreset = null;
+async function _detectSystemPreset() {
+  if (_detectedPreset) return _detectedPreset;
+  try {
+    const res = await fetch('/api/hwfit/system');
+    if (res.ok) {
+      const sys_info = await res.json();
+      if (sys_info && !sys_info.error) {
+        const total_ram = sys_info.total_ram_gb || 0;
+        const has_gpu = sys_info.has_gpu || false;
+        const gpu_vram = sys_info.gpu_vram_gb || 0;
+        if (!has_gpu || gpu_vram < 8.0 || total_ram < 16.0) {
+          _detectedPreset = 'small';
+        } else if (gpu_vram > 16.0 || (sys_info.gpu_count || 0) > 1) {
+          _detectedPreset = 'large';
+        } else {
+          _detectedPreset = 'medium';
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to detect hardware preset", e);
+  }
+  if (!_detectedPreset) {
+    _detectedPreset = 'medium';
+  }
+  return _detectedPreset;
+}
+
+function _applyPreset(preset) {
+  const roundsEl = document.getElementById('research-rounds');
+  if (roundsEl) {
+    if (preset === 'small') roundsEl.value = '3';
+    else if (preset === 'medium') roundsEl.value = '5';
+    else if (preset === 'large') roundsEl.value = '8';
+    else roundsEl.value = '0'; // Auto
+  }
+  const epEl = document.getElementById('research-endpoint');
+  if (epEl) {
+    _populateModels(epEl.value);
+  }
+}
+
+function _isLocalEndpoint(ep) {
+  if (!ep) return false;
+  if (ep.endpoint_kind === 'local') return true;
+  if (ep.endpoint_kind === 'api' || ep.endpoint_kind === 'proxy') return false;
+  const url = (ep.base_url || '').toLowerCase();
+  return url.includes('localhost') || url.includes('127.0.0.1') || url.includes('::1') || url.includes('0.0.0.0') || url.includes('11434');
+}
+
+function _getModelSizeGb(modelId) {
+  const mid = modelId.toLowerCase();
+  const match = mid.match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)?)\s*b(?:$|[^a-z0-9])/);
+  if (match) {
+    return parseFloat(match[1]);
+  }
+  const matchM = mid.match(/(?:^|[^a-z0-9])(\d+(?:\.\d+)?)\s*m(?:$|[^a-z0-9])/);
+  if (matchM) {
+    return parseFloat(matchM[1]) / 1000.0;
+  }
+  if (mid.includes('llama3') && !mid.includes('70b') && !mid.includes('405b')) return 8;
+  if (mid.includes('gemma2') && !mid.includes('27b') && !mid.includes('2b')) return 9;
+  if (mid.includes('mistral') && !mid.includes('8x') && !mid.includes('small') && !mid.includes('large')) return 7;
+  if (mid.includes('phi3')) return 3.8;
+  if (mid.includes('phi4')) return 14;
+  return null;
+}
+
 function _populateModels(endpointId) {
   const sel = document.getElementById('research-model');
   if (!sel) return;
@@ -656,10 +749,53 @@ function _populateModels(endpointId) {
   if (!endpointId) return;
   const ep = _endpoints.find(e => e.id === endpointId);
   if (!ep || !ep.models) return;
+
+  const presetEl = document.getElementById('research-preset');
+  let preset = (presetEl?.value || 'auto').toLowerCase();
+
+  if (preset === 'auto') {
+    if (!_detectedPreset) {
+      _detectSystemPreset().then(() => {
+        if (presetEl?.value === 'auto') {
+          _populateModels(endpointId);
+        }
+      });
+      preset = 'medium';
+    } else {
+      preset = _detectedPreset;
+    }
+  }
+
+  const isLocal = _isLocalEndpoint(ep);
+
   sortModelIds(ep.models).forEach(m => {
     const opt = document.createElement('option');
     opt.value = m;
-    opt.textContent = m;
+    
+    let label = m;
+    if (isLocal) {
+      const size = _getModelSizeGb(m);
+      if (size !== null) {
+        let rec = false;
+        if (preset === 'small' && size <= 9.5) rec = true;
+        else if (preset === 'medium' && size >= 7.0 && size <= 35.0) rec = true;
+        else if (preset === 'large' && size >= 30.0) rec = true;
+        
+        if (rec) {
+          label = `${m} (Recommended)`;
+        }
+      } else {
+        const mid = m.toLowerCase();
+        let rec = false;
+        if (preset === 'large' && (mid.includes('deepseek-r1') && !mid.includes('distill'))) {
+          rec = true;
+        }
+        if (rec) {
+          label = `${m} (Recommended)`;
+        }
+      }
+    }
+    opt.textContent = label;
     sel.appendChild(opt);
   });
 }
