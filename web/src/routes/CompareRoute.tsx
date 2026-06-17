@@ -34,7 +34,8 @@ function ModelSelect({ value, onChange, label }: { value: Sel; onChange: (s: Sel
   )
 }
 
-function streamPane(sessionId: string, prompt: string, sel: Sel, onDelta: (d: string) => void, signal: AbortSignal) {
+interface PaneMetrics { tokens_out?: number; tok_per_sec?: number; cost?: number }
+function streamPane(sessionId: string, prompt: string, sel: Sel, onDelta: (d: string) => void, onMetrics: (m: PaneMetrics) => void, signal: AbortSignal) {
   const fd = new FormData()
   fd.set("message", prompt)
   fd.set("session", sessionId)
@@ -45,6 +46,7 @@ function streamPane(sessionId: string, prompt: string, sel: Sel, onDelta: (d: st
   return streamChat(fd, (e) => {
     const ev = e as Record<string, unknown>
     if (typeof ev.delta === "string" && !ev.thinking) onDelta(ev.delta as string)
+    else if (e.type === "metrics") onMetrics({ tokens_out: ev.tokens_out as number, tok_per_sec: ev.tok_per_sec as number, cost: ev.cost as number })
   }, signal)
 }
 
@@ -55,13 +57,15 @@ export function CompareRoute() {
   const [running, setRunning] = useState(false)
   const [left, setLeft] = useState("")
   const [right, setRight] = useState("")
+  const [lm, setLm] = useState<PaneMetrics | null>(null)
+  const [rm, setRm] = useState<PaneMetrics | null>(null)
   const [comp, setComp] = useState<CompareStart | null>(null)
   const [voted, setVoted] = useState<string | null>(null)
   const [err, setErr] = useState("")
 
   const run = async () => {
     if (!prompt.trim() || !a.model || !b.model || running) return
-    setRunning(true); setErr(""); setLeft(""); setRight(""); setComp(null); setVoted(null)
+    setRunning(true); setErr(""); setLeft(""); setRight(""); setLm(null); setRm(null); setComp(null); setVoted(null)
     try {
       const c = await startCompare({
         prompt,
@@ -73,8 +77,8 @@ export function CompareRoute() {
       const ctrl = new AbortController()
       // session_left maps to whichever slot; in non-blind mode left=a, right=b
       await Promise.allSettled([
-        streamPane(c.session_left, prompt, a, (d) => setLeft((p) => p + d), ctrl.signal),
-        streamPane(c.session_right, prompt, b, (d) => setRight((p) => p + d), ctrl.signal),
+        streamPane(c.session_left, prompt, a, (d) => setLeft((p) => p + d), setLm, ctrl.signal),
+        streamPane(c.session_right, prompt, b, (d) => setRight((p) => p + d), setRm, ctrl.signal),
       ])
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Comparison failed")
@@ -88,7 +92,7 @@ export function CompareRoute() {
     try { await voteCompare(comp.id, w); setVoted(w) } catch { /* ignore */ }
   }
 
-  const Pane = ({ side, model, body, win }: { side: string; model: string; body: string; win: boolean }) => (
+  const Pane = ({ side, model, body, win, met }: { side: string; model: string; body: string; win: boolean; met: PaneMetrics | null }) => (
     <div className={cn("flex min-h-0 flex-1 flex-col rounded-lg border bg-card", win && "ring-2 ring-primary")}>
       <div className="flex items-center justify-between border-b px-3 py-2">
         <span className="truncate text-sm font-medium">{side}</span>
@@ -97,6 +101,13 @@ export function CompareRoute() {
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {body ? <Markdown>{body}</Markdown> : running ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Generating…</div> : <span className="text-sm text-muted-foreground">No output yet.</span>}
       </div>
+      {met && (
+        <div className="flex flex-wrap gap-3 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+          {met.tokens_out != null && <span>{met.tokens_out} tok</span>}
+          {met.tok_per_sec != null && <span>{Math.round(met.tok_per_sec)} tok/s</span>}
+          {met.cost != null && <span>${Number(met.cost).toFixed(4)}</span>}
+        </div>
+      )}
     </div>
   )
 
@@ -114,8 +125,8 @@ export function CompareRoute() {
         </div>
         {err && <p className="text-xs text-destructive">{err}</p>}
         <div className="flex min-h-0 flex-1 gap-3">
-          <Pane side="Model A" model={a.model} body={left} win={voted === "left"} />
-          <Pane side="Model B" model={b.model} body={right} win={voted === "right"} />
+          <Pane side="Model A" model={a.model} body={left} win={voted === "left"} met={lm} />
+          <Pane side="Model B" model={b.model} body={right} win={voted === "right"} met={rm} />
         </div>
         {comp && !running && (left || right) && (
           <div className="flex items-center justify-center gap-2 pt-1">
