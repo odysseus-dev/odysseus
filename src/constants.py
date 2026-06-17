@@ -57,7 +57,13 @@ MEMORY_VECTORS_DIR = os.path.join(DATA_DIR, "memory_vectors")
 
 # Paths with an intentional dedicated env override, defaulting under DATA_DIR.
 MAIL_ATTACHMENTS_DIR = os.getenv("ODYSSEUS_MAIL_ATTACHMENTS_DIR", os.path.join(DATA_DIR, "mail-attachments"))
-FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH", os.path.join(DATA_DIR, "fastembed_cache"))
+# `or` (not os.getenv's default arg) so a PRESENT-but-EMPTY value falls back to
+# the default. docker-compose.yml injects `FASTEMBED_CACHE_PATH=${FASTEMBED_CACHE_PATH:-}`,
+# which sets the var to "" when the host hasn't defined it. os.getenv(name, default)
+# only returns the default when the var is ABSENT, so the empty string would win →
+# os.makedirs("") raises [Errno 2] No such file or directory: '' → FastEmbed fails to
+# init and all vector features (RAG, semantic memory, tool index) silently degrade.
+FASTEMBED_CACHE_DIR = os.getenv("FASTEMBED_CACHE_PATH") or os.path.join(DATA_DIR, "fastembed_cache")
 
 # Agent tool output limits (single source of truth — imported by tool_execution.py,
 # tool_implementations.py, agent_tools.py, and any other module that needs them)
@@ -78,6 +84,13 @@ MAX_CONTEXT_MESSAGES = 90
 REQUEST_TIMEOUT = 20
 OPENAI_COMPAT_PATH = "/v1/chat/completions"
 
+# Outbound UA for web_fetch / web_search scraping; common desktop UA so pages serve normal HTML.
+WEB_FETCH_USER_AGENT = os.environ.get(
+    "WEB_FETCH_USER_AGENT",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+)
+
 # Environment variables with defaults
 DEFAULT_HOST = os.getenv("LLM_HOST", "localhost")
 LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip()]
@@ -88,6 +101,9 @@ SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"
 CLEANUP_INTERVAL_HOURS = int(os.getenv("CLEANUP_INTERVAL_HOURS", "24"))
+
+# Auth policy
+PASSWORD_MIN_LENGTH = 8
 
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0

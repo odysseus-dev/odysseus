@@ -505,6 +505,8 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    if u.startswith('KB'): return int(n * 1024)",
         "    return int(n)",
         "def scan_ollama():",
+        "    if any(m.get('is_ollama') for m in models): return",
+        "    if os.name == 'nt' and not os.environ.get('ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN'): return",
         "    if not shutil.which('ollama'): return",
         "    try:",
         "        p = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)",
@@ -535,8 +537,8 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
         "for _hf_cache in hf_cache_paths(): scan_hf(_hf_cache)",
-        "scan_ollama()",
         "scan_ollama_api()",
+        "scan_ollama()",
     ]
     for model_dir in model_dirs or []:
         lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")

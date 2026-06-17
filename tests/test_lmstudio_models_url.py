@@ -17,6 +17,7 @@ This module pins both behaviors so future refactors don't regress them.
 """
 
 import httpx
+import pytest
 
 from src import endpoint_resolver, llm_core
 
@@ -88,6 +89,19 @@ def test_build_models_url_preserves_explicit_non_v1_path(monkeypatch):
         endpoint_resolver.build_models_url("http://proxy.example.com/openai")
         == "http://proxy.example.com/openai/models"
     )
+
+
+@pytest.mark.parametrize("base_url", [
+    "http://localhost:1234?",
+    "http://localhost:1234#fragment",
+    "http://localhost:1234/v1?token=abc",
+])
+def test_build_models_url_rejects_query_or_fragment_base(monkeypatch, base_url):
+    monkeypatch.setattr(endpoint_resolver, "resolve_url", lambda url: url)
+    _neutralize_provider_detection(monkeypatch)
+
+    with pytest.raises(ValueError, match="query or fragment"):
+        endpoint_resolver.build_models_url(base_url)
 
 
 # ── list_model_ids: parse LM Studio's response ─────────────────────────
