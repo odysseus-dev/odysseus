@@ -12,7 +12,19 @@ logger = logging.getLogger(__name__)
 _docker_available = False
 try:
     import docker
-    _docker_available = True
+    # Guard against a non-SDK `docker` shadowing the real docker-py package.
+    # The repo ships a top-level `docker/` directory (deployment configs); when
+    # the SDK isn't installed, `import docker` silently resolves to that as a
+    # namespace package and succeeds without exposing `from_env`. Verifying the
+    # attribute keeps the "SDK not installed" path honest instead of failing
+    # later with a confusing "cannot connect to daemon" error.
+    if hasattr(docker, "from_env"):
+        _docker_available = True
+    else:
+        logger.warning(
+            "The importable 'docker' module is not the docker-py SDK "
+            "(no from_env); Docker workspaces disabled. Run: pip install docker"
+        )
 except ImportError:
     logger.warning("docker SDK not installed; Docker workspaces disabled. Run: pip install docker")
 
@@ -21,6 +33,11 @@ def _get_client():
     if not _docker_available:
         raise RuntimeError("Docker SDK not available. Install with: pip install docker")
     import docker as _docker
+    if not hasattr(_docker, "from_env"):
+        raise RuntimeError(
+            "The importable 'docker' module is not the docker-py SDK "
+            "(no from_env). Install it with: pip install docker"
+        )
     try:
         return _docker.from_env()
     except Exception as e:
