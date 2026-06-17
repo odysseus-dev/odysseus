@@ -27,6 +27,7 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
     : []
   const slashOpen = slashMatches.length > 0
   const sel = Math.min(slashSel, slashMatches.length - 1)
+  const grow = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px" }
   const pickSlash = (name: string) => { setText(`/${name} `); setSlashSel(0); requestAnimationFrame(() => { ref.current?.focus(); grow() }) }
   useEffect(() => { ref.current?.focus() }, [])
   useEffect(() => {
@@ -60,7 +61,6 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
       setRecording(true)
     } catch { /* mic denied/unavailable */ }
   }
-  const grow = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px" }
   const submit = async () => {
     if ((!text.trim() && atts.length === 0) || streaming || uploading) return
     const ids = atts.map((a) => a.id)

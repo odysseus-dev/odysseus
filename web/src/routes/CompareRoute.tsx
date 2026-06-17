@@ -50,6 +50,28 @@ function streamPane(sessionId: string, prompt: string, sel: Sel, onDelta: (d: st
   }, signal)
 }
 
+// Module-scope so it isn't recreated each render (which would reset its state).
+function Pane({ side, model, body, win, met, running }: { side: string; model: string; body: string; win: boolean; met: PaneMetrics | null; running: boolean }) {
+  return (
+    <div className={cn("flex min-h-0 flex-1 flex-col rounded-lg border bg-card", win && "ring-2 ring-primary")}>
+      <div className="flex items-center justify-between border-b px-3 py-2">
+        <span className="truncate text-sm font-medium">{side}</span>
+        <span className="truncate text-xs text-muted-foreground">{model}</span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {body ? <Markdown>{body}</Markdown> : running ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Generating…</div> : <span className="text-sm text-muted-foreground">No output yet.</span>}
+      </div>
+      {met && (
+        <div className="flex flex-wrap gap-3 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+          {met.tokens_out != null && <span>{met.tokens_out} tok</span>}
+          {met.tok_per_sec != null && <span>{Math.round(met.tok_per_sec)} tok/s</span>}
+          {met.cost != null && <span>${Number(met.cost).toFixed(4)}</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function CompareRoute() {
   const [a, setA] = useState<Sel>({ model: "", endpointId: "", endpointUrl: "" })
   const [b, setB] = useState<Sel>({ model: "", endpointId: "", endpointUrl: "" })
@@ -92,25 +114,6 @@ export function CompareRoute() {
     try { await voteCompare(comp.id, w); setVoted(w) } catch { /* ignore */ }
   }
 
-  const Pane = ({ side, model, body, win, met }: { side: string; model: string; body: string; win: boolean; met: PaneMetrics | null }) => (
-    <div className={cn("flex min-h-0 flex-1 flex-col rounded-lg border bg-card", win && "ring-2 ring-primary")}>
-      <div className="flex items-center justify-between border-b px-3 py-2">
-        <span className="truncate text-sm font-medium">{side}</span>
-        <span className="truncate text-xs text-muted-foreground">{model}</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {body ? <Markdown>{body}</Markdown> : running ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Generating…</div> : <span className="text-sm text-muted-foreground">No output yet.</span>}
-      </div>
-      {met && (
-        <div className="flex flex-wrap gap-3 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
-          {met.tokens_out != null && <span>{met.tokens_out} tok</span>}
-          {met.tok_per_sec != null && <span>{Math.round(met.tok_per_sec)} tok/s</span>}
-          {met.cost != null && <span>${Number(met.cost).toFixed(4)}</span>}
-        </div>
-      )}
-    </div>
-  )
-
   return (
     <div className="mx-auto flex h-full w-full max-w-5xl flex-col">
       <header className="flex h-13 shrink-0 items-center gap-2 border-b px-4 text-sm font-semibold"><GitCompareArrows className="size-4" />Compare models</header>
@@ -125,8 +128,8 @@ export function CompareRoute() {
         </div>
         {err && <p className="text-xs text-destructive">{err}</p>}
         <div className="flex min-h-0 flex-1 gap-3">
-          <Pane side="Model A" model={a.model} body={left} win={voted === "left"} met={lm} />
-          <Pane side="Model B" model={b.model} body={right} win={voted === "right"} met={rm} />
+          <Pane side="Model A" model={a.model} body={left} win={voted === "left"} met={lm} running={running} />
+          <Pane side="Model B" model={b.model} body={right} win={voted === "right"} met={rm} running={running} />
         </div>
         {comp && !running && (left || right) && (
           <div className="flex items-center justify-center gap-2 pt-1">

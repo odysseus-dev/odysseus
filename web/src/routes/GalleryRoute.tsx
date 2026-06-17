@@ -9,6 +9,7 @@ function Lightbox({ img, onClose }: { img: GalleryImage; onClose: () => void }) 
   const { favorite, remove, rename, rotate, setTags } = useGalleryMutations()
   const [name, setName] = useState(img.prompt || "")
   const [tags, setTagsLocal] = useState(img.tags || "")
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- sync editable fields when the selected image changes
   useEffect(() => { setName(img.prompt || ""); setTagsLocal(img.tags || "") }, [img])
   const inp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
   return (

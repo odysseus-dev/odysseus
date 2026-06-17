@@ -1,8 +1,9 @@
 import { useEffect } from "react"
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { queryClient } from "@/lib/queryClient"
 import { AppShell } from "@/components/shell/AppShell"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { ChatConsole } from "@/routes/ChatConsole"
 import { MemoryRoute } from "@/routes/MemoryRoute"
 import { NotesRoute } from "@/routes/NotesRoute"
@@ -29,6 +30,7 @@ function ThemedApp() {
   const accent = useUi((s) => s.accent)
   const font = useUi((s) => s.font)
   const density = useUi((s) => s.density)
+  const { pathname } = useLocation()
   useEffect(() => { document.documentElement.classList.toggle("dark", theme === "dark") }, [theme])
   useEffect(() => {
     const root = document.documentElement
@@ -39,22 +41,24 @@ function ThemedApp() {
   }, [accent, font, density])
   return (
     <AppShell>
-      <Routes>
-        <Route path="/" element={<Navigate to="/chat" replace />} />
-        <Route path="/chat/:sessionId?" element={<ChatConsole />} />
-        <Route path="/compare" element={<CompareRoute />} />
-        <Route path="/memory" element={<MemoryRoute />} />
-        <Route path="/gallery" element={<GalleryRoute />} />
-        <Route path="/calendar" element={<CalendarRoute />} />
-        <Route path="/email" element={<EmailRoute />} />
-        <Route path="/library" element={<DocumentsRoute />} />
-        <Route path="/notes" element={<NotesRoute />} />
-        <Route path="/tasks" element={<TasksRoute />} />
-        <Route path="/cookbook" element={<CookbookRoute />} />
-        <Route path="/skills" element={<SkillsRoute />} />
-        <Route path="/settings" element={<SettingsRoute />} />
-        <Route path="*" element={<Navigate to="/chat" replace />} />
-      </Routes>
+      <ErrorBoundary key={pathname}>
+        <Routes>
+          <Route path="/" element={<Navigate to="/chat" replace />} />
+          <Route path="/chat/:sessionId?" element={<ChatConsole />} />
+          <Route path="/compare" element={<CompareRoute />} />
+          <Route path="/memory" element={<MemoryRoute />} />
+          <Route path="/gallery" element={<GalleryRoute />} />
+          <Route path="/calendar" element={<CalendarRoute />} />
+          <Route path="/email" element={<EmailRoute />} />
+          <Route path="/library" element={<DocumentsRoute />} />
+          <Route path="/notes" element={<NotesRoute />} />
+          <Route path="/tasks" element={<TasksRoute />} />
+          <Route path="/cookbook" element={<CookbookRoute />} />
+          <Route path="/skills" element={<SkillsRoute />} />
+          <Route path="/settings" element={<SettingsRoute />} />
+          <Route path="*" element={<Navigate to="/chat" replace />} />
+        </Routes>
+      </ErrorBoundary>
     </AppShell>
   )
 }

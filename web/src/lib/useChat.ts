@@ -55,6 +55,7 @@ export function useChat(sessionId?: string) {
     if (streaming) return
     const sid = sessionId || null
     if (seededRef.current === sid) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- seed local message list from loaded server history
     if (!sid) { setMessages([]); seededRef.current = null; return }
     if (history?.history) { setMessages(historyToMessages(history.history)); seededRef.current = sid }
   }, [sessionId, history, streaming])
@@ -150,7 +151,7 @@ export function useChat(sessionId?: string) {
       setStreaming(false); abortRef.current = null
       qc.invalidateQueries({ queryKey: ["sessions"] })
     }
-  }, [streaming, composer, navigate, qc, handleEvent])
+  }, [streaming, composer, navigate, qc, handleEvent, patchAi])
 
   const stop = useCallback(async () => {
     abortRef.current?.abort()

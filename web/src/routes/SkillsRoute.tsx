@@ -12,6 +12,7 @@ function SkillEditor({ id, onBack }: { id: string; onBack: () => void }) {
   const [md, setMd] = useState("")
   const [dirty, setDirty] = useState(false)
   const [err, setErr] = useState("")
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- seed editor from async-loaded skill markdown
   useEffect(() => { if (data?.markdown != null) { setMd(data.markdown); setDirty(false) } }, [data])
   const save = () => { setErr(""); saveMarkdown.mutate({ id, markdown: md }, { onSuccess: () => setDirty(false), onError: (e) => setErr(e instanceof Error ? e.message : "Save failed") }) }
   return (

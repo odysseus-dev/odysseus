@@ -10,20 +10,22 @@ const CATS = ["fact", "preference", "identity", "project", "goal", "task", "cont
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
   return <button onClick={onClick} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", on ? "bg-primary" : "bg-input")}><span className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-transform", on ? "translate-x-4" : "translate-x-0.5")} /></button>
 }
+// Module-scope so it isn't recreated each render (which would reset state).
+function SettingRow({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+  return <div className="flex items-center justify-between py-1.5"><span className="text-sm text-muted-foreground">{label}</span><Toggle on={on} onClick={onClick} /></div>
+}
 function MemorySettings() {
   const { data: prefs } = usePrefs()
   const setPref = useSetPref()
   const b = (k: string, def = true) => (prefs?.[k] as boolean | undefined) ?? def
   const num = (prefs?.skill_min_confidence as number | undefined) ?? 0.85
-  const Row = ({ k, label, def = true }: { k: string; label: string; def?: boolean }) => (
-    <div className="flex items-center justify-between py-1.5"><span className="text-sm text-muted-foreground">{label}</span><Toggle on={b(k, def)} onClick={() => setPref.mutate({ key: k, value: !b(k, def) })} /></div>
-  )
+  const row = (k: string, label: string) => <SettingRow label={label} on={b(k)} onClick={() => setPref.mutate({ key: k, value: !b(k) })} />
   return (
     <div className="mb-4 space-y-1 rounded-lg border bg-card p-3">
       <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Memory settings</div>
-      <Row k="memory_enabled" label="Inject memories into chat" />
-      <Row k="auto_skills" label="Auto-extract skills from agent runs" />
-      <Row k="auto_approve_skills" label="Auto-approve extracted skills" />
+      {row("memory_enabled", "Inject memories into chat")}
+      {row("auto_skills", "Auto-extract skills from agent runs")}
+      {row("auto_approve_skills", "Auto-approve extracted skills")}
       <div className="flex items-center justify-between py-1.5">
         <span className="text-sm text-muted-foreground">Skill min-confidence</span>
         <input type="number" min={0} max={1} step={0.05} defaultValue={num}

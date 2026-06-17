@@ -8,6 +8,7 @@ function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const { update, remove } = useDocMutations()
   const [content, setContent] = useState("")
   const [dirty, setDirty] = useState(false)
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- seed editable copy from async-loaded document
   useEffect(() => { if (data?.current_content != null) { setContent(data.current_content); setDirty(false) } }, [data])
   const save = () => update.mutate({ id, content }, { onSuccess: () => setDirty(false) })
   const del = () => { if (confirm("Delete this document?")) remove.mutate(id, { onSuccess: onBack }) }
