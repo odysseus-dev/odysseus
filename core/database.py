@@ -1602,6 +1602,7 @@ class CalendarCal(TimestampMixin, Base):
     # NULL for local calendars and for CalDAV calendars created before
     # multi-account support was added (treated as "use any configured account").
     account_id = Column(String, nullable=True, index=True)
+    caldav_base_url = Column(String, nullable=True)
 
     events = relationship("CalendarEvent", back_populates="calendar", cascade="all, delete-orphan")
 
@@ -1632,8 +1633,25 @@ class CalendarEvent(TimestampMixin, Base):
     # vanishes upstream). NULL/local = created locally (agent, email triage, or
     # a UI event whose write-back failed) and must NOT be pruned by the sync.
     origin      = Column(String, nullable=True, index=True)
+    remote_href = Column(String, nullable=True)        # CalDAV object URL for updates/deletes
+    remote_etag = Column(String, nullable=True)        # Last seen CalDAV ETag, when available
+    caldav_sync_pending = Column(String, nullable=True) # create | update | delete retry marker
 
     calendar = relationship("CalendarCal", back_populates="events")
+
+
+class CalendarDeletedEvent(TimestampMixin, Base):
+    """Hidden CalDAV delete tombstone retained until remote delete succeeds."""
+    __tablename__ = "caldav_deleted_events"
+
+    uid = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    calendar_id = Column(String, nullable=True, index=True)
+    remote_href = Column(String, nullable=True)
+    remote_etag = Column(String, nullable=True)
+    caldav_base_url = Column(String, nullable=True)
+    summary = Column(String, nullable=True)
+    last_error = Column(Text, nullable=True)
 
 
 class Integration(TimestampMixin, Base):
@@ -1767,6 +1785,7 @@ def init_db():
     _migrate_add_calendar_is_utc()
     _migrate_add_calendar_origin()
     _migrate_add_calendar_account_id()
+    _migrate_add_caldav_sync_columns()
     _migrate_chat_messages_fts()
     _migrate_encrypt_email_passwords()
     _migrate_encrypt_signatures()
@@ -2065,6 +2084,31 @@ def _migrate_add_calendar_account_id():
             conn.close()
         except Exception:
             pass
+
+
+def _migrate_add_caldav_sync_columns():
+    """Add remote CalDAV metadata used for bidirectional sync."""
+    import sqlite3
+    db_path = DATABASE_URL.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        ev_columns = [row[1] for row in conn.execute("PRAGMA table_info(calendar_events)").fetchall()]
+        if ev_columns and "remote_href" not in ev_columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN remote_href TEXT")
+        if ev_columns and "remote_etag" not in ev_columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN remote_etag TEXT")
+        if ev_columns and "caldav_sync_pending" not in ev_columns:
+            conn.execute("ALTER TABLE calendar_events ADD COLUMN caldav_sync_pending TEXT")
+
+        cal_columns = [row[1] for row in conn.execute("PRAGMA table_info(calendars)").fetchall()]
+        if cal_columns and "caldav_base_url" not in cal_columns:
+            conn.execute("ALTER TABLE calendars ADD COLUMN caldav_base_url TEXT")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"CalDAV sync metadata migration failed: {e}")
 
 
 def _migrate_add_calendar_metadata():

@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from src.auth_helpers import require_authenticated_request, require_user
 from src.tool_implementations import do_manage_notes
 from src.constants import COOKBOOK_STATE_FILE
+from routes._validators import validate_remote_host, validate_ssh_port
 
 
 COOKBOOK_READ_SCOPES = {"cookbook:read", "cookbook:launch"}
@@ -34,6 +35,21 @@ CALENDAR_WRITE_SCOPES = {"calendar:write"}
 DOCS_READ_SCOPES = {"documents:read", "documents:write"}
 DOCS_WRITE_SCOPES = {"documents:write"}
 WRITE_ACTIONS = {"add", "create", "new", "save", "remind", "update", "delete", "toggle_item", "remove", "remove_item"}
+
+
+def _ssh_prefix_for_task(task: dict) -> tuple[str, str]:
+    """Resolve a cookbook task's stored SSH target into ``(host, port_flag)``.
+
+    ``host`` is ``""`` for a local task. ``remoteHost`` / ``sshPort`` come from
+    cookbook_state.json and get interpolated into an ``ssh`` command string, so
+    validate them the same way the cookbook routes do. A tampered entry with
+    shell metacharacters in ``remoteHost`` is rejected with 400 rather than
+    injected.
+    """
+    host = validate_remote_host((task.get("remoteHost") or "").strip() or None) or ""
+    ssh_port = validate_ssh_port((task.get("sshPort") or "").strip() or None) or ""
+    port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
+    return host, port_flag
 
 
 async def _as_owner(request: Request, owner: str, fn, *args, **kwargs):
@@ -68,6 +84,20 @@ def _scope_owner(request: Request, allowed: set[str]) -> str:
         if not scopes.intersection(allowed):
             required = " or ".join(sorted(allowed))
             raise HTTPException(403, f"API token missing required scope: {required}")
+        owner = getattr(request.state, "api_token_owner", None)
+        if not owner:
+            raise HTTPException(403, "API token has no owner")
+        return owner
+    return require_user(request)
+
+
+def _scope_owner_all(request: Request, required: set[str]) -> str:
+    """Return owner only when an API token has every required scope."""
+    if getattr(request.state, "api_token", False):
+        scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+        missing = required - scopes
+        if missing:
+            raise HTTPException(403, f"API token missing required scope: {' and '.join(sorted(missing))}")
         owner = getattr(request.state, "api_token_owner", None)
         if not owner:
             raise HTTPException(403, "API token has no owner")
@@ -122,7 +152,7 @@ def setup_codex_routes(
                     "read": scoped(EMAIL_READ_SCOPES),
                     "draft": scoped(EMAIL_DRAFT_SCOPES),
                     "send": scoped(EMAIL_SEND_SCOPES),
-                    "actions": ["list", "read", "draft", "send"],
+                    "actions": ["list", "read", "draft_document", "draft", "send"],
                 },
                 "memory": {
                     "read": scoped(MEMORY_READ_SCOPES),
@@ -245,6 +275,56 @@ def setup_codex_routes(
     # ── Email draft + send ────────────────────────────────────────────────
     # Both handlers in routes/email_routes.py already accept `owner=` via
     # FastAPI Depends, so we call them directly without patching state.
+
+    def _email_draft_document_content(body: dict[str, Any]) -> str:
+        def clean(v: Any) -> str:
+            if isinstance(v, list):
+                return ", ".join(str(x).strip() for x in v if str(x).strip())
+            return str(v or "").strip()
+
+        to = clean(body.get("to"))
+        cc = clean(body.get("cc"))
+        bcc = clean(body.get("bcc"))
+        subject = clean(body.get("subject"))
+        in_reply_to = clean(body.get("in_reply_to"))
+        references = clean(body.get("references"))
+        body_text = str(body.get("body") or body.get("body_html") or "").strip()
+        lines = [
+            f"To: {to}",
+        ]
+        if cc:
+            lines.append(f"Cc: {cc}")
+        if bcc:
+            lines.append(f"Bcc: {bcc}")
+        lines.append(f"Subject: {subject}")
+        if in_reply_to:
+            lines.append(f"In-Reply-To: {in_reply_to}")
+        if references:
+            lines.append(f"References: {references}")
+        lines.extend(["---", body_text])
+        return "\n".join(lines).rstrip() + "\n"
+
+    @router.post("/emails/draft-document")
+    async def codex_email_draft_document(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+        owner = _scope_owner_all(request, {"email:draft", "documents:write"})
+        if documents_create_endpoint is None:
+            raise HTTPException(503, "Documents integration is not available")
+        from routes.document_routes import DocumentCreate
+
+        subject = str(body.get("subject") or "Email draft").strip() or "Email draft"
+        title = str(body.get("title") or subject).strip() or "Email draft"
+        req = DocumentCreate(
+            session_id=body.get("session_id"),
+            title=title,
+            language="email",
+            content=_email_draft_document_content(body),
+        )
+        result = await _as_owner(request, owner, documents_create_endpoint, request, req)
+        if isinstance(result, dict):
+            result = dict(result)
+            result["draft_type"] = "document"
+            result["send_required_confirmation"] = True
+        return result
 
     @router.post("/emails/draft")
     async def codex_email_draft(request: Request, body: dict[str, Any] = Body(default_factory=dict)):
@@ -486,8 +566,7 @@ def setup_codex_routes(
         task = next((t for t in tasks if t.get("sessionId") == session_id), None)
         if task is None:
             raise HTTPException(404, "task not found")
-        host = (task.get("remoteHost") or "").strip()
-        ssh_port = (task.get("sshPort") or "").strip()
+        host, port_flag = _ssh_prefix_for_task(task)
         # Prefer the persisted log file over the tmux pane. The pane gets
         # overwritten by the post-crash neofetch banner + bash prompt the
         # moment vllm exits; the log file is the raw stdout/stderr and
@@ -499,7 +578,6 @@ def setup_codex_routes(
             f"else tmux capture-pane -t {session_id} -p -S -{tail}; fi"
         )
         if host:
-            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             import shlex
             cmd = f"ssh {port_flag}{host} {shlex.quote(inner)}"
         else:
@@ -561,10 +639,8 @@ def setup_codex_routes(
         state = _read_cookbook_state()
         tasks = state.get("tasks") or []
         task = next((t for t in tasks if t.get("sessionId") == session_id), None)
-        host = ((task or {}).get("remoteHost") or "").strip()
-        ssh_port = ((task or {}).get("sshPort") or "").strip()
+        host, port_flag = _ssh_prefix_for_task(task or {})
         if host:
-            port_flag = f"-p {ssh_port} " if ssh_port and ssh_port != "22" else ""
             cmd = f"ssh {port_flag}{host} \"tmux kill-session -t {session_id}\""
         else:
             cmd = f"tmux kill-session -t {session_id}"

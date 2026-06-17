@@ -93,16 +93,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if category_filter:
                 msg += f" in category '{category_filter}'"
             return [TextContent(type="text", text=msg + ".")]
+
         lines = [f"Found {len(memories)} memory entries:\n"]
-        for m in memories[:100]:
+        for m in memories:
             cat = m.get("category", "fact")
             mid = m.get("id", "?")[:8]
             text = m.get("text", "")
             if len(text) > 150:
                 text = text[:150] + "..."
             lines.append(f"- [{cat}] `{mid}` — {text}")
-        if len(memories) > 100:
-            lines.append(f"... and {len(memories) - 100} more")
         return [TextContent(type="text", text="\n".join(lines))]
 
     elif action == "add":

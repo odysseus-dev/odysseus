@@ -107,6 +107,7 @@ class TestBuildersRejectLookalikeHosts:
         assert build_chat_url("https://notanthropic.com") == "https://notanthropic.com/chat/completions"
 
     def test_lookalike_anthropic_models_is_openai(self):
+        assert llm_core._detect_provider("https://anthropic.com.evil.com") == "openai"
         assert build_models_url("https://anthropic.com.evil.com") == "https://anthropic.com.evil.com/models"
 
     def test_anthropic_domain_in_path_is_openai(self):
@@ -119,6 +120,7 @@ class TestBuildersRejectLookalikeHosts:
         assert build_chat_url("https://notollama.com") == "https://notollama.com/chat/completions"
 
     def test_lookalike_ollama_models_is_openai(self):
+        assert llm_core._detect_provider("https://notollama.com") == "openai"
         assert build_models_url("https://notollama.com") == "https://notollama.com/models"
 
 

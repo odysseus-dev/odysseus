@@ -2472,6 +2472,8 @@ import * as Modals from './modalManager.js';
     }
     // Hide toolbar items that have no clean WYSIWYG equivalent in email (Code).
     document.querySelectorAll('.md-toolbar-email-hide').forEach(el => { el.style.display = 'none'; });
+    // Show email-only toolbar items (AI reply button).
+    document.querySelectorAll('.md-toolbar-email-only').forEach(el => { el.style.display = 'inline-flex'; });
     if (emailHeader) emailHeader.style.display = '';
     if (emailActions) emailActions.style.display = '';
     // Emails have their own complete footer (Close / More / Send), so hide the
@@ -2864,6 +2866,8 @@ import * as Modals from './modalManager.js';
     if (emailActions) emailActions.style.display = 'none';
     // Restore toolbar items that were hidden for email (Code dropdown).
     document.querySelectorAll('.md-toolbar-email-hide').forEach(el => { el.style.display = ''; });
+    // Re-hide email-only toolbar items (AI reply button).
+    document.querySelectorAll('.md-toolbar-email-only').forEach(el => { el.style.display = 'none'; });
     // Restore the generic documents action bar + its bottom footer (Close /
     // Copy / Export) for non-email docs.
     const docActions = document.getElementById('doc-editor-actions');
@@ -3206,7 +3210,95 @@ import * as Modals from './modalManager.js';
     renderTabs();
   }
 
-  async function _aiReply() {
+  // Fast/Full + optional context popover for the doc-editor email Reply button.
+  // Mirrors the email reader's AI reply choice popover so the UX is identical:
+  // textarea for an optional steering note, then Fast (lightning) or Full
+  // (concentric dot) buttons; both feed into _aiReply with the chosen mode.
+  let _docAiReplyChoiceMenu = null;
+  function _closeDocAiReplyChoice() {
+    if (_docAiReplyChoiceMenu) {
+      try { _docAiReplyChoiceMenu.remove(); } catch (_) {}
+      _docAiReplyChoiceMenu = null;
+    }
+  }
+  function _showDocAiReplyChoice(btn) {
+    _closeDocAiReplyChoice();
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.className = 'doc-ai-reply-choice';
+    const menuMaxW = Math.min(240, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - menuMaxW - 8));
+    const estHeight = 150;
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    const top = (spaceBelow >= estHeight || spaceBelow >= spaceAbove)
+      ? Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - estHeight - 8))
+      : Math.max(8, rect.top - estHeight - 6);
+    menu.style.cssText = [
+      'position:fixed',
+      `left:${left}px`,
+      `top:${top}px`,
+      `max-width:${menuMaxW}px`,
+      'box-sizing:border-box',
+      'z-index:10060',
+      'display:flex',
+      'gap:6px',
+      'padding:6px',
+      'background:var(--bg,#111)',
+      'border:1px solid var(--border,#333)',
+      'border-radius:7px',
+      'box-shadow:0 8px 24px rgba(0,0,0,.28)',
+    ].join(';');
+    menu.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:6px;min-width:200px;">
+        <textarea data-note-input rows="2" placeholder="Add context (optional)" style="width:100%;box-sizing:border-box;resize:vertical;min-height:42px;font-family:inherit;font-size:11px;padding:5px 6px;border-radius:5px;border:1px solid var(--border,#333);background:var(--bg-elev,#1a1a1a);color:var(--fg);"></textarea>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button class="memory-toolbar-btn" data-mode="ai-reply-fast" title="Shorter, faster draft" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="var(--accent, var(--red))" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Fast
+          </button>
+          <button class="memory-toolbar-btn" data-mode="ai-reply-full" title="Fuller reply with more context" style="display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:1;">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:var(--accent, var(--red));"><circle cx="12" cy="12" r="6"/></svg>
+            Full
+          </button>
+        </div>
+      </div>
+    `;
+    const noteInput = menu.querySelector('[data-note-input]');
+    setTimeout(() => noteInput?.focus(), 0);
+    menu.addEventListener('mousedown', (ev) => ev.stopPropagation());
+    menu.addEventListener('click', async (ev) => {
+      const choice = ev.target.closest('[data-mode]');
+      if (!choice) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const mode = choice.getAttribute('data-mode') || 'ai-reply-fast';
+      const noteHint = (noteInput?.value || '').trim();
+      _closeDocAiReplyChoice();
+      await _aiReply({ mode, noteHint });
+    });
+    document.body.appendChild(menu);
+    _docAiReplyChoiceMenu = menu;
+    const outsideClose = (ev) => {
+      if (menu.contains(ev.target)) return;
+      document.removeEventListener('click', outsideClose, true);
+      _closeDocAiReplyChoice();
+    };
+    setTimeout(() => document.addEventListener('click', outsideClose, true), 0);
+    // Esc to close.
+    const escClose = (ev) => {
+      if (ev.key === 'Escape') {
+        ev.stopPropagation();
+        document.removeEventListener('keydown', escClose, true);
+        _closeDocAiReplyChoice();
+      }
+    };
+    document.addEventListener('keydown', escClose, true);
+  }
+
+  async function _aiReply(opts = {}) {
+    const { mode = 'auto', noteHint = '' } = (opts || {});
     const to = document.getElementById('doc-email-to')?.value?.trim() || '';
     const subject = document.getElementById('doc-email-subject')?.value?.trim() || '';
     const textarea = document.getElementById('doc-editor-textarea');
@@ -3251,32 +3343,43 @@ import * as Modals from './modalManager.js';
     if (btn) { btn.disabled = true; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Drafting...'; }
 
     try {
+      // Empty-compose path: if there's no original body, send a placeholder
+      // so the backend's "no body" guard doesn't fail. The user_hint carries
+      // the user's compose intent; the model uses To/Subject + that hint.
+      const bodyForApi = currentBody || (noteHint ? '(no prior email — compose a new message based on the To, Subject, and user instructions)' : currentBody);
+      const fastFlag = mode === 'ai-reply-fast' ? true
+                     : mode === 'ai-reply-full' ? false
+                     : shouldUseFastAiReply();
       const res = await fetch(`${API_BASE}/api/email/ai-reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           to: to,
           subject: subject,
-          original_body: currentBody,
+          original_body: bodyForApi,
           model: currentModel,
           session_id: currentSessionId,
           message_id: inReplyTo,
           uid: sourceUid,
           folder: sourceFolder,
-          fast: shouldUseFastAiReply(),
+          fast: fastFlag,
+          user_hint: noteHint || '',
         }),
       });
       const data = await res.json();
       if (data.success && data.reply) {
-        const cleanReply = cleanAiReplyText(data.reply);
-        const lines = currentBody.split('\n');
-        const quoteIdx = lines.findIndex(l => l.startsWith('On ') && l.includes(' wrote:'));
-        let newBody = '';
-        if (quoteIdx > 0) {
-          newBody = cleanReply + '\n\n' + lines.slice(quoteIdx).join('\n');
-        } else {
-          newBody = cleanReply + (currentBody ? '\n\n' + currentBody : '');
-        }
+        let cleanReply = cleanAiReplyText(data.reply);
+        // Strip any "On <date>, <name> wrote:" attribution + everything
+        // after it from the AI's output — the model sometimes re-quotes
+        // the original thread, and we already have the real quote in
+        // currentBody. Without this, AI's invented quote stacked on top
+        // of the real one and looked like the history had been "edited".
+        cleanReply = cleanReply.replace(/\n*On\b[\s\S]*?\bwrote:[\s\S]*$/m, '').trim();
+        // Never overwrite the existing draft (user's typed text + the
+        // quoted history below it). Always prepend the AI suggestion so
+        // the user can read it, copy parts, or delete it — but their
+        // own work and the original quote are untouched.
+        const newBody = currentBody ? cleanReply + '\n\n' + currentBody : cleanReply;
         await _streamEmailBodyText(textarea, newBody);
         if (uiModule) uiModule.showToast(`AI draft inserted (${data.model_used || 'AI'})`);
       } else {
@@ -3285,7 +3388,7 @@ import * as Modals from './modalManager.js';
     } catch (e) {
       if (uiModule) uiModule.showError('Failed to generate AI reply');
     } finally {
-      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>AI Reply'; }
+      if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;margin-left:4px;">Reply</span>'; }
     }
   }
 
@@ -3813,7 +3916,6 @@ import * as Modals from './modalManager.js';
         <button id="doc-export-pdf-btn" class="doc-action-icon-btn" title="Export PDF" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg> <span style="font-size:11px;">Export PDF</span></button>
         <button id="doc-pdf-view-btn" class="doc-action-icon-btn" title="Toggle PDF view" style="display:none;opacity:0.7;gap:4px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> <span style="font-size:11px;">PDF</span></button>
         <select id="doc-language-select" class="doc-language-select">
-          <option value="">type</option>
           <option value="python">python</option>
           <option value="javascript">javascript</option>
           <option value="typescript">typescript</option>
@@ -3851,22 +3953,24 @@ import * as Modals from './modalManager.js';
         </button>
         <div id="doc-email-fields" class="doc-email-fields">
           <div class="email-field" style="position:relative">
-            <label>To</label>
+            <span class="email-field-prefix">To</span>
             <input type="text" id="doc-email-to" placeholder="recipient@example.com" autocomplete="off" />
             <div id="doc-email-to-suggestions" class="email-autocomplete" style="display:none"></div>
             <button type="button" id="doc-email-show-cc" class="email-cc-toggle" title="Show Cc/Bcc">Cc</button>
           </div>
           <div class="email-field" id="doc-email-cc-row" style="display:none;position:relative">
-            <label>Cc</label>
-            <input type="text" id="doc-email-cc" placeholder="cc@example.com" autocomplete="off" />
+            <span class="email-field-prefix">Cc</span>
+            <input type="text" id="doc-email-cc" placeholder="cc@example.com, example2" autocomplete="off" />
             <div id="doc-email-cc-suggestions" class="email-autocomplete" style="display:none"></div>
+            <button type="button" class="email-cc-close" data-cc-close title="Hide Cc/Bcc" aria-label="Hide Cc/Bcc"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           <div class="email-field" id="doc-email-bcc-row" style="display:none;position:relative">
-            <label>Bcc</label>
+            <span class="email-field-prefix">Bcc</span>
             <input type="text" id="doc-email-bcc" placeholder="bcc@example.com" autocomplete="off" />
             <div id="doc-email-bcc-suggestions" class="email-autocomplete" style="display:none"></div>
+            <button type="button" class="email-cc-close" data-cc-close title="Hide Cc/Bcc" aria-label="Hide Cc/Bcc"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
-          <div class="email-field"><label>Subject</label><input type="text" id="doc-email-subject" placeholder="Subject" /></div>
+          <div class="email-field" style="position:relative"><span class="email-field-prefix">Subject</span><input type="text" id="doc-email-subject" placeholder="" /></div>
           <div id="doc-email-attachments" class="email-attachments" style="display:none"></div>
           <div id="doc-email-compose-atts" class="email-compose-atts" style="display:none"></div>
         </div>
@@ -3879,13 +3983,14 @@ import * as Modals from './modalManager.js';
       <div class="doc-md-toolbar" id="doc-md-toolbar" style="display:none">
         <div class="md-toolbar-items" id="md-toolbar-items">
           <span class="md-view-toggle" id="doc-md-view-toggle" style="display:none" role="group" aria-label="Edit or preview">
-            <button type="button" class="md-view-opt" data-mdview="edit" title="Edit source"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-            <button type="button" class="md-view-opt" data-mdview="preview" title="Preview"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+            <button type="button" class="md-view-opt" data-mdview="edit" title="Edit source (Ctrl+Alt+M to toggle)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+            <button type="button" class="md-view-opt" data-mdview="preview" title="Preview (Ctrl+Alt+M to toggle)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
           </span>
           <span class="md-view-toggle" id="doc-render-view-toggle" style="display:none" role="group" aria-label="Code or run">
             <button type="button" class="md-view-opt" data-renderview="code" title="Edit code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
             <button type="button" class="md-view-opt" data-renderview="run" title="Run / Preview"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>
           </span>
+          <button id="doc-email-ai-reply-btn" class="doc-action-icon-btn md-toolbar-email-only" type="button" title="Draft a reply with AI (Fast / Full + optional context)" style="display:none;align-items:center;gap:4px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" style="color:var(--accent, var(--red));flex-shrink:0;position:relative;top:-1px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg><span style="font-size:11px;">Reply</span></button>
           <button id="doc-fontsize-btn" class="doc-action-icon-btn" title="Font size" style="position:relative;width:28px;height:26px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7;"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg><span class="doc-fontsize-levels"><i data-sz="s">S</i><i data-sz="m">M</i><i data-sz="l">L</i></span></button>
           <button id="doc-diff-toggle-btn" class="doc-action-icon-btn" title="Compare changes" style="opacity:0.7;display:none;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M5 12H2l5-5 5 5H9"/><path d="M19 12h3l-5 5-5-5h3"/></svg></button>
           <span class="md-toolbar-sep"></span>
@@ -4395,6 +4500,24 @@ import * as Modals from './modalManager.js';
         }
       });
     }
+    // Ctrl+Alt+M (and Cmd+Opt+M on mac) flips Edit ↔ Preview on a markdown
+    // doc. Bound once globally; gated on the doc panel being open and the
+    // active doc being markdown so it doesn't fire while the user is typing
+    // in a non-markdown context.
+    if (!window._docMdToggleBound) {
+      window._docMdToggleBound = true;
+      document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
+          if (!isOpen) return;
+          const doc = activeDocId && docs.get(activeDocId);
+          const lang = (doc?.language || 'markdown').toLowerCase();
+          if (lang !== 'markdown') return;
+          e.preventDefault();
+          toggleMarkdownPreview();
+          _syncHeaderActions();
+        }
+      });
+    }
     document.getElementById('doc-email-draft-btn')?.addEventListener('click', () => {
       document.getElementById('doc-email-more-menu').style.display = 'none';
       _saveDraft();
@@ -4409,7 +4532,11 @@ import * as Modals from './modalManager.js';
       document.getElementById('doc-email-more-menu').style.display = 'none';
       _scheduleSend(anchor);
     });
-    document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', _aiReply);
+    document.getElementById('doc-email-ai-reply-btn')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      _showDocAiReplyChoice(ev.currentTarget);
+    });
 
     const collapseBtn = document.getElementById('doc-email-collapse-btn');
     if (collapseBtn && !collapseBtn._emailCollapseWired) {
@@ -4487,6 +4614,25 @@ import * as Modals from './modalManager.js';
       if (bccRow) bccRow.style.display = '';
       document.getElementById('doc-email-show-cc').style.display = 'none';
       _syncEmailHeaderSummary();
+    });
+
+    // Cc/Bcc close — X buttons inside the Cc and Bcc fields hide both
+    // rows + clear their inputs + restore the Cc opener on the To row.
+    document.querySelectorAll('[data-cc-close]').forEach(closeBtn => {
+      closeBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const ccRow = document.getElementById('doc-email-cc-row');
+        const bccRow = document.getElementById('doc-email-bcc-row');
+        const ccInput = document.getElementById('doc-email-cc');
+        const bccInput = document.getElementById('doc-email-bcc');
+        if (ccRow) ccRow.style.display = 'none';
+        if (bccRow) bccRow.style.display = 'none';
+        if (ccInput) ccInput.value = '';
+        if (bccInput) bccInput.value = '';
+        const ccToggle = document.getElementById('doc-email-show-cc');
+        if (ccToggle) ccToggle.style.display = '';
+        _syncEmailHeaderSummary();
+      });
     });
 
     // Autocomplete for To / Cc / Bcc — typed fragment after the last
@@ -8527,6 +8673,19 @@ import * as Modals from './modalManager.js';
     // `body:has(.doc-editor-pane.doc-fullscreen) .doc-divider-collapse` slides
     // it into a forced-inside position). Hiding the divider here would hide
     // the chevron with it.
+
+    // Hide the tab bar during the layout shift so any in-flight smooth
+    // scroll / reflow doesn't visibly "fly" the active tab across the
+    // pane as it expands. Restored after the layout settles.
+    const tabBar = document.getElementById('doc-tab-bar');
+    if (tabBar) {
+      tabBar.style.visibility = 'hidden';
+      clearTimeout(tabBar._fsHideTimer);
+      tabBar._fsHideTimer = setTimeout(() => {
+        tabBar.style.visibility = '';
+      }, 240);
+    }
+
     if (pane.classList.contains('doc-fullscreen')) {
       pane.classList.remove('doc-fullscreen');
       if (container) container.style.display = '';
