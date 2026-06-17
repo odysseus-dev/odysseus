@@ -645,6 +645,137 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 # MCP server management tool
 # ---------------------------------------------------------------------------
 
+# Parallel to routes/cookbook_helpers._validate_serve_cmd but deliberately the
+# opposite policy: that gate guards an admin-only serve command and allows
+# interpreters (python3/etc) because model-serving needs them, whereas this is
+# the model/prompt-injection-reachable manage_mcp path, so interpreters and
+# runners are denied here.
+#
+# Commands that can execute arbitrary code regardless of their arguments. These
+# are NEVER accepted on the manage_mcp agent path, even if an operator lists one
+# in ODYSSEUS_MCP_ALLOWED_COMMANDS -- a stdio server that genuinely needs an
+# interpreter or package runner must be registered via the trusted admin route.
+_MCP_DENIED_COMMANDS = frozenset({
+    "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "ash", "busybox",
+    "cmd", "command.com", "powershell", "pwsh",
+    "python", "pypy", "node", "nodejs", "deno", "bun", "ruby", "jruby",
+    "perl", "raku", "php", "lua", "luajit", "tclsh", "wish", "expect", "rscript",
+    "groovy", "scala", "elixir", "erl", "iex", "java", "javac", "jshell", "jbang",
+    "kotlin", "kotlinc", "dotnet", "mono", "swift", "osascript", "tsx", "ts-node",
+    "npx", "bunx", "uvx", "pipx", "npm", "pnpm", "yarn", "pip", "uv",
+    "gem", "cargo", "go", "bundle", "poetry", "conda", "mamba", "brew",
+    "apt", "apt-get", "yum", "dnf", "pacman", "apk",
+    "env", "xargs", "nohup", "setsid", "nice", "ionice", "time", "timeout",
+    "watch", "stdbuf", "unbuffer", "script", "ssh", "scp", "sshpass", "sudo",
+    "doas", "su", "make", "cmake", "docker", "podman", "kubectl", "find",
+    "awk", "gawk", "sed", "vi", "vim", "nvim", "emacs", "ed", "tee", "eval",
+})
+
+# Argv flags that make even an allowlisted binary execute inline code. Matched
+# by prefix so glued forms (-cimport os, --eval=...) are caught, not just the
+# exact-token form.
+_MCP_CODE_EXEC_SHORT_FLAGS = ("-c", "-e", "-m")
+_MCP_CODE_EXEC_LONG_FLAGS = ("--eval", "--exec", "--print", "--module", "--command", "--require")
+
+_MCP_URL_SCHEMES = ("http://", "https://", "ftp://", "ftps://", "file://", "data:", "jar:", "blob:")
+
+# Shell metacharacters refused in command/args. Args are passed as an argv list
+# (no shell), but refusing these keeps the surface narrow and obvious.
+_MCP_SHELL_METACHARS = set(";|&$`><\n\r")
+
+# Env vars that let a child process load attacker-supplied code before main().
+_MCP_DANGEROUS_ENV = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "PYTHONPATH", "PYTHONSTARTUP",
+    "PYTHONHOME", "PYTHONEXECUTABLE", "NODE_OPTIONS", "NODE_PATH", "BASH_ENV",
+    "ENV", "SHELLOPTS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB", "GEM_PATH",
+    "R_PROFILE", "R_HOME", "PATH", "IFS", "PROMPT_COMMAND",
+})
+
+
+def _mcp_allowed_commands() -> set:
+    """Operator-configured allowlist of safe MCP launcher basenames for the agent
+    path. Empty by default; set ODYSSEUS_MCP_ALLOWED_COMMANDS (comma-separated)
+    to opt specific trusted binaries in. Denied commands are rejected even if
+    listed here."""
+    raw = os.environ.get("ODYSSEUS_MCP_ALLOWED_COMMANDS", "")
+    return {c.strip().lower() for c in raw.split(",") if c.strip()}
+
+
+def _validate_mcp_command(command, args, env) -> Optional[str]:
+    """Validate a model-supplied stdio MCP registration. Returns an error string
+    if it must be rejected, else None.
+
+    Closes the RCE where manage_mcp 'add' passed prompt-injection-controlled
+    command/args/env straight to a subprocess spawn (issue #438): a payload
+    smuggled into a skill description, memory entry, fetched page, or email body
+    could register a stdio server running arbitrary code as the app UID.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return "command must be a non-empty string"
+    command = command.strip()
+    if "/" in command or "\\" in command:
+        return "command must be a bare executable name, not a path"
+    if any(ch in _MCP_SHELL_METACHARS for ch in command):
+        return "command contains shell metacharacters"
+    base = command.lower()
+    if base.endswith(".exe") or base.endswith(".cmd") or base.endswith(".bat"):
+        base = base.rsplit(".", 1)[0]
+    # Canonicalize a trailing version suffix so versioned aliases collapse to the
+    # family name (python3.11 -> python, node18 -> node, pip3 -> pip); both the
+    # raw basename and the canonical form are denied, so an operator cannot
+    # accidentally allowlist a runtime alias back into the path.
+    canon = re.sub(r"[-_.]?\d+(?:\.\d+)*$", "", base)
+    if base in _MCP_DENIED_COMMANDS or canon in _MCP_DENIED_COMMANDS:
+        return (
+            f"command '{command}' is not allowed on the agent MCP path: "
+            "interpreters, runtimes, package runners, and shells can execute "
+            "arbitrary code. Register such a server via the admin route instead."
+        )
+    if base not in _mcp_allowed_commands():
+        return (
+            f"command '{command}' is not in the MCP allowlist. Add it to "
+            "ODYSSEUS_MCP_ALLOWED_COMMANDS if you trust it, or register the "
+            "server via the admin route."
+        )
+
+    if args is not None:
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                return "args must be a JSON list"
+        if not isinstance(args, list):
+            return "args must be a list"
+        for a in args:
+            if not isinstance(a, str):
+                return "args must all be strings"
+            s = a.strip()
+            low = s.lower()
+            if any(s == f or s.startswith(f) for f in _MCP_CODE_EXEC_SHORT_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low == f or low.startswith(f + "=") for f in _MCP_CODE_EXEC_LONG_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low.startswith(u) for u in _MCP_URL_SCHEMES):
+                return f"arg '{a}' is a remote URL and is not allowed"
+            if any(ch in _MCP_SHELL_METACHARS for ch in a):
+                return f"arg '{a}' contains shell metacharacters"
+
+    if env:
+        if isinstance(env, str):
+            try:
+                env = json.loads(env)
+            except Exception:
+                return "env must be a JSON object"
+        if not isinstance(env, dict):
+            return "env must be an object"
+        for k in env:
+            if str(k).strip().upper() in _MCP_DANGEROUS_ENV:
+                return f"env var '{k}' can inject code into the child process and is not allowed"
+
+    return None
+
+
 async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
     """Manage MCP servers: list, add, delete, enable, disable, reconnect."""
     try:
@@ -684,6 +815,12 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         env = args.get("env", {})
         if not name or not command:
             return {"error": "name and command are required", "exit_code": 1}
+        # Validate BEFORE any DB write or spawn: a rejected registration must
+        # leave no enabled row (which would otherwise auto-reconnect on restart)
+        # and must not attempt a connection.
+        _mcp_err = _validate_mcp_command(command, cmd_args, env)
+        if _mcp_err:
+            return {"error": f"manage_mcp: refused unsafe server registration: {_mcp_err}", "exit_code": 1}
         sid = str(_uuid.uuid4())[:8]
         db = SessionLocal()
         try:

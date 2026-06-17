@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
+from core.middleware import INTERNAL_TOOL_USER
 from src.auth_helpers import require_user
 from src.constants import DATA_DIR
 from sqlalchemy.orm.attributes import flag_modified
@@ -582,7 +583,7 @@ def setup_note_routes(task_scheduler=None):
         return require_user(request) or None
 
     def _is_admin_or_single_user(request: Request, user: str | None) -> bool:
-        if user == "internal-tool":
+        if user == INTERNAL_TOOL_USER:
             return True
         if not user:
             # require_user() already admitted this request, which only happens

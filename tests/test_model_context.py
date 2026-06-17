@@ -67,6 +67,14 @@ class TestIsLocalEndpoint:
     def test_private_10(self):
         assert is_local_endpoint("http://10.0.0.5:8000/v1/chat/completions") is True
 
+    @pytest.mark.parametrize("host", [
+        "10.example-cloud.com",
+        "172.16.example-cloud.com",
+        "192.168.example-cloud.com",
+    ])
+    def test_private_prefix_dns_names_are_remote(self, host):
+        assert is_local_endpoint(f"https://{host}/v1/chat/completions") is False
+
     def test_tailscale_100(self):
         # 100.64.0.0/10 is the CGNAT range Tailscale uses.
         assert is_local_endpoint("http://100.64.0.1:5000/v1/chat/completions") is True

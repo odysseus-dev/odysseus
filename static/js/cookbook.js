@@ -2462,10 +2462,13 @@ export async function open(opts) {
   // returned before hydration — and since close/reopen doesn't reset the page,
   // only a full reload recovered it. Re-rendering is cheap and the in-progress
   // Running tab is rendered separately just below.
-  _renderRecipes();
+  // Guard the render passes: a single broken task card must not throw out of
+  // open() and leave the modal stuck hidden (it has no catch, so the panel
+  // would silently never appear). Show the window regardless; log and move on.
+  try { _renderRecipes(); } catch (e) { console.error('[cookbook] renderRecipes failed', e); }
   _rendered = true;
   _clearCookbookNotif();
-  _renderRunningTab();
+  try { _renderRunningTab(); } catch (e) { console.error('[cookbook] renderRunningTab failed', e); }
   // Self-heal: revive any download tasks whose tmux session is still alive
   // but were persisted as done/error (covers the "restarted server while a
   // big multi-shard download was in flight" case — the task survived in

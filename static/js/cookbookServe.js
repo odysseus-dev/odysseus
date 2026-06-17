@@ -116,11 +116,26 @@ function _selectedServeTarget(panel) {
     : (server?.name || 'local server');
   return {
     host,
-    port: host ? (_getPort(host) || server?.port || '') : '',
+    port: host ? (server?.port || _getPort(host) || '') : '',
+    env: server?.env || '',
     venv,
     platform: server?.platform || _envState.platform || '',
     label,
   };
+}
+
+function _remoteWindowsDiffusersUnsupported(target) {
+  return !!(target?.host && target?.platform === 'windows');
+}
+
+function _backendChoicesForTarget(target) {
+  if (target?.platform === 'windows') {
+    if (_remoteWindowsDiffusersUnsupported(target)) return [['llamacpp','llama.cpp']];
+    return [['llamacpp','llama.cpp'],['diffusers','Diffusers']];
+  }
+  return _isMetal()
+    ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
+    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
 }
 
 async function _fetchServeRuntimePackage(panel, backend) {
@@ -529,13 +544,14 @@ function _rerenderCachedModels() {
       const ss = (_byRepo[repo] && typeof _byRepo[repo] === 'object')
         ? _byRepo[repo]
         : (_lastUsed || (_isLegacyFlat ? _allSs : {}));
+      const _serveTarget = _selectedServeTarget();
+      const _backendChoices = _backendChoicesForTarget(_serveTarget);
+      const _allowedBackends = new Set(_backendChoices.map(([v]) => v));
       const detectedBackend = _detectBackend(m).backend;
-      const _allowedBackends = new Set(_isWindows()
-        ? ['llamacpp', 'diffusers']
-        : (_isMetal() ? ['llamacpp', 'ollama'] : ['vllm', 'sglang', 'llamacpp', 'ollama', 'diffusers']));
-      const defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
+      let defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
         ? ss.backend
         : detectedBackend;
+      if (!_allowedBackends.has(defaultBackend)) defaultBackend = _backendChoices[0]?.[0] || detectedBackend;
       const savedMatchesBackend = !!ss._forceBackend || (ss.backend || 'vllm') === detectedBackend;
       const sv = (k, def) => (ss[k] !== undefined && savedMatchesBackend) ? ss[k] : def;
       const defaultTp = defaultBackend === 'llamacpp' ? '1' : sv('tp', '1');
@@ -607,12 +623,6 @@ function _rerenderCachedModels() {
       }
       // Row 1: Backend + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
-      const _backendChoices = _isWindows()
-        ? [['llamacpp','llama.cpp'],['diffusers','Diffusers']]
-        : _isMetal()
-        // Diffusers (diffusion_server.py) is CUDA-only — omit it on Metal.
-        ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
-        : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
       const backendOpts = _backendChoices.map(([v,l]) => `<option value="${v}"${defaultBackend===v?' selected':''}>${l}</option>`).join('');
       // Custom Backend picker — native <select> can't host SVG inside
       // options, so we render a button + menu that show the backend logo
@@ -1971,6 +1981,12 @@ function _rerenderCachedModels() {
           else serveState[el.dataset.field] = el.value;
         });
         serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
+        const launchTarget = _selectedServeTarget(panel);
+        if (serveState.backend === 'diffusers' && _remoteWindowsDiffusersUnsupported(launchTarget)) {
+          _restoreLaunchBtn();
+          uiModule.showToast('Diffusers serving is not supported on remote Windows servers yet. Use local Windows or a Linux server.', 9000);
+          return;
+        }
 
         // Pre-launch: check our own task list for a serve already running
         // on this host. Offer to stop+launch as the default action — the
@@ -1979,7 +1995,7 @@ function _rerenderCachedModels() {
         // common case instantly without waiting for a network round-trip.
         try {
           const _runningMod = await import('./cookbookRunning.js');
-          const _hostStr = _envState.remoteHost || '';
+          const _hostStr = launchTarget.host || '';
           const _active = (_runningMod._loadTasks ? _runningMod._loadTasks() : []).filter(t =>
             t && t.type === 'serve'
             && (t.remoteHost || '') === _hostStr
@@ -2033,12 +2049,11 @@ function _rerenderCachedModels() {
           || (serveState.backend === 'diffusers');
         if (_needsGpu) {
           try {
-            const _probeHost = (_envState.remoteHost || '').trim();
+            const _probeHost = (launchTarget.host || '').trim();
             const _probeParams = new URLSearchParams();
             if (_probeHost) {
               _probeParams.set('host', _probeHost);
-              const _sp = (_serverByVal?.(_envState.remoteServerKey || _probeHost) || {}).port;
-              if (_sp) _probeParams.set('ssh_port', _sp);
+              if (launchTarget.port) _probeParams.set('ssh_port', launchTarget.port);
             }
             const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
             const _probeData = await _probeRes.json();
@@ -2071,10 +2086,10 @@ function _rerenderCachedModels() {
             || launchCmd.match(/OLLAMA_HOST=[^:\s]+:(\d{2,5})\b/);
           const _port = _portMatch ? _portMatch[1] : '';
           if (_port) {
-            const _portHost = (_envState.remoteHost || '').trim();
+            const _portHost = (launchTarget.host || '').trim();
             const _checkInner = `ss -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}' || netstat -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}'`;
             const _cmd = _portHost
-              ? `ss h ${_portHost} <<<"" 2>/dev/null; ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_portHost} ${JSON.stringify(_checkInner)}`
+              ? `ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_sshPrefix(launchTarget.port)}${_portHost} ${JSON.stringify(_checkInner)}`
               : _checkInner;
             const _res = await fetch('/api/shell/exec', {
               method: 'POST', credentials: 'same-origin',
@@ -2131,20 +2146,8 @@ function _rerenderCachedModels() {
         // Resolve the target host from the visible Server dropdown — the reliable
         // source. Relying on _envState.remoteHost silently sent serves to Local
         // when that value was stale/empty. Pass it explicitly to the launcher.
-        let serveHost = _envState.remoteHost || '';
-        let _srvEnv = '', _srvEnvPath = '';
-        const _ssEl = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
-        if (_ssEl && _ssEl.value != null) {
-          if (_ssEl.value === 'local') serveHost = '';
-          else {
-            const _srv = _serverByVal?.(_ssEl.value) || _envState.servers[parseInt(_ssEl.value)];
-            if (_srv) {
-              serveHost = _srv.host;
-              _srvEnv = _srv.env || '';
-              _srvEnvPath = _srv.envPath || '';
-            }
-          }
-        }
+        let serveHost = launchTarget.host || '';
+        let _srvEnv = launchTarget.env || '', _srvEnvPath = launchTarget.venv || '';
         // The venv field wins; otherwise fall back to the env configured for the
         // selected server in Settings, so the activation isn't silently dropped
         // when the field is left blank (the per-server venv wasn't being applied).
