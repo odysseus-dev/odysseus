@@ -1,0 +1,5 @@
+[allowlist]
+description = "Allow dummy strings inside the trace export unit tests"
+paths = [
+    '''tests/test_trace_export\.py'''
+]
