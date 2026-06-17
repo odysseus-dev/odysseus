@@ -1,0 +1,88 @@
+/**
+ * OdysseusPkg — Package Runtime API
+ *
+ * Packages use this to inject UI into named slots and interact with the app.
+ * Available as window.OdysseusPkg (set at load time) and as an ES6 default export.
+ *
+ * Usage inside a widget script:
+ *   const api = window.OdysseusPkg;
+ *   api.addWidget('chatInput', myButton);
+ *   const text = api.getChatInput();
+ *   await api.callLLM('You are...', 'Improve this: ' + text);
+ */
+
+// Named injection slot registry.
+// Each entry is a function returning the live DOM container (resolved lazily
+// so the API can be imported before the DOM is fully parsed).
+const _slotFn = {
+  sidebar:   () => document.getElementById('package-widgets-sidebar'),
+  chatInput: () => document.getElementById('pkg-slot-chat-input'),
+  toolbar:   () => document.getElementById('package-widgets-toolbar'),
+};
+
+/**
+ * Append an element into a named UI slot.
+ * @param {'sidebar'|'chatInput'|'toolbar'} slot
+ * @param {HTMLElement} element
+ */
+function addWidget(slot, element) {
+  const fn = _slotFn[slot];
+  if (!fn) { console.warn('[OdysseusPkg] Unknown slot:', slot); return; }
+  const container = fn();
+  if (!container) { console.warn('[OdysseusPkg] Slot not in DOM yet:', slot); return; }
+  container.appendChild(element);
+}
+
+/** Return the current text in the chat textarea. */
+function getChatInput() {
+  return document.getElementById('message')?.value || '';
+}
+
+/**
+ * Set the chat textarea content and trigger a React-style input event
+ * so the app's auto-resize and ghost-text logic stays in sync.
+ */
+function setChatInput(text) {
+  const ta = document.getElementById('message');
+  if (!ta) return;
+  // Use the native setter so React/framework state handlers notice the change
+  const nativeSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype, 'value'
+  )?.set;
+  if (nativeSetter) {
+    nativeSetter.call(ta, text);
+  } else {
+    ta.value = text;
+  }
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  ta.dispatchEvent(new Event('change', { bubbles: true }));
+  ta.focus();
+}
+
+/**
+ * Make a non-streaming LLM call through the server.
+ * @param {string} systemPrompt  System instruction for the model.
+ * @param {string} userMessage   The user turn.
+ * @param {string} [model='']    Optional model spec (defaults to user's default model).
+ * @returns {Promise<string>}    The model's text response.
+ */
+async function callLLM(systemPrompt, userMessage, model = '') {
+  const res = await fetch('/api/pkg/llm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ system: systemPrompt, message: userMessage, model }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'LLM call failed');
+  }
+  const data = await res.json();
+  return data.content;
+}
+
+const OdysseusPkg = { addWidget, getChatInput, setChatInput, callLLM };
+
+// Expose globally so widget scripts that can't do ES6 imports can access it
+window.OdysseusPkg = OdysseusPkg;
+
+export default OdysseusPkg;

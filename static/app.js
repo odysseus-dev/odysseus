@@ -45,6 +45,9 @@ import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+// Package runtime API — must load before any package widget scripts so that
+// window.OdysseusPkg is available when widget modules execute.
+import './js/pkg-api.js';
 import HardwarePanel from './js/hardware.js';
 import WorkspaceManager from './js/workspaces.js';
 import PackageManager from './js/packages.js';

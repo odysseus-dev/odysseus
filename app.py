@@ -814,6 +814,10 @@ app.include_router(setup_hardware_routes())
 from routes.guard_routes import setup_guard_routes
 app.include_router(setup_guard_routes())
 
+# Package extension API — LLM call endpoint for package widgets
+from routes.pkg_routes import setup_pkg_routes
+app.include_router(setup_pkg_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

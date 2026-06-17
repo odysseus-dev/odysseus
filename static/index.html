@@ -1015,6 +1015,8 @@
       }).catch(function(){});
     })();
     </script>
+    <!-- Package chatPanel injection slot (above messages) -->
+    <div id="pkg-slot-chat-panel"></div>
     <div id="chat-history" class="chat-history" role="log" aria-live="polite"></div>
 
     <!-- Attachments strip -->
@@ -1045,7 +1047,10 @@
           </div>
         </div>
       </div>
-      <div id="pinned-tools-bar"></div>
+      <div id="pinned-tools-bar">
+        <!-- Package chatInputWidget injection slot -->
+        <div id="pkg-slot-chat-input" style="display:contents"></div>
+      </div>
       <div class="chat-input-bottom" style="visibility:hidden">
         <div class="chat-input-left">
           <!-- Overflow menu (+) — always first/left -->

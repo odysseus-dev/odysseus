@@ -252,15 +252,18 @@ const PackageManager = (() => {
   async function loadFrontendHooks() {
     try {
       const hooks = await _api('GET', '/hooks');
-      _injectSidebarWidgets(hooks.sidebarWidget || []);
+      _injectWidgets(hooks.sidebarWidget   || [], 'package-widgets-sidebar');
+      _injectWidgets(hooks.chatInputWidget || [], 'pkg-slot-chat-input');
+      _injectWidgets(hooks.toolbarWidget   || [], 'package-widgets-toolbar');
+      _injectWidgets(hooks.chatPanel       || [], 'pkg-slot-chat-panel');
       return hooks;
     } catch (e) {
       return {};
     }
   }
 
-  function _injectSidebarWidgets(widgets) {
-    const target = document.getElementById('package-widgets-sidebar');
+  function _injectWidgets(widgets, containerId) {
+    const target = document.getElementById(containerId);
     if (!target || !widgets.length) return;
     target.innerHTML = '';
     widgets.forEach(w => {

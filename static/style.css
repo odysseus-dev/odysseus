@@ -38043,3 +38043,49 @@ body.theme-frosted .modal {
 .ws-btn-approve:hover { background: #22c55e; }
 .ws-btn-deny { background: transparent; border: 1px solid var(--border, #2a2a3a); }
 .ws-btn-deny:hover { background: color-mix(in srgb, var(--red, #e06c75) 15%, transparent); }
+
+/* ── Package Runtime Slots ─────────────────────────────────────────────────── */
+#pkg-slot-chat-input {
+  display: contents; /* children appear as direct children of #pinned-tools-bar */
+}
+#pkg-slot-chat-panel {
+  width: 100%;
+}
+
+/* ── Package Widget: Enhance Button ────────────────────────────────────────── */
+.pkg-enhance-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  border: 1px solid var(--border, #2a2a3a);
+  background: transparent;
+  color: var(--fg, #cdd6f4);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.pkg-enhance-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, var(--red, #e06c75)) 12%, transparent);
+  border-color: var(--accent, var(--red, #e06c75));
+}
+.pkg-enhance-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pkg-enhance-btn.pkg-enhance-empty {
+  animation: pkg-pulse 0.3s ease-in-out 2;
+}
+@keyframes pkg-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.pkg-enhance-spinner {
+  animation: spin 0.7s linear infinite;
+}
+.pkg-enhance-label {
+  position: relative;
+  top: -0.5px;
+}
