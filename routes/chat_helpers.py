@@ -542,7 +542,7 @@ async def build_chat_context(
     agent_mode: bool = False,
     allow_tool_preprocessing: bool = True,
 ) -> ChatContext:
-    """Build the full context (preface + messages) for an LLM call.
+    """Build the full context (history + preface + latest message) for an LLM call.
 
     This is the shared logic between /chat and /chat_stream — preset extraction,
     message preprocessing, memory/RAG/web injection, compaction, normalization.
@@ -645,7 +645,12 @@ async def build_chat_context(
         sess.model = norm
 
     # Build messages
-    messages = preface + sess.get_context_messages()
+    chat_history = sess.get_context_messages()
+
+    latest_messages = []
+    if chat_history and chat_history[-1].get("role") == "user":
+        latest_messages.append(chat_history[-1])
+        chat_history.pop()
 
     # Current date/time — injected as a standalone *user*-role context message
     # placed immediately before the latest user turn, NOT folded into the
@@ -654,18 +659,17 @@ async def build_chat_context(
     # system message byte-for-byte; mixing ever-changing timestamp text into
     # it would invalidate the cached prefix on every request (issue #2927).
     # Placing it at the tail also keeps it out of the stable
-    # preface+history prefix, so that prefix stays byte-identical turn over
+    # history prefix, so that prefix stays byte-identical turn over
     # turn (modulo the genuinely new history entries) and the cache survives.
     if not agent_mode:
         try:
             from src.user_time import current_datetime_context_message
             _dt_msg = current_datetime_context_message()
-            if messages and messages[-1].get("role") == "user":
-                messages.insert(len(messages) - 1, _dt_msg)
-            else:
-                messages.append(_dt_msg)
+            latest_messages = [_dt_msg] + latest_messages
         except Exception:
             logger.debug("Failed to add current date/time context", exc_info=True)
+
+    messages = chat_history + preface + latest_messages
 
     # Auto-compact
     messages, context_length, was_compacted = await maybe_compact(
