@@ -17,6 +17,11 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
   const recRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   useEffect(() => { ref.current?.focus() }, [])
+  useEffect(() => {
+    const focus = () => ref.current?.focus()
+    window.addEventListener("odysseus:focus-composer", focus)
+    return () => window.removeEventListener("odysseus:focus-composer", focus)
+  }, [])
 
   const toggleMic = async () => {
     if (recording) { recRef.current?.stop(); return }
