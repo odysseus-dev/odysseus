@@ -1,10 +1,38 @@
 import { useState } from "react"
-import { Trash2, Plus, Pencil, Check } from "lucide-react"
+import { Trash2, Plus, Pencil, Check, Settings2 } from "lucide-react"
 import { useMemory, useMemoryMutations } from "@/api/memory"
+import { usePrefs, useSetPref } from "@/api/prefs"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 const CATS = ["fact", "preference", "identity", "project", "goal", "task", "contact"]
+
+function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return <button onClick={onClick} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", on ? "bg-primary" : "bg-input")}><span className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-transform", on ? "translate-x-4" : "translate-x-0.5")} /></button>
+}
+function MemorySettings() {
+  const { data: prefs } = usePrefs()
+  const setPref = useSetPref()
+  const b = (k: string, def = true) => (prefs?.[k] as boolean | undefined) ?? def
+  const num = (prefs?.skill_min_confidence as number | undefined) ?? 0.85
+  const Row = ({ k, label, def = true }: { k: string; label: string; def?: boolean }) => (
+    <div className="flex items-center justify-between py-1.5"><span className="text-sm text-muted-foreground">{label}</span><Toggle on={b(k, def)} onClick={() => setPref.mutate({ key: k, value: !b(k, def) })} /></div>
+  )
+  return (
+    <div className="mb-4 space-y-1 rounded-lg border bg-card p-3">
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Memory settings</div>
+      <Row k="memory_enabled" label="Inject memories into chat" />
+      <Row k="auto_skills" label="Auto-extract skills from agent runs" />
+      <Row k="auto_approve_skills" label="Auto-approve extracted skills" />
+      <div className="flex items-center justify-between py-1.5">
+        <span className="text-sm text-muted-foreground">Skill min-confidence</span>
+        <input type="number" min={0} max={1} step={0.05} defaultValue={num}
+          onBlur={(e) => setPref.mutate({ key: "skill_min_confidence", value: parseFloat(e.target.value) })}
+          className="h-8 w-20 rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring" />
+      </div>
+    </div>
+  )
+}
 
 export function MemoryRoute() {
   const { data: memories } = useMemory()
@@ -13,6 +41,7 @@ export function MemoryRoute() {
   const [cat, setCat] = useState("fact")
   const [filter, setFilter] = useState<string | null>(null)
   const [q, setQ] = useState("")
+  const [showSettings, setShowSettings] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
   const list = (memories || [])
@@ -24,8 +53,12 @@ export function MemoryRoute() {
 
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
-      <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">Memory</header>
+      <header className="flex h-13 shrink-0 items-center justify-between border-b px-4">
+        <span className="text-sm font-semibold">Memory</span>
+        <button onClick={() => setShowSettings((s) => !s)} title="Memory settings" className={cn("rounded-md p-1.5 hover:bg-accent hover:text-foreground", showSettings ? "text-foreground" : "text-muted-foreground")}><Settings2 className="size-4" /></button>
+      </header>
       <div className="flex-1 overflow-y-auto p-4">
+        {showSettings && <MemorySettings />}
         <div className="mb-4 flex gap-2">
           <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a memory…" onKeyDown={(e) => { if (e.key === "Enter") submit() }}
             className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
