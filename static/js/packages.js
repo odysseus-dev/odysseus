@@ -8,6 +8,7 @@ const PackageManager = (() => {
 
   // ── State ──────────────────────────────────────────────────────────────────
   let _packages = [];
+  let _available = [];
   let _panel = null;
 
   // ── Risk badge helper ──────────────────────────────────────────────────────
@@ -57,6 +58,17 @@ const PackageManager = (() => {
       return _packages;
     } catch (e) {
       console.error('[PackageManager] load failed:', e);
+      return [];
+    }
+  }
+
+  async function loadAvailable() {
+    try {
+      const data = await _api('GET', '/available');
+      _available = data.available || [];
+      return _available;
+    } catch (e) {
+      _available = [];
       return [];
     }
   }
@@ -130,6 +142,17 @@ const PackageManager = (() => {
           </div>
         </div>
 
+        <div class="admin-card" id="pkg-available-card">
+          <div class="pkg-list-header">
+            <h2 style="margin:0;border:none;padding:0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.7"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Available Packages
+            </h2>
+            <span class="pkg-count" id="pkg-available-count"></span>
+          </div>
+          <div class="admin-toggle-sub" style="margin-bottom:10px">Bundled extensions you can install with one click.</div>
+          <div class="pkg-list" id="pkg-available-list"></div>
+        </div>
+
         <div class="admin-card">
           <div class="pkg-list-header">
             <h2 style="margin:0;border:none;padding:0">
@@ -146,6 +169,68 @@ const PackageManager = (() => {
 
     _bindEvents(container);
     _refreshList(container);
+    _refreshAvailable(container);
+  }
+
+  // ── Render available (bundled) packages ────────────────────────────────────
+  function _renderAvailableCard(pkg) {
+    const perms = (pkg.permissions || []).map(p =>
+      `<span class="pkg-perm-tag">${_esc(p)}</span>`
+    ).join('');
+    return `
+      <div class="pkg-card" data-avail-id="${_esc(pkg.id)}">
+        <div class="pkg-card-header">
+          <div class="pkg-card-title">
+            <strong>${_esc(pkg.name)}</strong>
+            ${pkg.version ? `<span class="pkg-version">v${_esc(pkg.version)}</span>` : ''}
+          </div>
+        </div>
+        ${pkg.description ? `<p class="pkg-description">${_esc(pkg.description)}</p>` : ''}
+        ${perms ? `<div class="pkg-perms">${perms}</div>` : ''}
+        <div class="pkg-card-actions">
+          <button class="pkg-btn pkg-btn-primary pkg-btn-install-bundled" data-id="${_esc(pkg.id)}">Install</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function _refreshAvailable(container) {
+    const listEl = container.querySelector('#pkg-available-list');
+    const countEl = container.querySelector('#pkg-available-count');
+    const card = container.querySelector('#pkg-available-card');
+    if (!listEl) return;
+
+    const notInstalled = _available.filter(p => !p.installed);
+
+    // Hide the whole card when nothing is bundled at all.
+    if (card) card.style.display = _available.length ? '' : 'none';
+
+    if (!notInstalled.length) {
+      listEl.innerHTML = '<div class="pkg-empty">All bundled packages are installed.</div>';
+      if (countEl) countEl.textContent = '';
+      return;
+    }
+
+    if (countEl) countEl.textContent = `${notInstalled.length} available`;
+    listEl.innerHTML = notInstalled.map(_renderAvailableCard).join('');
+
+    listEl.querySelectorAll('.pkg-btn-install-bundled').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        btn.disabled = true;
+        btn.textContent = 'Installing…';
+        try {
+          await _api('POST', '/install-bundled', { id });
+          await Promise.all([load(), loadAvailable()]);
+          _refreshList(container);
+          _refreshAvailable(container);
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = 'Install';
+          alert(`Install failed: ${e.message}`);
+        }
+      });
+    });
   }
 
   function _refreshList(container) {
@@ -184,8 +269,9 @@ const PackageManager = (() => {
         if (!confirm(`Remove package "${pkg?.name || id}"? This cannot be undone.`)) return;
         try {
           await _api('DELETE', `/${id}`);
-          await load();
+          await Promise.all([load(), loadAvailable()]);
           _refreshList(container);
+          _refreshAvailable(container);
         } catch (e) {
           alert(`Remove failed: ${e.message}`);
         }
@@ -224,8 +310,9 @@ const PackageManager = (() => {
         if (result.warnings?.length) {
           setTimeout(() => alert(`Package installed.${riskMsg}${warnings}`), 100);
         }
-        await load();
+        await Promise.all([load(), loadAvailable()]);
         _refreshList(container);
+        _refreshAvailable(container);
       } catch (e) {
         progress.style.display = 'none';
         alert(`Installation failed: ${e.message}`);
@@ -253,7 +340,7 @@ const PackageManager = (() => {
   // ── Public API ─────────────────────────────────────────────────────────────
   async function init(container) {
     _panel = container;
-    await load();
+    await Promise.all([load(), loadAvailable()]);
     _renderPanel(container);
   }
 
