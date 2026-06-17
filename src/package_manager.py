@@ -97,13 +97,7 @@ class PackageManager:
             # Publish frontend widgets to /static/packages/<pkg_id>/
             # Accept both camelCase (frontendHooks) and snake_case (frontend_hooks)
             frontend_hooks = manifest.get("frontendHooks") or manifest.get("frontend_hooks") or {}
-            if frontend_hooks:
-                static_pkg_dir = self.static_packages_dir / pkg_id
-                static_pkg_dir.mkdir(exist_ok=True)
-                for _hook_type, widget_path in frontend_hooks.items():
-                    widget_file = install_dir / widget_path
-                    if widget_file.exists():
-                        shutil.copy2(widget_file, static_pkg_dir / Path(widget_path).name)
+            self._publish_frontend(pkg_id, install_dir, frontend_hooks)
 
             self._save_to_db(manifest, install_dir, scan_result, owner)
 
@@ -117,6 +111,24 @@ class PackageManager:
         finally:
             if tmp_dir.exists():
                 shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _publish_frontend(self, pkg_id: str, install_dir, frontend_hooks: dict) -> None:
+        """Copy a package's widget files into the static dir so they are served
+        at /static/packages/<pkg_id>/<widget>. Idempotent — safe to re-run on
+        startup to restore widgets after the static dir is wiped (e.g. a
+        container reset), since the source files live in the persistent
+        install_dir (DATA_DIR) while the static copies do not."""
+        if not frontend_hooks:
+            return
+        install_dir = Path(install_dir)
+        static_pkg_dir = self.static_packages_dir / pkg_id
+        static_pkg_dir.mkdir(parents=True, exist_ok=True)
+        for _hook_type, widget_path in frontend_hooks.items():
+            widget_file = install_dir / widget_path
+            if widget_file.exists():
+                shutil.copy2(widget_file, static_pkg_dir / Path(widget_path).name)
+            else:
+                logger.warning(f"Package {pkg_id}: widget file missing: {widget_file}")
 
     def _validate_manifest(self, manifest: dict):
         missing = MANIFEST_REQUIRED_FIELDS - manifest.keys()
@@ -200,12 +212,28 @@ class PackageManager:
             return False
 
     def load_all_active(self) -> int:
-        """Load every installed (non-disabled) package. Called at startup."""
+        """Load every installed (non-disabled) package. Called at startup.
+
+        Also re-publishes each package's frontend widgets to the static dir.
+        The static copies live inside the app image (ephemeral) while the
+        package source + DB live in DATA_DIR (persistent), so after a container
+        reset the DB still lists the package but its widget files are gone —
+        re-publishing here restores them without needing a re-install.
+        """
         from core.database import get_db_session, Package as _Pkg
         with get_db_session() as db:
-            pkg_ids = [p.id for p in db.query(_Pkg).filter(_Pkg.status == "installed").all()]
-        count = sum(1 for pid in pkg_ids if self.load_plugin(pid))
-        logger.info(f"Loaded {count}/{len(pkg_ids)} active packages at startup")
+            rows = [
+                (p.id, p.install_path, dict(p.frontend_hooks or {}))
+                for p in db.query(_Pkg).filter(_Pkg.status == "installed").all()
+            ]
+        for pkg_id, install_path, fhooks in rows:
+            if install_path and fhooks:
+                try:
+                    self._publish_frontend(pkg_id, install_path, fhooks)
+                except Exception as e:
+                    logger.warning(f"Failed to re-publish widgets for {pkg_id}: {e}")
+        count = sum(1 for pkg_id, _, _ in rows if self.load_plugin(pkg_id))
+        logger.info(f"Loaded {count}/{len(rows)} active packages at startup")
         return count
 
     def unload_plugin(self, pkg_id: str) -> bool:

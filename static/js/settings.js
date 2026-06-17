@@ -40,8 +40,29 @@ function initTabs() {
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
       if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'packages') initPackagesPanel();
     });
   });
+}
+
+/* ── Packages tab (admin) ──
+   Lazy-loads the Package Manager UI into the settings panel the first time
+   the tab is opened. The same module previously powered a standalone modal;
+   here it simply renders into the in-settings container. */
+let _packagesInited = false;
+async function initPackagesPanel() {
+  if (_packagesInited) return;
+  const body = el('settings-packages-body');
+  if (!body) return;
+  try {
+    const mod = await import('./packages.js');
+    const PackageManager = mod.default || mod;
+    PackageManager.init(body);
+    _packagesInited = true;
+  } catch (e) {
+    body.innerHTML = '<div class="pkg-empty">Failed to load Package Manager.</div>';
+    console.error('[settings] packages panel init failed:', e);
+  }
 }
 
 /* ── Dragging ── */
@@ -5721,6 +5742,7 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') refreshAiModelEndpoints();
+  if (activeTab === 'packages') initPackagesPanel();
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
