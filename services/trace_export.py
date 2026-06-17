@@ -63,6 +63,9 @@ def build_trace_records(
     """Export selected chat messages for `session_id` using the provided
     SQLAlchemy `db` session.
     """
+    if not message_ids:
+        raise ValueError("Export failed: Message ID list cannot be empty.")
+    
     if not current_user:
         print("Error: No authenticated user found")
         return
@@ -70,14 +73,14 @@ def build_trace_records(
     print(f"Exporting data for user: {current_user}\n")
 
     # Verify session ownership
-    session_row = db.query(DbSession).filter(DbSession.id == session_id, DbSession.owner == current_user).first()
+    session = db.query(DbSession).filter(DbSession.id == session_id, DbSession.owner == current_user).first()
     
-    if not session_row:
-        print("Error: Session not found or unauthorized")
-        return
-    if session_row.owner != current_user:
-        print("Error: Session not found or unauthorized")
-        return
+    if not session:
+       raise KeyError("Export failed: Session not found or unauthorized.")
+        
+    if session.owner != current_user:
+        raise PermissionError("Export failed: You do not have permission to access this session.")
+        
 
     print(f"Processing session '{session_id}'\n")
 
@@ -126,12 +129,12 @@ def build_trace_records(
         messages_list.append(message_data)
 
     session_properties = {
-        "name": session_row.name,
-        "id": session_row.id,
-        "owner": session_row.owner,
-        "model": session_row.model,
-        "message_count": session_row.message_count,
-        "created_at": session_row.created_at,
+        "name": session.name,
+        "id": session.id,
+        "owner": session.owner,
+        "model": session.model,
+        "message_count": session.message_count,
+        "created_at": session.created_at,
         "label": label,
         "messages": messages_list,
         "note": note
