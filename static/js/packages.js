@@ -110,8 +110,12 @@ const PackageManager = (() => {
 
   // ── Render full panel ──────────────────────────────────────────────────────
   function _renderPanel(container) {
+    // No .pkg-panel wrapper here: the admin-cards sit directly in the settings
+    // panel so the layout matches every other settings tab (full width, left
+    // aligned). The old .pkg-panel had max-width:900px + margin:0 auto, which
+    // centered the content and left a growing gap as the window widened.
     container.innerHTML = `
-      <div class="pkg-panel">
+      <div class="pkg-settings-stack">
         <div class="admin-card">
           <h2>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.7">
