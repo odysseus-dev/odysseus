@@ -12,7 +12,7 @@ def test_backend_status_treats_download_exit_zero_as_completed():
     source = _read("routes/cookbook_routes.py")
 
     assert "exit_match = re.search(r\"=== process exited with code\\s+(-?\\d+)\"" in source
-    assert "elif has_exit and task_type == \"download\":" in source
+    assert "elif has_exit and task_type in (\"download\", \"install\"):" in source
     assert "status = \"completed\" if exit_code == 0 else \"error\"" in source
 
 
@@ -105,3 +105,26 @@ def test_local_dependency_probe_refreshes_user_site_visibility():
     assert "importlib.invalidate_caches()" in source
     assert "user_site = site.getusersitepackages()" in source
     assert "if user_site and os.path.isdir(user_site) and user_site not in sys.path:" in source
+
+
+def test_hf_download_uses_hf_home_env_not_local_dir_flag():
+    """Custom download dir must be injected via HF_HOME/HUGGINGFACE_HUB_CACHE
+    env vars, NOT via --local-dir. The hub-cache layout gives resumable .incomplete
+    blobs; --local-dir produces a flat layout that breaks resume on flaky transfers
+    (issue #2722).
+    """
+    source = _read("routes/cookbook_routes.py")
+
+    assert "export HF_HOME=" in source
+    assert "export HUGGINGFACE_HUB_CACHE=" in source
+    # --local-dir must no longer appear on the hf download command line
+    assert "hf_cmd += f\" --local-dir" not in source
+
+
+def test_ollama_download_detection_uses_colon_no_slash_heuristic():
+    """Ollama model IDs (name:tag without a slash) must be auto-detected as
+    ollama pulls so the route routes to `ollama pull` instead of `hf download`."""
+    source = _read("routes/cookbook_routes.py")
+
+    assert '"/" not in req.repo_id and ":" in req.repo_id' in source
+    assert 'ollama pull' in source

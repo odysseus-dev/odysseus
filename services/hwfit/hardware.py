@@ -659,6 +659,7 @@ def _detect_windows():
             "gpu_vram_gb": d.get("gpu_vram_gb"),
             "gpu_count": _as_int(d.get("gpu_count"), 0),
             "backend": d.get("gpu_backend", "cpu_x86"),
+            "rdna_gen": _as_int(d.get("rdna_gen"), 2),
             "homogeneous": True,
             "gpu_error": None,
             "platform": "windows",

@@ -3237,7 +3237,7 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
-            output_tail = error_aware_output_tail(full_snapshot, status)
+            output_tail = error_aware_output_tail(full_snapshot, status, task_type)
 
             results.append({
                 "session_id": session_id,

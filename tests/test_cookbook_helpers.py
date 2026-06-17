@@ -706,6 +706,31 @@ def test_validate_serve_cmd_accepts_windows_printf_format():
     assert _validate_serve_cmd(cmd) == cmd
 
 
+def test_validate_serve_cmd_accepts_windows_ps_env_prefix():
+    # Windows llama.cpp cmd builder emits $env:VAR="val"; before the binary.
+    cmd = (
+        '$env:CUDA_VISIBLE_DEVICES="0"; python -m llama_cpp.server --model '
+        "\"$(printf %s 'C:/Users/Glenn/.cache/huggingface/hub/models--unsloth--Qwen2.5-Coder-3B-Instruct-GGUF/snapshots/abc123/Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf')\" "
+        "--host 0.0.0.0 --port 8001 --n_gpu_layers 99 --n_ctx 20000 --flash_attn true --type_k q8_0 --type_v q8_0"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_accepts_multiple_windows_ps_env_prefixes():
+    cmd = (
+        '$env:GGML_CUDA_ENABLE_UNIFIED_MEMORY="1"; $env:CUDA_VISIBLE_DEVICES="0"; '
+        "python -m llama_cpp.server --model model.gguf --host 0.0.0.0 --port 8001 --n_gpu_layers 99"
+    )
+    assert _validate_serve_cmd(cmd) == cmd
+
+
+def test_validate_serve_cmd_rejects_windows_ps_env_with_injection():
+    # Semicolon in the value must be rejected — could escape the quoted context
+    cmd = '$env:CUDA_VISIBLE_DEVICES="0;$(evil)"; python -m llama_cpp.server --model m.gguf --host 0.0.0.0 --port 8001'
+    with pytest.raises(Exception):
+        _validate_serve_cmd(cmd)
+
+
 def test_normalize_llama_cpp_python_cache_types_for_stale_client_cmd():
     cmd = (
         "python -m llama_cpp.server --model model.gguf --host 0.0.0.0 --port 8000 "

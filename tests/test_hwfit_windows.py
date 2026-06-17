@@ -147,3 +147,26 @@ def test_detect_windows_non_amd_payload_defaults_rdna(monkeypatch):
     assert info is not None
     assert info["backend"] == "cpu_x86"
     assert info["rdna_gen"] == 2
+
+
+def test_detect_windows_amd_rdna2_payload_without_rdna_gen_defaults_to_2(monkeypatch):
+    """AMD RDNA2 (RX 6xxx) — the PowerShell probe omits rdna_gen for these
+    because they're CPU-fallback on Windows ROCm. Python must still default
+    rdna_gen to 2 rather than raising a KeyError."""
+    payload = {
+        "ram_gb": 16.0,
+        "avail_gb": 10.0,
+        "cpu_name": "AMD Ryzen 5 5600X",
+        "cpu_cores": 12,
+        "gpu_name": "AMD Radeon RX 6600",
+        "gpu_vram_gb": 8.0,
+        "gpu_count": 1,
+        "gpu_backend": "rocm",
+    }
+    monkeypatch.setattr(hardware, "_remote_host", None)
+    monkeypatch.setattr(hardware, "_run", lambda _cmd: json.dumps(payload))
+
+    info = hardware._detect_windows()
+    assert info is not None
+    assert info["backend"] == "rocm"
+    assert info["rdna_gen"] == 2

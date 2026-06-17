@@ -54,3 +54,19 @@ def test_error_tail_is_wider_than_non_error():
     assert len(err) > len(run)
     # The non-error tail is a strict suffix of the error tail.
     assert err[-len(run):] == run
+
+
+def test_install_task_type_returns_50_lines_regardless_of_status():
+    # Dependency installs emit long build output; always return 50 lines so
+    # pip/cmake errors are visible without triggering error status first.
+    snap = _snapshot(200)
+    for status in ("running", "completed", "stopped", "unknown"):
+        tail = error_aware_output_tail(snap, status, task_type="install")
+        assert len(tail.splitlines()) == 50, f"install tail should be 50 for status={status!r}"
+
+
+def test_non_install_task_type_keeps_12_line_tail_when_not_errored():
+    snap = _snapshot(200)
+    for task_type in ("download", "serve", ""):
+        tail = error_aware_output_tail(snap, "running", task_type=task_type)
+        assert len(tail.splitlines()) == 12, f"non-install running tail should be 12 for type={task_type!r}"

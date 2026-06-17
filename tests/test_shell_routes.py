@@ -180,6 +180,7 @@ class TestAppleSiliconDetection:
 
         monkeypatch.setattr(platform_compat.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(platform_compat.platform, "machine", lambda: "arm64")
+        monkeypatch.setattr(platform_compat.os, "name", "posix")
         importlib.reload(platform_compat)
 
         assert platform_compat.IS_APPLE_SILICON is True
@@ -363,14 +364,16 @@ class TestPackageProbeStatus:
     def test_local_user_install_bin_is_added_to_path(self, monkeypatch, tmp_path):
         user_base = tmp_path / "user-base"
         monkeypatch.setattr("site.USER_BASE", str(user_base))
-        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        home = str(tmp_path / "home")
+        monkeypatch.setenv("HOME", home)
+        monkeypatch.setenv("USERPROFILE", home)  # Windows uses USERPROFILE for expanduser("~")
         monkeypatch.setenv("PATH", "/usr/bin")
 
         _prepend_user_install_bins_to_path()
 
-        parts = os.environ["PATH"].split(os.pathsep)
-        assert str(user_base / "bin") in parts
-        assert str(tmp_path / "home" / ".local" / "bin") in parts
+        normed = [os.path.normcase(os.path.normpath(p)) for p in os.environ["PATH"].split(os.pathsep)]
+        assert os.path.normcase(str(user_base / "bin")) in normed
+        assert os.path.normcase(str(tmp_path / "home" / ".local" / "bin")) in normed
 
     def test_remote_package_probe_checks_user_install_bin(self):
         script = _package_probe_script(["vllm"])
@@ -698,3 +701,65 @@ def test_add_to_path_rejects_remote_host():
             json={"remote_host": "myserver.local"},
         )
     assert res.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# _normalize_platform_label
+# ---------------------------------------------------------------------------
+
+def test_normalize_platform_label_windows_variants():
+    from routes.shell_routes import _normalize_platform_label
+    for variant in ("windows", "win", "win32", "Windows", "WIN"):
+        assert _normalize_platform_label(variant) == "windows", variant
+
+
+def test_normalize_platform_label_macos_variants():
+    from routes.shell_routes import _normalize_platform_label
+    for variant in ("darwin", "mac", "macos", "osx", "MacOS"):
+        assert _normalize_platform_label(variant) == "macos", variant
+
+
+def test_normalize_platform_label_termux():
+    from routes.shell_routes import _normalize_platform_label
+    assert _normalize_platform_label("termux") == "termux"
+
+
+def test_normalize_platform_label_none_falls_back_to_host(monkeypatch):
+    import routes.shell_routes as sr
+    monkeypatch.setattr(sr, "IS_WINDOWS", False)
+    monkeypatch.setattr(sr.sys, "platform", "linux")
+    assert sr._normalize_platform_label(None) == "linux"
+    assert sr._normalize_platform_label("") == "linux"
+
+
+def test_normalize_platform_label_arbitrary_value_passthrough():
+    from routes.shell_routes import _normalize_platform_label
+    assert _normalize_platform_label("freebsd") == "freebsd"
+
+
+# ---------------------------------------------------------------------------
+# _extract_cuda_release
+# ---------------------------------------------------------------------------
+
+def test_extract_cuda_release_from_nvcc_output():
+    from routes.shell_routes import _extract_cuda_release
+    text = "nvcc: NVIDIA (R) Cuda compiler driver\nCuda compilation tools, release 12.4, V12.4.131"
+    assert _extract_cuda_release(text) == "12.4"
+
+
+def test_extract_cuda_release_from_nvidia_smi_header():
+    from routes.shell_routes import _extract_cuda_release
+    text = "NVIDIA-SMI 550.54.15   Driver Version: 550.54.15   CUDA Version: 12.4"
+    assert _extract_cuda_release(text) == "12.4"
+
+
+def test_extract_cuda_release_returns_none_when_absent():
+    from routes.shell_routes import _extract_cuda_release
+    assert _extract_cuda_release("") is None
+    assert _extract_cuda_release("no version here") is None
+
+
+def test_extract_cuda_release_handles_case_insensitivity():
+    from routes.shell_routes import _extract_cuda_release
+    text = "Cuda compilation tools, Release 11.8, V11.8.89"
+    assert _extract_cuda_release(text) == "11.8"

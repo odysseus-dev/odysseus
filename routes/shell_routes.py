@@ -756,8 +756,12 @@ async def _create_shell(command: str, **kwargs):
     return await asyncio.create_subprocess_shell(command, **kwargs)
 
 
-async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, Any]:
-    """Run a shell command and return stdout/stderr/exit_code."""
+async def _exec_shell(command: str, timeout: int | None = EXEC_TIMEOUT) -> Dict[str, Any]:
+    """Run a shell command and return stdout/stderr/exit_code.
+
+    Pass timeout=None or timeout=0 to wait indefinitely (long-running builds,
+    slow prereq checks on Windows where PowerShell startup adds seconds).
+    """
     proc = None
     try:
         proc = await _create_shell(
@@ -766,7 +770,11 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
             stderr=asyncio.subprocess.PIPE,
             cwd=str(Path.home()),
         )
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        no_timeout = timeout is None or timeout == 0
+        if no_timeout:
+            stdout_b, stderr_b = await proc.communicate()
+        else:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         stdout = stdout_b.decode(errors="replace")[:MAX_OUTPUT]
         stderr = stderr_b.decode(errors="replace")[:MAX_OUTPUT]
         return {"stdout": stdout, "stderr": stderr, "exit_code": proc.returncode}
