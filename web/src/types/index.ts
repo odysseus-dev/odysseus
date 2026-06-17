@@ -28,3 +28,9 @@ export interface Note {
   note_type?: string; color?: string; label?: string;
   pinned?: boolean; archived?: boolean; due_date?: string; updated_at?: string;
 }
+export interface Task {
+  id: string; name?: string; title?: string; status?: string;
+  task_type?: string; action?: string; prompt?: string;
+  schedule?: string; cron?: string; model?: string;
+  next_run_at?: string; last_run_at?: string; enabled?: boolean;
+}
