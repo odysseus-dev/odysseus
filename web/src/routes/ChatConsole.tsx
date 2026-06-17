@@ -9,6 +9,13 @@ import { ConfigPanel } from "@/components/shell/ConfigPanel"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
 
+const SUGGESTIONS = [
+  "What can you help me with?",
+  "Summarize my recent notes",
+  "What's on my calendar this week?",
+  "Brainstorm ideas for a project",
+]
+
 export function ChatConsole() {
   const { theme, toggleTheme } = useUi()
   const { sessionId } = useParams()
@@ -26,8 +33,19 @@ export function ChatConsole() {
         </header>
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (
-            <div className="flex h-full items-center justify-center p-8 text-center">
-              <div><h1 className="text-2xl font-semibold tracking-tight">How can I help?</h1><p className="mt-2 text-sm text-muted-foreground">Start a conversation below.</p></div>
+            <div className="flex h-full items-center justify-center p-8">
+              <div className="w-full max-w-[768px] text-center">
+                <h1 className="text-2xl font-semibold tracking-tight">How can I help?</h1>
+                <p className="mt-2 text-sm text-muted-foreground">Start a conversation below.</p>
+                <div className="mt-6 flex flex-wrap justify-center gap-2">
+                  {SUGGESTIONS.map((s) => (
+                    <button key={s} onClick={() => send(s)} disabled={streaming}
+                      className="rounded-full border px-3.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50">
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : (
             <div className="mx-auto w-full max-w-[768px] space-y-6 px-4 py-6">{messages.map((m, i) => <Message key={i} m={m} />)}</div>
