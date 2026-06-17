@@ -88,6 +88,9 @@ const WorkspaceManager = (() => {
           ${ws.status === 'running' ? `<button class="ws-btn ws-btn-stop" data-id="${ws.id}">Stop</button>` : ''}
           ${ws.status === 'running' ? `<button class="ws-btn ws-btn-exec" data-id="${ws.id}">Execute</button>` : ''}
           ${ws.status === 'running' ? `<button class="ws-btn ws-btn-logs" data-id="${ws.id}">Logs</button>` : ''}
+          <button class="ws-btn ws-btn-skills" data-id="${ws.id}">
+            Skills${ws.assigned_mcps && ws.assigned_mcps.length ? ` (${ws.assigned_mcps.length})` : ''}
+          </button>
           <button class="ws-btn ws-btn-destroy" data-id="${ws.id}">Destroy</button>
         </div>
       </div>
@@ -253,6 +256,83 @@ const WorkspaceManager = (() => {
     }
   }
 
+  // ── Skills modal ───────────────────────────────────────────────────────────
+  async function _showSkillsModal(wsId, ws) {
+    const existing = document.getElementById('ws-skills-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'ws-skills-modal';
+    modal.className = 'ws-modal-overlay';
+    modal.innerHTML = `
+      <div class="ws-modal ws-modal-wide">
+        <div class="ws-modal-header">
+          <h3>Workspace Skills — ${_esc(ws.name)}</h3>
+          <button class="ws-modal-close">✕</button>
+        </div>
+        <div class="ws-modal-body" id="ws-skills-body">
+          <p style="font-size:12px;opacity:0.6;margin:0 0 10px">Loading available MCP servers…</p>
+        </div>
+        <div class="ws-modal-footer" style="padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end">
+          <button class="ws-btn ws-btn-cancel ws-skills-cancel">Cancel</button>
+          <button class="ws-btn ws-btn-primary" id="ws-skills-save">Save</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    modal.querySelector('.ws-modal-close').addEventListener('click', () => modal.remove());
+    modal.querySelector('.ws-skills-cancel').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+
+    const body = modal.querySelector('#ws-skills-body');
+    const assigned = new Set(ws.assigned_mcps || []);
+
+    try {
+      const data = await fetch('/api/mcp/servers').then(r => r.ok ? r.json() : Promise.reject(r.statusText));
+      const servers = data.servers || [];
+
+      if (servers.length === 0) {
+        body.innerHTML = '<p style="font-size:12px;opacity:0.55">No MCP servers configured. Add servers in Settings → MCP.</p>';
+      } else {
+        body.innerHTML = `
+          <p style="font-size:11px;opacity:0.55;margin:0 0 10px">Select which MCP servers (tools/skills) are available inside this workspace.</p>
+          <div id="ws-skills-list" style="display:flex;flex-direction:column;gap:6px">
+            ${servers.map(s => `
+              <label class="admin-user-row" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 10px">
+                <input type="checkbox" value="${_esc(s.id || s.name)}" ${assigned.has(s.id || s.name) ? 'checked' : ''} style="width:14px;height:14px;flex-shrink:0">
+                <div>
+                  <div style="font-size:12px;font-weight:600">${_esc(s.name || s.id)}</div>
+                  ${s.description ? `<div style="font-size:11px;opacity:0.55">${_esc(s.description)}</div>` : ''}
+                </div>
+              </label>
+            `).join('')}
+          </div>
+        `;
+      }
+    } catch (e) {
+      body.innerHTML = `<p style="font-size:12px;color:var(--danger,#e55)">Failed to load MCP servers: ${_esc(e.toString())}</p>`;
+    }
+
+    modal.querySelector('#ws-skills-save').addEventListener('click', async () => {
+      const checks = modal.querySelectorAll('#ws-skills-list input[type=checkbox]');
+      const selected = Array.from(checks).filter(c => c.checked).map(c => c.value);
+      const saveBtn = modal.querySelector('#ws-skills-save');
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        await _api('PUT', `/${wsId}/skills`, { assigned_mcps: selected });
+        modal.remove();
+        await load();
+        _refreshList(_container);
+      } catch (e) {
+        alert(`Failed to save skills: ${e.message}`);
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+      }
+    });
+  }
+
   // ── Render panel ───────────────────────────────────────────────────────────
   function _renderPanel(container) {
     if (!_dockerAvailable) {
@@ -376,6 +456,14 @@ const WorkspaceManager = (() => {
 
     listEl.querySelectorAll('.ws-btn-logs').forEach(btn => {
       btn.addEventListener('click', () => _showLogsModal(btn.dataset.id));
+    });
+
+    listEl.querySelectorAll('.ws-btn-skills').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const ws = _workspaces.find(w => w.id === id);
+        if (ws) _showSkillsModal(id, ws);
+      });
     });
 
     listEl.querySelectorAll('.ws-btn-destroy').forEach(btn => {

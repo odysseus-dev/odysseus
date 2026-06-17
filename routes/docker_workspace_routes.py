@@ -24,6 +24,10 @@ class BindAgentBody(BaseModel):
     agent_id: str
 
 
+class SkillsBody(BaseModel):
+    assigned_mcps: list = []
+
+
 def setup_docker_workspace_routes(workspace_manager):
     router = APIRouter(prefix="/api/docker-workspaces", tags=["docker-workspaces"])
 
@@ -207,5 +211,30 @@ def setup_docker_workspace_routes(workspace_manager):
             return {"success": ok, "ws_id": ws_id, "agent_id": body.agent_id}
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))
+
+    @router.get("/{ws_id}/skills")
+    def get_workspace_skills(ws_id: str, request: Request):
+        """Return the MCP servers (skills) assigned to this workspace."""
+        owner = _owner(request)
+        ws = workspace_manager.get_workspace(ws_id)
+        if not ws:
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        if ws["owner"] != owner:
+            raise HTTPException(status_code=403, detail="Access denied")
+        return {"assigned_mcps": ws.get("assigned_mcps", [])}
+
+    @router.put("/{ws_id}/skills")
+    def set_workspace_skills(ws_id: str, body: SkillsBody, request: Request):
+        """Assign MCP servers (skills) to a workspace."""
+        owner = _owner(request)
+        from core.database import get_db_session, DockerWorkspace
+        with get_db_session() as db:
+            ws = db.query(DockerWorkspace).filter(DockerWorkspace.id == ws_id).first()
+            if not ws:
+                raise HTTPException(status_code=404, detail="Workspace not found")
+            if ws.owner != owner:
+                raise HTTPException(status_code=403, detail="Access denied")
+            ws.assigned_mcps = body.assigned_mcps
+        return {"assigned_mcps": body.assigned_mcps}
 
     return router

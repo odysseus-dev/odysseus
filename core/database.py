@@ -1843,6 +1843,7 @@ def init_db():
     # these helpers add columns to existing installs that predate the feature.
     _migrate_add_packages_table()
     _migrate_add_docker_workspaces_table()
+    _migrate_add_workspace_skills_columns()
 
 
 def _migrate_backfill_task_folders():
@@ -2228,6 +2229,9 @@ class DockerWorkspace(TimestampMixin, Base):
     bound_agent_id = Column(String, nullable=True)   # AI agent session linked to this WS
     labels         = Column(JSON, default=dict)      # Docker labels (includes owner/protected)
     owner          = Column(String, nullable=True, index=True)
+    # Skills/tools assigned to this workspace — list of MCP server IDs (int).
+    # When the workspace is active in shell mode the AI is restricted to these.
+    assigned_mcps  = Column(JSON, default=list)
 
     __table_args__ = (
         Index("ix_docker_workspaces_status", "status"),
@@ -2384,6 +2388,19 @@ def _migrate_add_docker_workspaces_table():
                 logging.getLogger(__name__).info("docker_workspaces table will be created by Base.metadata.create_all")
     except Exception as e:
         logging.getLogger(__name__).warning(f"docker_workspaces table check: {e}")
+
+
+def _migrate_add_workspace_skills_columns():
+    """Add assigned_mcps column to docker_workspaces (idempotent)."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(docker_workspaces)"))]
+            if "assigned_mcps" not in cols:
+                conn.execute(text("ALTER TABLE docker_workspaces ADD COLUMN assigned_mcps JSON DEFAULT '[]'"))
+                conn.commit()
+                logging.getLogger(__name__).info("docker_workspaces: added assigned_mcps column")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"workspace skills migration: {e}")
 
 
 def get_session_by_id(session_id: str):

@@ -317,6 +317,7 @@ class WorkspaceManager:
             "bound_agent_id": ws.bound_agent_id,
             "labels": ws.labels or {},
             "owner": ws.owner,
+            "assigned_mcps": ws.assigned_mcps or [],
             "created_at": ws.created_at.isoformat() if ws.created_at else None,
             "updated_at": ws.updated_at.isoformat() if ws.updated_at else None,
         }
