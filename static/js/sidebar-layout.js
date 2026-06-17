@@ -236,7 +236,13 @@ export function initSidebarLayout(Storage, opts) {
     // sidebar → safe-rect changes → reclamp modal → new chat width → ...
     const chatContainer = document.querySelector('.chat-container');
     const hasTileSnapped = document.querySelector('.modal-content[data-_tile-zone], .research-pane[data-_tile-zone]');
-    const chatTooNarrow = chatContainer && chatContainer.offsetWidth < MIN_CHAT_WIDTH && !isHidden && !hasTileSnapped;
+    // An open document pane is the user's explicit choice (like a tile-snap) and
+    // it narrows the chat by design — don't react by collapsing the sidebar, or
+    // opening a doc strands the nav. The icon-rail stays regardless; this keeps
+    // the sidebar (chats/tools list) reachable too while editing.
+    const docOpen = document.body.classList.contains('doc-view');
+    const chatTooNarrow = chatContainer && chatContainer.offsetWidth < MIN_CHAT_WIDTH
+      && !isHidden && !hasTileSnapped && !docOpen;
 
     if ((window.innerWidth < AUTO_COLLAPSE_WIDTH || chatTooNarrow) && !isHidden) {
       sidebar.classList.add('hidden');

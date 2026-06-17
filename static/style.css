@@ -12086,6 +12086,28 @@ textarea.memory-add-input {
   100% { box-shadow: inset 0 0 0 2px transparent; }
 }
 
+/* "AI can see this" badge — shown on the open doc, which is injected into the
+   chat's context. Themed pill so it reads as ambient, not alarming. */
+.doc-ai-context-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  color: var(--brand-color, var(--accent));
+  background: color-mix(in srgb, var(--brand-color, var(--accent)) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-color, var(--accent)) 30%, transparent);
+  white-space: nowrap;
+  cursor: default;
+}
+.doc-ai-context-badge svg { opacity: 0.85; flex-shrink: 0; }
+/* Drop the label to just the eye icon when the editor pane is narrow
+   (the pane sets container-name: docpane). */
+@container docpane (max-width: 540px) {
+  .doc-ai-context-label { display: none; }
+}
+
 /* In the doc footer the type picker sits next to the accent Copy/Export split —
    match its 28px height and 6px radius so the right-hand controls line up. */
 .doc-actions-footer #doc-language-select {

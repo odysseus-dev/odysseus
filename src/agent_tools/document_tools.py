@@ -114,6 +114,13 @@ def _sniff_doc_language(text: str) -> str:
         return "python"
     if _re2.search(r"(?m)^\s*(function \w|const \w|let \w|export |import .* from )", s):
         return "javascript"
+    # Simpler scripts that miss the strong signals above would otherwise fall to
+    # the 'markdown' default and render unhighlighted. Catch common python/JS
+    # statements (still line-anchored to keep prose out).
+    if _re2.search(r"(?m)^\s*(print\(|if __name__\s*==|for \w+ in .+:|while .+:|@\w+\s*$|with .+ as |try:\s*$|async def )", s):
+        return "python"
+    if _re2.search(r"(?m)^\s*(console\.(log|error|warn)\(|document\.|window\.|=>\s|var \w+\s*=)", s):
+        return "javascript"
     if _re2.search(r"(?mi)^\s*(select .* from |create table |insert into |update \w)", s):
         return "sql"
     if _re2.search(r"(?m)^[.#]?[\w-]+\s*\{[^{}]*:[^{}]*;", s):
