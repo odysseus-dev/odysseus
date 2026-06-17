@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ArrowUp, Square, Paperclip, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { uploadFiles } from "@/api/upload"
@@ -9,6 +9,7 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
   const [uploading, setUploading] = useState(false)
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { ref.current?.focus() }, [])
   const grow = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px" }
   const submit = () => {
     if ((!text.trim() && atts.length === 0) || streaming || uploading) return
