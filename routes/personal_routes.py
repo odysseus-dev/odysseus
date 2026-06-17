@@ -253,13 +253,13 @@ def setup_personal_routes(personal_docs_manager, rag_manager, rag_available):
 
             # Always remove from personal_docs_manager tracking
             if hasattr(personal_docs_manager, 'remove_directory'):
-                personal_docs_manager.remove_directory(directory)
+                personal_docs_manager.remove_directory(directory, owner=owner)
 
             # Remove from RAG vector store (best-effort)
             rag = _rag()
             if rag:
                 try:
-                    rag.remove_directory(directory)
+                    rag.remove_directory(directory, owner=owner)
                 except Exception as e:
                     logger.warning(f"RAG removal failed for directory {directory}: {e}")
 

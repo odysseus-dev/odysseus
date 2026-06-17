@@ -148,7 +148,7 @@ def retrieve_personal_keyword(personal_index: List[Dict], query: str, k: int = 5
     return out
 
 def retrieve_personal(personal_index: List[Dict], query: str, k: int = 5,
-                     rag_manager=None) -> List[str]:
+                     rag_manager=None, owner: str = None) -> List[str]:
     """
     Retrieve relevant personal documents using vector search first, falling back to keyword search.
 
@@ -167,7 +167,7 @@ def retrieve_personal(personal_index: List[Dict], query: str, k: int = 5,
     # First try vector search if RAGManager is available
     if rag_manager:
         try:
-            vector_results = rag_manager.search(query, k)
+            vector_results = rag_manager.search(query, k, owner=owner)
             if vector_results:
                 # Format vector results
                 out = []
@@ -183,7 +183,10 @@ def retrieve_personal(personal_index: List[Dict], query: str, k: int = 5,
         except Exception as e:
             logger.warning(f"Vector search failed, falling back to keyword search: {e}")
 
-    # Fall back to keyword search
+    # Fall back to keyword search only for legacy ownerless calls.
+    # Owner-scoped calls should not use the legacy global in-memory index.
+    if owner:
+        return []
     return retrieve_personal_keyword(personal_index, query, k)
 
 
@@ -295,8 +298,8 @@ class PersonalDocsManager:
         else:
             logger.info(f"Directory already indexed: {directory}")
 
-    def remove_directory(self, directory: str):
-        """Remove a directory from the tracking list."""
+    def remove_directory(self, directory: str, owner: str = None):
+        """Remove a directory from the tracking list and owner-scoped RAG index."""
         # Normalize the path
         directory = os.path.abspath(directory)
         
@@ -316,7 +319,7 @@ class PersonalDocsManager:
             # removes exactly this directory's chunks and leaves the rest intact.
             if self.rag_manager:
                 try:
-                    self.rag_manager.remove_directory(directory)
+                    self.rag_manager.remove_directory(directory, owner=owner)
                 except Exception as e:
                     logger.error(f"Failed to remove directory from RAG index: {e}")
         else:
@@ -401,9 +404,9 @@ class PersonalDocsManager:
 
         logger.info(f"Refreshed index: {len(self.index)} documents from {len(self.indexed_directories) + 1} directories")
 
-    def retrieve(self, query: str, k: int = 5) -> List[str]:
+    def retrieve(self, query: str, k: int = 5, owner: str = None) -> List[str]:
         """Retrieve relevant documents for a query."""
-        return retrieve_personal(self.index, query, k, self.rag_manager)
+        return retrieve_personal(self.index, query, k, self.rag_manager, owner=owner)
 
     def get_file_list(self) -> List[Dict[str, Any]]:
         """Get list of indexed files with metadata."""

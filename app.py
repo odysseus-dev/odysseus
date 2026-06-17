@@ -530,6 +530,14 @@ upload_handler    = components["upload_handler"]
 app.state.upload_handler = upload_handler
 personal_docs_mgr = components["personal_docs_manager"]
 app.state.personal_docs_manager = personal_docs_mgr
+try:
+    from src.doc_bindings import sync_doc_bindings as _sync_doc_bindings
+    app.state.doc_bindings = _sync_doc_bindings(auth_manager, rag_manager, personal_docs_mgr)
+    logger.info("Loaded %s Docker/env document binding(s)", len(app.state.doc_bindings))
+except Exception as _e:
+    logger.error("Failed to initialize Docker/env document bindings: %s", _e)
+    if os.getenv("ODYSSEUS_DOC_BINDINGS_STRICT", "false").lower() == "true":
+        raise
 api_key_manager   = components["api_key_manager"]
 preset_manager    = components["preset_manager"]
 chat_processor    = components["chat_processor"]
