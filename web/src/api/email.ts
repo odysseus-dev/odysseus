@@ -14,6 +14,7 @@ export function useInbox() {
 
 export interface EmailBody {
   subject?: string; from?: string; from_addr?: string; sender?: string; date?: string;
+  from_name?: string; from_address?: string;
   body_html?: string; html?: string; body_text?: string; body?: string; text?: string; error?: string;
 }
 export function useEmail(uid: string | null) {

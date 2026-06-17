@@ -41,6 +41,7 @@ export interface BuiltinSkill { name: string; description?: string; is_overridde
 export interface GalleryImage { id: string; filename: string; url: string; prompt?: string; tags?: string; favorite?: boolean; width?: number; height?: number }
 export interface EmailMsg {
   uid: string; subject?: string; from?: string; from_addr?: string; sender?: string;
+  from_name?: string; from_address?: string; is_read?: boolean;
   date?: string; snippet?: string; preview?: string; unread?: boolean; seen?: boolean;
 }
 export interface DocItem { id: string; title?: string; name?: string; language?: string; updated_at?: string; session_name?: string }

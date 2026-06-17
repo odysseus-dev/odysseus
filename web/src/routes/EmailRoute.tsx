@@ -8,7 +8,7 @@ function Reader({ uid, onBack }: { uid: string; onBack: () => void }) {
   const { data, isLoading } = useEmail(uid)
   const html = data?.body_html || data?.html
   const text = data?.body_text || data?.body || data?.text
-  const from = data?.from || data?.from_addr || data?.sender || ""
+  const from = data?.from_name || data?.from_address || data?.from || data?.from_addr || data?.sender || ""
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-13 shrink-0 items-center gap-2 border-b px-3">
@@ -76,8 +76,8 @@ export function EmailRoute() {
             {data?.error && <p className="p-4 text-sm text-muted-foreground">No mail account connected (or unavailable).</p>}
             <div className="divide-y">
               {emails.map((m) => {
-                const from = m.from || m.from_addr || m.sender || "Unknown"
-                const unread = m.unread ?? m.seen === false
+                const from = m.from_name || m.from_address || m.from || m.from_addr || m.sender || "Unknown"
+                const unread = m.is_read != null ? !m.is_read : (m.unread ?? m.seen === false)
                 return (
                   <div key={m.uid} onClick={() => setUid(m.uid)} className="flex cursor-pointer items-baseline gap-3 px-4 py-3 hover:bg-accent/50">
                     <div className={cn("w-44 shrink-0 truncate text-sm", unread ? "font-semibold text-foreground" : "text-muted-foreground")}>{from}</div>
