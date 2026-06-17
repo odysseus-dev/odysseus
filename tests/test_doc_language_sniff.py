@@ -43,3 +43,41 @@ def test_prose_and_markdown_stay_markdown(text):
 def test_unambiguous_markup_still_wins():
     assert sniff("<svg viewBox='0 0 10 10'></svg>") == "svg"
     assert sniff('{"a": 1, "b": [2, 3]}') == "json"
+
+
+# --- _maybe_promote_language: doc language follows content, but only safely ----
+
+from src.agent_tools.document_tools import _maybe_promote_language as promote
+
+
+class _Doc:
+    def __init__(self, language):
+        self.language = language
+
+
+def test_promote_raw_code_on_default_doc():
+    d = _Doc("markdown")
+    promote(d, "def add(x, y):\n    return x + y\n\nprint(add(1, 2))")
+    assert d.language == "python"
+    d = _Doc("")
+    promote(d, "const f = (a, b) => a + b;\nconsole.log(f(1, 2));")
+    assert d.language == "javascript"
+
+
+def test_promote_skips_markdown_wrapped_code():
+    # The "# heading + ```python fence" case — it's a markdown doc, keep it.
+    d = _Doc("markdown")
+    promote(d, "# Calculator\n```python\ndef add(x, y):\n    return x + y\n```")
+    assert d.language == "markdown"
+
+
+def test_promote_leaves_prose_and_explicit_languages():
+    d = _Doc("markdown")
+    promote(d, "# Notes\n\nSome **bold** prose.")
+    assert d.language == "markdown"
+    d = _Doc("python")               # explicitly set — never override
+    promote(d, "# just a comment\nx = 1")
+    assert d.language == "python"
+    d = _Doc("email")
+    promote(d, "def x(): pass")
+    assert d.language == "email"

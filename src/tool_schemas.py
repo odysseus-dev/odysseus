@@ -186,13 +186,13 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_document",
-            "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines) AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large code blocks directly in chat — use this tool instead.",
+            "description": "Create a new document in the editor panel. Use this when the user asks to write, create, build, or generate code, scripts, programs, games, apps, or any substantial content (>15 lines) AND there is no already-open document/email draft that the request refers to. If an email compose draft is open, edit that draft instead of creating another document. NEVER put large code blocks directly in chat — use this tool instead. For a CODE FILE / SCRIPT, put the RAW code in `content` (no markdown '# heading' or ``` fences) and set `language` to that code's language, so it's a real runnable file rather than a markdown doc.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Document title"},
-                    "language": {"type": "string", "description": "Programming language or format (e.g. python, javascript, markdown, text)"},
-                    "content": {"type": "string", "description": "The document content"}
+                    "language": {"type": "string", "description": "Programming language or format (e.g. python, javascript, markdown, text). For a code file/script, set this to the code's language."},
+                    "content": {"type": "string", "description": "The document content. For a code file, this is the RAW code — no markdown headings or ``` fences."}
                 },
                 "required": ["title", "content"]
             }
@@ -253,11 +253,11 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "update_document",
-            "description": "Replace the ENTIRE active document. ONLY use for genuine full rewrites (>50% of lines changed). For any smaller change, use edit_document — echoing back the whole file for small edits is wasteful.",
+            "description": "Replace the ENTIRE active document. ONLY use for genuine full rewrites (>50% of lines changed). For any smaller change, use edit_document — echoing back the whole file for small edits is wasteful. For a CODE FILE / SCRIPT, write RAW code (no markdown '# heading' or ``` fences) — the document's language auto-follows the content.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "Complete new document content"}
+                    "content": {"type": "string", "description": "Complete new document content. For a code file, the RAW code — no markdown headings or ``` fences."}
                 },
                 "required": ["content"]
             }

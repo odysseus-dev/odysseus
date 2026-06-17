@@ -127,6 +127,26 @@ def _sniff_doc_language(text: str) -> str:
         return "css"
     return "markdown"
 
+def _maybe_promote_language(doc, new_content: str) -> None:
+    """Make an edited document's language follow its content — but only safely.
+
+    So "make a python script in the active document" turns an empty/markdown
+    placeholder into a real python doc (raw code → python highlighting), while a
+    document the user deliberately made markdown is left alone. Rules:
+      - only act when the current language is the default (markdown/text/unset),
+      - skip content containing a ``` fence (that IS a markdown doc), and
+      - only promote to a real code language (never re-flip to markdown/email).
+    """
+    cur = (getattr(doc, "language", "") or "").lower()
+    if cur not in ("", "markdown", "text"):
+        return
+    if "```" in (new_content or ""):
+        return
+    sniffed = _sniff_doc_language(new_content or "")
+    if sniffed and sniffed not in ("markdown", "email"):
+        doc.language = sniffed
+
+
 def _looks_like_email_document(text: str = "", title: str = "") -> bool:
     import re as _re
     title_l = (title or "").strip().lower()
@@ -370,6 +390,8 @@ class UpdateDocumentTool:
             new_content = _coerce_email_document_content(doc.current_content or "", content) if is_email_doc else content.strip()
             if is_email_doc:
                 doc.language = "email"
+            else:
+                _maybe_promote_language(doc, new_content)
 
             new_ver = doc.version_count + 1
             ver = DocumentVersion(
@@ -464,6 +486,7 @@ class EditDocumentTool:
                 summary=f"Edited by {_active_model or 'AI'} ({applied} edit(s))",
                 source="ai",
             )
+            _maybe_promote_language(doc, updated_content)
             doc.current_content = updated_content
             doc.version_count = new_ver
             db.add(ver)
