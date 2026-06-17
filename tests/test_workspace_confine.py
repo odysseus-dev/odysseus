@@ -407,8 +407,43 @@ def test_request_workspace_gate(ws, monkeypatch):
     # drop silently, and the path never reaches the filesystem.
     assert cr._resolve_request_workspace(object(), ws) == ("", "")
     assert cr._resolve_request_workspace(object(), "/nonexistent/xyz") == ("", "")
+    assert cr._resolve_request_workspace(object(), "") == ("", "")
     assert vet_calls == []
 
     monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda owner: True)
     assert cr._resolve_request_workspace(object(), ws) == (os.path.realpath(ws), "")
     assert cr._resolve_request_workspace(object(), "/nonexistent/xyz") == ("", "/nonexistent/xyz")
+
+
+def test_request_workspace_defaults_to_mounted_workspace(monkeypatch, ws):
+    """A missing workspace form value should still bind the standard Docker
+    workspace mount when it is present and the caller is allowed to use it."""
+    import routes.chat_routes as cr
+
+    monkeypatch.setattr(cr, "get_current_user", lambda req: "admin")
+
+    import src.tool_security as ts
+    monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda owner: True)
+    monkeypatch.setattr(cr, "_DEFAULT_MOUNTED_WORKSPACE", "/workspace")
+    monkeypatch.setattr(cr.os.path, "isdir", lambda path: path == "/workspace")
+
+    import src.tool_execution as te
+    monkeypatch.setattr(te, "vet_workspace", lambda path: ws if path == "/workspace" else None)
+
+    assert cr._resolve_request_workspace(object(), "") == (ws, "")
+    assert cr._resolve_request_workspace(object(), None) == (ws, "")
+
+
+def test_request_workspace_default_is_not_rejected_when_missing(monkeypatch):
+    """If the conventional mount is absent, omission just means no workspace;
+    no workspace_rejected event should be emitted for an implicit default."""
+    import routes.chat_routes as cr
+
+    monkeypatch.setattr(cr, "get_current_user", lambda req: "admin")
+
+    import src.tool_security as ts
+    monkeypatch.setattr(ts, "owner_is_admin_or_single_user", lambda owner: True)
+    monkeypatch.setattr(cr, "_DEFAULT_MOUNTED_WORKSPACE", "/workspace")
+    monkeypatch.setattr(cr.os.path, "isdir", lambda path: False)
+
+    assert cr._resolve_request_workspace(object(), "") == ("", "")

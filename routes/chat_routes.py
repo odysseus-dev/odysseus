@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Track active streams for partial-save safety net
 _active_streams: Dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
+_DEFAULT_MOUNTED_WORKSPACE = os.environ.get("ODYSSEUS_DEFAULT_WORKSPACE", "/workspace").strip()
 
 
 def _stream_set(session_id: str, **fields) -> None:
@@ -64,7 +65,7 @@ def _stream_set(session_id: str, **fields) -> None:
 
 
 def _resolve_request_workspace(request, raw_value) -> tuple:
-    """Resolve the posted workspace for this request: (workspace, rejected).
+    """Resolve the workspace for this request: (workspace, rejected).
 
     Privilege is checked BEFORE the path ever touches the filesystem. Only
     admin/single-user callers can use the workspace-backed file/shell tools,
@@ -75,17 +76,26 @@ def _resolve_request_workspace(request, raw_value) -> tuple:
 
     vet_workspace rejects non-directories, sensitive roots (.ssh, .gnupg,
     ...), and filesystem roots; on rejection there is no confinement and the
-    default tool-path allowlist applies. The rejected value is surfaced so the
-    stream can tell an admin client (which believes a workspace is active)
-    that it was dropped.
+    default tool-path allowlist applies. The rejected value is surfaced for
+    posted workspaces so the stream can tell an admin client (which believes a
+    workspace is active) that it was dropped.
+
+    If no workspace is posted, bind the conventional Docker workspace mount
+    when it exists and passes the same vetting. That covers local deployments
+    where /workspace is mounted but the browser has no persisted selection yet.
     """
-    requested = (raw_value or "").strip()
-    if not requested:
-        return "", ""
     from src.tool_security import owner_is_admin_or_single_user
     if not owner_is_admin_or_single_user(get_current_user(request)):
         return "", ""
+
     from src.tool_execution import vet_workspace
+
+    requested = (raw_value or "").strip()
+    if not requested:
+        if _DEFAULT_MOUNTED_WORKSPACE and os.path.isdir(_DEFAULT_MOUNTED_WORKSPACE):
+            return vet_workspace(_DEFAULT_MOUNTED_WORKSPACE) or "", ""
+        return "", ""
+
     workspace = vet_workspace(requested) or ""
     return workspace, (requested if not workspace else "")
 
