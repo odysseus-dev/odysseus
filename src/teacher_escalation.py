@@ -14,7 +14,10 @@ Detection tiers:
   Tier 1: regex on tool outputs + agent reply. Catches the "Unknown
           action 'switch'" / "I don't have a tool" / "Could you tell
           me which one?" type failures. Free, instant.
-  Tier 2 (TODO): LLM self-eval for ambiguous cases. Not in first cut.
+  Tier 2: LLM self-eval for ambiguous cases. Off by default; enabled
+          with the ODYSSEUS_TEACHER_TIER2=1 environment variable. The
+          stub returns None (no escalation) when the flag is unset, so
+          existing callers behave exactly as before.
 
 If Tier 1 fires FAILURE, call the teacher with the full failed
 context. Skill is only saved if the teacher's response itself passes
@@ -30,6 +33,54 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+
+# Feature flag for the Tier 2 LLM-self-eval escalation path. Off by
+# default; set ODYSSEUS_TEACHER_TIER2=1 to enable. The flag is read
+# once at import time so a process restart is required to flip it,
+# which is intentional: it avoids surprise behaviour in long-running
+# agent loops.
+import os as _os
+
+_TIER2_ENABLED = _os.environ.get("ODYSSEUS_TEACHER_TIER2", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
+
+def tier2_enabled() -> bool:
+    """True iff the Tier 2 LLM self-eval path is enabled by config.
+
+    Exposed so tests and operators can confirm the current process is
+    running with Tier 2 enabled without re-reading the environment.
+    """
+    return _TIER2_ENABLED
+
+
+async def tier2_self_eval(student_reply: str, tool_outputs: List[str]) -> Optional[bool]:
+    """Stub for Tier 2 LLM self-evaluation.
+
+    Tier 2 is intended to call a small classifier model on the
+    student's reply plus the most recent tool outputs and produce a
+    bool indicating whether the reply looks like a genuine answer or
+    a confused "I don't have that tool" style failure. The full model
+    is not wired in yet — when it is, this stub is the single place
+    that gets replaced.
+
+    While Tier 2 is disabled (the default), this returns ``None``
+    so callers can distinguish "Tier 2 said nothing useful" from
+    "Tier 2 said definitely-failed". Callers must treat ``None`` as
+    a non-decision and continue with Tier 1.
+
+    When Tier 2 is enabled, this stub still returns ``None`` until
+    the underlying model call is implemented. The function exists so
+    that downstream wiring can already exercise the Tier 2 path
+    (e.g. via ODYSSEUS_TEACHER_TIER2=1 in CI) without crashing.
+    """
+    del student_reply, tool_outputs
+    return None
 
 
 # Hosts considered SOTA / paid APIs — if the student's endpoint URL
