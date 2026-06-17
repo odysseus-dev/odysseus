@@ -18,5 +18,15 @@ export function useGalleryMutations() {
     rename: useMutation({ mutationFn: async (v: { id: string; name: string }) => { await json(`/api/gallery/${v.id}/rename`, { name: v.name }) }, onSuccess: inv }),
     rotate: useMutation({ mutationFn: async (v: { id: string; angle: number }) => { await json(`/api/gallery/${v.id}/rotate`, { angle: v.angle }) }, onSuccess: inv }),
     setTags: useMutation({ mutationFn: async (v: { id: string; tags: string }) => { await apiFetch(`/api/gallery/${v.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags: v.tags }) }) }, onSuccess: inv }),
+    upload: useMutation({
+      mutationFn: async (files: FileList | File[]) => {
+        for (const f of Array.from(files)) {
+          const fd = new FormData(); fd.set("file", f)
+          const r = await apiFetch("/api/gallery/upload", { method: "POST", body: fd })
+          if (!r.ok) throw new Error("upload failed")
+        }
+      },
+      onSuccess: inv,
+    }),
   }
 }

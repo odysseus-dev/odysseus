@@ -38,5 +38,19 @@ export function useDocMutations() {
       mutationFn: async (id: string) => { const r = await apiFetch(`/api/document/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("delete failed") },
       onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
     }),
+    create: useMutation({
+      mutationFn: async (v: { title: string }) => {
+        const r = await apiFetch("/api/document", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: v.title, content: "" }) })
+        if (!r.ok) throw new Error("create failed"); return r.json() as Promise<DocFull>
+      },
+      onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+    }),
+    rename: useMutation({
+      mutationFn: async (v: { id: string; title: string }) => {
+        const r = await apiFetch(`/api/document/${v.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: v.title }) })
+        if (!r.ok) throw new Error("rename failed"); return r.json()
+      },
+      onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["document", v.id] }); qc.invalidateQueries({ queryKey: ["documents"] }) },
+    }),
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { FileText, ArrowLeft, Save, Trash2 } from "lucide-react"
+import { FileText, ArrowLeft, Save, Trash2, Plus } from "lucide-react"
 import { useDocuments, useDocument, useDocMutations } from "@/api/documents"
 import { Button } from "@/components/ui/button"
 
@@ -33,12 +33,17 @@ function Editor({ id, onBack }: { id: string; onBack: () => void }) {
 
 export function DocumentsRoute() {
   const { data: docs } = useDocuments()
+  const { create } = useDocMutations()
   const [openId, setOpenId] = useState<string | null>(null)
   const list = docs || []
+  const newDoc = () => create.mutate({ title: "Untitled" }, { onSuccess: (d) => { if (d?.id) setOpenId(d.id) } })
   if (openId) return <div className="mx-auto h-full w-full max-w-3xl"><Editor id={openId} onBack={() => setOpenId(null)} /></div>
   return (
     <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
-      <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">Library</header>
+      <header className="flex h-13 shrink-0 items-center justify-between border-b px-4">
+        <span className="text-sm font-semibold">Library</span>
+        <Button size="sm" disabled={create.isPending} onClick={newDoc}><Plus className="size-4" />New document</Button>
+      </header>
       <div className="flex-1 overflow-y-auto p-4">
         <div className="space-y-2">
           {list.map((d) => (

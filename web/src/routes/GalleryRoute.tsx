@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react"
-import { Star, Trash2, X, RotateCcw, RotateCw, Save } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Star, Trash2, X, RotateCcw, RotateCw, Save, Upload, Search, Download } from "lucide-react"
 import { useGallery, useGalleryMutations } from "@/api/gallery"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -45,6 +45,7 @@ function Lightbox({ img, onClose }: { img: GalleryImage; onClose: () => void }) 
           </div>
           <div className="mt-auto flex gap-2">
             <Button size="sm" variant="outline" className="flex-1" onClick={() => favorite.mutate(img.id)}><Star className={cn("size-4", img.favorite && "fill-current")} />{img.favorite ? "Favorited" : "Favorite"}</Button>
+            <Button size="sm" variant="outline" title="Download" onClick={() => window.open(img.url, "_blank")}><Download className="size-4" /></Button>
             <Button size="sm" variant="outline" onClick={() => { if (confirm("Delete this image?")) { remove.mutate(img.id); onClose() } }}><Trash2 className="size-4" /></Button>
           </div>
         </div>
@@ -55,15 +56,28 @@ function Lightbox({ img, onClose }: { img: GalleryImage; onClose: () => void }) 
 
 export function GalleryRoute() {
   const { data: images } = useGallery()
-  const { favorite, remove } = useGalleryMutations()
+  const { favorite, remove, upload } = useGalleryMutations()
   const [open, setOpen] = useState<GalleryImage | null>(null)
+  const [q, setQ] = useState("")
+  const fileRef = useRef<HTMLInputElement>(null)
+  const list = (images || []).filter((i) => !q || `${i.prompt || ""} ${i.filename || ""} ${i.tags || ""}`.toLowerCase().includes(q.toLowerCase()))
   return (
     <div className="relative flex h-full flex-col">
       {open && <Lightbox img={images?.find((i) => i.id === open.id) || open} onClose={() => setOpen(null)} />}
-      <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">Gallery</header>
+      <header className="flex h-13 shrink-0 items-center justify-between gap-3 border-b px-4">
+        <span className="text-sm font-semibold">Gallery</span>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="h-8 w-40 rounded-md border bg-background pl-8 pr-2 text-sm outline-none focus-visible:border-ring" />
+          </div>
+          <input ref={fileRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) upload.mutate(e.target.files); if (fileRef.current) fileRef.current.value = "" }} />
+          <Button size="sm" disabled={upload.isPending} onClick={() => fileRef.current?.click()}><Upload className="size-4" />{upload.isPending ? "Uploading…" : "Upload"}</Button>
+        </div>
+      </header>
       <div className="flex-1 overflow-y-auto p-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-          {(images || []).map((img) => (
+          {list.map((img) => (
             <div key={img.id} className="group relative cursor-pointer overflow-hidden rounded-lg border bg-card" onClick={() => setOpen(img)}>
               <img src={img.url} alt={img.prompt || img.filename} loading="lazy" className="aspect-square w-full object-cover" />
               <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -82,7 +96,7 @@ export function GalleryRoute() {
             </div>
           ))}
         </div>
-        {(images || []).length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No images yet.</p>}
+        {list.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">{q ? "No matches." : "No images yet."}</p>}
       </div>
     </div>
   )
