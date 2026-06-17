@@ -1651,7 +1651,7 @@ def _compute_final_metrics(
 # read-only / Q&A turns are not.
 _VERIFIER_EFFECTFUL_TOOLS = {
     "create_document", "update_document", "edit_document",
-    "bash", "python", "write_file",
+    "bash", "python", "write_file", "edit_file",
 }
 _VERIFIER_MAX_ROUNDS = 2  # cap re-verify cycles per turn — never loop forever
 

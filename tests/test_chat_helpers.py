@@ -289,6 +289,87 @@ def test_prepare_agent_response_for_save_accepts_file_tool_write_success():
     assert "agent_file_mutation_verification_failed" not in metadata
 
 
+def test_prepare_agent_response_for_save_rejects_mismatched_file_tool_path():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [
+            {
+                "tool": "write_file",
+                "command": "unrelated.txt\nnot the requested copy",
+                "output": "Wrote 22 bytes to /workspace/unrelated.txt",
+                "exit_code": 0,
+            }
+        ],
+        "round_texts": ["Done - README_copy.txt was created."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(
+        "raw accumulated",
+        metrics,
+        user_message="copy README.txt to README_copy.txt in the workspace",
+    )
+
+    assert "couldn't verify" in content
+    assert metadata["agent_file_mutation_verification_failed"] is True
+    assert "path" in metadata["agent_file_mutation_verification_reason"]
+    assert metadata["agent_unverified_final_response"] == "Done - README_copy.txt was created."
+
+
+def test_prepare_agent_response_for_save_rejects_missing_requested_line_evidence():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [
+            {
+                "tool": "write_file",
+                "command": "README_copy.txt\noriginal contents only",
+                "output": "Wrote 22 bytes to /workspace/README_copy.txt",
+                "exit_code": 0,
+            }
+        ],
+        "round_texts": ["Done - README_copy.txt was created with the requested final line."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(
+        "raw accumulated",
+        metrics,
+        user_message='copy README.txt to README_copy.txt and add "This is a test copy" at the end',
+    )
+
+    assert "couldn't verify" in content
+    assert metadata["agent_file_mutation_verification_failed"] is True
+    assert "content" in metadata["agent_file_mutation_verification_reason"]
+
+
+def test_prepare_agent_response_for_save_accepts_path_and_requested_line_evidence():
+    metrics = {
+        "model": "agent-model",
+        "tool_events": [
+            {
+                "tool": "write_file",
+                "command": "README_copy.txt\noriginal contents\nThis is a test copy\n",
+                "output": "Wrote 43 bytes to /workspace/README_copy.txt",
+                "exit_code": 0,
+                "diff": {
+                    "file": "README_copy.txt",
+                    "text": "+This is a test copy",
+                },
+            }
+        ],
+        "round_texts": ["Done - README_copy.txt was created with the requested final line."],
+    }
+
+    content, metadata = prepare_agent_response_for_save(
+        "raw accumulated",
+        metrics,
+        user_message='copy README.txt to README_copy.txt and add "This is a test copy" at the end',
+    )
+
+    assert content == "Done - README_copy.txt was created with the requested final line."
+    assert metadata["agent_file_mutation_verified"] is True
+    assert metadata["agent_file_mutation_verification_reason"] == "matched successful file-tool evidence"
+    assert "agent_file_mutation_verification_failed" not in metadata
+
+
 def test_prepare_agent_response_for_save_does_not_certify_shell_write_success():
     metrics = {
         "model": "agent-model",
