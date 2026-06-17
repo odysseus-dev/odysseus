@@ -18,7 +18,6 @@ import spinnerModule from './spinner.js';
 import themeModule from './theme.js';
 import documentModule from './document.js';
 import workspaceModule from './workspace.js';
-import ShellWorkspace from './shellWorkspace.js';
 import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
@@ -1843,10 +1842,12 @@ async function _cmdShell(args, ctx) {
   const cmd = args.join(' ');
   if (!cmd) { slashReply('Usage: /sh command'); return true; }
 
-  // If a Docker workspace is selected in shell mode, run inside it instead of
-  // the host shell. Selection is managed by the shell-mode workspace picker.
-  const wsId = ShellWorkspace.getSelected();
-  if (wsId) return _cmdShellInWorkspace(cmd, wsId, ctx);
+  // If the docker-workspaces package is installed and a workspace is selected
+  // in shell mode, run inside that container instead of the host shell. The
+  // package exposes window.OdysseusShellWS; absent it, /sh stays on the host.
+  const router = window.OdysseusShellWS;
+  const wsId = router && router.getSelected ? router.getSelected() : '';
+  if (router && wsId) return _cmdShellInWorkspace(router, cmd, wsId, ctx);
 
   slashReply(`<pre>$ ${ctx.esc(cmd)}\nRunning...</pre>`);
   try {
@@ -1869,13 +1870,14 @@ async function _cmdShell(args, ctx) {
 }
 
 /** Run a /sh command inside the selected Docker workspace container.
- *  Handles the MEDIUM-risk guard approval flow by rendering an inline
- *  "Approve & run" button that re-issues the command with a guard token. */
-async function _cmdShellInWorkspace(cmd, wsId, ctx, guardToken) {
+ *  `router` is window.OdysseusShellWS (provided by the docker-workspaces
+ *  package). Handles the MEDIUM-risk guard approval flow by rendering an
+ *  inline "Approve & run" button that re-issues the command with a guard token. */
+async function _cmdShellInWorkspace(router, cmd, wsId, ctx, guardToken) {
   const tag = `ws:${wsId.slice(0, 8)}`;
   if (!guardToken) slashReply(`<pre>[${tag}] $ ${ctx.esc(cmd)}\nRunning...</pre>`);
   try {
-    const result = await ShellWorkspace.exec(wsId, cmd, guardToken);
+    const result = await router.exec(wsId, cmd, guardToken);
 
     if (result.status === 'pending_approval') {
       const reason = result.reason ? `\n${ctx.esc(result.reason)}` : '';
@@ -1889,15 +1891,15 @@ async function _cmdShellInWorkspace(cmd, wsId, ctx, guardToken) {
       approveBtn?.addEventListener('click', async () => {
         approveBtn.disabled = true; if (denyBtn) denyBtn.disabled = true;
         try {
-          await ShellWorkspace.guardDecide(result.token, 'approve');
-          await _cmdShellInWorkspace(cmd, wsId, ctx, result.token);
+          await router.guardDecide(result.token, 'approve');
+          await _cmdShellInWorkspace(router, cmd, wsId, ctx, result.token);
         } catch (e) {
           slashReply(`<pre>Approval failed: ${ctx.esc(e.message)}</pre>`);
         }
       });
       denyBtn?.addEventListener('click', async () => {
         approveBtn.disabled = true; denyBtn.disabled = true;
-        try { await ShellWorkspace.guardDecide(result.token, 'deny'); } catch (_) {}
+        try { await router.guardDecide(result.token, 'deny'); } catch (_) {}
         slashReply('<pre>Command denied.</pre>');
       });
       return true;

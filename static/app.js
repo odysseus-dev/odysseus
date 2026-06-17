@@ -49,7 +49,6 @@ import { initSectionCollapse, initSectionDrag } from './js/section-management.js
 // window.OdysseusPkg is available when widget modules execute.
 import './js/pkg-api.js';
 import PackageManager from './js/packages.js';
-import ShellWorkspace from './js/shellWorkspace.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -1700,9 +1699,8 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
-  // Shell workspace selector — appears next to the shell toggle when shell
-  // mode is active and routes /sh commands into the chosen Docker workspace.
-  try { ShellWorkspace.mount(); } catch (_) {}
+  // The shell-mode workspace selector is provided by the docker-workspaces
+  // package (shell-select.js) when installed; no core wiring needed here.
   try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)

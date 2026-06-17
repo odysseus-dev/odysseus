@@ -1,14 +1,19 @@
-// static/js/shellWorkspace.js
-// Lets shell-mode (`/sh`) commands run inside a selected Docker workspace
-// container instead of the host. A small <select> appears next to the shell
-// toggle button while shell mode is active; the chosen workspace id is then
-// used to route `/sh` commands to POST /api/docker-workspaces/{id}/exec.
-
-const ShellWorkspace = (() => {
+/**
+ * Docker Workspaces — Shell target selector
+ *
+ * Injects a workspace picker next to the shell-mode toggle. While shell mode
+ * is active the user can choose a Docker workspace; `/sh` commands then run
+ * inside that container instead of the host. Exposes window.OdysseusShellWS so
+ * the core shell command (slashCommands.js) can route to the selection. When
+ * this package is not installed the global is absent and `/sh` stays on the host.
+ *
+ * Loaded as a chatInputWidget hook; uses window.OdysseusPkg as a fallback mount.
+ */
+(function () {
+  'use strict';
   const KEY = 'odysseus-shell-ws-id';
   const WS_API = '/api/docker-workspaces';
 
-  // ── Selection state (persisted) ────────────────────────────────────────────
   function getSelected() {
     try { return localStorage.getItem(KEY) || ''; } catch (_) { return ''; }
   }
@@ -19,7 +24,6 @@ const ShellWorkspace = (() => {
     } catch (_) {}
   }
 
-  // ── API helpers ─────────────────────────────────────────────────────────────
   async function listWorkspaces() {
     try {
       const res = await fetch(WS_API, { credentials: 'same-origin' });
@@ -31,8 +35,8 @@ const ShellWorkspace = (() => {
     }
   }
 
-  /** Run a command in a workspace. Returns the raw JSON (either the exec
-   *  result {exit_code, output, ...} or {status:'pending_approval', token, ...}). */
+  // Run a command in a workspace. Returns the raw JSON (exec result or a
+  // {status:'pending_approval', token, command, reason} guard response).
   async function exec(wsId, command, guardToken) {
     const body = guardToken ? { command, guard_token: guardToken } : { command };
     const res = await fetch(`${WS_API}/${wsId}/exec`, {
@@ -45,7 +49,6 @@ const ShellWorkspace = (() => {
     return data;
   }
 
-  /** Approve/deny a pending guard token for a MEDIUM-risk command. */
   async function guardDecide(token, decision) {
     const res = await fetch(`/api/guard/decide/${token}`, {
       method: 'POST', credentials: 'same-origin',
@@ -59,8 +62,19 @@ const ShellWorkspace = (() => {
     return res.json().catch(() => ({}));
   }
 
-  // ── Selector UI ─────────────────────────────────────────────────────────────
-  async function populate(sel) {
+  // Expose the router so the core /sh handler can use the selection.
+  window.OdysseusShellWS = { getSelected, setSelected, exec, guardDecide };
+
+  // ── Selector element ─────────────────────────────────────────────────────
+  const sel = document.createElement('select');
+  sel.id = 'shell-ws-select';
+  sel.className = 'shell-ws-select';
+  sel.title = 'Run shell commands in…';
+  sel.setAttribute('aria-label', 'Shell workspace');
+  sel.style.display = 'none';
+  sel.addEventListener('change', () => setSelected(sel.value));
+
+  async function populate() {
     const current = getSelected();
     const workspaces = await listWorkspaces();
     sel.innerHTML = '';
@@ -88,45 +102,39 @@ const ShellWorkspace = (() => {
       sel.appendChild(opt);
     });
 
-    // If the previously-selected workspace was destroyed, fall back to Host.
-    if (current && !stillExists) {
-      setSelected('');
-      sel.value = '';
-    } else {
-      sel.value = current;
+    if (current && !stillExists) { setSelected(''); sel.value = ''; }
+    else { sel.value = current; }
+  }
+
+  function shellModeActive() {
+    const btn = document.getElementById('bash-toggle-btn');
+    if (!btn) return false;
+    return btn.style.display !== 'none' && btn.classList.contains('active');
+  }
+
+  function syncVisibility() {
+    const on = shellModeActive();
+    sel.style.display = on ? '' : 'none';
+    if (on) populate();
+  }
+
+  // ── Mount: place the selector right after the shell toggle ────────────────
+  function mount() {
+    const btn = document.getElementById('bash-toggle-btn');
+    if (btn && btn.parentNode) {
+      btn.insertAdjacentElement('afterend', sel);
+      const obs = new MutationObserver(syncVisibility);
+      obs.observe(btn, { attributes: true, attributeFilter: ['class', 'style'] });
+      syncVisibility();
+    } else if (window.OdysseusPkg) {
+      // Fallback: inject into the chat-input slot if the toggle isn't found.
+      window.OdysseusPkg.addWidget('chatInput', sel);
     }
   }
 
-  function _visible() {
-    const btn = document.getElementById('bash-toggle-btn');
-    if (!btn) return false;
-    const shown = btn.style.display !== 'none';
-    return shown && btn.classList.contains('active');
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mount, { once: true });
+  } else {
+    mount();
   }
-
-  function syncVisibility(sel) {
-    const on = _visible();
-    sel.style.display = on ? '' : 'none';
-    if (on) populate(sel);
-  }
-
-  // Wire the selector to shell-mode state. The selector shows only while the
-  // shell toggle is active and visible, and refreshes its workspace list each
-  // time it appears (so newly-created workspaces show up without a reload).
-  function mount() {
-    const sel = document.getElementById('shell-ws-select');
-    const btn = document.getElementById('bash-toggle-btn');
-    if (!sel || !btn) return;
-
-    sel.addEventListener('change', () => setSelected(sel.value));
-
-    const obs = new MutationObserver(() => syncVisibility(sel));
-    obs.observe(btn, { attributes: true, attributeFilter: ['class', 'style'] });
-
-    syncVisibility(sel);
-  }
-
-  return { KEY, getSelected, setSelected, listWorkspaces, exec, guardDecide, populate, mount, syncVisibility };
 })();
-
-export default ShellWorkspace;
