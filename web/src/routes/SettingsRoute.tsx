@@ -1,6 +1,6 @@
 import { Trash2 } from "lucide-react"
 import { useUi } from "@/stores/ui"
-import { useAuthStatus, logout } from "@/api/auth"
+import { useAuthStatus, useUsers, logout } from "@/api/auth"
 import { useModels, useDeleteEndpoint } from "@/api/models"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -9,9 +9,11 @@ export function SettingsRoute() {
   const { theme, setTheme } = useUi()
   const { data: status } = useAuthStatus()
   const { data: models } = useModels()
+  const { data: users } = useUsers()
   const del = useDeleteEndpoint()
   const user = status?.username || status?.user || "—"
   const endpoints = (models?.items || []).filter((e) => e.endpoint_id)
+  const userList = users || []
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
@@ -44,6 +46,20 @@ export function SettingsRoute() {
             {endpoints.length === 0 && <p className="py-2 text-sm text-muted-foreground">No saved endpoints.</p>}
           </div>
         </section>
+
+        {userList.length > 0 && (
+          <section>
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Users <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
+            <div className="space-y-2">
+              {userList.map((u) => (
+                <div key={u.username} className="flex items-center justify-between rounded-lg border bg-card p-3">
+                  <span className="text-sm font-medium">{u.username}</span>
+                  {u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</h2>
