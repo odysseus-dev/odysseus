@@ -15,9 +15,8 @@ function ThemedApp() {
     <AppShell>
       <Routes>
         <Route path="/" element={<Navigate to="/chat" replace />} />
-        <Route path="/chat" element={<ChatConsole />} />
-        <Route path="/chat/:sessionId" element={<ChatConsole />} />
-        <Route path="*" element={<ChatConsole />} />
+        <Route path="/chat/:sessionId?" element={<ChatConsole />} />
+        <Route path="*" element={<Navigate to="/chat" replace />} />
       </Routes>
     </AppShell>
   )
