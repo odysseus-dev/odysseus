@@ -38,11 +38,16 @@ async def export_trace(
             label=payload.label,
             note=payload.note
         )
+        if data is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Export failed: Unathorized or invalid session data."
+            )
 
         return {
             "status": "success",
             "data": data
-        }
+            }
 
     except Exception as e:
         raise HTTPException(
