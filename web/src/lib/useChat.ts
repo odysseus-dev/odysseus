@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { streamChat, type SseEvent } from "@/lib/sse"
+import { streamChat, streamResume, type SseEvent } from "@/lib/sse"
 import { useComposer } from "@/stores/composer"
 import { createSession, useHistory } from "@/api/sessions"
 import type { ChatMessage, HistoryMsg, Source } from "@/types"
@@ -45,6 +45,7 @@ export function useChat(sessionId?: string) {
   const abortRef = useRef<AbortController | null>(null)
   const sidRef = useRef<string | undefined>(sessionId)
   const seededRef = useRef<string | null>(null)
+  const resumeRef = useRef<string | null>(null)
   const { data: history } = useHistory(sessionId)
 
   useEffect(() => { sidRef.current = sessionId }, [sessionId])
@@ -57,12 +58,79 @@ export function useChat(sessionId?: string) {
     if (history?.history) { setMessages(historyToMessages(history.history)); seededRef.current = sid }
   }, [sessionId, history, streaming])
 
-  const patchAi = (fn: (m: ChatMessage) => ChatMessage) =>
+  // Reconnect to a detached run still streaming server-side (e.g. the user
+  // navigated away mid-response and came back). Additive: only fires when this
+  // hook isn't itself streaming and there's a genuinely active stream.
+  useEffect(() => {
+    const sid = sessionId
+    if (!sid || streaming || resumeRef.current === sid) return
+    let cancelled = false
+    const ctrl = new AbortController()
+    ;(async () => {
+      try {
+        const s = await fetch(`/api/chat/stream_status/${sid}`, { credentials: "same-origin" })
+        if (!s.ok || cancelled || sidRef.current !== sid) return
+        resumeRef.current = sid
+        setMessages((prev) => prev[prev.length - 1]?.streaming ? prev : [...prev, { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
+        setStreaming(true)
+        try {
+          await streamResume(sid, (e) => handleEvent(e, sid), ctrl.signal)
+        } finally {
+          patchAi((m) => ({ ...m, streaming: false }))
+          setStreaming(false)
+          seededRef.current = null // re-seed from the now-complete saved history
+          qc.invalidateQueries({ queryKey: ["history", sid] })
+          qc.invalidateQueries({ queryKey: ["sessions"] })
+        }
+      } catch { /* no active stream (404) — normal case */ }
+    })()
+    return () => { cancelled = true; ctrl.abort() }
+  }, [sessionId, streaming, handleEvent, patchAi, qc])
+
+  const patchAi = useCallback((fn: (m: ChatMessage) => ChatMessage) =>
     setMessages((prev) => {
       const c = [...prev]; const i = c.length - 1
       if (i >= 0 && c[i].role === "assistant") c[i] = fn(c[i])
       return c
-    })
+    }), [])
+
+  const handleEvent = useCallback(async (e: SseEvent, sid: string) => {
+    const ev = e as Record<string, unknown>
+    if (typeof ev.delta === "string") {
+      const d = ev.delta as string
+      if (ev.thinking) patchAi((m) => ({ ...m, reasoning: (m.reasoning || "") + d }))
+      else patchAi((m) => ({ ...m, content: m.content + d }))
+      return
+    }
+    switch (e.type) {
+      case "model_info": patchAi((m) => ({ ...m, model: ev.model as string })); break
+      case "tool_start": patchAi((m) => ({ ...m, tools: [...(m.tools || []), { name: (ev.tool_name as string) || "tool", input: ev.tool_input }] })); break
+      case "tool_output": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], output: ev.tool_output as string }; return { ...m, tools: t } }); break
+      case "tool_progress": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], progress: ev.progress_text as string }; return { ...m, tools: t } }); break
+      case "web_sources": case "sources": case "research_sources":
+        patchAi((m) => ({ ...m, sources: [...(m.sources || []), ...((ev.data as []) || [])] })); break
+      case "metrics":
+        patchAi((m) => ({ ...m, metrics: { tokens_in: ev.tokens_in as number, tokens_out: ev.tokens_out as number, cost: ev.cost as number, tok_per_sec: ev.tok_per_sec as number } })); break
+      case "research_progress":
+        patchAi((m) => ({ ...m, research: researchPhase(ev.data as Record<string, unknown>) })); break
+      case "research_done": {
+        const rsid = (ev.data as { session_id?: string })?.session_id || sid
+        try {
+          const r = await fetch(`/api/research/result/${rsid}`, { method: "POST", credentials: "same-origin" })
+          if (r.ok) {
+            const j = await r.json()
+            patchAi((m) => ({
+              ...m,
+              content: (j.result as string) || m.content,
+              sources: (j.sources as Source[])?.length ? (j.sources as Source[]) : m.sources,
+              research: undefined,
+            }))
+          }
+        } catch { /* result fetch failed; leave progress as-is */ }
+        break
+      }
+    }
+  }, [patchAi])
 
   const send = useCallback(async (text: string, attachmentIds?: string[]) => {
     if (!text.trim() || streaming) return
@@ -98,43 +166,7 @@ export function useChat(sessionId?: string) {
 
     const ctrl = new AbortController(); abortRef.current = ctrl
     try {
-      await streamChat(fd, async (e: SseEvent) => {
-        const ev = e as Record<string, unknown>
-        if (typeof ev.delta === "string") {
-          const d = ev.delta as string
-          if (ev.thinking) patchAi((m) => ({ ...m, reasoning: (m.reasoning || "") + d }))
-          else patchAi((m) => ({ ...m, content: m.content + d }))
-          return
-        }
-        switch (e.type) {
-          case "model_info": patchAi((m) => ({ ...m, model: ev.model as string })); break
-          case "tool_start": patchAi((m) => ({ ...m, tools: [...(m.tools || []), { name: (ev.tool_name as string) || "tool", input: ev.tool_input }] })); break
-          case "tool_output": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], output: ev.tool_output as string }; return { ...m, tools: t } }); break
-          case "tool_progress": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], progress: ev.progress_text as string }; return { ...m, tools: t } }); break
-          case "web_sources": case "sources": case "research_sources":
-            patchAi((m) => ({ ...m, sources: [...(m.sources || []), ...((ev.data as []) || [])] })); break
-          case "metrics":
-            patchAi((m) => ({ ...m, metrics: { tokens_in: ev.tokens_in as number, tokens_out: ev.tokens_out as number, cost: ev.cost as number, tok_per_sec: ev.tok_per_sec as number } })); break
-          case "research_progress":
-            patchAi((m) => ({ ...m, research: researchPhase(ev.data as Record<string, unknown>) })); break
-          case "research_done": {
-            const rsid = (ev.data as { session_id?: string })?.session_id || sid
-            try {
-              const r = await fetch(`/api/research/result/${rsid}`, { method: "POST", credentials: "same-origin" })
-              if (r.ok) {
-                const j = await r.json()
-                patchAi((m) => ({
-                  ...m,
-                  content: (j.result as string) || m.content,
-                  sources: (j.sources as Source[])?.length ? (j.sources as Source[]) : m.sources,
-                  research: undefined,
-                }))
-              }
-            } catch { /* result fetch failed; leave progress as-is */ }
-            break
-          }
-        }
-      }, ctrl.signal)
+      await streamChat(fd, (e: SseEvent) => handleEvent(e, sid!), ctrl.signal)
     } catch {
       patchAi((m) => ({ ...m, content: m.content || "_(stream interrupted)_" }))
     } finally {
@@ -142,7 +174,7 @@ export function useChat(sessionId?: string) {
       setStreaming(false); abortRef.current = null
       qc.invalidateQueries({ queryKey: ["sessions"] })
     }
-  }, [streaming, composer, navigate, qc])
+  }, [streaming, composer, navigate, qc, handleEvent])
 
   const stop = useCallback(async () => {
     abortRef.current?.abort()

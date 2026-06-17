@@ -19,7 +19,23 @@ export async function streamChat(
   })
   if (res.status === 401) { window.location.assign("/login"); return }
   if (!res.ok || !res.body) throw new Error(`chat_stream -> ${res.status}`)
-  const reader = res.body.getReader()
+  await readSse(res.body, onEvent)
+}
+
+// Reconnect to a detached run still streaming server-side (GET, no body).
+export async function streamResume(
+  sessionId: string,
+  onEvent: (e: SseEvent) => void | Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`/api/chat/resume/${sessionId}`, { credentials: "same-origin", signal })
+  if (res.status === 401) { window.location.assign("/login"); return }
+  if (!res.ok || !res.body) throw new Error(`chat/resume -> ${res.status}`)
+  await readSse(res.body, onEvent)
+}
+
+async function readSse(body: ReadableStream<Uint8Array>, onEvent: (e: SseEvent) => void | Promise<void>) {
+  const reader = body.getReader()
   const decoder = new TextDecoder()
   let buf = ""
   for (;;) {
