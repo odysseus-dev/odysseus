@@ -3,6 +3,7 @@ import { Trash2, UserPlus } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useAuthStatus, useUsers, useUserMutations, logout } from "@/api/auth"
 import { useModels, useDeleteEndpoint } from "@/api/models"
+import { AdminSections } from "@/components/settings/AdminSections"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -90,6 +91,8 @@ export function SettingsRoute() {
             </div>
           </section>
         )}
+
+        <AdminSections />
 
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</h2>
