@@ -46,17 +46,46 @@ def client():
 # --- Tests ---
 
 def test_redact_sensitive_data():
+    # Setup our exact settings dictionary fallback
     mock_settings = json.dumps({
-        "brave_api_key": "brave-dummy-key-for-testing",
-        "tavily_api_key": "tavily-dummy-key-for-testing"
+        "brave_api_key": "brave-dummy-key-for-testing"
     })
-    test_payload = {"messages": [{"id": "msg_1", "content": "Key: brave-dummy-key-for-testing.", "metadata": {"used_key": "tavily-dummy-key-for-testing"}}]}
+    
+    # Add an intensive payload containing generic sensitive infrastructure items
+    test_payload = {
+        "messages": [
+            {
+                "id": "msg_1",
+                "content": "Check out my key brave-dummy-key-for-testing or log in via Authorization: Bearer secrettoken123456.",
+                "metadata": {
+                    "local_url": "http://localhost:8000/api/v1/internal",
+                    "log_path": "C:\\Users\\Admin\\AppData\\local\\temp_log.txt"
+                }
+            }
+        ]
+    }
 
     with patch("builtins.open", mock_open(read_data=mock_settings)):
         result = services.trace_export.redact_sensitive_data(test_payload)
 
-    assert "brave-dummy-key-for-testing" not in result["messages"][0]["content"]
-    assert "[REDACTED]" in result["messages"][0]["content"]
+    scrubbed_msg = result["messages"][0]
+
+    # Verify Configured Key is redacted
+    assert "brave-dummy-key-for-testing" not in scrubbed_msg["content"]
+    
+    # Verify Bearer Token string pattern is redacted
+    assert "secrettoken123456" not in scrubbed_msg["content"]
+    
+    # Verify internal host urls are redacted
+    assert "localhost:8000" not in scrubbed_msg["metadata"]["local_url"]
+    
+    # Verify sensitive Windows filesystems structures are hidden
+    assert "AppData" not in scrubbed_msg["metadata"]["log_path"]
+    
+    # Confirm they all cleanly mapped into generic placeholders
+    assert "[REDACTED]" in scrubbed_msg["content"]
+    assert scrubbed_msg["metadata"]["local_url"] == "[REDACTED]"
+    assert scrubbed_msg["metadata"]["log_path"] == "[REDACTED]"
 
 def test_build_trace_records_owner_mismatch():
     """FIXED: Verify that an owner mismatch explicitly raises a PermissionError instead of returning None."""

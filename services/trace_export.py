@@ -1,5 +1,6 @@
 import json
 import sys
+import re
 from pathlib import Path
 
 # Ensure the repo root is on sys.path when executing this file directly.
@@ -10,47 +11,56 @@ if str(repo_root) not in sys.path:
 from typing import List
 from core.database import Session as DbSession, ChatMessage as DbChatMessage
 
-def redact_sensitive_data(session_properties: dict) -> dict:
-    """Scrub known API keys from message content and metadata."""
+GENERIC_SENSITIVE_PATTERNS = [
+    # Auth Headers & Bearer Tokens (catches common token prefixes)
+    re.compile(r'(?i)(bearer|token|auth|authorization|x-api-key)\s*[:=\s]\s*["\']?[a-zA-Z0-9_\-\.]{10,}["\']?'),
     
+    # Generic API keys assignment patterns (e.g. key="secret")
+    re.compile(r'(?i)(api[-_]?key|secret[-_]?key|password|passwd)\s*[:=]\s*["\']?[a-zA-Z0-9_\-\.]{8,}["\']?'),
+    
+    # Local/Internal Endpoints (localhost, 127.0.0.1, internal subnets)
+    re.compile(r'(?i)https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})[^\s"\'<>]*'),
+    
+    # Windows and Unix absolute/local filesystem paths
+    re.compile(r'(?:/[a-zA-Z0-9_\-]+)+/[a-zA-Z0-9_\-\.]+'), # Unix-like: /home/user/file.txt
+    re.compile(r'(?i)[a-z]:\\(?:[^\\\s<>:"|?*]+\\)*[^\\\s<>:"|?*]+') # Windows-like: C:\path\to\file
+]
+
+def redact_sensitive_data(payload: dict) -> dict:
+    """
+    Recursively scans the export payload. 
+    Redacts specific configured API keys AND generic high-risk infrastructure patterns.
+    """
+    # Load exact match strings from settings if available (your old logic)
+    exact_secrets = set()
     try:
         with open("data/settings.json", "r") as f:
             settings = json.load(f)
-    except FileNotFoundError:
-        print("Warning: /data/settings.json not found. Skipping redaction.")
-        return session_properties
+            for value in settings.values():
+                if isinstance(value, str) and len(value) > 4:
+                    exact_secrets.add(value)
+    except Exception:
+        pass
 
-    raw_secrets = [
-        settings.get("brave_api_key"),
-        settings.get("google_pse_key"),
-        settings.get("google_pse_cx"),
-        settings.get("tavily_api_key"),
-        settings.get("serper_api_key")
-    ]
-    
-    secrets_to_hide = [s for s in raw_secrets if s and isinstance(s, str)]
-
-    if not secrets_to_hide:
-        return session_properties
-
-    def scrub_text(text: str) -> str:
-        if not text:
+    def scan_and_scrub(text: str) -> str:
+        if not isinstance(text, str):
             return text
-        for secret in secrets_to_hide:
-            text = text.replace(secret, "[REDACTED]")
+
+        for secret in exact_secrets:
+            if secret in text:
+                text = text.replace(secret, "[REDACTED]")
+
+        for pattern in GENERIC_SENSITIVE_PATTERNS:
+            text = pattern.sub("[REDACTED]", text)
+            
         return text
 
-    for msg in session_properties.get("messages", []):
-        
-        if isinstance(msg.get("content"), str):
-            msg["content"] = scrub_text(msg["content"])
-            
-        if msg.get("metadata"):
-            meta_str = json.dumps(msg["metadata"])
-            scrubbed_meta_str = scrub_text(meta_str)
-            msg["metadata"] = json.loads(scrubbed_meta_str)
-
-    return session_properties
+    if isinstance(payload, dict):
+        return {k: scan_and_scrub(v) if isinstance(v, str) else redact_sensitive_data(v) for k, v in payload.items()}
+    elif isinstance(payload, list):
+        return [scan_and_scrub(item) if isinstance(item, str) else redact_sensitive_data(item) for item in payload]
+    
+    return payload
 
 def build_trace_records(
     db,
