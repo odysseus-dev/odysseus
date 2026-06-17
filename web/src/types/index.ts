@@ -19,3 +19,7 @@ export interface ChatMessage {
   role: "user" | "assistant"; content: string; reasoning?: string; model?: string;
   tools?: ToolEvent[]; sources?: Source[]; streaming?: boolean;
 }
+export interface Memory {
+  id: string; text: string; category?: string; categories?: string[];
+  source?: string; timestamp?: number; session_id?: string;
+}
