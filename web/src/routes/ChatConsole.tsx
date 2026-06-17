@@ -44,7 +44,14 @@ export function ChatConsole() {
               </div>
             </div>
           ) : (
-            <div className="mx-auto w-full max-w-[768px] space-y-6 px-4 py-6">{messages.map((m, i) => <Message key={i} m={m} />)}</div>
+            <div className="mx-auto w-full max-w-[768px] space-y-6 px-4 py-6">{messages.map((m, i) => (
+              <Message key={i} m={m}
+                onRegenerate={m.role === "assistant" && !streaming ? () => {
+                  for (let j = i - 1; j >= 0; j--) { if (messages[j].role === "user") { send(messages[j].content); break } }
+                } : undefined}
+                onEdit={m.role === "user" && !streaming ? () => window.dispatchEvent(new CustomEvent("odysseus:set-composer", { detail: m.content })) : undefined}
+              />
+            ))}</div>
           )}
         </div>
         <Composer onSend={send} onStop={stop} streaming={streaming} />

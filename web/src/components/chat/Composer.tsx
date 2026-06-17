@@ -31,8 +31,10 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
   useEffect(() => { ref.current?.focus() }, [])
   useEffect(() => {
     const focus = () => ref.current?.focus()
+    const setText_ = (e: Event) => { const t = (e as CustomEvent).detail; if (typeof t === "string") { setText(t); requestAnimationFrame(() => { ref.current?.focus(); grow() }) } }
     window.addEventListener("odysseus:focus-composer", focus)
-    return () => window.removeEventListener("odysseus:focus-composer", focus)
+    window.addEventListener("odysseus:set-composer", setText_)
+    return () => { window.removeEventListener("odysseus:focus-composer", focus); window.removeEventListener("odysseus:set-composer", setText_) }
   }, [])
 
   const toggleMic = async () => {

@@ -19,6 +19,7 @@ export interface ChatMessage {
   role: "user" | "assistant"; content: string; reasoning?: string; model?: string;
   tools?: ToolEvent[]; sources?: Source[]; streaming?: boolean;
   research?: { phase: string; detail?: string };
+  modelActual?: string;
   metrics?: { tokens_in?: number; tokens_out?: number; cost?: number; tok_per_sec?: number };
 }
 export interface Memory {

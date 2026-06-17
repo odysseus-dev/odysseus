@@ -75,6 +75,7 @@ export function useChat(sessionId?: string) {
     }
     switch (e.type) {
       case "model_info": patchAi((m) => ({ ...m, model: ev.model as string })); break
+      case "model_actual": patchAi((m) => ({ ...m, modelActual: ev.model as string, model: m.model || (ev.requested_model as string) })); break
       case "tool_start": patchAi((m) => ({ ...m, tools: [...(m.tools || []), { name: (ev.tool_name as string) || "tool", input: ev.tool_input }] })); break
       case "tool_output": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], output: ev.tool_output as string }; return { ...m, tools: t } }); break
       case "tool_progress": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], progress: ev.progress_text as string }; return { ...m, tools: t } }); break
