@@ -45,7 +45,7 @@ export function useChat(sessionId?: string) {
       return c
     })
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, attachmentIds?: string[]) => {
     if (!text.trim() || streaming) return
     let sid = sidRef.current
     if (!sid) {
@@ -65,6 +65,7 @@ export function useChat(sessionId?: string) {
     const fd = new FormData()
     fd.set("message", text)
     fd.set("session", sid)
+    if (attachmentIds && attachmentIds.length) fd.set("attachments", JSON.stringify(attachmentIds))
     fd.set("mode", composer.mode)
     fd.set("allow_bash", String(composer.allowBash))
     if (composer.mode === "chat" && composer.useWeb) fd.set("use_web", "true")
