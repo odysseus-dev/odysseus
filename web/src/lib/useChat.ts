@@ -4,7 +4,26 @@ import { useQueryClient } from "@tanstack/react-query"
 import { streamChat, type SseEvent } from "@/lib/sse"
 import { useComposer } from "@/stores/composer"
 import { createSession, useHistory } from "@/api/sessions"
-import type { ChatMessage, HistoryMsg } from "@/types"
+import type { ChatMessage, HistoryMsg, Source } from "@/types"
+
+function researchPhase(d: Record<string, unknown>): { phase: string; detail?: string } {
+  const phase = (d?.phase as string) || "researching"
+  const round = d?.round as number | undefined
+  const sources = d?.total_sources as number | undefined
+  const msg = d?.message as string | undefined
+  const title = (d?.title as string) || (d?.url as string)
+  let detail: string | undefined
+  switch (phase) {
+    case "planning": detail = "Planning the research…"; break
+    case "searching": detail = `Searching${round ? ` · round ${round}` : ""}${sources != null ? ` · ${sources} sources` : ""}`; break
+    case "reading": detail = title ? `Reading: ${title}` : "Reading sources…"; break
+    case "analyzing": detail = `Analyzing findings${round ? ` · round ${round}` : ""}`; break
+    case "writing": detail = msg || "Writing the report…"; break
+    case "warning": case "error": detail = msg; break
+    default: detail = msg
+  }
+  return { phase, detail }
+}
 
 function flatten(content: unknown): string {
   if (typeof content === "string") return content
@@ -79,7 +98,7 @@ export function useChat(sessionId?: string) {
 
     const ctrl = new AbortController(); abortRef.current = ctrl
     try {
-      await streamChat(fd, (e: SseEvent) => {
+      await streamChat(fd, async (e: SseEvent) => {
         const ev = e as Record<string, unknown>
         if (typeof ev.delta === "string") {
           const d = ev.delta as string
@@ -96,6 +115,24 @@ export function useChat(sessionId?: string) {
             patchAi((m) => ({ ...m, sources: [...(m.sources || []), ...((ev.data as []) || [])] })); break
           case "metrics":
             patchAi((m) => ({ ...m, metrics: { tokens_in: ev.tokens_in as number, tokens_out: ev.tokens_out as number, cost: ev.cost as number, tok_per_sec: ev.tok_per_sec as number } })); break
+          case "research_progress":
+            patchAi((m) => ({ ...m, research: researchPhase(ev.data as Record<string, unknown>) })); break
+          case "research_done": {
+            const rsid = (ev.data as { session_id?: string })?.session_id || sid
+            try {
+              const r = await fetch(`/api/research/result/${rsid}`, { method: "POST", credentials: "same-origin" })
+              if (r.ok) {
+                const j = await r.json()
+                patchAi((m) => ({
+                  ...m,
+                  content: (j.result as string) || m.content,
+                  sources: (j.sources as Source[])?.length ? (j.sources as Source[]) : m.sources,
+                  research: undefined,
+                }))
+              }
+            } catch { /* result fetch failed; leave progress as-is */ }
+            break
+          }
         }
       }, ctrl.signal)
     } catch {

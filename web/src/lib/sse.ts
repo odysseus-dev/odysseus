@@ -4,7 +4,7 @@ export type SseEvent = { type: string; [k: string]: unknown }
 
 export async function streamChat(
   form: FormData,
-  onEvent: (e: SseEvent) => void,
+  onEvent: (e: SseEvent) => void | Promise<void>,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch("/api/chat_stream", {
@@ -33,7 +33,9 @@ export async function streamChat(
       if (!line.startsWith("data:")) continue
       const payload = line.slice(5).trim()
       if (payload === "[DONE]") return
-      try { onEvent(JSON.parse(payload) as SseEvent) } catch { /* ignore keepalives */ }
+      let ev: SseEvent | null = null
+      try { ev = JSON.parse(payload) as SseEvent } catch { /* ignore keepalives */ }
+      if (ev) await onEvent(ev)
     }
   }
 }

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { ChevronRight, Brain } from "lucide-react"
+import { ChevronRight, Brain, Telescope, Loader2 } from "lucide-react"
 import { Markdown } from "./Markdown"
 import { ToolThread } from "./ToolThread"
 import { cn } from "@/lib/utils"
@@ -32,7 +32,15 @@ export function Message({ m }: { m: ChatMessage }) {
     <div className="space-y-3">
       {m.reasoning && <Reasoning text={m.reasoning} live={!!m.streaming && !m.content} />}
       {m.tools && m.tools.length > 0 && <ToolThread tools={m.tools} />}
-      {m.content ? <Markdown>{m.content}</Markdown> : m.streaming && !m.reasoning ? <div className="text-sm text-muted-foreground">Thinking…</div> : null}
+      {m.research && m.streaming && (
+        <div className="flex items-center gap-2.5 rounded-lg border bg-card px-3 py-2.5 text-sm">
+          <Telescope className="size-4 shrink-0 text-muted-foreground" />
+          <span className="font-medium capitalize">{m.research.phase}</span>
+          {m.research.detail && <span className="min-w-0 truncate text-muted-foreground">— {m.research.detail}</span>}
+          <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        </div>
+      )}
+      {m.content ? <Markdown>{m.content}</Markdown> : m.streaming && !m.reasoning && !m.research ? <div className="text-sm text-muted-foreground">Thinking…</div> : null}
       {m.sources && m.sources.length > 0 && (
         <div className="flex flex-wrap gap-1.5 pt-1">
           {m.sources.slice(0, 8).map((s, i) => (
