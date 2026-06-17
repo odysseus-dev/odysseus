@@ -23,3 +23,8 @@ export interface Memory {
   id: string; text: string; category?: string; categories?: string[];
   source?: string; timestamp?: number; session_id?: string;
 }
+export interface Note {
+  id: string; title?: string; content?: string; items?: unknown;
+  note_type?: string; color?: string; label?: string;
+  pinned?: boolean; archived?: boolean; due_date?: string; updated_at?: string;
+}
