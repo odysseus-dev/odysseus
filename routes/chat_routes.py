@@ -64,6 +64,56 @@ def _stream_set(session_id: str, **fields) -> None:
     rec.update(fields)
 
 
+def _save_cancelled_stream_placeholder(
+    session_manager,
+    session_id: str,
+    *,
+    model: str = "",
+    requested_model: str = "",
+    incognito: bool = False,
+) -> bool:
+    """Persist an empty stopped assistant row for explicit user cancellation.
+
+    The streaming cancellation path saves partial content when any assistant
+    text exists. This covers the complementary case: the user hits Stop before
+    the model has produced answer tokens. Without a server-side placeholder,
+    a refresh can make that turn look as if it never happened.
+    """
+    if incognito:
+        return False
+    try:
+        sess = session_manager.get_session(session_id)
+    except Exception:
+        return False
+
+    history = getattr(sess, "history", None) or []
+    if history:
+        last = history[-1]
+        md = getattr(last, "metadata", None) or {}
+        if (
+            getattr(last, "role", "") == "assistant"
+            and not (getattr(last, "content", "") or "").strip()
+            and md.get("stopped")
+            and md.get("cancelled")
+        ):
+            return False
+
+    selected_model = str(requested_model or getattr(sess, "model", "") or "").strip()
+    actual_model = str(model or selected_model).strip()
+    metadata = {"stopped": True, "cancelled": True}
+    if actual_model:
+        metadata["model"] = actual_model
+    if selected_model:
+        metadata["requested_model"] = selected_model
+    sess.add_message(ChatMessage("assistant", "", metadata=metadata))
+    try:
+        session_manager.save_sessions()
+    except Exception:
+        logger.exception("Failed to save cancelled placeholder for session %s", session_id)
+        return False
+    return True
+
+
 def _resolve_request_workspace(request, raw_value) -> tuple:
     """Resolve the workspace for this request: (workspace, rejected).
 
@@ -813,7 +863,16 @@ def setup_chat_routes(
             web_sources = ctx.web_sources
 
             # Register active stream for partial-save safety net
-            _active_streams[session] = {"status": "streaming", "partial": "", "query": message, "is_research": effective_do_research, "mode": _effective_mode}
+            _active_streams[session] = {
+                "status": "streaming",
+                "partial": "",
+                "query": message,
+                "is_research": effective_do_research,
+                "mode": _effective_mode,
+                "incognito": incognito,
+                "model": getattr(sess, "model", ""),
+                "requested_model": getattr(sess, "model", ""),
+            }
 
             # The client sent a workspace the server refused to bind (deleted
             # folder, file path, sensitive dir, filesystem root). Tell it up
@@ -1364,8 +1423,18 @@ def setup_chat_routes(
     @router.post("/api/chat/stop/{session_id}")
     async def chat_stop(request: Request, session_id: str) -> Dict[str, Any]:
         _verify_session_owner(request, session_id)
+        rec = _active_streams.get(session_id) or {}
         stopped = agent_runs.stop(session_id)
-        return {"stopped": stopped}
+        placeholder_saved = False
+        if stopped and not str(rec.get("partial") or "").strip():
+            placeholder_saved = _save_cancelled_stream_placeholder(
+                session_manager,
+                session_id,
+                model=str(rec.get("model") or ""),
+                requested_model=str(rec.get("requested_model") or ""),
+                incognito=bool(rec.get("incognito")),
+            )
+        return {"stopped": stopped, "placeholder_saved": placeholder_saved}
 
     # ------------------------------------------------------------------ #
     # GET /api/chat/stream_status — check if a stream is active for a session

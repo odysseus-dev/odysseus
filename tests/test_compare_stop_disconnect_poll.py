@@ -24,10 +24,76 @@ normal completed streams, and non-interference with detached chat/agent
 streams that are meant to keep running server-side after a client disconnect.
 """
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from src import agent_runs
+from routes.chat_routes import _save_cancelled_stream_placeholder
+
+
+class _PlaceholderSession:
+    def __init__(self, model="selected-model"):
+        self.model = model
+        self.history = []
+
+    def add_message(self, message):
+        self.history.append(message)
+
+
+class _PlaceholderSessionManager:
+    def __init__(self, session):
+        self.session = session
+        self.saved = 0
+
+    def get_session(self, session_id):
+        assert session_id == "sess-stop-placeholder"
+        return self.session
+
+    def save_sessions(self):
+        self.saved += 1
+
+
+def test_cancelled_placeholder_is_saved_once_for_empty_explicit_stop():
+    session = _PlaceholderSession()
+    manager = _PlaceholderSessionManager(session)
+
+    saved = _save_cancelled_stream_placeholder(
+        manager,
+        "sess-stop-placeholder",
+        model="actual-model",
+        requested_model="requested-model",
+    )
+
+    assert saved is True
+    assert manager.saved == 1
+    assert len(session.history) == 1
+    msg = session.history[-1]
+    assert msg.role == "assistant"
+    assert msg.content == ""
+    assert msg.metadata["stopped"] is True
+    assert msg.metadata["cancelled"] is True
+    assert msg.metadata["model"] == "actual-model"
+    assert msg.metadata["requested_model"] == "requested-model"
+
+    assert _save_cancelled_stream_placeholder(manager, "sess-stop-placeholder") is False
+    assert manager.saved == 1
+    assert len(session.history) == 1
+
+
+def test_cancelled_placeholder_is_not_saved_for_incognito():
+    session = _PlaceholderSession()
+    manager = _PlaceholderSessionManager(session)
+
+    saved = _save_cancelled_stream_placeholder(
+        manager,
+        "sess-stop-placeholder",
+        incognito=True,
+    )
+
+    assert saved is False
+    assert manager.saved == 0
+    assert session.history == []
 
 
 # --------------------------------------------------------------------------- #
@@ -277,7 +343,6 @@ def test_compare_mode_branch_skips_agent_runs_in_source():
     (bypassing agent_runs.start/subscribe) BEFORE the detached agent_runs.start
     call below it — otherwise compare streams would still be detached and a
     pane's Stop (closing the SSE) wouldn't cancel the upstream call."""
-    from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py").read_text(encoding="utf-8")
 
     branch_idx = src.index("if compare_mode:")
@@ -288,3 +353,15 @@ def test_compare_mode_branch_skips_agent_runs_in_source():
         "compare_mode must short-circuit to a direct (non-detached) "
         "StreamingResponse before normal streams are wrapped in agent_runs"
     )
+
+
+def test_empty_cancelled_bubble_uses_server_stop_persistence():
+    src = (Path(__file__).resolve().parents[1] / "static" / "js" / "chat.js").read_text(encoding="utf-8")
+
+    fn_idx = src.index("function _renderCancelledBubble(holder)")
+    next_fn_idx = src.index("  /**\n   * Detach current stream", fn_idx)
+    fn_src = src[fn_idx:next_fn_idx]
+
+    assert "/api/chat/stop/" in src
+    assert "inject_messages" not in fn_src
+    assert "Persistence is handled by POST /api/chat/stop/{session_id}" in fn_src

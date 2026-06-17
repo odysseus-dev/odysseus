@@ -3272,33 +3272,9 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     if (typeof createMsgFooter === 'function' && !holder.querySelector('.msg-footer')) {
       holder.appendChild(createMsgFooter(holder));
     }
-    // Persist as an assistant message with stopped+cancelled metadata so the
-    // chat-history loader renders the same indicator after a refresh.
-    // Include the model name so the bubble header still shows which model
-    // was running when the user hit Stop.
-    const sid = sessionModule.getCurrentSessionId();
-    if (sid) {
-      let modelName = '';
-      try { modelName = sessionModule.getCurrentModel?.() || ''; } catch {}
-      // Fallback: pull from the holder's existing meta (the streaming
-      // placeholder usually has the model set in the header already).
-      if (!modelName) {
-        modelName = holder.dataset.model
-          || holder.querySelector('.msg-header .msg-model')?.textContent
-          || '';
-      }
-      fetch(`${API_BASE}/api/session/${sid}/inject_messages`, {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{
-            role: 'assistant',
-            content: '',
-            metadata: { stopped: true, cancelled: true, model: modelName },
-          }],
-        }),
-      }).catch(() => {});
-    }
+    // Persistence is handled by POST /api/chat/stop/{session_id}. Keeping the
+    // save server-side prevents an early Stop from vanishing after refresh
+    // while avoiding duplicate empty assistant rows from the browser.
   }
 
   /**
