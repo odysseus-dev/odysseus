@@ -737,6 +737,15 @@ async def _execute_tool_block_impl(
         desc = f"{tool}: {first_line}"
         result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
             or {"error": f"{tool}: execution failed", "exit_code": 1}
+    elif tool == "delegate_to_claude_code":
+        # Admin-only (gated above via is_public_blocked_tool). No MCP server —
+        # run the in-process handler, forwarding progress_cb so the long build
+        # streams tool_progress to the UI. Without this branch the tool was
+        # registered in TOOL_HANDLERS but fell through to "Unknown tool type".
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"delegate_to_claude_code: {first_line}"
+        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
+            or {"error": "delegate_to_claude_code: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
         desc = f"{tool}: {content.split(chr(10))[0][:80]}"

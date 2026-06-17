@@ -60,6 +60,34 @@ def _find_npx() -> str:
             return npx_candidate
     return "npx"  # fallback, will fail with a clear error
 
+
+def _bundled_chromium_path():
+    """Resolve the bundled Chromium executable that Playwright installed under
+    PLAYWRIGHT_BROWSERS_PATH (default ~/.cache/ms-playwright).
+
+    @playwright/mcp defaults to the *branded* Chrome channel
+    (/opt/google/chrome/chrome), which this image does not ship — only the
+    bundled Chromium from `playwright install chromium` (INSTALL_BROWSER=true)
+    is baked in. Pointing the server at this path via --executable-path is what
+    lets browser_* tool calls actually launch. Globbing keeps it correct across
+    Chromium revision bumps (chromium-1226 -> chromium-NNNN on image rebuilds).
+    Returns None when no bundled Chromium is present (e.g. browser not baked).
+    """
+    import glob
+    roots = [
+        os.environ.get("PLAYWRIGHT_BROWSERS_PATH"),
+        os.path.expanduser("~/.cache/ms-playwright"),
+    ]
+    for root in roots:
+        if not root:
+            continue
+        for pat in ("chromium-*/chrome-linux64/chrome", "chromium-*/chrome-linux/chrome"):
+            hits = sorted(glob.glob(os.path.join(root, pat)))
+            if hits:
+                return hits[-1]  # highest revision
+    return None
+
+
 # Server definitions: id -> (script path relative to project root, display name)
 #
 # bash / python / filesystem / web_search were folded into native in-process
@@ -81,7 +109,16 @@ _BUILTIN_NPX_SERVERS = {
     "builtin_browser": {
         "name": "Built-in: Browser",
         "command": "npx",
-        "args": ["-y", "@playwright/mcp@latest", "--headless", "--caps", "vision"],
+        # --no-sandbox is REQUIRED here: the app runs as non-root (uid 1000) and
+        # Docker's default seccomp/AppArmor profile blocks the unprivileged user
+        # namespaces Chromium needs for its sandbox, with no setuid chrome_sandbox
+        # helper wired up. Without this flag every browser_* tool call aborts with
+        # "FATAL: No usable sandbox!" (SIGABRT, exit 134) the moment a page loads —
+        # which an agent surfaces to the user as "browser engine isn't installed".
+        # The container is already an isolation boundary, so dropping Chromium's
+        # inner sandbox here is acceptable for this single-operator, Tailscale-only
+        # deployment.
+        "args": ["-y", "@playwright/mcp@latest", "--headless", "--no-sandbox", "--caps", "vision"],
     }
 }
 
@@ -143,7 +180,22 @@ async def register_builtin_servers(mcp_manager):
             # task, which cascades cancellations into the rest of the event
             # loop and downs the app. Detecting installed-state up-front lets
             # us bail with a useful warning before we ever touch stdio_client.
-            args = cfg["args"]
+            args = list(cfg["args"])
+            # @playwright/mcp defaults to the branded Chrome *channel*, which
+            # this image doesn't ship — only the bundled Chromium baked in by
+            # INSTALL_BROWSER. Point the server at it so browser_* tool calls
+            # can actually launch (otherwise: "Chromium distribution 'chrome'
+            # is not found at /opt/google/chrome/chrome").
+            if server_id == "builtin_browser" and "--executable-path" not in args:
+                chromium = _bundled_chromium_path()
+                if chromium:
+                    args = args + ["--executable-path", chromium]
+                else:
+                    logger.warning(
+                        "builtin_browser: no bundled Chromium found under "
+                        "PLAYWRIGHT_BROWSERS_PATH; browser tools will fail until "
+                        "the image is built with INSTALL_BROWSER=true."
+                    )
             pkg_spec = _npx_package_from_args(args)
             if pkg_spec and not await _is_npx_package_cached(npx_path, pkg_spec):
                 logger.warning(

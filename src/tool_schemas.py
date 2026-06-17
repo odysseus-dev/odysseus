@@ -52,6 +52,22 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "delegate_to_claude_code",
+            "description": "Delegate a self-contained CODING/BUILD task to Claude Code (a separate, more capable coding agent running headless in this container, backed by an Ollama Cloud model). Use this for substantial software work the user asks to BUILD on disk — e.g. 'build a website', 'scaffold an app', 'write and run this script/project' — where you want stronger code quality than the local chat model. Claude Code autonomously writes/edits files and runs commands inside a confined build folder, then returns a summary + the list of files it created (under ./data/claude_builds/<subdir> on the host). Admin-only. Do NOT use it for quick edits, single-file snippets (use create_document/write_file), web search, or answering questions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "Full natural-language description of the build task. Be specific: what to build, the stack, files/structure, and any constraints. Claude Code gets only this — include everything it needs."},
+                    "subdir": {"type": "string", "description": "Folder name for the build under ./data/claude_builds/ (e.g. 'coffee-site'). Optional; defaults to 'build'. Basename only — no paths."},
+                    "model": {"type": "string", "description": "Override the Ollama model (default kimi-k2.7-code:cloud). Optional."}
+                },
+                "required": ["task"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": "Quick single web lookup for a fact or current event mid-task. NOT for 'research X' / 'do research on X' — those are deep-research jobs; use trigger_research instead.",
             "parameters": {

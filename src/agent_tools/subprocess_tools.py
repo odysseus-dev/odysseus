@@ -1,9 +1,30 @@
 import asyncio
+import os
+import signal
 import sys
 import time
 import collections
 from typing import Optional, Callable, Awaitable, Tuple, Dict
 from src.constants import MAX_OUTPUT_CHARS
+
+
+def _terminate(proc: asyncio.subprocess.Process, *, process_group: bool) -> None:
+    """Kill a finished-with subprocess. When ``process_group`` is True (the
+    child was launched with ``start_new_session=True``), SIGKILL the whole
+    process group so descendants — e.g. ``ollama launch`` -> ``claude`` ->
+    ``node`` — die too, instead of orphaning and outliving the wall-clock cap.
+    Falls back to a plain ``proc.kill()`` if the group teardown isn't available
+    (no pid, already reaped, or non-POSIX)."""
+    if process_group and hasattr(os, "killpg"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
 
 DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
 DEFAULT_PYTHON_TIMEOUT = 60 * 60
@@ -16,6 +37,7 @@ async def _run_subprocess_streaming(
     *,
     timeout: float,
     progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+    kill_process_group: bool = False,
 ) -> Tuple[str, str, Optional[int], bool]:
     started = time.time()
     stdout_full: list[str] = []
@@ -58,19 +80,13 @@ async def _run_subprocess_streaming(
         await asyncio.wait_for(proc.wait(), timeout=timeout)
     except asyncio.TimeoutError:
         timed_out = True
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _terminate(proc, process_group=kill_process_group)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
         except Exception:
             pass
     except asyncio.CancelledError:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        _terminate(proc, process_group=kill_process_group)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
         except Exception:

@@ -49,6 +49,8 @@ NON_ADMIN_BLOCKED_TOOLS = {
     "stop_served_model",
     "cancel_download",
     "adopt_served_model",
+    # Spawns an autonomous Claude Code with shell/file access in the container.
+    "delegate_to_claude_code",
 }
 
 
@@ -113,7 +115,7 @@ _PLAN_MODE_KNOWN_MUTATORS = {
     "generate_image", "edit_image", "trigger_research", "manage_research",
     # Shell is never read-only-safe; block it explicitly so it stays out of plan
     # mode even if the schema list fails to load.
-    "bash", "python",
+    "bash", "python", "delegate_to_claude_code",
 }
 
 
