@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { apiJson, apiFetch } from "@/lib/api"
 
 export function useAuthStatus() {
@@ -26,4 +26,38 @@ export function useUsers() {
       }
     },
   })
+}
+
+export function useUserMutations() {
+  const qc = useQueryClient()
+  const inv = () => qc.invalidateQueries({ queryKey: ["users"] })
+  return {
+    create: useMutation({
+      mutationFn: async (v: { username: string; password: string; is_admin: boolean }) => {
+        const r = await apiFetch("/api/auth/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(v),
+        })
+        if (!r.ok) {
+          const msg = await r.json().catch(() => ({}))
+          throw new Error(msg.detail || (r.status === 409 ? "Username already taken" : "Create failed"))
+        }
+        return r.json()
+      },
+      onSuccess: inv,
+    }),
+    remove: useMutation({
+      mutationFn: async (username: string) => {
+        const r = await apiFetch("/api/auth/users", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username }),
+        })
+        if (!r.ok) throw new Error("Delete failed")
+        return r.json()
+      },
+      onSuccess: inv,
+    }),
+  }
 }

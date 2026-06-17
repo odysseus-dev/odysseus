@@ -1,6 +1,7 @@
-import { Trash2 } from "lucide-react"
+import { useState } from "react"
+import { Trash2, UserPlus } from "lucide-react"
 import { useUi } from "@/stores/ui"
-import { useAuthStatus, useUsers, logout } from "@/api/auth"
+import { useAuthStatus, useUsers, useUserMutations, logout } from "@/api/auth"
 import { useModels, useDeleteEndpoint } from "@/api/models"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -11,9 +12,22 @@ export function SettingsRoute() {
   const { data: models } = useModels()
   const { data: users } = useUsers()
   const del = useDeleteEndpoint()
+  const { create: createUser, remove: removeUser } = useUserMutations()
   const user = status?.username || status?.user || "—"
   const endpoints = (models?.items || []).filter((e) => e.endpoint_id)
   const userList = users || []
+  const [nu, setNu] = useState("")
+  const [np, setNp] = useState("")
+  const [nAdmin, setNAdmin] = useState(false)
+  const [uErr, setUErr] = useState("")
+  const addUser = () => {
+    if (!nu.trim() || np.length < 8) { setUErr("Username and 8+ char password required"); return }
+    setUErr("")
+    createUser.mutate({ username: nu.trim(), password: np, is_admin: nAdmin }, {
+      onSuccess: () => { setNu(""); setNp(""); setNAdmin(false) },
+      onError: (e: unknown) => setUErr(e instanceof Error ? e.message : "Failed"),
+    })
+  }
 
   return (
     <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
@@ -52,11 +66,27 @@ export function SettingsRoute() {
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Users <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
             <div className="space-y-2">
               {userList.map((u) => (
-                <div key={u.username} className="flex items-center justify-between rounded-lg border bg-card p-3">
-                  <span className="text-sm font-medium">{u.username}</span>
-                  {u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>}
+                <div key={u.username} className="group flex items-center justify-between rounded-lg border bg-card p-3">
+                  <span className="text-sm font-medium">{u.username}{u.username === user && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(you)</span>}</span>
+                  <div className="flex items-center gap-2">
+                    {u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>}
+                    {u.username !== user && (
+                      <button onClick={() => { if (confirm(`Delete user "${u.username}"?`)) removeUser.mutate(u.username) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Delete user"><Trash2 className="size-4" /></button>
+                    )}
+                  </div>
                 </div>
               ))}
+            </div>
+            <div className="mt-2 space-y-2 rounded-lg border bg-card p-3">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input value={nu} onChange={(e) => setNu(e.target.value)} placeholder="Username" autoComplete="off" className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
+                <input value={np} onChange={(e) => setNp(e.target.value)} type="password" placeholder="Password (8+ chars)" autoComplete="new-password" className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={nAdmin} onChange={(e) => setNAdmin(e.target.checked)} className="size-3.5 accent-foreground" />Administrator</label>
+                <Button size="sm" disabled={createUser.isPending} onClick={addUser}><UserPlus className="size-4" />{createUser.isPending ? "Adding…" : "Add user"}</Button>
+              </div>
+              {uErr && <p className="text-xs text-destructive">{uErr}</p>}
             </div>
           </section>
         )}
