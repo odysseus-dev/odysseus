@@ -71,6 +71,9 @@ def setup_packages_routes(package_manager):
             tmp_path.write_bytes(content)
 
             result = package_manager.install_package(str(tmp_path), owner=owner)
+            # Load the backend immediately so route registration happens now,
+            # not only on the next server restart.
+            package_manager.load_plugin(result["package_id"])
             return JSONResponse(status_code=201, content=result)
 
         except PermissionError as e:

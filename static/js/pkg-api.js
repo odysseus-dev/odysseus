@@ -120,10 +120,10 @@ function openPanel(id, title, opts = {}) {
     </div>`;
   document.body.appendChild(modal);
 
-  makeWindowDraggable(
-    modal.querySelector('.modal-content'),
-    modal.querySelector(`#${id}-header`)
-  );
+  makeWindowDraggable(modal, {
+    content: modal.querySelector('.modal-content'),
+    header:  modal.querySelector(`#${id}-header`),
+  });
   modal.querySelector(`#${id}-close-btn`).addEventListener('click', () => {
     _Modals.close(id);
   });
