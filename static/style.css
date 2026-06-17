@@ -38121,80 +38121,16 @@ body.theme-frosted .modal {
   padding: 4px 6px 8px;
 }
 
-/* Packages settings panel: cards stack full-width like every other settings
-   tab. (Replaces the old .pkg-panel wrapper that centered content at 900px.) */
-.pkg-settings-stack {
-  display: block;
-  width: 100%;
-}
-
-/* Kill the page-style outer padding/centering — the modal body already pads,
-   and the modal width already constrains the panel. */
+/* Panel chrome for hardware-monitor and docker-workspaces package widgets
+   when opened as floating panels via openPanel(). */
 .pkg-panel, .ws-panel, .hw-panel {
   max-width: none;
   margin: 0;
   padding: 0;
 }
-
-/* The modal header (the draggable title bar) already shows the panel name in
-   the accent colour, so the duplicate in-body title is removed. The header row
-   is kept only for its action button (Refresh / etc.) and lead description. */
-.pkg-panel-title, .ws-panel-title, .hw-panel-title {
-  display: none;
-}
-.pkg-panel-header, .ws-panel-header, .hw-panel-header {
-  align-items: center;
-  margin-bottom: 12px;
-}
-/* Hardware has no in-body subtitle — once the duplicate title is hidden only
-   the Refresh button remains, so anchor it to the top-right like a native
-   modal action rather than letting space-between float it left. */
+.pkg-panel-title, .ws-panel-title, .hw-panel-title { display: none; }
+.pkg-panel-header, .ws-panel-header, .hw-panel-header { align-items: center; margin-bottom: 12px; }
 .hw-panel-header { justify-content: flex-end; }
-.pkg-panel-subtitle, .ws-panel-subtitle {
-  font-size: 0.8rem;
-}
-
-/* Section groups → native "card heading + subtle divider" rhythm rather than a
-   heavy full-width bottom rule. Inner stat/gauge cards stay var(--panel) and
-   now pop against the var(--bg) modal body. */
-.hw-section {
-  margin-bottom: 14px;
-  padding-bottom: 0;
-  border-bottom: none;
-}
-.hw-section-title,
-.pkg-list-header h3, .ws-list-header h3 {
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: none;
-  letter-spacing: -0.02em;
-  opacity: 1;
-  color: var(--fg);
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
-}
-
-/* Compact the install drop zone to tool-modal scale. */
-.pkg-install-zone {
-  padding: 18px;
-  margin-bottom: 14px;
-  border-radius: 8px;
-}
-
-/* Cards: match the native .admin-card corner radius (8px, not 10px). */
+.pkg-panel-subtitle, .ws-panel-subtitle { font-size: 0.8rem; }
+.hw-section { margin-bottom: 14px; padding-bottom: 0; border-bottom: none; }
 .pkg-card, .ws-card { border-radius: 8px; margin-bottom: 8px; }
-
-/* In the Settings → Packages tab the panel content is wrapped in native
-   .admin-card containers; drop the extra modal-style spacing so it reads the
-   same as every other settings panel. */
-[data-settings-panel="packages"] .pkg-install-zone {
-  margin-bottom: 0;
-}
-[data-settings-panel="packages"] .pkg-list-header {
-  margin-bottom: 10px;
-}
-[data-settings-panel="packages"] .pkg-card:last-child,
-[data-settings-panel="packages"] .ws-card:last-child {
-  margin-bottom: 0;
-}
