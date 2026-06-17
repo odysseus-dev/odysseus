@@ -782,10 +782,20 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       fd.append('message', _finalMsgWithInject);
       fd.append('session', streamSessionId);
       if (ids.length) fd.append('attachments', JSON.stringify(ids));
-      // Auto-save & send active doc ID so the backend sees latest content
-      if (documentModule && documentModule.isPanelOpen() && documentModule.getCurrentDocId()) {
-        try { await documentModule.saveDocument({ silent: true }); } catch (_e) { /* best-effort */ }
-        fd.append('active_doc_id', documentModule.getCurrentDocId());
+      // Auto-save & send active doc ID so the backend sees latest content.
+      // If the panel is open on an empty "Untitled" ghost (no persisted doc),
+      // materialize it first so the AI actually receives the document the user
+      // is looking at — otherwise it can't see it and lists other library docs
+      // asking "which one?".
+      if (documentModule && documentModule.isPanelOpen()) {
+        let _activeDocId = documentModule.getCurrentDocId();
+        if (!_activeDocId && documentModule.ensureActiveDocId) {
+          try { _activeDocId = await documentModule.ensureActiveDocId(streamSessionId); } catch (_e) { /* best-effort */ }
+        }
+        if (_activeDocId) {
+          try { await documentModule.saveDocument({ silent: true }); } catch (_e) { /* best-effort */ }
+          fd.append('active_doc_id', _activeDocId);
+        }
       }
       // Active email context — when an email reader is open, pass its
       // uid/folder/account so "reply", "summarize", "what does this say"
