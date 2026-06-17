@@ -1,9 +1,32 @@
-import { useState } from "react"
-import { ChevronRight, Brain, Telescope, Loader2 } from "lucide-react"
+import { useRef, useState } from "react"
+import { ChevronRight, Brain, Telescope, Loader2, Volume2, Square } from "lucide-react"
 import { Markdown } from "./Markdown"
 import { ToolThread } from "./ToolThread"
+import { useVoiceCaps, speak } from "@/api/voice"
 import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/types"
+
+function SpeakButton({ text }: { text: string }) {
+  const { data: caps } = useVoiceCaps()
+  const [busy, setBusy] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  if (!caps?.tts) return null
+  const toggle = async () => {
+    if (playing) { audioRef.current?.pause(); audioRef.current = null; setPlaying(false); return }
+    setBusy(true)
+    try {
+      const a = await speak(text)
+      audioRef.current = a; setPlaying(true)
+      a.addEventListener("ended", () => setPlaying(false), { once: true })
+    } catch { /* unavailable */ } finally { setBusy(false) }
+  }
+  return (
+    <button onClick={toggle} title={playing ? "Stop" : "Read aloud"} className="inline-flex items-center gap-1 hover:text-foreground">
+      {busy ? <Loader2 className="size-3.5 animate-spin" /> : playing ? <Square className="size-3.5" /> : <Volume2 className="size-3.5" />}
+    </button>
+  )
+}
 
 function Reasoning({ text, live }: { text: string; live: boolean }) {
   const [open, setOpen] = useState(false)
@@ -48,12 +71,13 @@ export function Message({ m }: { m: ChatMessage }) {
           ))}
         </div>
       )}
-      {!m.streaming && (m.model || mt) && (
+      {!m.streaming && (m.model || mt || m.content) && (
         <div className="flex flex-wrap items-center gap-3 pt-0.5 text-[11px] text-muted-foreground">
           {m.model && <span>{m.model}</span>}
           {mt?.tokens_out != null && <span>{mt.tokens_out} tok</span>}
           {mt?.tok_per_sec != null && <span>{Math.round(mt.tok_per_sec)} tok/s</span>}
           {mt?.cost != null && <span>${Number(mt.cost).toFixed(4)}</span>}
+          {m.content && <SpeakButton text={m.content} />}
         </div>
       )}
     </div>

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react"
-import { ArrowUp, Square, Paperclip, X } from "lucide-react"
+import { ArrowUp, Square, Paperclip, X, Mic, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { uploadFiles } from "@/api/upload"
+import { useVoiceCaps, transcribe } from "@/api/voice"
+import { cn } from "@/lib/utils"
 
 export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, ids?: string[]) => void; onStop: () => void; streaming: boolean }) {
   const [text, setText] = useState("")
@@ -9,7 +11,36 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
   const [uploading, setUploading] = useState(false)
   const ref = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const { data: caps } = useVoiceCaps()
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const recRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
   useEffect(() => { ref.current?.focus() }, [])
+
+  const toggleMic = async () => {
+    if (recording) { recRef.current?.stop(); return }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const rec = new MediaRecorder(stream)
+      chunksRef.current = []
+      rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data) }
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop())
+        setRecording(false)
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" })
+        if (!blob.size) return
+        setTranscribing(true)
+        try {
+          const t = await transcribe(blob)
+          if (t) { setText((p) => (p ? p + " " : "") + t); requestAnimationFrame(grow) }
+        } catch { /* ignore */ } finally { setTranscribing(false); ref.current?.focus() }
+      }
+      recRef.current = rec
+      rec.start()
+      setRecording(true)
+    } catch { /* mic denied/unavailable */ }
+  }
   const grow = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px" }
   const submit = () => {
     if ((!text.trim() && atts.length === 0) || streaming || uploading) return
@@ -41,6 +72,11 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
             <Paperclip className="size-4" />
           </button>
           <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => onFiles(e.target.files)} />
+          {caps?.stt && (
+            <button onClick={toggleMic} disabled={transcribing} title={recording ? "Stop recording" : "Dictate"} className={cn("mb-0.5 rounded-md p-1.5 hover:bg-accent hover:text-foreground", recording ? "animate-pulse bg-destructive/15 text-destructive" : "text-muted-foreground")}>
+              {transcribing ? <Loader2 className="size-4 animate-spin" /> : <Mic className="size-4" />}
+            </button>
+          )}
           <textarea
             ref={ref} value={text} rows={1} placeholder={uploading ? "Uploading…" : "Message Odysseus…"}
             onChange={(e) => { setText(e.target.value); grow() }}
