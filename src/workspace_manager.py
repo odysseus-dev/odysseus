@@ -5,7 +5,6 @@ Chat history deletion NEVER affects workspace state — they are decoupled layer
 """
 import logging
 import uuid
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
