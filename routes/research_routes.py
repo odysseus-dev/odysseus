@@ -26,8 +26,13 @@ logger = logging.getLogger(__name__)
 # never pick these as its model. An OpenAI-style endpoint often lists
 # `text-embedding-ada-002` etc. first in its model list, which is why research
 # was failing with "Cannot reach model 'text-embedding-ada-002'".
+#
+# The bare "embed" substring also catches Ollama embedding models such as
+# `nomic-embed-text` / `mxbai-embed-large` (no "embedding" in the name); Ollama
+# lists the most-recently-pulled model first, so pulling one for RAG would
+# otherwise get it auto-picked for research (error: `... does not support chat`).
 _NON_CHAT_MODEL = (
-    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
+    "embed", "text-embedding", "embedding", "tts-", "whisper", "dall-e",
     "moderation", "rerank", "reranker", "clip", "stable-diffusion",
 )
 

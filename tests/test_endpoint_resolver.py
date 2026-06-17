@@ -127,6 +127,15 @@ class TestFirstChatModel:
         models = ["text-embedding-ada-002", "whisper-large-v3", "gpt-4o"]
         assert _first_chat_model(models) == "gpt-4o"
 
+    def test_skips_ollama_embed_models_listed_first(self):
+        # Ollama lists the most-recently-pulled model first and names embedding
+        # models without "embedding" (e.g. nomic-embed-text), so the bare
+        # "embed" substring must keep them out of chat auto-pick.
+        for embed in ("nomic-embed-text:latest", "mxbai-embed-large",
+                      "snowflake-arctic-embed"):
+            models = [embed, "qwen3.6:35b-a3b"]
+            assert _first_chat_model(models) == "qwen3.6:35b-a3b"
+
     def test_falls_back_to_first_when_all_non_chat(self):
         assert _first_chat_model(["whisper-large-v3"]) == "whisper-large-v3"
 

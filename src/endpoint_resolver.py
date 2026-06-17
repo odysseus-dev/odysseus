@@ -21,8 +21,15 @@ logger = logging.getLogger(__name__)
 # never an embedding/tts/etc. (an OpenAI-style endpoint often lists
 # `text-embedding-ada-002` first, which silently broke email-summarize and
 # other resolve_endpoint callers with "Cannot reach model").
+#
+# The bare "embed" substring is deliberate: Ollama embedding models use names
+# like `nomic-embed-text`, `mxbai-embed-large`, `snowflake-arctic-embed` that do
+# NOT contain "embedding", and Ollama lists the most-recently-pulled model first,
+# so pulling one for RAG would float it to the top and get it picked as the chat
+# model (error: `... does not support chat`). "embed" subsumes the older
+# "text-embedding"/"embedding" entries, which are kept for explicitness.
 _NON_CHAT_MODEL = (
-    "text-embedding", "embedding", "tts-", "whisper", "dall-e",
+    "embed", "text-embedding", "embedding", "tts-", "whisper", "dall-e",
     "moderation", "rerank", "reranker", "clip", "stable-diffusion",
 )
 
