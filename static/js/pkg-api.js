@@ -111,12 +111,12 @@ function openPanel(id, title, opts = {}) {
   modal.className = 'modal';
   modal.innerHTML = `
     <div class="modal-content" role="dialog" aria-label="${title.replace(/"/g, '')}"
-         style="width:min(${width},95vw);max-height:85vh;overflow-y:auto;padding:0">
+         style="width:min(${width},95vw);max-height:85vh;overflow-y:auto;padding:10px;background:var(--bg)">
       <div class="modal-header" id="${id}-header">
         <h4>${title}</h4>
         <button class="close-btn" id="${id}-close-btn" aria-label="Close">&#x2716;</button>
       </div>
-      <div id="${id}-body" style="padding:16px"></div>
+      <div id="${id}-body" class="pkg-modal-body"></div>
     </div>`;
   document.body.appendChild(modal);
 
