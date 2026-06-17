@@ -134,7 +134,9 @@ class TestMaybeCompactFourthMessage:
         cc.get_context_length = lambda url, model: context_length
         cc.llm_call_async = _fake_summary
         cc.resolve_endpoint = lambda which, owner=None: (None, None, None)
-        cc._update_session_history = lambda *a, **k: None
+        async def _fake_update(*a, **k):
+            pass
+        cc._update_session_history = _fake_update
         try:
             return asyncio.run(
                 maybe_compact(
@@ -192,3 +194,74 @@ class TestMaybeCompactFourthMessage:
         ]}
         result = self._run(messages)
         assert len(result) == 3 and result[2] is True
+
+
+class TestUpdateSessionHistoryAcquiresLock:
+    """_update_session_history must hold session_lock around replace_messages."""
+
+    def test_replace_messages_called_under_lock(self):
+        """The lock must be acquired before replace_messages is called and
+        released afterward — verified by recording lock state inside the stub."""
+        import asyncio
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        lock_held_during_replace = []
+
+        lock = asyncio.Lock()
+
+        class _FakeMgr:
+            def session_lock(self, sid):
+                return lock
+
+            def replace_messages(self, sid, msgs):
+                lock_held_during_replace.append(lock.locked())
+                return True
+
+        fake_mgr = _FakeMgr()
+
+        # Temporarily swap get_session_manager_instance
+        import src.context_compactor as cc_mod
+        import importlib
+
+        # Patch the import inside the function
+        import core.models as cm_mod_orig
+        # We need to mock get_session_manager_instance at the call site inside
+        # _update_session_history which does:
+        #   from core.models import get_session_manager_instance
+        # The easiest approach: patch core.models in sys.modules temporarily.
+        fake_core_models = MagicMock()
+        fake_core_models.get_session_manager_instance.return_value = fake_mgr
+        fake_core_models.ChatMessage = MagicMock(side_effect=lambda role, content, metadata=None: SimpleNamespace(role=role, content=content, metadata=metadata or {}))
+
+        saved = sys.modules.get("core.models")
+        sys.modules["core.models"] = fake_core_models
+
+        # Also patch cc.ChatMessage used in _update_session_history directly
+        orig_chat_message = cc_mod.ChatMessage
+        cc_mod.ChatMessage = fake_core_models.ChatMessage
+
+        try:
+            session = SimpleNamespace(
+                id="test-session-lock",
+                history=[
+                    SimpleNamespace(role="system", content="sys"),
+                    SimpleNamespace(role="user", content="u1"),
+                    SimpleNamespace(role="assistant", content="a1"),
+                    SimpleNamespace(role="user", content="u2"),
+                    SimpleNamespace(role="assistant", content="a2"),
+                ],
+            )
+            asyncio.run(cc_mod._update_session_history(session, split_point=2, summary="test summary", system_msg_count=1))
+        finally:
+            if saved is None:
+                sys.modules.pop("core.models", None)
+            else:
+                sys.modules["core.models"] = saved
+            cc_mod.ChatMessage = orig_chat_message
+
+        assert lock_held_during_replace == [True], (
+            "replace_messages was not called under session_lock — "
+            f"lock state during call: {lock_held_during_replace}"
+        )

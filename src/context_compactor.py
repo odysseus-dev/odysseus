@@ -398,7 +398,7 @@ async def maybe_compact(
     # offset — session.history INCLUDES the system messages, but
     # split_point is indexed against convo_msgs which does NOT. Without
     # this, the slice drops the leading system message(s).
-    _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
+    await _update_session_history(session, split_point, summary, system_msg_count=len(system_msgs))
 
     new_used = estimate_tokens(compacted)
     logger.info(
@@ -409,8 +409,8 @@ async def maybe_compact(
     return compacted, context_length, True
 
 
-def _update_session_history(session, split_point: int, summary: str,
-                            system_msg_count: int = 0):
+async def _update_session_history(session, split_point: int, summary: str,
+                                  system_msg_count: int = 0):
     """Update the in-memory session history after compaction.
 
     `split_point` is the index in `convo_msgs` (system-stripped). The
@@ -443,6 +443,7 @@ def _update_session_history(session, split_point: int, summary: str,
     except Exception:
         manager = None
     if manager and getattr(session, "id", None):
-        if manager.replace_messages(session.id, new_history):
-            return
+        async with manager.session_lock(session.id):
+            if manager.replace_messages(session.id, new_history):
+                return
     session.history = new_history
