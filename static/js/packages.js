@@ -1,30 +1,18 @@
 /**
- * Package Manager UI
- * Handles install, list, toggle, and remove of platform extension packages.
+ * Package Manager UI — settings panel edition.
+ * Styled to match native settings panels (admin-card / admin-user-row pattern).
  */
 
 const PackageManager = (() => {
   const API = '/api/packages';
 
-  // ── State ──────────────────────────────────────────────────────────────────
   let _packages = [];
   let _available = [];
   let _panel = null;
 
-  // ── Risk badge helper ──────────────────────────────────────────────────────
-  function _riskBadge(level) {
-    const map = {
-      LOW:    { cls: 'pkg-risk-low',    label: 'Safe' },
-      MEDIUM: { cls: 'pkg-risk-medium', label: 'Review' },
-      HIGH:   { cls: 'pkg-risk-high',   label: 'Blocked' },
-    };
-    const r = map[level] || map.LOW;
-    return `<span class="pkg-risk-badge ${r.cls}">${r.label}</span>`;
-  }
-
-  function _statusBadge(status) {
-    const cls = status === 'installed' ? 'pkg-status-on' : 'pkg-status-off';
-    return `<span class="pkg-status-badge ${cls}">${status}</span>`;
+  // ── Escape helper ──────────────────────────────────────────────────────────
+  function _esc(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
   // ── API helpers ────────────────────────────────────────────────────────────
@@ -50,15 +38,14 @@ const PackageManager = (() => {
     return res.json();
   }
 
-  // ── Load packages from API ─────────────────────────────────────────────────
+  // ── Load ───────────────────────────────────────────────────────────────────
   async function load() {
     try {
       const data = await _api('GET', '');
       _packages = data.packages || [];
-      return _packages;
     } catch (e) {
       console.error('[PackageManager] load failed:', e);
-      return [];
+      _packages = [];
     }
   }
 
@@ -66,159 +53,193 @@ const PackageManager = (() => {
     try {
       const data = await _api('GET', '/available');
       _available = data.available || [];
-      return _available;
     } catch (e) {
       _available = [];
-      return [];
     }
   }
 
-  // ── Render package card ────────────────────────────────────────────────────
-  function _renderCard(pkg) {
+  // ── Risk badge ─────────────────────────────────────────────────────────────
+  function _riskBadge(level) {
+    if (!level || level === 'LOW') return '';
+    const color = level === 'HIGH' ? 'var(--color-error, #e06c75)' : 'var(--accent, var(--red))';
+    return `<span class="admin-badge" style="background:color-mix(in srgb,${color} 20%,transparent);color:${color}">${_esc(level)}</span>`;
+  }
+
+  // ── Render an installed package row ────────────────────────────────────────
+  function _pkgRow(pkg) {
+    const enabled = pkg.status === 'installed';
+    const riskBadge = _riskBadge(pkg.risk_level);
+    const statusBadge = enabled
+      ? `<span class="admin-badge" style="background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red)">enabled</span>`
+      : `<span class="admin-badge admin-badge-off">disabled</span>`;
     const perms = (pkg.permissions || []).map(p =>
-      `<span class="pkg-perm-tag">${p}</span>`
+      `<span class="admin-badge" style="font-size:9px;opacity:0.75">${_esc(p)}</span>`
     ).join('');
 
     return `
-      <div class="pkg-card" data-id="${pkg.id}">
-        <div class="pkg-card-header">
-          <div class="pkg-card-title">
-            <strong>${_esc(pkg.name)}</strong>
-            <span class="pkg-version">v${_esc(pkg.version)}</span>
+      <div class="admin-user-row" data-pkg-id="${_esc(pkg.id)}">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+          <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;min-width:0;">
+            <span class="admin-user-name">${_esc(pkg.name)}</span>
+            ${pkg.version ? `<span class="admin-badge" style="font-size:9px;opacity:0.6">v${_esc(pkg.version)}</span>` : ''}
+            ${statusBadge}
+            ${riskBadge}
+            ${perms}
+            ${pkg.author ? `<span style="font-size:10px;opacity:0.4">by ${_esc(pkg.author)}</span>` : ''}
+            ${pkg.description ? `<span style="font-size:11px;opacity:0.55;flex-basis:100%;margin-top:1px">${_esc(pkg.description)}</span>` : ''}
           </div>
-          <div class="pkg-card-badges">
-            ${_riskBadge(pkg.risk_level)}
-            ${_statusBadge(pkg.status)}
+          <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;margin-left:8px;">
+            <button class="admin-btn-sm pkg-toggle-btn" data-id="${_esc(pkg.id)}" data-enabled="${enabled}">
+              ${enabled ? 'Disable' : 'Enable'}
+            </button>
+            <button class="admin-btn-delete pkg-remove-btn" data-id="${_esc(pkg.id)}" style="font-size:10px;padding:2px 7px">Remove</button>
           </div>
-        </div>
-        ${pkg.description ? `<p class="pkg-description">${_esc(pkg.description)}</p>` : ''}
-        ${pkg.author ? `<div class="pkg-author">by ${_esc(pkg.author)}</div>` : ''}
-        ${perms ? `<div class="pkg-perms">${perms}</div>` : ''}
-        <div class="pkg-card-actions">
-          <button class="pkg-btn pkg-btn-toggle" data-id="${pkg.id}" data-enabled="${pkg.status === 'installed'}">
-            ${pkg.status === 'installed' ? 'Disable' : 'Enable'}
-          </button>
-          <button class="pkg-btn pkg-btn-remove" data-id="${pkg.id}">Remove</button>
         </div>
       </div>
     `;
   }
 
-  function _esc(s) {
-    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // ── Render an available (bundled) package row ──────────────────────────────
+  function _availRow(pkg) {
+    const perms = (pkg.permissions || []).map(p =>
+      `<span class="admin-badge" style="font-size:9px;opacity:0.75">${_esc(p)}</span>`
+    ).join('');
+
+    return `
+      <div class="admin-user-row" data-avail-id="${_esc(pkg.id)}">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;">
+          <div class="admin-user-info" style="flex:1;flex-wrap:wrap;gap:0.3rem;align-items:center;min-width:0;">
+            <span class="admin-user-name">${_esc(pkg.name)}</span>
+            ${pkg.version ? `<span class="admin-badge" style="font-size:9px;opacity:0.6">v${_esc(pkg.version)}</span>` : ''}
+            ${perms}
+            ${pkg.author ? `<span style="font-size:10px;opacity:0.4">by ${_esc(pkg.author)}</span>` : ''}
+            ${pkg.description ? `<span style="font-size:11px;opacity:0.55;flex-basis:100%;margin-top:1px">${_esc(pkg.description)}</span>` : ''}
+          </div>
+          <div style="flex-shrink:0;margin-left:8px;">
+            <button class="admin-btn-add pkg-install-bundled-btn" data-id="${_esc(pkg.id)}" style="font-size:11px;padding:3px 10px;">Install</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   // ── Render full panel ──────────────────────────────────────────────────────
   function _renderPanel(container) {
-    // No .pkg-panel wrapper here: the admin-cards sit directly in the settings
-    // panel so the layout matches every other settings tab (full width, left
-    // aligned). The old .pkg-panel had max-width:900px + margin:0 auto, which
-    // centered the content and left a growing gap as the window widened.
+    const notInstalled = _available.filter(p => !p.installed);
+    const pkgCount = _packages.length;
+
     container.innerHTML = `
-      <div class="pkg-settings-stack">
-        <div class="admin-card">
-          <h2>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.7">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
-            </svg>Install Package
-          </h2>
-          <div class="admin-toggle-sub" style="margin-bottom:10px">Install extensions to add new AI capabilities, hardware drivers, and UI components.</div>
-          <div class="pkg-install-zone" id="pkg-drop-zone">
-            <div class="pkg-drop-inner">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                <polyline points="17 8 12 3 7 8"/>
-                <line x1="12" y1="3" x2="12" y2="15"/>
-              </svg>
-              <p>Drop a <strong>.zip</strong> package here or</p>
-              <label class="pkg-btn pkg-btn-primary pkg-upload-label">
-                Browse Files
-                <input type="file" id="pkg-file-input" accept=".zip" style="display:none">
-              </label>
-            </div>
-            <div class="pkg-install-progress" id="pkg-install-progress" style="display:none">
-              <div class="pkg-progress-bar">
-                <div class="pkg-progress-fill" id="pkg-progress-fill"></div>
-              </div>
-              <span id="pkg-progress-msg">Installing...</span>
-            </div>
-          </div>
+      <!-- Install card -->
+      <div class="admin-card" id="pkg-install-card">
+        <h2>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>Install Package
+        </h2>
+        <div class="admin-toggle-sub" style="margin-bottom:10px">Upload a <strong>.zip</strong> package to add new capabilities. You can also drag-and-drop a file onto this card.</div>
+        <div class="settings-row">
+          <label class="admin-btn-add" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-size:12px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Browse .zip
+            <input type="file" id="pkg-file-input" accept=".zip" style="display:none">
+          </label>
+          <span id="pkg-install-msg" style="font-size:11px;margin-left:8px;color:color-mix(in srgb,var(--fg) 50%,transparent)"></span>
         </div>
+      </div>
 
-        <div class="admin-card" id="pkg-available-card">
-          <div class="pkg-list-header">
-            <h2 style="margin:0;border:none;padding:0">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.7"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>Available Packages
-            </h2>
-            <span class="pkg-count" id="pkg-available-count"></span>
-          </div>
-          <div class="admin-toggle-sub" style="margin-bottom:10px">Bundled extensions you can install with one click.</div>
-          <div class="pkg-list" id="pkg-available-list"></div>
+      <!-- Available (bundled) packages card -->
+      ${_available.length ? `
+      <div class="admin-card" id="pkg-available-card">
+        <h2>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+          </svg>Available Packages
+          ${notInstalled.length ? `<span class="admin-badge" style="margin-left:6px;font-size:10px">${notInstalled.length} available</span>` : ''}
+        </h2>
+        <div class="admin-toggle-sub" style="margin-bottom:10px">Bundled extensions — install with one click.</div>
+        <div id="pkg-available-list">
+          ${notInstalled.length
+            ? notInstalled.map(_availRow).join('')
+            : '<div class="admin-empty">All bundled packages are installed.</div>'
+          }
         </div>
+      </div>
+      ` : ''}
 
-        <div class="admin-card">
-          <div class="pkg-list-header">
-            <h2 style="margin:0;border:none;padding:0">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.7"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Installed Packages
-            </h2>
-            <span class="pkg-count" id="pkg-count">0 packages</span>
-          </div>
-          <div class="pkg-list" id="pkg-list">
-            <div class="pkg-empty">No packages installed yet.</div>
-          </div>
+      <!-- Installed packages card -->
+      <div class="admin-card">
+        <h2>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>Installed Packages
+          ${pkgCount ? `<span class="admin-badge" style="margin-left:6px;font-size:10px">${pkgCount} installed</span>` : ''}
+        </h2>
+        <div id="pkg-list">
+          ${pkgCount
+            ? _packages.map(_pkgRow).join('')
+            : '<div class="admin-empty">No packages installed yet.</div>'
+          }
         </div>
       </div>
     `;
 
     _bindEvents(container);
-    _refreshList(container);
-    _refreshAvailable(container);
   }
 
-  // ── Render available (bundled) packages ────────────────────────────────────
-  function _renderAvailableCard(pkg) {
-    const perms = (pkg.permissions || []).map(p =>
-      `<span class="pkg-perm-tag">${_esc(p)}</span>`
-    ).join('');
-    return `
-      <div class="pkg-card" data-avail-id="${_esc(pkg.id)}">
-        <div class="pkg-card-header">
-          <div class="pkg-card-title">
-            <strong>${_esc(pkg.name)}</strong>
-            ${pkg.version ? `<span class="pkg-version">v${_esc(pkg.version)}</span>` : ''}
-          </div>
-        </div>
-        ${pkg.description ? `<p class="pkg-description">${_esc(pkg.description)}</p>` : ''}
-        ${perms ? `<div class="pkg-perms">${perms}</div>` : ''}
-        <div class="pkg-card-actions">
-          <button class="pkg-btn pkg-btn-primary pkg-btn-install-bundled" data-id="${_esc(pkg.id)}">Install</button>
-        </div>
-      </div>
-    `;
+  // ── Refresh lists in place (after install/remove) ──────────────────────────
+  function _refreshPanel(container) {
+    // Re-render fully — simpler than patching individual sections
+    _renderPanel(container);
   }
 
-  function _refreshAvailable(container) {
-    const listEl = container.querySelector('#pkg-available-list');
-    const countEl = container.querySelector('#pkg-available-count');
-    const card = container.querySelector('#pkg-available-card');
-    if (!listEl) return;
+  // ── Event binding ──────────────────────────────────────────────────────────
+  function _bindEvents(container) {
+    const fileInput = container.querySelector('#pkg-file-input');
+    const installCard = container.querySelector('#pkg-install-card');
+    const installMsg = container.querySelector('#pkg-install-msg');
 
-    const notInstalled = _available.filter(p => !p.installed);
-
-    // Hide the whole card when nothing is bundled at all.
-    if (card) card.style.display = _available.length ? '' : 'none';
-
-    if (!notInstalled.length) {
-      listEl.innerHTML = '<div class="pkg-empty">All bundled packages are installed.</div>';
-      if (countEl) countEl.textContent = '';
-      return;
+    async function _installFile(file) {
+      if (!file || !file.name.endsWith('.zip')) {
+        alert('Please select a .zip package file.');
+        return;
+      }
+      installMsg.textContent = 'Uploading…';
+      if (fileInput) fileInput.disabled = true;
+      try {
+        const result = await _upload(file);
+        installMsg.textContent = `Installed: ${result.package_id}`;
+        const warnings = result.warnings?.length ? result.warnings.join(', ') : '';
+        if (warnings) setTimeout(() => alert(`Package installed.\nWarnings: ${warnings}`), 100);
+        setTimeout(() => { installMsg.textContent = ''; }, 3000);
+        await Promise.all([load(), loadAvailable()]);
+        _refreshPanel(container);
+      } catch (e) {
+        installMsg.textContent = `Error: ${e.message}`;
+        if (fileInput) fileInput.disabled = false;
+      }
     }
 
-    if (countEl) countEl.textContent = `${notInstalled.length} available`;
-    listEl.innerHTML = notInstalled.map(_renderAvailableCard).join('');
+    if (fileInput) {
+      fileInput.addEventListener('change', e => {
+        if (e.target.files?.[0]) _installFile(e.target.files[0]);
+      });
+    }
 
-    listEl.querySelectorAll('.pkg-btn-install-bundled').forEach(btn => {
+    // Drag-and-drop on the install card
+    if (installCard) {
+      installCard.addEventListener('dragover', e => { e.preventDefault(); installCard.style.outline = '2px dashed var(--red)'; });
+      installCard.addEventListener('dragleave', () => { installCard.style.outline = ''; });
+      installCard.addEventListener('drop', e => {
+        e.preventDefault();
+        installCard.style.outline = '';
+        const file = e.dataTransfer?.files?.[0];
+        if (file) _installFile(file);
+      });
+    }
+
+    // Install bundled buttons
+    container.querySelectorAll('.pkg-install-bundled-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         btn.disabled = true;
@@ -226,8 +247,7 @@ const PackageManager = (() => {
         try {
           await _api('POST', '/install-bundled', { id });
           await Promise.all([load(), loadAvailable()]);
-          _refreshList(container);
-          _refreshAvailable(container);
+          _refreshPanel(container);
         } catch (e) {
           btn.disabled = false;
           btn.textContent = 'Install';
@@ -235,38 +255,24 @@ const PackageManager = (() => {
         }
       });
     });
-  }
 
-  function _refreshList(container) {
-    const listEl = container.querySelector('#pkg-list');
-    const countEl = container.querySelector('#pkg-count');
-    if (!listEl) return;
-
-    if (_packages.length === 0) {
-      listEl.innerHTML = '<div class="pkg-empty">No packages installed yet.</div>';
-      if (countEl) countEl.textContent = '0 packages';
-      return;
-    }
-
-    if (countEl) countEl.textContent = `${_packages.length} package${_packages.length !== 1 ? 's' : ''}`;
-    listEl.innerHTML = _packages.map(_renderCard).join('');
-
-    // Wire action buttons
-    listEl.querySelectorAll('.pkg-btn-toggle').forEach(btn => {
+    // Toggle buttons
+    container.querySelectorAll('.pkg-toggle-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
-        const enable = btn.dataset.enabled === 'true' ? false : true;
+        const enable = btn.dataset.enabled !== 'true';
         try {
           await _api('PATCH', `/${id}/toggle`, { enable });
           await load();
-          _refreshList(container);
+          _refreshPanel(container);
         } catch (e) {
           alert(`Toggle failed: ${e.message}`);
         }
       });
     });
 
-    listEl.querySelectorAll('.pkg-btn-remove').forEach(btn => {
+    // Remove buttons
+    container.querySelectorAll('.pkg-remove-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         const pkg = _packages.find(p => p.id === id);
@@ -274,71 +280,12 @@ const PackageManager = (() => {
         try {
           await _api('DELETE', `/${id}`);
           await Promise.all([load(), loadAvailable()]);
-          _refreshList(container);
-          _refreshAvailable(container);
+          _refreshPanel(container);
         } catch (e) {
           alert(`Remove failed: ${e.message}`);
         }
       });
     });
-  }
-
-  function _bindEvents(container) {
-    const dropZone = container.querySelector('#pkg-drop-zone');
-    const fileInput = container.querySelector('#pkg-file-input');
-    const progress = container.querySelector('#pkg-install-progress');
-    const progressFill = container.querySelector('#pkg-progress-fill');
-    const progressMsg = container.querySelector('#pkg-progress-msg');
-
-    async function installFile(file) {
-      if (!file || !file.name.endsWith('.zip')) {
-        alert('Please select a .zip package file.');
-        return;
-      }
-      progress.style.display = 'block';
-      progressFill.style.width = '30%';
-      progressMsg.textContent = 'Uploading...';
-      try {
-        progressFill.style.width = '60%';
-        progressMsg.textContent = 'Running security scan...';
-        const result = await _upload(file);
-        progressFill.style.width = '100%';
-
-        const riskMsg = result.risk_level === 'MEDIUM'
-          ? `\n\nNote: This package requires elevated permissions (${result.risk_level} risk).`
-          : '';
-        const warnings = result.warnings?.length ? `\nWarnings: ${result.warnings.join(', ')}` : '';
-        progressMsg.textContent = `Installed: ${result.package_id}`;
-        setTimeout(() => { progress.style.display = 'none'; progressFill.style.width = '0%'; }, 2000);
-
-        if (result.warnings?.length) {
-          setTimeout(() => alert(`Package installed.${riskMsg}${warnings}`), 100);
-        }
-        await Promise.all([load(), loadAvailable()]);
-        _refreshList(container);
-        _refreshAvailable(container);
-      } catch (e) {
-        progress.style.display = 'none';
-        alert(`Installation failed: ${e.message}`);
-      }
-    }
-
-    if (fileInput) {
-      fileInput.addEventListener('change', e => {
-        if (e.target.files?.[0]) installFile(e.target.files[0]);
-      });
-    }
-
-    if (dropZone) {
-      dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('pkg-drag-over'); });
-      dropZone.addEventListener('dragleave', () => dropZone.classList.remove('pkg-drag-over'));
-      dropZone.addEventListener('drop', e => {
-        e.preventDefault();
-        dropZone.classList.remove('pkg-drag-over');
-        const file = e.dataTransfer?.files?.[0];
-        if (file) installFile(file);
-      });
-    }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
