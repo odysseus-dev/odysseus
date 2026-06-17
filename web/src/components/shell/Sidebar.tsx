@@ -3,7 +3,7 @@ import { NavLink, useNavigate, useParams } from "react-router-dom"
 import {
   Plus, Search, PanelLeft, MessageSquare, GitCompareArrows, Image, Brain,
   Calendar, Mail, StickyNote, ListChecks, FileText, FlaskConical, Sparkles,
-  Settings, Trash2, Moon, Sun, LogOut, EyeOff, Keyboard, ChevronsUpDown,
+  Settings, Trash2, Moon, Sun, LogOut, EyeOff, Keyboard, ChevronsUpDown, Pencil, Pin, Check,
 } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useComposer } from "@/stores/composer"
@@ -91,8 +91,11 @@ export function Sidebar() {
   const navigate = useNavigate()
   const { sessionId } = useParams()
   const { data: sessions } = useSessions()
-  const { remove } = useSessionMutations()
+  const { remove, rename, setImportant } = useSessionMutations()
   const [q, setQ] = useState("")
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editName, setEditName] = useState("")
+  const commitRename = () => { if (editId && editName.trim()) rename.mutate({ id: editId, name: editName.trim() }); setEditId(null) }
 
   const list = (sessions || []).filter((s) => !s.archived).filter((s) => !q || (s.name || "").toLowerCase().includes(q.toLowerCase()))
   const groups = BUCKETS.map((b) => ({ b, items: list.filter((s) => bucketOf(s) === b) })).filter((g) => g.items.length)
@@ -139,13 +142,25 @@ export function Sidebar() {
         {groups.map((g) => (
           <div key={g.b} className="mb-2">
             <div className="px-2 py-1 text-xs font-medium text-muted-foreground/80">{g.b}</div>
-            {g.items.map((s) => (
+            {g.items.map((s) => editId === s.id ? (
+              <div key={s.id} className="flex items-center gap-1 px-2 py-1">
+                <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditId(null) }}
+                  onBlur={commitRename}
+                  className="h-7 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring" />
+                <button onClick={commitRename} className="text-muted-foreground hover:text-foreground"><Check className="size-3.5" /></button>
+              </div>
+            ) : (
               <div key={s.id} onClick={() => navigate(`/chat/${s.id}`)}
-                className={cn("group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+                className={cn("group flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm",
                   s.id === sessionId ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
+                {s.is_important && <Pin className="size-3 shrink-0 fill-current text-muted-foreground" />}
                 <span className="flex-1 truncate">{s.name || "Untitled"}</span>
-                <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this chat?")) { remove.mutate(s.id); if (s.id === sessionId) navigate("/chat") } }}
-                  className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="size-3.5" /></button>
+                <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button onClick={(e) => { e.stopPropagation(); setImportant.mutate({ id: s.id, important: !s.is_important }) }} title={s.is_important ? "Unpin" : "Pin"} className={cn("hover:text-foreground", s.is_important && "text-foreground")}><Pin className="size-3.5" /></button>
+                  <button onClick={(e) => { e.stopPropagation(); setEditId(s.id); setEditName(s.name || "") }} title="Rename" className="hover:text-foreground"><Pencil className="size-3.5" /></button>
+                  <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this chat?")) { remove.mutate(s.id); if (s.id === sessionId) navigate("/chat") } }} title="Delete" className="hover:text-destructive"><Trash2 className="size-3.5" /></button>
+                </span>
               </div>
             ))}
           </div>

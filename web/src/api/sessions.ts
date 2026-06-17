@@ -29,10 +29,28 @@ export async function deleteSession(id: string): Promise<void> {
 }
 export function useSessionMutations() {
   const qc = useQueryClient()
+  const inv = () => qc.invalidateQueries({ queryKey: ["sessions"] })
+  const form = (path: string, fields: Record<string, string>) => {
+    const fd = new FormData(); Object.entries(fields).forEach(([k, v]) => fd.set(k, v))
+    return apiFetch(path, { method: "POST", body: fd })
+  }
   return {
-    remove: useMutation({
-      mutationFn: deleteSession,
-      onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
+    remove: useMutation({ mutationFn: deleteSession, onSuccess: inv }),
+    rename: useMutation({
+      mutationFn: async (v: { id: string; name: string }) => {
+        const fd = new FormData(); fd.set("name", v.name)
+        const r = await apiFetch(`/api/session/${v.id}`, { method: "PATCH", body: fd })
+        if (!r.ok) throw new Error("rename failed"); return r.json()
+      },
+      onSuccess: inv,
+    }),
+    setImportant: useMutation({
+      mutationFn: async (v: { id: string; important: boolean }) => { await form(`/api/session/${v.id}/important`, { important: String(v.important) }) },
+      onSuccess: inv,
+    }),
+    archive: useMutation({
+      mutationFn: async (id: string) => { await apiFetch(`/api/session/${id}/archive`, { method: "POST" }) },
+      onSuccess: inv,
     }),
   }
 }
