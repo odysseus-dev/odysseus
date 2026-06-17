@@ -37,3 +37,7 @@ export interface Task {
 export interface Skill { id?: string; name: string; description?: string; published?: boolean }
 export interface BuiltinSkill { name: string; description?: string; is_overridden?: boolean }
 export interface GalleryImage { id: string; filename: string; url: string; prompt?: string; tags?: string; favorite?: boolean; width?: number; height?: number }
+export interface EmailMsg {
+  uid: string; subject?: string; from?: string; from_addr?: string; sender?: string;
+  date?: string; snippet?: string; preview?: string; unread?: boolean; seen?: boolean;
+}
