@@ -230,6 +230,8 @@ _DOMAIN_RULES = {
 - For latest/newest email, list with `max_results: 1`, `unread_only: false`, then read the returned UID if needed.
 - For named mailboxes/accounts, call `list_email_accounts` if needed and pass the exact `account` value.
 - Bulk email actions use `bulk_email` once with explicit UIDs; do not loop one message at a time.
+- `search_emails` matches text and has no boolean/NOT operator. Search a keyword (or a few), then apply any "exclude <sender>" request by filtering the RESULTS (drop rows whose `from` matches) - never encode the exclusion in the query.
+- Once a search returns UIDs, act on them (filter -> confirm -> `bulk_email`); do not re-run a search you already ran or re-open the skill in a loop.
 - "Open/start a reply" means open a draft via `ui_control open_email_reply`; only `reply_to_email` when the user clearly wants to send now.""",
     "cookbook": """\
 ## Cookbook/model-serving rules
