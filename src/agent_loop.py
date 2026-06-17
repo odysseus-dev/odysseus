@@ -1598,11 +1598,12 @@ def _build_system_prompt(
     # standalone *user*-role message and inserted near the end of the array,
     # right alongside _doc_message / _skills_message, below.
     _datetime_message = None
-    try:
-        from src.user_time import current_datetime_context_message
-        _datetime_message = current_datetime_context_message()
-    except Exception as e:
-        logger.warning("Failed to build datetime context message", exc_info=e)
+    if get_setting("share_user_date_time", True):
+        try:
+            from src.user_time import current_datetime_context_message
+            _datetime_message = current_datetime_context_message()
+        except Exception as e:
+            logger.warning("Failed to build datetime context message", exc_info=e)
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the

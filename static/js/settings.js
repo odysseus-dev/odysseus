@@ -802,6 +802,45 @@ async function initImageSettings() {
   if (enabledToggle) enabledToggle.addEventListener('change', function() { syncImgDisabled(); saveSettings(); });
 }
 
+/* ── Share Date & Time ── */
+
+async function initShareDateTime() {
+  const toggle = el('set-shareUserTimeLocation');
+  if (!toggle) return;
+  const settings = await fetchSettings();
+  toggle.checked = settings.share_user_date_time ?? true;
+  toggle.addEventListener('change', e => {
+    saveApiAuthSettings('share_user_date_time', e.target.checked);
+  });
+}
+
+/* ── Anonymous API Connection ── */
+
+async function initAnonymousAPIConnection() {
+  const toggle = el('set-AnonymousAPIConnection');
+  if (!toggle) return;
+  const settings = await fetchSettings();
+  toggle.checked = settings.anonymous_api_connection ?? false;
+  toggle.addEventListener('change', e => {
+    saveApiAuthSettings('anonymous_api_connection', e.target.checked);
+  });
+}
+
+async function fetchSettings() {
+  try {
+    const settingsRes = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    return await settingsRes.json();
+  } catch (e) { console.warn('Failed to load settings', e); }
+  return {};
+}
+
+async function saveApiAuthSettings(name, value) {
+  try {
+    await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [name]: value }) });
+  } catch (e) { console.warn('Failed to save setting', name, e); }
+}
+
 /* ── Vision ── */
 async function initVisionSettings() {
   const vlSel = el('set-vlModelSelect');
@@ -2327,6 +2366,8 @@ function initAll() {
   initTeacherModel();
   initUtilityModel();
   initImageSettings();
+  initAnonymousAPIConnection();
+  initShareDateTime();
   initVisionSettings();
   initTtsSettings();
   initSttSettings();

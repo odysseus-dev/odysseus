@@ -770,12 +770,14 @@ async def build_chat_context(
     # turn (modulo the genuinely new history entries) and the cache survives.
     if not agent_mode:
         try:
-            from src.user_time import current_datetime_context_message
-            _dt_msg = current_datetime_context_message()
-            if messages and messages[-1].get("role") == "user":
-                messages.insert(len(messages) - 1, _dt_msg)
-            else:
-                messages.append(_dt_msg)
+            from src.settings import get_setting
+            if get_setting("share_user_date_time", True):
+                from src.user_time import current_datetime_context_message
+                _dt_msg = current_datetime_context_message()
+                if messages and messages[-1].get("role") == "user":
+                    messages.insert(len(messages) - 1, _dt_msg)
+                else:
+                    messages.append(_dt_msg)
         except Exception:
             logger.debug("Failed to add current date/time context", exc_info=True)
 

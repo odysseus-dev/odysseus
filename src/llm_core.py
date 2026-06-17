@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import HTTPException
 from typing import Optional, Dict, List, Tuple
 from src.model_context import get_context_length, DEFAULT_CONTEXT, is_local_endpoint
+from src.settings import get_setting
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -698,6 +699,36 @@ def _is_kimi_code_url(url: str) -> bool:
         return False
 
 
+# Generic User-Agent applied when "anonymous_api_connection" is on. Version is
+# rounded (not x.y.z) to keep the anonymity set large, and carries no app name
+# or SDK impersonation — an honest "generic client" that blends into the large
+# volume of python-httpx traffic hitting OpenAI-compatible endpoints.
+ANON_USER_AGENT = "python-httpx/0.27"
+
+
+def _apply_anon_ua(h: Dict[str, str], provider: str, url: Optional[str] = None) -> Dict[str, str]:
+    """Normalize the User-Agent to a generic value when anon mode is enabled.
+
+    Mutates and returns ``h``. No-op unless ``anonymous_api_connection`` is set.
+
+    Exempt (these REQUIRE a specific UA or the provider answers 403):
+      - copilot (COPILOT_USER_AGENT, set by copilot_headers)
+      - Kimi Code (KIMI_CODE_USER_AGENT, detected by URL not provider string)
+
+    Anthropic / ChatGPT-subscription keep their mandatory *non-UA* identity
+    headers (anthropic-version, x-api-key, Codex headers); only their UA is
+    normalized, which is safe.
+    """
+    if not get_setting("anonymous_api_connection", False):
+        return h
+    if provider == "copilot":
+        return h
+    if url and _is_kimi_code_url(url):
+        return h
+    h["User-Agent"] = ANON_USER_AGENT
+    return h
+
+
 def _kimi_code_base_key(url: str) -> str:
     """Normalize a Kimi Code chat/models URL to its OpenAI base (.../coding/v1)."""
     parsed = urlparse(url)
@@ -945,13 +976,20 @@ def _apply_local_generation_stability(payload: Dict, url: str, model: str) -> No
         payload["max_tokens"] = 2048
 
 
-def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str, str]:
+def _provider_headers(provider: str, headers: Optional[Dict] = None, url: Optional[str] = None) -> Dict[str, str]:
     h = {"Content-Type": "application/json"}
     if isinstance(headers, dict):
         h.update(headers)
     if provider == "openrouter":
-        h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
-        h.setdefault("X-OpenRouter-Title", "Odysseus")
+        if get_setting("anonymous_api_connection", False):
+            # Strip attribution headers that may have been baked into the
+            # stored session headers by build_headers() before the user toggled
+            # anon mode — h.update() above would otherwise smuggle them through.
+            h.pop("HTTP-Referer", None)
+            h.pop("X-OpenRouter-Title", None)
+        else:
+            h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
+            h.setdefault("X-OpenRouter-Title", "Odysseus")
     if provider == "copilot":
         # Ensure the Copilot-required headers are present even when the caller
         # didn't pass pre-built headers (e.g. model listing). build_headers()
@@ -960,6 +998,7 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
         from src.copilot import copilot_headers
         for k, v in copilot_headers(None).items():
             h.setdefault(k, v)
+    _apply_anon_ua(h, provider, url)
     return h
 
 
@@ -1733,7 +1772,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
-    h = _provider_headers(_detect_provider(url))
+    h = _provider_headers(_detect_provider(url), url=url)
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
     # element #0 has length 1; 2 is required".
@@ -1973,20 +2012,21 @@ async def llm_call_async(
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
-        h = _build_anthropic_headers(headers)
+        h = _apply_anon_ua(_build_anthropic_headers(headers), provider, url)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
+        _apply_anon_ua(h, provider, url)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
     else:
         target_url = _normalize_openai_chat_url(url)
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, headers, url)
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
@@ -2128,20 +2168,21 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
 
     if provider == "anthropic":
         target_url = _normalize_anthropic_url(url)
-        h = _build_anthropic_headers(headers)
+        h = _apply_anon_ua(_build_anthropic_headers(headers), provider, url)
         payload = _build_anthropic_payload(model, messages_copy, temperature, max_tokens, stream=True, tools=tools)
     elif provider == "ollama":
         target_url = _normalize_ollama_url(url)
         h = {"Content-Type": "application/json"}
         if headers:
             h.update(headers)
+        _apply_anon_ua(h, provider, url)
         payload = _build_ollama_payload(
             model, messages_copy, temperature, max_tokens,
             stream=True, tools=tools, num_ctx=get_context_length(url, model),
         )
     elif provider == "chatgpt-subscription":
         target_url = _normalize_chatgpt_subscription_url(url)
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, headers, url)
         payload = _build_chatgpt_responses_payload(model, messages_copy, temperature, max_tokens, stream=True)
     else:
         target_url = _normalize_openai_chat_url(url)
@@ -2175,7 +2216,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             payload["think"] = False
         _apply_local_cache_affinity(payload, url, session_id)
         _apply_local_generation_stability(payload, target_url, model)
-        h = _provider_headers(provider, headers)
+        h = _provider_headers(provider, headers, url)
+
         if provider == "copilot":
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
