@@ -1838,6 +1838,11 @@ def init_db():
     _migrate_encrypt_signatures()
     _migrate_encrypt_endpoint_keys()
     _migrate_backfill_task_folders()
+    # Platform extension tables — packages and Docker workspaces
+    # Base.metadata.create_all() already creates them from the ORM models above;
+    # these helpers add columns to existing installs that predate the feature.
+    _migrate_add_packages_table()
+    _migrate_add_docker_workspaces_table()
 
 
 def _migrate_backfill_task_folders():
@@ -2184,6 +2189,52 @@ def _migrate_add_calendar_metadata():
         except Exception:
             pass
 
+class Package(TimestampMixin, Base):
+    """An installed plugin/package that extends the platform with new capabilities."""
+    __tablename__ = "packages"
+
+    id          = Column(String, primary_key=True, index=True)   # from manifest.json "id"
+    name        = Column(String, nullable=False)
+    version     = Column(String, nullable=False, default="1.0.0")
+    author      = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    status      = Column(String, default="installed")            # installed | disabled | error
+    permissions = Column(JSON, default=list)                     # ["NET_ADMIN", "HardwareBridgeAccess"]
+    entry_point = Column(String, nullable=True)                  # backend/main.py
+    frontend_hooks = Column(JSON, default=dict)                  # {"sidebarWidget": "wifi-widget.js"}
+    install_path = Column(String, nullable=True)                 # data/packages/<id>/
+    risk_level  = Column(String, default="LOW")                  # LOW | MEDIUM | HIGH
+    owner       = Column(String, nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_packages_status", "status"),
+        Index("ix_packages_owner_status", "owner", "status"),
+    )
+
+
+class DockerWorkspace(TimestampMixin, Base):
+    """A stateful Docker container workspace. Lifecycle is decoupled from chat history."""
+    __tablename__ = "docker_workspaces"
+
+    id             = Column(String, primary_key=True, index=True)
+    name           = Column(String, nullable=False)
+    description    = Column(Text, nullable=True)
+    template_image = Column(String, nullable=False, default="python:3.11-alpine")
+    container_id   = Column(String, nullable=True)   # Docker container ID
+    volume_name    = Column(String, nullable=True)   # Named Docker volume
+    # creating | running | stopped | destroyed | error
+    status         = Column(String, default="creating")
+    resource_limits = Column(JSON, default=dict)     # {memory: "512m", cpu: 0.5}
+    bound_agent_id = Column(String, nullable=True)   # AI agent session linked to this WS
+    labels         = Column(JSON, default=dict)      # Docker labels (includes owner/protected)
+    owner          = Column(String, nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_docker_workspaces_status", "status"),
+        Index("ix_docker_workspaces_owner_status", "owner", "status"),
+    )
+
+
 def get_db():
     """
     Dependency to get a database session.
@@ -2308,6 +2359,32 @@ def set_session_mode(session_id: str, mode: str) -> bool:
     except Exception:
         logger.warning("Failed to persist mode %r for session %s", mode, session_id)
         return False
+
+def _migrate_add_packages_table():
+    """Ensure the packages table exists (idempotent — Base.create_all handles new installs)."""
+    try:
+        with engine.connect() as conn:
+            tables = [r[0] for r in conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='packages'"
+            ))]
+            if "packages" not in tables:
+                logging.getLogger(__name__).info("packages table will be created by Base.metadata.create_all")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"packages table check: {e}")
+
+
+def _migrate_add_docker_workspaces_table():
+    """Ensure the docker_workspaces table exists (idempotent)."""
+    try:
+        with engine.connect() as conn:
+            tables = [r[0] for r in conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='docker_workspaces'"
+            ))]
+            if "docker_workspaces" not in tables:
+                logging.getLogger(__name__).info("docker_workspaces table will be created by Base.metadata.create_all")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"docker_workspaces table check: {e}")
+
 
 def get_session_by_id(session_id: str):
     """Get a session by ID"""

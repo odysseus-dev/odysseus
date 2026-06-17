@@ -37673,3 +37673,354 @@ body.theme-frosted .modal {
 .log-line-default {
   color: var(--fg, #9cdef2);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PLATFORM EXTENSION STYLES — Package Manager, Workspaces, Hardware Panel
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Shared panel chrome ──────────────────────────────────────────────────── */
+.pkg-panel, .ws-panel, .hw-panel {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+.pkg-panel-header, .ws-panel-header, .hw-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.pkg-panel-title, .ws-panel-title, .hw-panel-title {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--fg, #e4e4e7);
+}
+.pkg-panel-subtitle, .ws-panel-subtitle {
+  font-size: 0.85rem;
+  color: var(--fg, #888);
+  opacity: 0.65;
+  margin: 0;
+}
+
+/* ── Shared button styles ─────────────────────────────────────────────────── */
+.pkg-btn, .ws-btn, .hw-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #3a3a4a);
+  background: var(--panel, #1a1a2e);
+  color: var(--fg, #e4e4e7);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.pkg-btn:hover, .ws-btn:hover, .hw-btn:hover {
+  background: var(--border, #3a3a4a);
+}
+.pkg-btn:disabled, .ws-btn:disabled, .hw-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.pkg-btn-primary, .ws-btn-primary, .hw-btn-primary {
+  background: var(--red, #e06c75);
+  border-color: var(--red, #e06c75);
+  color: #fff;
+}
+.pkg-btn-primary:hover, .ws-btn-primary:hover, .hw-btn-primary:hover {
+  opacity: 0.85;
+  background: var(--red, #e06c75);
+}
+.pkg-btn-sm, .hw-btn-sm {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+}
+
+/* ── Package: install drop zone ───────────────────────────────────────────── */
+.pkg-install-zone {
+  border: 2px dashed var(--border, #3a3a4a);
+  border-radius: 10px;
+  padding: 28px;
+  text-align: center;
+  margin-bottom: 28px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pkg-install-zone.pkg-drag-over {
+  border-color: var(--red, #e06c75);
+  background: color-mix(in srgb, var(--red, #e06c75) 8%, transparent);
+}
+.pkg-drop-inner svg { opacity: 0.4; margin-bottom: 10px; }
+.pkg-drop-inner p { margin: 6px 0 14px; color: var(--fg, #ccc); opacity: 0.8; font-size: 0.9rem; }
+.pkg-upload-label { display: inline-block; cursor: pointer; }
+.pkg-install-progress { margin-top: 14px; }
+.pkg-progress-bar { height: 4px; background: var(--border, #2a2a3a); border-radius: 2px; overflow: hidden; }
+.pkg-progress-fill { height: 100%; background: var(--red, #e06c75); border-radius: 2px; transition: width 0.3s; width: 0%; }
+
+/* ── Package: list header ─────────────────────────────────────────────────── */
+.pkg-list-header, .ws-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.pkg-list-header h3, .ws-list-header h3 { margin: 0; font-size: 0.95rem; font-weight: 600; }
+.pkg-count, .ws-count { font-size: 0.8rem; color: var(--fg, #888); opacity: 0.6; }
+.pkg-empty, .ws-empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--fg, #888);
+  opacity: 0.5;
+  border: 1px solid var(--border, #2a2a3a);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+/* ── Package card ─────────────────────────────────────────────────────────── */
+.pkg-card, .ws-card {
+  border: 1px solid var(--border, #2a2a3a);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 10px;
+  background: var(--panel, #141420);
+  transition: border-color 0.15s;
+}
+.pkg-card:hover, .ws-card:hover { border-color: var(--red, #e06c75); }
+.pkg-card-header, .ws-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.pkg-card-title, .ws-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pkg-card-badges, .ws-card-badges { display: flex; gap: 6px; flex-shrink: 0; }
+.pkg-version { font-size: 0.72rem; color: var(--fg, #888); opacity: 0.6; font-family: monospace; }
+.pkg-description, .ws-description { font-size: 0.83rem; color: var(--fg, #ccc); opacity: 0.75; margin: 6px 0; }
+.pkg-author { font-size: 0.75rem; color: var(--fg, #888); opacity: 0.55; margin-bottom: 8px; }
+
+/* ── Badges ───────────────────────────────────────────────────────────────── */
+.pkg-risk-badge, .pkg-status-badge, .ws-status-badge {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-weight: 500;
+}
+.pkg-risk-low { background: #1a3a1a; color: #6bdd6b; border: 1px solid #2d5a2d; }
+.pkg-risk-medium { background: #3a2a00; color: #fbbf24; border: 1px solid #5a4000; }
+.pkg-risk-high { background: #3a1010; color: var(--red, #e06c75); border: 1px solid #5a2020; }
+.pkg-status-on { background: #1a3a1a; color: #6bdd6b; border: 1px solid #2d5a2d; }
+.pkg-status-off { background: var(--panel, #1a1a2e); color: var(--fg, #888); border: 1px solid var(--border, #3a3a4a); opacity: 0.6; }
+
+/* ── Permission tags ──────────────────────────────────────────────────────── */
+.pkg-perms { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.pkg-perm-tag {
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--red, #e06c75) 15%, var(--panel, #141420));
+  color: var(--red, #e06c75);
+  border: 1px solid color-mix(in srgb, var(--red, #e06c75) 30%, transparent);
+  font-family: monospace;
+}
+
+/* ── Shared card actions ──────────────────────────────────────────────────── */
+.pkg-card-actions, .ws-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #2a2a3a);
+}
+.pkg-btn-remove, .ws-btn-destroy {
+  color: var(--red, #e06c75);
+  border-color: color-mix(in srgb, var(--red, #e06c75) 30%, transparent);
+}
+.pkg-btn-remove:hover, .ws-btn-destroy:hover {
+  background: color-mix(in srgb, var(--red, #e06c75) 15%, var(--panel, #141420));
+}
+
+/* ── Workspace badges ─────────────────────────────────────────────────────── */
+.ws-status-running  { background: #1a3a1a; color: #6bdd6b; border: 1px solid #2d5a2d; }
+.ws-status-stopped  { background: var(--panel, #1a1a2e); color: #888; border: 1px solid var(--border, #3a3a4a); }
+.ws-status-creating { background: #2a1a00; color: #fbbf24; border: 1px solid #5a3800; }
+.ws-status-error    { background: #3a1010; color: var(--red, #e06c75); border: 1px solid #5a2020; }
+.ws-status-destroyed { background: var(--panel, #1a1a2e); color: #666; border: 1px solid #2a2a3a; }
+.ws-image { font-size: 0.72rem; color: var(--fg, #888); opacity: 0.6; padding: 1px 5px; background: var(--panel, #1a1a2e); border-radius: 3px; }
+.ws-meta { display: flex; flex-wrap: wrap; gap: 10px; margin: 6px 0; font-size: 0.78rem; color: var(--fg, #888); opacity: 0.65; }
+.ws-meta-item { display: flex; align-items: center; gap: 4px; }
+.ws-unavailable { text-align: center; padding: 48px 24px; opacity: 0.6; }
+.ws-unavailable svg { margin-bottom: 16px; opacity: 0.4; }
+.ws-unavailable h3 { margin: 0 0 8px; }
+.ws-unavailable p { margin: 0; font-size: 0.85rem; }
+
+/* ── Create workspace form ────────────────────────────────────────────────── */
+.ws-create-form {
+  border: 1px solid var(--border, #2a2a3a);
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+  background: var(--panel, #141420);
+}
+.ws-create-form h3 { margin: 0 0 16px; font-size: 1rem; }
+.ws-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+@media (max-width: 640px) { .ws-form-grid { grid-template-columns: 1fr; } }
+.ws-form-label, .hw-form-label { display: flex; flex-direction: column; gap: 5px; font-size: 0.82rem; color: var(--fg, #ccc); opacity: 0.8; }
+.ws-input, .hw-input {
+  padding: 8px 10px;
+  border: 1px solid var(--border, #3a3a4a);
+  border-radius: 6px;
+  background: var(--bg, #0f0f14);
+  color: var(--fg, #e4e4e7);
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.ws-input:focus, .hw-input:focus { border-color: var(--red, #e06c75); }
+.ws-form-actions, .hw-form-actions { display: flex; gap: 10px; }
+.ws-create-error, .hw-connect-status { font-size: 0.82rem; padding: 8px 12px; border-radius: 6px; margin-top: 10px; }
+.ws-create-error { background: color-mix(in srgb, var(--red, #e06c75) 15%, transparent); color: var(--red, #e06c75); }
+.hw-connect-ok { background: #1a3a1a; color: #6bdd6b; }
+.hw-connect-err { background: color-mix(in srgb, var(--red, #e06c75) 15%, transparent); color: var(--red, #e06c75); }
+
+/* ── Modal ─────────────────────────────────────────────────────────────────── */
+.ws-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
+}
+.ws-modal {
+  background: var(--panel, #1a1a2e);
+  border: 1px solid var(--border, #3a3a4a);
+  border-radius: 12px;
+  padding: 24px;
+  width: min(540px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+}
+.ws-modal-wide { width: min(720px, 92vw); }
+.ws-modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.ws-modal-header h3 { margin: 0; font-size: 1rem; }
+.ws-modal-close { background: none; border: none; color: var(--fg, #888); font-size: 1.1rem; cursor: pointer; padding: 2px 6px; }
+.ws-modal-close:hover { color: var(--red, #e06c75); }
+.ws-modal-body { margin-bottom: 16px; }
+.ws-exec-input { width: 100%; box-sizing: border-box; font-family: monospace; }
+.ws-exec-output, .ws-logs-output {
+  background: var(--bg, #0a0a0f);
+  border: 1px solid var(--border, #2a2a3a);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 0.78rem;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+  color: var(--fg, #ccc);
+  margin-top: 12px;
+}
+
+/* ── Hardware panel ───────────────────────────────────────────────────────── */
+.hw-section {
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border, #2a2a3a);
+}
+.hw-section:last-child { border-bottom: none; }
+.hw-section-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg, #888);
+  opacity: 0.6;
+  margin-bottom: 12px;
+}
+.hw-section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.hw-section-row { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* Gauges */
+.hw-gauges { display: flex; flex-direction: column; gap: 10px; }
+.hw-gauge-wrap { display: flex; flex-direction: column; gap: 4px; }
+.hw-gauge { height: 6px; border-radius: 3px; background: var(--border, #2a2a3a); overflow: hidden; }
+.hw-gauge-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
+.hw-gauge-ok .hw-gauge-fill { background: #4ade80; }
+.hw-gauge-warn .hw-gauge-fill { background: #fbbf24; }
+.hw-gauge-critical .hw-gauge-fill { background: var(--red, #e06c75); }
+.hw-gauge-label { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--fg, #ccc); opacity: 0.8; }
+.hw-gauge-value { font-family: monospace; }
+
+/* Stat cards */
+.hw-stat-card {
+  flex: 1 1 130px;
+  border: 1px solid var(--border, #2a2a3a);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel, #141420);
+}
+.hw-stat-label { font-size: 0.72rem; color: var(--fg, #888); opacity: 0.6; margin-bottom: 4px; }
+.hw-stat-val { font-size: 0.92rem; font-weight: 500; font-family: monospace; }
+
+/* Temperatures */
+.hw-temps { display: flex; flex-wrap: wrap; gap: 8px; }
+.hw-temp-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; }
+.hw-temp-name { color: var(--fg, #888); opacity: 0.7; }
+.hw-temp { font-family: monospace; font-weight: 500; padding: 2px 7px; border-radius: 4px; font-size: 0.8rem; }
+.hw-temp-ok   { background: #1a3a1a; color: #4ade80; }
+.hw-temp-warm { background: #3a2a00; color: #fbbf24; }
+.hw-temp-hot  { background: #3a1010; color: var(--red, #e06c75); }
+
+/* Network interfaces */
+.hw-iface {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 6px; margin-bottom: 6px;
+  border: 1px solid var(--border, #2a2a3a); font-size: 0.8rem;
+}
+.hw-iface-up { border-left: 3px solid #4ade80; }
+.hw-iface-down { border-left: 3px solid var(--border, #3a3a4a); opacity: 0.6; }
+.hw-iface-name { font-weight: 600; font-family: monospace; }
+.hw-iface-status { font-size: 0.72rem; padding: 1px 6px; border-radius: 3px; background: var(--panel, #1a1a2e); }
+.hw-iface-addrs { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.hw-addr { font-family: monospace; font-size: 0.72rem; color: var(--fg, #888); opacity: 0.7; }
+
+/* Wi-Fi */
+.hw-wifi-status-bar {
+  padding: 8px 12px; border-radius: 6px; font-size: 0.82rem; margin-bottom: 12px;
+  background: var(--panel, #141420); border: 1px solid var(--border, #2a2a3a);
+}
+.hw-wifi-connected { color: #4ade80; }
+.hw-wifi-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.hw-wifi-network {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-radius: 6px;
+  border: 1px solid var(--border, #2a2a3a); cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  background: var(--panel, #141420);
+}
+.hw-wifi-network:hover, .hw-wifi-network.selected {
+  border-color: var(--red, #e06c75);
+  background: color-mix(in srgb, var(--red, #e06c75) 8%, var(--panel, #141420));
+}
+.hw-wifi-network-info { display: flex; flex-direction: column; gap: 2px; }
+.hw-wifi-ssid { font-size: 0.85rem; font-weight: 500; }
+.hw-wifi-security { font-size: 0.72rem; }
+.hw-wifi-signal { display: flex; align-items: flex-end; gap: 3px; }
+.hw-signal-bar {
+  width: 4px; border-radius: 1px; background: var(--border, #3a3a4a);
+  transition: background 0.15s;
+}
+.hw-signal-bar-on { background: #4ade80; }
+.hw-wifi-connect-form {
+  border: 1px solid var(--border, #2a2a3a);
+  border-radius: 8px; padding: 14px; margin-top: 12px;
+  background: var(--panel, #141420);
+}
+.hw-wifi-connect-title { margin: 0 0 12px; font-size: 0.9rem; }
+
+/* Shared util classes */
+.hw-loading, .hw-scanning { padding: 20px; text-align: center; opacity: 0.5; font-size: 0.85rem; }
+.hw-error { padding: 10px 14px; border-radius: 6px; background: color-mix(in srgb, var(--red, #e06c75) 12%, transparent); color: var(--red, #e06c75); font-size: 0.82rem; }
+.hw-muted { color: var(--fg, #888); opacity: 0.6; font-size: 0.8rem; }
+
+/* Plugin widget injection containers */
+#package-widgets-sidebar, #package-widgets-toolbar { display: contents; }

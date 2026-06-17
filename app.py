@@ -789,6 +789,27 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# ========= PLATFORM EXTENSION ROUTES =========
+# Package Manager — install/manage .zip plugin packages
+from routes.packages_routes import setup_packages_routes
+from src.package_manager import PackageManager
+from src.constants import DATA_DIR, STATIC_DIR
+_package_manager = PackageManager(
+    packages_dir=DATA_DIR + "/packages",
+    static_dir=STATIC_DIR,
+)
+app.include_router(setup_packages_routes(_package_manager))
+
+# Docker Workspace Manager — stateful AI container workspaces
+from routes.docker_workspace_routes import setup_docker_workspace_routes
+from src.workspace_manager import WorkspaceManager
+_workspace_manager = WorkspaceManager()
+app.include_router(setup_docker_workspace_routes(_workspace_manager))
+
+# Hardware routes — metrics, Wi-Fi control, network interfaces
+from routes.hardware_routes import setup_hardware_routes
+app.include_router(setup_hardware_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
