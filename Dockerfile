@@ -1,3 +1,12 @@
+# ---- Stage 1: build the v2 SPA (React/Vite) → /web/dist ----
+FROM node:22-slim AS web-build
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# ---- Stage 2: app runtime ----
 FROM python:3.14-slim
 
 # System deps. tmux is required by Cookbook for background downloads/serves.
@@ -75,6 +84,9 @@ RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
 
 # Copy app code
 COPY . .
+
+# v2 SPA built assets → served at /static-v2 (see app.py mount + /v2 route)
+COPY --from=web-build /web/dist ./static-v2
 
 # Create data directory (mount a volume here for persistence)
 RUN mkdir -p data logs services/cache/search

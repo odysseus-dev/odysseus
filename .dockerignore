@@ -46,3 +46,5 @@ timetree*.png
 *_signin_page.png
 *_calendar_view.png
 .gitignore
+web/node_modules/
+web/dist/

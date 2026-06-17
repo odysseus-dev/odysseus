@@ -1,0 +1,31 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import path from 'node:path'
+
+// Inject the FastAPI CSP nonce placeholder onto every emitted <script>.
+// `_serve_html_with_nonce` substitutes {{CSP_NONCE}} per request.
+const cspNonce = {
+  name: 'csp-nonce',
+  transformIndexHtml(html: string) {
+    return html.replace(/<script(?![^>]*\bnonce=)/g, '<script nonce="{{CSP_NONCE}}"')
+  },
+}
+
+export default defineConfig({
+  base: '/static-v2/',
+  plugins: [react(), tailwindcss(), cspNonce],
+  resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    modulePreload: { polyfill: false },
+    rollupOptions: {
+      output: {
+        entryFileNames: 'assets/index.js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
+})

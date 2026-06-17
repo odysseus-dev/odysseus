@@ -211,7 +211,7 @@ if AUTH_ENABLED:
         "/api/version",
         "/login",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    AUTH_EXEMPT_PREFIXES = ["/static", "/static-v2"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -438,6 +438,11 @@ class _RevalidatingStatic(StaticFiles):
 
 
 app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+
+# v2 frontend (React/Vite SPA, monochrome-zinc console). Built into static-v2/
+# by the Docker web-build stage. Auth-exempt for assets only (see
+# AUTH_EXEMPT_PREFIXES); the /v2 HTML route below stays session-gated.
+app.mount("/static-v2", _RevalidatingStatic(directory="static-v2"), name="static-v2")
 
 # ========= GENERATED IMAGES =========
 @app.get("/api/generated-image/{filename}")
@@ -841,6 +846,17 @@ async def serve_tasks(request: Request):
 @app.get("/library")
 async def serve_library(request: Request):
     return await serve_index(request)
+
+@app.get("/v2")
+@app.get("/v2/{full_path:path}")
+async def serve_v2(request: Request, full_path: str = ""):
+    """New React/Vite SPA (v2). One nonce'd index.html for every /v2/* path so
+    React Router history mode (basename="/v2") deep-links reload correctly.
+    Session-gated by AuthMiddleware like the other HTML routes."""
+    v2_index = abs_join(BASE_DIR, "static-v2/index.html")
+    if os.path.exists(v2_index):
+        return _serve_html_with_nonce(request, v2_index)
+    raise HTTPException(404, "v2 build not found — run the web-build (npm run build / docker build)")
 
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
