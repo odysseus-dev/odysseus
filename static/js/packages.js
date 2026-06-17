@@ -137,15 +137,19 @@ const PackageManager = (() => {
             <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
           </svg>Install Package
         </h2>
-        <div class="admin-toggle-sub" style="margin-bottom:10px">Upload a <strong>.zip</strong> package to add new capabilities. You can also drag-and-drop a file onto this card.</div>
-        <div class="settings-row">
-          <label class="admin-btn-add" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-size:12px;">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Browse .zip
+        <div class="admin-toggle-sub" style="margin-bottom:10px">Install extensions to add new AI capabilities, hardware drivers, and UI components.</div>
+        <div id="pkg-drop-zone" style="border:1.5px dashed color-mix(in srgb,var(--fg) 22%,transparent);border-radius:8px;padding:28px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:110px;max-height:140px;box-sizing:border-box;transition:border-color 0.15s,background 0.15s;cursor:pointer;background:color-mix(in srgb,var(--fg) 2%,transparent);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span style="font-size:12px;opacity:0.55">Drop a <strong>.zip</strong> package here or</span>
+          <label class="admin-btn-add" style="cursor:pointer;display:inline-flex;align-items:center;gap:5px;font-size:12px;margin:0;">
+            Browse Files
             <input type="file" id="pkg-file-input" accept=".zip" style="display:none">
           </label>
-          <span id="pkg-install-msg" style="font-size:11px;margin-left:8px;color:color-mix(in srgb,var(--fg) 50%,transparent)"></span>
         </div>
+        <span id="pkg-install-msg" style="display:block;font-size:11px;margin-top:7px;color:color-mix(in srgb,var(--fg) 50%,transparent);min-height:1em"></span>
       </div>
 
       <!-- Available (bundled) packages card -->
@@ -226,13 +230,23 @@ const PackageManager = (() => {
       });
     }
 
-    // Drag-and-drop on the install card
-    if (installCard) {
-      installCard.addEventListener('dragover', e => { e.preventDefault(); installCard.style.outline = '2px dashed var(--red)'; });
-      installCard.addEventListener('dragleave', () => { installCard.style.outline = ''; });
-      installCard.addEventListener('drop', e => {
+    // Drag-and-drop on the drop zone (also allow clicking the zone to open file picker)
+    const dropZone = container.querySelector('#pkg-drop-zone');
+    if (dropZone) {
+      dropZone.addEventListener('click', () => fileInput?.click());
+      dropZone.addEventListener('dragover', e => {
         e.preventDefault();
-        installCard.style.outline = '';
+        dropZone.style.borderColor = 'var(--red)';
+        dropZone.style.background = 'color-mix(in srgb,var(--red) 6%,transparent)';
+      });
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.style.borderColor = '';
+        dropZone.style.background = '';
+      });
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.style.borderColor = '';
+        dropZone.style.background = '';
         const file = e.dataTransfer?.files?.[0];
         if (file) _installFile(file);
       });

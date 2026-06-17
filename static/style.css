@@ -22153,6 +22153,12 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 16px 20px;
   min-width: 0;
 }
+/* Settings panel tabs: only the active panel is visible. The JS toggles
+   the "hidden" class via classList — make sure it actually hides the panel
+   regardless of any other display rule on the element. */
+[data-settings-panel].hidden {
+  display: none !important;
+}
 .settings-appearance-panel {
   flex-direction: column;
 }
@@ -38114,12 +38120,6 @@ body.theme-frosted .modal {
    header). The overrides below collapse them into the compact, layered look
    the built-in tool modals use: a var(--bg) modal body with var(--panel) cards.
    ════════════════════════════════════════════════════════════════════════════ */
-
-/* Modal body wrapper used by openPanel() and the Packages modal. Matches the
-   inner padding of native tool-modal bodies. */
-.pkg-modal-body {
-  padding: 4px 6px 8px;
-}
 
 /* Panel chrome for hardware-monitor and docker-workspaces package widgets
    when opened as floating panels via openPanel(). */
