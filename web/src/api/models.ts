@@ -16,6 +16,17 @@ export function useDeleteEndpoint() {
   })
 }
 
+export function useSetDefaultModel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (model: string) => {
+      const r = await apiFetch("/api/auth/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ default_model: model }) })
+      if (!r.ok) throw new Error("save failed"); return r.json()
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["default-chat"] }),
+  })
+}
+
 export interface NewEndpoint { name?: string; base_url: string; api_key?: string; model_type?: string }
 function endpointForm(v: NewEndpoint) {
   const fd = new FormData()

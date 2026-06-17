@@ -2,12 +2,53 @@ import { useState } from "react"
 import { Trash2, UserPlus, Plus } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useAuthStatus, useUsers, useUserMutations, logout } from "@/api/auth"
-import { useModels, useDeleteEndpoint, useEndpointMutations, testEndpoint } from "@/api/models"
+import { useModels, useDefaultChat, useDeleteEndpoint, useEndpointMutations, useSetDefaultModel, testEndpoint } from "@/api/models"
+import { usePresets, useCreatePreset } from "@/api/presets"
 import { AdminSections } from "@/components/settings/AdminSections"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 const inpCls = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
+
+function PresetSection() {
+  const { data: presets } = usePresets()
+  const { mutate, isPending } = useCreatePreset()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
+  const [sys, setSys] = useState("")
+  const [temp, setTemp] = useState("1.0")
+  const [maxTok, setMaxTok] = useState("0")
+  const [err, setErr] = useState("")
+  const add = () => {
+    if (!name.trim()) { setErr("Name required"); return }
+    setErr("")
+    mutate({ name: name.trim(), system_prompt: sys, temperature: parseFloat(temp) || 1, max_tokens: parseInt(maxTok) || 0 }, {
+      onSuccess: () => { setName(""); setSys(""); setTemp("1.0"); setMaxTok("0"); setOpen(false) },
+      onError: (e) => setErr(e instanceof Error ? e.message : "Failed"),
+    })
+  }
+  return (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Presets</h2>
+      <div className="space-y-2">
+        {(presets || []).map((p) => <div key={p.id} className="rounded-lg border bg-card p-3 text-sm">{p.name}</div>)}
+        {(presets || []).length === 0 && <p className="py-1 text-sm text-muted-foreground">No presets yet.</p>}
+      </div>
+      {open ? (
+        <div className="mt-2 space-y-2 rounded-lg border bg-card p-3">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Preset name" className={inpCls} />
+          <textarea value={sys} onChange={(e) => setSys(e.target.value)} placeholder="System prompt (optional)" rows={3} className="w-full resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring" />
+          <div className="flex gap-2">
+            <label className="flex-1 text-xs text-muted-foreground">Temperature<input value={temp} onChange={(e) => setTemp(e.target.value)} type="number" min={0} max={2} step={0.1} className={cn(inpCls, "mt-1")} /></label>
+            <label className="flex-1 text-xs text-muted-foreground">Max tokens (0=auto)<input value={maxTok} onChange={(e) => setMaxTok(e.target.value)} type="number" min={0} className={cn(inpCls, "mt-1")} /></label>
+          </div>
+          {err && <p className="text-xs text-destructive">{err}</p>}
+          <div className="flex justify-end gap-2"><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button><Button size="sm" disabled={isPending} onClick={add}>{isPending ? "Saving…" : "Save preset"}</Button></div>
+        </div>
+      ) : <Button variant="outline" size="sm" className="mt-2" onClick={() => setOpen(true)}><Plus className="size-4" />New preset</Button>}
+    </section>
+  )
+}
 
 function AddEndpointForm() {
   const { create } = useEndpointMutations()
@@ -50,8 +91,11 @@ export function SettingsRoute() {
   const { theme, setTheme } = useUi()
   const { data: status } = useAuthStatus()
   const { data: models } = useModels()
+  const { data: def } = useDefaultChat()
+  const setDefault = useSetDefaultModel()
   const { data: users } = useUsers()
   const del = useDeleteEndpoint()
+  const allModels = (models?.items || []).flatMap((e) => [...(e.models || []), ...(e.models_extra || [])])
   const { create: createUser, remove: removeUser } = useUserMutations()
   const user = status?.username || status?.user || "—"
   const endpoints = (models?.items || []).filter((e) => e.endpoint_id)
@@ -82,6 +126,17 @@ export function SettingsRoute() {
                 <button key={t} onClick={() => setTheme(t)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", theme === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{t}</button>
               ))}
             </div>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">AI defaults</h2>
+          <div className="flex items-center justify-between rounded-lg border bg-card p-3">
+            <span className="text-sm">Default chat model</span>
+            <select value={def?.model || ""} onChange={(e) => setDefault.mutate(e.target.value)} className="h-9 max-w-[60%] rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring">
+              {!def?.model && <option value="">—</option>}
+              {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
           </div>
         </section>
 
@@ -131,6 +186,8 @@ export function SettingsRoute() {
             </div>
           </section>
         )}
+
+        <PresetSection />
 
         <AdminSections />
 

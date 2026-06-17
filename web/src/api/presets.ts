@@ -1,6 +1,20 @@
-import { useQuery } from "@tanstack/react-query"
-import { apiJson } from "@/lib/api"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { apiJson, apiFetch } from "@/lib/api"
 export interface Preset { id: string; name: string; enabled?: boolean }
+
+export function useCreatePreset() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (v: { name: string; system_prompt?: string; temperature?: number; max_tokens?: number }) => {
+      const r = await apiFetch("/api/presets/custom", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: v.name, system_prompt: v.system_prompt || "", temperature: v.temperature ?? 1.0, max_tokens: v.max_tokens ?? 0, enabled: true }),
+      })
+      if (!r.ok) throw new Error("save failed"); return r.json()
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["presets"] }),
+  })
+}
 export function usePresets() {
   return useQuery({
     queryKey: ["presets"],
