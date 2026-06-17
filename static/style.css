@@ -38089,3 +38089,74 @@ body.theme-frosted .modal {
   position: relative;
   top: -0.5px;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Native-modal parity for package panels (Hardware / Workspaces / Packages).
+   These panels originally shipped with their own "marketing page" layout
+   (900px max-width, 24px padding, a big in-body title duplicating the modal
+   header). The overrides below collapse them into the compact, layered look
+   the built-in tool modals use: a var(--bg) modal body with var(--panel) cards.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Modal body wrapper used by openPanel() and the Packages modal. Matches the
+   inner padding of native tool-modal bodies. */
+.pkg-modal-body {
+  padding: 4px 6px 8px;
+}
+
+/* Kill the page-style outer padding/centering — the modal body already pads,
+   and the modal width already constrains the panel. */
+.pkg-panel, .ws-panel, .hw-panel {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* The modal header (the draggable title bar) already shows the panel name in
+   the accent colour, so the duplicate in-body title is removed. The header row
+   is kept only for its action button (Refresh / etc.) and lead description. */
+.pkg-panel-title, .ws-panel-title, .hw-panel-title {
+  display: none;
+}
+.pkg-panel-header, .ws-panel-header, .hw-panel-header {
+  align-items: center;
+  margin-bottom: 12px;
+}
+/* Hardware has no in-body subtitle — once the duplicate title is hidden only
+   the Refresh button remains, so anchor it to the top-right like a native
+   modal action rather than letting space-between float it left. */
+.hw-panel-header { justify-content: flex-end; }
+.pkg-panel-subtitle, .ws-panel-subtitle {
+  font-size: 0.8rem;
+}
+
+/* Section groups → native "card heading + subtle divider" rhythm rather than a
+   heavy full-width bottom rule. Inner stat/gauge cards stay var(--panel) and
+   now pop against the var(--bg) modal body. */
+.hw-section {
+  margin-bottom: 14px;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.hw-section-title,
+.pkg-list-header h3, .ws-list-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: -0.02em;
+  opacity: 1;
+  color: var(--fg);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+/* Compact the install drop zone to tool-modal scale. */
+.pkg-install-zone {
+  padding: 18px;
+  margin-bottom: 14px;
+  border-radius: 8px;
+}
+
+/* Cards: match the native .admin-card corner radius (8px, not 10px). */
+.pkg-card, .ws-card { border-radius: 8px; margin-bottom: 8px; }

@@ -1121,12 +1121,12 @@ function initializeEventListeners() {
           modal.className = 'modal';
           modal.innerHTML = `
             <div class="modal-content" role="dialog" aria-label="Package Manager"
-                 style="width:min(680px,95vw);max-height:85vh;overflow-y:auto;padding:0">
+                 style="width:min(680px,95vw);max-height:85vh;overflow-y:auto;padding:10px;background:var(--bg)">
               <div class="modal-header" id="pkg-modal-header">
                 <h4>Package Manager</h4>
                 <button class="close-btn" id="pkg-modal-close" aria-label="Close">&#x2716;</button>
               </div>
-              <div id="pkg-panel-body" style="padding:16px"></div>
+              <div id="pkg-panel-body" class="pkg-modal-body"></div>
             </div>`;
           document.body.appendChild(modal);
           makeWindowDraggable(modal, {
