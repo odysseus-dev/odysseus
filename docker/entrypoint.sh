@@ -141,9 +141,12 @@ export PATH="/app/.local/bin:$PATH"
 # Run first-time setup as the app user so data/ files get the right ownership.
 # setup.py is idempotent — skips auth.json / .env if they already exist.
 # || true so a setup failure never prevents the container from starting.
-"$GOSU_BIN" "$PUID:$PGID" "$PYTHON_BIN" /app/setup.py || true
+"$GOSU_BIN" "$APP_USER" "$PYTHON_BIN" /app/setup.py || true
 
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
 # so signals (SIGTERM from `docker stop`) reach uvicorn directly.
-exec "$GOSU_BIN" "$PUID:$PGID" "$@"
+# NOTE: use APP_USER (not PUID:PGID) — gosu preserves supplementary groups
+# only when called by username. Without dockerhost group access the AI
+# Workspaces UI reports "Docker is not running on this host".
+exec "$GOSU_BIN" "$APP_USER" "$@"

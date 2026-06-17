@@ -11,12 +11,6 @@ logger = logging.getLogger(__name__)
 _docker_available = False
 try:
     import docker
-    # Guard against a non-SDK `docker` shadowing the real docker-py package.
-    # The repo ships a top-level `docker/` directory (deployment configs); when
-    # the SDK isn't installed, `import docker` silently resolves to that as a
-    # namespace package and succeeds without exposing `from_env`. Verifying the
-    # attribute keeps the "SDK not installed" path honest instead of failing
-    # later with a confusing "cannot connect to daemon" error.
     if hasattr(docker, "from_env"):
         _docker_available = True
     else:
