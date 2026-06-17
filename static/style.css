@@ -38024,3 +38024,22 @@ body.theme-frosted .modal {
 
 /* Plugin widget injection containers */
 #package-widgets-sidebar, #package-widgets-toolbar { display: contents; }
+
+/* ── ExecutionGuard approval bar ───────────────────────────────────────────── */
+.ws-approval-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, #f0c040 30%, transparent);
+  background: color-mix(in srgb, #f0c040 8%, transparent);
+}
+.ws-approval-msg {
+  flex: 1; min-width: 0; font-size: 0.82rem; word-break: break-all;
+}
+.ws-approval-msg code {
+  font-family: monospace; background: var(--panel, #141420);
+  padding: 1px 5px; border-radius: 3px; font-size: 0.85em;
+}
+.ws-btn-approve { background: #4ade80; color: #111; border: none; }
+.ws-btn-approve:hover { background: #22c55e; }
+.ws-btn-deny { background: transparent; border: 1px solid var(--border, #2a2a3a); }
+.ws-btn-deny:hover { background: color-mix(in srgb, var(--red, #e06c75) 15%, transparent); }

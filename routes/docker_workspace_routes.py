@@ -17,6 +17,7 @@ class CreateWorkspaceBody(BaseModel):
 
 class ExecuteBody(BaseModel):
     command: str
+    guard_token: Optional[str] = None
 
 
 class BindAgentBody(BaseModel):
@@ -147,12 +148,36 @@ def setup_docker_workspace_routes(workspace_manager):
     def execute_in_workspace(ws_id: str, body: ExecuteBody, request: Request):
         """
         Execute a command inside the workspace container.
-        Commands are security-classified before execution.
-        HIGH-risk commands are blocked. MEDIUM-risk commands require prior approval.
+        HIGH-risk commands are blocked. MEDIUM-risk commands return a pending_approval
+        response with a guard_token; the client must call POST /api/guard/decide/{token}
+        with decision="approve" then re-submit with guard_token in the body.
         """
+        from src.execution_guard import classify_command
+        from src.guard_approvals import create_approval, consume
+
         owner = _owner(request)
+
+        if body.guard_token:
+            record = consume(body.guard_token, owner)
+            if record is None:
+                raise HTTPException(status_code=403, detail="Guard token invalid, expired, or not approved")
+            command = record["command"]
+        else:
+            command = body.command
+            risk = classify_command(command)
+            if risk["blocked"]:
+                raise HTTPException(status_code=403, detail=f"Command blocked: {risk['reason']}")
+            if risk["risk"] == "MEDIUM":
+                token = create_approval(command, owner, ws_id)
+                return {
+                    "status": "pending_approval",
+                    "token": token,
+                    "command": command,
+                    "reason": risk["reason"],
+                }
+
         try:
-            result = workspace_manager.execute_in_workspace(ws_id, body.command, owner=owner)
+            result = workspace_manager.execute_in_workspace(ws_id, command, owner=owner)
             return result
         except PermissionError as e:
             raise HTTPException(status_code=403, detail=str(e))

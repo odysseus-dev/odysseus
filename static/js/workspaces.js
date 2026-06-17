@@ -162,12 +162,42 @@ const WorkspaceManager = (() => {
     const cmdInput = modal.querySelector('#ws-exec-cmd');
     const output = modal.querySelector('#ws-exec-output');
 
-    async function runCmd() {
+    async function runCmd(guardToken) {
       const cmd = cmdInput.value.trim();
       if (!cmd) return;
       output.textContent = '$ ' + cmd + '\nRunning...';
       try {
-        const result = await _api('POST', `/${wsId}/exec`, { command: cmd });
+        const body = guardToken ? { command: cmd, guard_token: guardToken } : { command: cmd };
+        const result = await _api('POST', `/${wsId}/exec`, body);
+
+        if (result.status === 'pending_approval') {
+          output.textContent = `$ ${cmd}\n⚠️ This command requires your approval (MEDIUM risk).\n`;
+          const approveBar = document.createElement('div');
+          approveBar.className = 'ws-approval-bar';
+          approveBar.innerHTML = `
+            <span class="ws-approval-msg">Command: <code>${_esc(result.command)}</code></span>
+            <button class="ws-btn ws-btn-primary ws-btn-approve" data-token="${_esc(result.token)}">Approve &amp; Run</button>
+            <button class="ws-btn ws-btn-deny">Deny</button>
+          `;
+          modal.querySelector('.ws-modal-body').appendChild(approveBar);
+
+          approveBar.querySelector('.ws-btn-approve').addEventListener('click', async () => {
+            const token = result.token;
+            approveBar.remove();
+            try {
+              await _apiGuardDecide(token, 'approve');
+              await runCmd(token);
+            } catch (e) {
+              output.textContent += `\nApproval error: ${e.message}`;
+            }
+          });
+          approveBar.querySelector('.ws-btn-deny').addEventListener('click', () => {
+            approveBar.remove();
+            output.textContent += '\nCommand denied by user.';
+          });
+          return;
+        }
+
         output.textContent = `$ ${cmd}\n${result.output || '(no output)'}`;
         if (result.exit_code !== 0) {
           output.textContent += `\n[Exit code: ${result.exit_code}]`;
@@ -175,6 +205,19 @@ const WorkspaceManager = (() => {
       } catch (e) {
         output.textContent = `Error: ${e.message}`;
       }
+    }
+
+    async function _apiGuardDecide(token, decision) {
+      const res = await fetch('/api/guard/decide/' + token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || 'Guard decision failed');
+      }
+      return res.json();
     }
 
     modal.querySelector('#ws-exec-run').addEventListener('click', runCmd);

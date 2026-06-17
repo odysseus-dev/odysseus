@@ -810,6 +810,10 @@ app.include_router(setup_docker_workspace_routes(_workspace_manager))
 from routes.hardware_routes import setup_hardware_routes
 app.include_router(setup_hardware_routes())
 
+# ExecutionGuard approval routes — MEDIUM-risk command approval flow
+from routes.guard_routes import setup_guard_routes
+app.include_router(setup_guard_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
