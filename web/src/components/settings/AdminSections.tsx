@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Trash2, Plus, RefreshCw, Send, Server, Webhook as WebhookIcon } from "lucide-react"
-import { useMcpServers, useWebhooks, useAdminMutations } from "@/api/admin"
+import { useMcpServers, useWebhooks, useAdminMutations, useFeatures, useSetFeature } from "@/api/admin"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -123,6 +123,25 @@ function WebhookSection() {
   )
 }
 
+function FeaturesSection() {
+  const { data } = useFeatures()
+  const setFeature = useSetFeature()
+  if (!data || Object.keys(data).length === 0) return null
+  return (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Features <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
+      <div className="rounded-lg border bg-card p-3">
+        {Object.entries(data).map(([k, v]) => (
+          <div key={k} className="flex items-center justify-between py-1.5">
+            <span className="text-sm capitalize text-muted-foreground">{k.replace(/_/g, " ")}</span>
+            <button onClick={() => setFeature.mutate({ key: k, value: !v })} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", v ? "bg-primary" : "bg-input")}><span className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-transform", v ? "translate-x-4" : "translate-x-0.5")} /></button>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 export function AdminSections() {
-  return (<><McpSection /><WebhookSection /></>)
+  return (<><FeaturesSection /><McpSection /><WebhookSection /></>)
 }

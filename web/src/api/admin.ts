@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { apiFetch } from "@/lib/api"
+import { apiFetch, apiJson } from "@/lib/api"
 
 export interface McpServer {
   id: string; name: string; transport: string; command?: string; url?: string;
@@ -16,6 +16,20 @@ async function adminList<T>(path: string): Promise<{ items: T[]; admin: boolean 
   if (r.status === 403) return { items: [], admin: false }
   if (!r.ok) return { items: [], admin: true }
   return { items: (await r.json()) as T[], admin: true }
+}
+
+export function useFeatures() {
+  return useQuery({ queryKey: ["features"], retry: false, queryFn: () => apiJson<Record<string, boolean>>("/api/auth/features") })
+}
+export function useSetFeature() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (v: { key: string; value: boolean }) => {
+      const r = await apiFetch("/api/auth/features", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [v.key]: v.value }) })
+      if (!r.ok) throw new Error("save failed"); return r.json()
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["features"] }),
+  })
 }
 
 export function useMcpServers() {
