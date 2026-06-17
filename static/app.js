@@ -1106,53 +1106,11 @@ function initializeEventListeners() {
     });
   }
 
-  // ── Package Manager panel ─────────────────────────────────────────────────
-  {
-    let _pkgInited = false;
-    const toolPackagesBtn = el('tool-packages-btn');
-    if (toolPackagesBtn) {
-      toolPackagesBtn.addEventListener('click', async () => {
-        const Modals = await import('./js/modalManager.js');
-        if (Modals.toggle('packages-modal')) return;
-        let modal = document.getElementById('packages-modal');
-        if (!modal) {
-          modal = document.createElement('div');
-          modal.id = 'packages-modal';
-          modal.className = 'modal';
-          modal.innerHTML = `
-            <div class="modal-content" role="dialog" aria-label="Package Manager"
-                 style="width:min(680px,95vw);max-height:85vh;overflow-y:auto;padding:10px;background:var(--bg)">
-              <div class="modal-header" id="pkg-modal-header">
-                <h4>Package Manager</h4>
-                <button class="close-btn" id="pkg-modal-close" aria-label="Close">&#x2716;</button>
-              </div>
-              <div id="pkg-panel-body" class="pkg-modal-body"></div>
-            </div>`;
-          document.body.appendChild(modal);
-          makeWindowDraggable(modal, {
-            content: modal.querySelector('.modal-content'),
-            header:  modal.querySelector('#pkg-modal-header'),
-          });
-          modal.querySelector('#pkg-modal-close').addEventListener('click', () => { Modals.close('packages-modal'); });
-          Modals.register('packages-modal', {
-            sidebarBtnId: 'tool-packages-btn',
-            restoreFn: () => { modal.classList.remove('hidden', 'modal-minimized'); },
-            closeFn: () => {
-              modal.remove();
-              _pkgInited = false;
-            },
-          });
-        }
-        if (!_pkgInited) {
-          PackageManager.init(modal.querySelector('#pkg-panel-body'));
-          _pkgInited = true;
-        }
-        modal.classList.remove('hidden', 'modal-minimized');
-      });
-    }
-    // Load package frontend hooks on startup
-    PackageManager.loadFrontendHooks().catch(() => {});
-  }
+  // ── Package extensions ────────────────────────────────────────────────────
+  // The Package Manager UI now lives in Settings → Packages (admin). Here we
+  // only load installed packages' frontend hooks so their sidebar/chat widgets
+  // inject on startup.
+  PackageManager.loadFrontendHooks().catch(() => {});
 
   // Sidebar toggle
   const toggleSidebarOption = el('toggle-sidebar-option');

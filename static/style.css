@@ -38160,3 +38160,14 @@ body.theme-frosted .modal {
 
 /* Cards: match the native .admin-card corner radius (8px, not 10px). */
 .pkg-card, .ws-card { border-radius: 8px; margin-bottom: 8px; }
+
+/* In the Settings → Packages tab there is no per-panel modal header to show
+   the name (the settings header reads "Settings"), so the in-body title is
+   shown here at native settings-heading scale. */
+[data-settings-panel="packages"] .pkg-panel-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  margin: 0 0 4px;
+}
