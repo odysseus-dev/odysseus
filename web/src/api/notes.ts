@@ -23,6 +23,17 @@ export function useNoteMutations() {
       },
       onSuccess: inv,
     }),
+    update: useMutation({
+      mutationFn: async (v: { id: string; title: string; content: string }) => {
+        const r = await apiFetch(`/api/notes/${v.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: v.title, content: v.content }),
+        })
+        if (!r.ok) throw new Error("update failed"); return r.json()
+      },
+      onSuccess: inv,
+    }),
     remove: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/notes/${id}`, { method: "DELETE" }) }, onSuccess: inv }),
     pin: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/notes/${id}/pin`, { method: "POST" }) }, onSuccess: inv }),
   }

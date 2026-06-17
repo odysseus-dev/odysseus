@@ -1,15 +1,20 @@
 import { useState } from "react"
-import { Trash2, Pin } from "lucide-react"
+import { Trash2, Pin, Pencil, Check, X } from "lucide-react"
 import { useNotes, useNoteMutations } from "@/api/notes"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 export function NotesRoute() {
   const { data: notes } = useNotes()
-  const { create, remove, pin } = useNoteMutations()
+  const { create, update, remove, pin } = useNoteMutations()
   const [title, setTitle] = useState("")
   const [content, setContent] = useState("")
   const submit = () => { if (title.trim() || content.trim()) { create.mutate({ title, content }); setTitle(""); setContent("") } }
+  const [editId, setEditId] = useState<string | null>(null)
+  const [eTitle, setETitle] = useState("")
+  const [eContent, setEContent] = useState("")
+  const startEdit = (id: string, t: string, c: string) => { setEditId(id); setETitle(t || ""); setEContent(c || "") }
+  const saveEdit = () => { if (editId) { update.mutate({ id: editId, title: eTitle, content: eContent }); setEditId(null) } }
 
   return (
     <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
@@ -23,12 +28,26 @@ export function NotesRoute() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {(notes || []).map((n) => (
             <div key={n.id} className="group relative rounded-lg border bg-card p-3">
-              {n.title && <div className="mb-1 pr-12 text-sm font-semibold">{n.title}</div>}
-              {n.content && <p className="whitespace-pre-wrap text-sm text-muted-foreground">{n.content}</p>}
-              <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-                <button onClick={() => pin.mutate(n.id)} title="Pin" className={cn("text-muted-foreground hover:text-foreground", n.pinned && "text-foreground")}><Pin className="size-3.5" /></button>
-                <button onClick={() => remove.mutate(n.id)} title="Delete" className="text-muted-foreground hover:text-destructive"><Trash2 className="size-3.5" /></button>
-              </div>
+              {editId === n.id ? (
+                <div className="space-y-2">
+                  <input value={eTitle} onChange={(e) => setETitle(e.target.value)} placeholder="Title" className="w-full bg-transparent text-sm font-medium outline-none placeholder:text-muted-foreground" />
+                  <textarea value={eContent} onChange={(e) => setEContent(e.target.value)} placeholder="Note…" rows={4} className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
+                  <div className="flex justify-end gap-1.5">
+                    <button onClick={() => setEditId(null)} title="Cancel" className="text-muted-foreground hover:text-foreground"><X className="size-3.5" /></button>
+                    <button onClick={saveEdit} title="Save" className="text-muted-foreground hover:text-foreground"><Check className="size-3.5" /></button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {n.title && <div className="mb-1 pr-16 text-sm font-semibold">{n.title}</div>}
+                  {n.content && <p className="whitespace-pre-wrap text-sm text-muted-foreground">{n.content}</p>}
+                  <div className="absolute right-2 top-2 flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button onClick={() => pin.mutate(n.id)} title="Pin" className={cn("text-muted-foreground hover:text-foreground", n.pinned && "text-foreground")}><Pin className="size-3.5" /></button>
+                    <button onClick={() => startEdit(n.id, n.title || "", n.content || "")} title="Edit" className="text-muted-foreground hover:text-foreground"><Pencil className="size-3.5" /></button>
+                    <button onClick={() => remove.mutate(n.id)} title="Delete" className="text-muted-foreground hover:text-destructive"><Trash2 className="size-3.5" /></button>
+                  </div>
+                </>
+              )}
             </div>
           ))}
         </div>
