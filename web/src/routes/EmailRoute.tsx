@@ -1,21 +1,32 @@
 import { useState } from "react"
-import { ArrowLeft, PenSquare, Send, X } from "lucide-react"
-import { useInbox, useEmail, sendEmail, saveDraft } from "@/api/email"
+import { ArrowLeft, PenSquare, Send, X, Reply, Archive, MailOpen, Trash2 } from "lucide-react"
+import { useInbox, useEmail, useEmailActions, sendEmail, saveDraft } from "@/api/email"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-function Reader({ uid, onBack }: { uid: string; onBack: () => void }) {
+interface Prefill { to?: string; subject?: string; body?: string }
+
+function Reader({ uid, onBack, onReply }: { uid: string; onBack: () => void; onReply: (p: Prefill) => void }) {
   const { data, isLoading } = useEmail(uid)
+  const { markUnread, archive, remove } = useEmailActions()
   const html = data?.body_html || data?.html
   const text = data?.body_text || data?.body || data?.text
   const from = data?.from_name || data?.from_address || data?.from || data?.from_addr || data?.sender || ""
+  const addr = data?.from_address || data?.from_addr || from
+  const after = (fn: () => void) => { fn(); onBack() }
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-13 shrink-0 items-center gap-2 border-b px-3">
         <Button variant="ghost" size="icon" onClick={onBack} title="Back"><ArrowLeft className="size-4" /></Button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold">{data?.subject || "(no subject)"}</div>
           <div className="truncate text-xs text-muted-foreground">{from}{data?.date ? ` · ${new Date(data.date).toLocaleString()}` : ""}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button onClick={() => onReply({ to: addr, subject: /^re:/i.test(data?.subject || "") ? data?.subject : `Re: ${data?.subject || ""}`, body: `\n\n---\n${text || ""}` })} title="Reply" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Reply className="size-4" /></button>
+          <button onClick={() => after(() => markUnread.mutate(uid))} title="Mark unread" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><MailOpen className="size-4" /></button>
+          <button onClick={() => after(() => archive.mutate(uid))} title="Archive" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><Archive className="size-4" /></button>
+          <button onClick={() => { if (confirm("Delete this email?")) after(() => remove.mutate(uid)) }} title="Delete" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-destructive"><Trash2 className="size-4" /></button>
         </div>
       </header>
       {isLoading ? <div className="p-6 text-sm text-muted-foreground">Loading…</div>
@@ -26,10 +37,10 @@ function Reader({ uid, onBack }: { uid: string; onBack: () => void }) {
   )
 }
 
-function Compose({ onClose }: { onClose: () => void }) {
-  const [to, setTo] = useState("")
-  const [subject, setSubject] = useState("")
-  const [body, setBody] = useState("")
+function Compose({ onClose, initial }: { onClose: () => void; initial?: Prefill }) {
+  const [to, setTo] = useState(initial?.to || "")
+  const [subject, setSubject] = useState(initial?.subject || "")
+  const [body, setBody] = useState(initial?.body || "")
   const [busy, setBusy] = useState("")
   const [err, setErr] = useState("")
   const act = async (kind: "send" | "draft") => {
@@ -62,11 +73,13 @@ export function EmailRoute() {
   const { data } = useInbox()
   const [uid, setUid] = useState<string | null>(null)
   const [composing, setComposing] = useState(false)
+  const [prefill, setPrefill] = useState<Prefill | undefined>(undefined)
   const emails = data?.emails || []
+  const reply = (p: Prefill) => { setPrefill(p); setUid(null); setComposing(true) }
   return (
     <div className="relative mx-auto flex h-full w-full max-w-3xl flex-col">
-      {composing && <Compose onClose={() => setComposing(false)} />}
-      {uid ? <Reader uid={uid} onBack={() => setUid(null)} /> : (
+      {composing && <Compose initial={prefill} onClose={() => { setComposing(false); setPrefill(undefined) }} />}
+      {uid ? <Reader uid={uid} onBack={() => setUid(null)} onReply={reply} /> : (
         <>
           <header className="flex h-13 shrink-0 items-center justify-between border-b px-4">
             <div className="text-sm font-semibold">Email <span className="font-normal text-muted-foreground">· Inbox</span></div>

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { apiJson, apiFetch } from "@/lib/api"
 import type { EmailMsg } from "@/types"
 
@@ -32,3 +32,18 @@ async function post(path: string, p: ComposePayload): Promise<{ success?: boolea
 }
 export const sendEmail = (p: ComposePayload) => post("/api/email/send", p)
 export const saveDraft = (p: ComposePayload) => post("/api/email/draft", p)
+
+export async function aiReply(uid: string): Promise<{ reply?: string; body?: string; error?: string }> {
+  const r = await apiFetch(`/api/email/ai-reply/${uid}?folder=INBOX`, { method: "POST" })
+  return r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+}
+
+export function useEmailActions() {
+  const qc = useQueryClient()
+  const inv = () => qc.invalidateQueries({ queryKey: ["email", "INBOX"] })
+  return {
+    markUnread: useMutation({ mutationFn: async (uid: string) => { await apiFetch(`/api/email/mark-unread/${uid}?folder=INBOX`, { method: "POST" }) }, onSuccess: inv }),
+    archive: useMutation({ mutationFn: async (uid: string) => { await apiFetch(`/api/email/archive/${uid}?folder=INBOX`, { method: "POST" }) }, onSuccess: inv }),
+    remove: useMutation({ mutationFn: async (uid: string) => { await apiFetch(`/api/email/delete/${uid}?folder=INBOX`, { method: "DELETE" }) }, onSuccess: inv }),
+  }
+}
