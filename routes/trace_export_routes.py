@@ -2,7 +2,7 @@ import sys
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Literal
 from pathlib import Path
 
 # Ensure the repo root is on sys.path when executing this file directly.
@@ -20,7 +20,7 @@ router = APIRouter()
 class TraceExportRequest(BaseModel):
     session_id: str
     message_ids: List[str]
-    label: str
+    label: Literal["success", "failed", "needs_review"] 
     note: Optional[str] = None
 
 @router.post("/trace/export")
