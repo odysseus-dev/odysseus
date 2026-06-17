@@ -703,6 +703,18 @@ def _extract_last_user_message(messages: List[Dict]) -> str:
 
 
 _LOW_SIGNAL_RE = re.compile(r"^[\W_]*$", re.UNICODE)
+_FILE_MUTATION_VERB_RE = re.compile(
+    r"\b(copy|append|write|create|make|add|insert|edit|modify|update|replace|rename|delete|remove|move|save)\b",
+    re.IGNORECASE,
+)
+_FILE_TARGET_HINT_RE = re.compile(
+    r"("
+    r"\b(files?|folders?|director(?:y|ies)|repos?|repositories|workspace|project|readme|changelog|license|dockerfile|makefile)\b"
+    r"|(?:^|[\s'\"`])(?:\.{1,2}[\\/]|[A-Za-z]:[\\/]|~[\\/]|/[\w.-]|[\w.-]+[\\/])"
+    r"|\b[\w.-]+\.(?:txt|md|markdown|py|js|jsx|ts|tsx|json|toml|ya?ml|ini|cfg|conf|env|html|css|scss|rs|go|java|kt|cs|cpp|c|h|hpp|sh|ps1|bat|cmd|sql|xml|csv|log|lock)\b"
+    r")",
+    re.IGNORECASE,
+)
 _EXPLICIT_CONTINUATION_RE = re.compile(
     r"^\s*(?:"
     r"yes|y|yeah|yep|ok|okay|sure|do it|go ahead|continue|carry on|"
@@ -717,6 +729,12 @@ _EXPLICIT_CONTINUATION_RE = re.compile(
 def _is_explicit_continuation(text: str) -> bool:
     """Only these terse replies may inherit older user turns for tool retrieval."""
     return bool(_EXPLICIT_CONTINUATION_RE.match(str(text or "").strip()))
+
+
+def _looks_like_file_mutation(text: str) -> bool:
+    """True for write/edit/copy requests aimed at files or a workspace path."""
+    q = str(text or "")
+    return bool(_FILE_MUTATION_VERB_RE.search(q) and _FILE_TARGET_HINT_RE.search(q))
 
 
 def _assistant_requested_followup(messages: List[Dict]) -> bool:
@@ -769,10 +787,12 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
             "low_signal": True,
             "continuation": False,
             "domains": set(),
+            "file_mutation": False,
             "retrieval_query": text,
         }
 
     domains: Set[str] = set()
+    file_mutation = _looks_like_file_mutation(q)
 
     def has(*patterns: str) -> bool:
         return any(re.search(p, q) for p in patterns)
@@ -787,9 +807,9 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("notes_calendar_tasks")
     if has(r"\b(calendar|event|meeting|appointment|schedule)\b"):
         domains.add("notes_calendar_tasks")
-    if has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
+    if not file_mutation and has(r"\b(documents?|docs?|draft|compose|poem|story|essay|outline|letter|edit|rewrite|proofread|suggest|feedback|review this|make a file)\b"):
         domains.add("documents")
-    if "notes_calendar_tasks" not in domains and has(r"\bwrite\b"):
+    if "notes_calendar_tasks" not in domains and not file_mutation and has(r"\bwrite\b"):
         domains.add("documents")
     if has(r"\b(search|web|google|look up|latest|news|current|weather|forecast|stock price|price of|website|url|https?://|www\.)\b"):
         domains.add("web")
@@ -805,7 +825,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("ui")
     if has(r"\b(session|chat history|rename chat|delete chat|archive chat|fork chat|list chats)\b"):
         domains.add("sessions")
-    if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
+    if file_mutation or has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
         domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
@@ -817,6 +837,7 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         "low_signal": low_signal,
         "continuation": continuation,
         "domains": domains,
+        "file_mutation": file_mutation,
         "retrieval_query": retrieval_query,
     }
 
@@ -1830,10 +1851,11 @@ async def stream_agent_loop(
     # user turns only for explicit continuations ("yes", "do it", "1").
     _retrieval_query = str(_intent.get("retrieval_query") or _last_user)
     logger.info(
-        "[agent-intent] latest=%r continuation=%s low_signal=%s domains=%s retrieval_query=%r",
+        "[agent-intent] latest=%r continuation=%s low_signal=%s file_mutation=%s domains=%s retrieval_query=%r",
         _last_user[:120],
         bool(_intent.get("continuation")),
         bool(_intent.get("low_signal")),
+        bool(_intent.get("file_mutation")),
         sorted(_intent.get("domains") or []),
         _retrieval_query[:200],
     )

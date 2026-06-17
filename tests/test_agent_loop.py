@@ -73,6 +73,39 @@ def test_polish_internet_search_request_classifies_as_web():
     assert "web" in intent["domains"]
 
 
+def test_workspace_copy_request_classifies_as_file_mutation():
+    intent = _classify_agent_request([], "Copy README.txt to README_copy.txt")
+
+    assert intent["low_signal"] is False
+    assert intent["file_mutation"] is True
+    assert "files" in intent["domains"]
+    assert "documents" not in intent["domains"]
+
+
+def test_readme_append_request_classifies_as_file_mutation():
+    intent = _classify_agent_request([], "Append 'This is a test' to the README")
+
+    assert intent["low_signal"] is False
+    assert intent["file_mutation"] is True
+    assert "files" in intent["domains"]
+
+
+def test_plain_writing_request_stays_document_or_chat_not_file_mutation():
+    intent = _classify_agent_request([], "Write a poem about winter")
+
+    assert intent["file_mutation"] is False
+    assert "documents" in intent["domains"]
+    assert "files" not in intent["domains"]
+
+
+def test_chat_rename_request_does_not_become_file_mutation():
+    intent = _classify_agent_request([], "Rename chat to Agent test")
+
+    assert intent["file_mutation"] is False
+    assert "sessions" in intent["domains"]
+    assert "files" not in intent["domains"]
+
+
 # ---------------------------------------------------------------------------
 # _detect_admin_intent
 # ---------------------------------------------------------------------------

@@ -221,7 +221,7 @@ async def test_binding_does_not_leak(ws, admin):
 # must still surface the file tools, otherwise the agent says it has no file
 # access (the bug this guards against).
 
-def _captured_agent_request(monkeypatch, *, workspace):
+def _captured_agent_request(monkeypatch, *, workspace, prompt="look at the local project"):
     import asyncio
     import src.agent_loop as al
 
@@ -244,7 +244,7 @@ def _captured_agent_request(monkeypatch, *, workspace):
     async def _run():
         gen = al.stream_agent_loop(
             "https://api.openai.com/v1", "gpt-test",
-            [{"role": "user", "content": "look at the local project"}],
+            [{"role": "user", "content": prompt}],
             max_rounds=1, relevant_tools=None, owner="admin", workspace=workspace,
         )
         return [c async for c in gen]
@@ -253,8 +253,8 @@ def _captured_agent_request(monkeypatch, *, workspace):
     return captured
 
 
-def _sent_tool_names(monkeypatch, *, workspace):
-    captured = _captured_agent_request(monkeypatch, workspace=workspace)
+def _sent_tool_names(monkeypatch, *, workspace, prompt="look at the local project"):
+    captured = _captured_agent_request(monkeypatch, workspace=workspace, prompt=prompt)
     schemas = captured["tools"] or []
     return {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
 
@@ -276,6 +276,31 @@ def test_low_signal_without_workspace_excludes_file_tools(monkeypatch):
     names = _sent_tool_names(monkeypatch, workspace=None)
     assert "read_file" not in names
     assert "get_workspace" not in names
+
+
+def test_workspace_copy_request_surfaces_write_file_tools(monkeypatch):
+    names = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        prompt="Copy README.txt to README_copy.txt and add a final line",
+    )
+
+    assert "get_workspace" in names
+    assert "read_file" in names
+    assert "write_file" in names
+    assert "edit_file" in names
+
+
+def test_workspace_readme_append_request_surfaces_write_file_tools(monkeypatch):
+    names = _sent_tool_names(
+        monkeypatch,
+        workspace="/tmp",
+        prompt="Append 'This is a test' to the README",
+    )
+
+    assert "read_file" in names
+    assert "write_file" in names
+    assert "edit_file" in names
 
 
 def test_workspace_contract_prompt_is_injected(monkeypatch):
