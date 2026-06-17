@@ -75,6 +75,11 @@ the codebase, you are probably right to stay away.
 - Backup/restore guide and helper flow for `data/`.
 - Security hardening around admin-only tools and clear docs for their risk.
 
+## Ideation / Future
+
+- **Inline memory context preview** — before sending a message, show which memory entries will be included in the prompt and their estimated token cost; lets users prune or disable specific memories to reclaim context without navigating away from the chat.
+- **Session export to markdown** — export any conversation as a clean `.md` file suitable for archiving or sharing; strips UI chrome, renders tool results as fenced code blocks, and prepends metadata (model, timestamps, session duration).
+
 ## Not The Focus Right Now
 
 I prob shouldnt add more themes.
