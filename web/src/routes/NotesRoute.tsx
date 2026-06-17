@@ -13,8 +13,10 @@ export function NotesRoute() {
   const [editId, setEditId] = useState<string | null>(null)
   const [eTitle, setETitle] = useState("")
   const [eContent, setEContent] = useState("")
+  const [q, setQ] = useState("")
   const startEdit = (id: string, t: string, c: string) => { setEditId(id); setETitle(t || ""); setEContent(c || "") }
   const saveEdit = () => { if (editId) { update.mutate({ id: editId, title: eTitle, content: eContent }); setEditId(null) } }
+  const list = (notes || []).filter((n) => !q || `${n.title || ""} ${n.content || ""}`.toLowerCase().includes(q.toLowerCase()))
 
   return (
     <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
@@ -25,8 +27,10 @@ export function NotesRoute() {
           <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="Take a note…" rows={2} className="w-full resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
           <div className="flex justify-end"><Button size="sm" onClick={submit}>Add note</Button></div>
         </div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search notes…"
+          className="mb-3 h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {(notes || []).map((n) => (
+          {list.map((n) => (
             <div key={n.id} className="group relative rounded-lg border bg-card p-3">
               {editId === n.id ? (
                 <div className="space-y-2">
@@ -51,7 +55,7 @@ export function NotesRoute() {
             </div>
           ))}
         </div>
-        {(notes || []).length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No notes yet.</p>}
+        {list.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">{q ? "No matching notes." : "No notes yet."}</p>}
       </div>
     </div>
   )

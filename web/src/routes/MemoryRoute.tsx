@@ -12,9 +12,12 @@ export function MemoryRoute() {
   const [text, setText] = useState("")
   const [cat, setCat] = useState("fact")
   const [filter, setFilter] = useState<string | null>(null)
+  const [q, setQ] = useState("")
   const [editId, setEditId] = useState<string | null>(null)
   const [editText, setEditText] = useState("")
-  const list = (memories || []).filter((m) => !filter || m.category === filter || (m.categories || []).includes(filter))
+  const list = (memories || [])
+    .filter((m) => !filter || m.category === filter || (m.categories || []).includes(filter))
+    .filter((m) => !q || (m.text || "").toLowerCase().includes(q.toLowerCase()))
   const submit = () => { if (text.trim()) { add.mutate({ text, category: cat }); setText("") } }
   const startEdit = (id: string, t: string) => { setEditId(id); setEditText(t) }
   const saveEdit = () => { if (editId && editText.trim()) update.mutate({ id: editId, text: editText }); setEditId(null) }
@@ -31,6 +34,8 @@ export function MemoryRoute() {
           </select>
           <Button onClick={submit}><Plus className="size-4" />Add</Button>
         </div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search memories…"
+          className="mb-3 h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
         <div className="mb-4 flex flex-wrap gap-1.5">
           <button onClick={() => setFilter(null)} className={cn("rounded-full border px-3 py-1 text-xs", !filter ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}>All</button>
           {CATS.map((c) => (
