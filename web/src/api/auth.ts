@@ -12,6 +12,19 @@ export async function logout() {
   window.location.assign("/login")
 }
 
+export async function changePassword(current_password: string, new_password: string): Promise<{ ok?: boolean; error?: string }> {
+  const r = await apiFetch("/api/auth/change-password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ current_password, new_password }) })
+  return r.json().catch(() => ({ ok: r.ok }))
+}
+export async function setup2FA(): Promise<{ secret?: string; uri?: string; qr_code?: string; error?: string }> {
+  const r = await apiFetch("/api/auth/2fa/setup", { method: "POST" })
+  return r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+}
+export async function confirm2FA(code: string): Promise<{ ok?: boolean; error?: string; backup_codes?: string[] }> {
+  const r = await apiFetch("/api/auth/2fa/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) })
+  return r.json().catch(() => ({ ok: r.ok }))
+}
+
 export interface AppUser { username: string; is_admin?: boolean }
 export function useUsers() {
   return useQuery({

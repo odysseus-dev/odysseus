@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Trash2, UserPlus, Plus } from "lucide-react"
 import { useUi } from "@/stores/ui"
-import { useAuthStatus, useUsers, useUserMutations, logout } from "@/api/auth"
+import { useAuthStatus, useUsers, useUserMutations, logout, changePassword, setup2FA, confirm2FA } from "@/api/auth"
 import { useModels, useDefaultChat, useDeleteEndpoint, useEndpointMutations, useSetDefaultModel, testEndpoint } from "@/api/models"
 import { usePresets, useCreatePreset } from "@/api/presets"
 import { AdminSections } from "@/components/settings/AdminSections"
@@ -9,6 +9,50 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 const inpCls = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
+
+function AccountSecurity() {
+  const [cur, setCur] = useState("")
+  const [nw, setNw] = useState("")
+  const [pwMsg, setPwMsg] = useState("")
+  const [qr, setQr] = useState<string | null>(null)
+  const [code, setCode] = useState("")
+  const [twoMsg, setTwoMsg] = useState("")
+  const doChange = async () => {
+    if (nw.length < 8) { setPwMsg("New password must be 8+ chars"); return }
+    const r = await changePassword(cur, nw)
+    if (r.ok) { setPwMsg("Password changed."); setCur(""); setNw("") } else setPwMsg(r.error || "Failed")
+  }
+  const startTwo = async () => { const r = await setup2FA(); if (r.qr_code) { setQr(r.qr_code); setTwoMsg("") } else setTwoMsg(r.error || "2FA unavailable") }
+  const confirmTwo = async () => { const r = await confirm2FA(code); if (r.ok) { setTwoMsg("2FA enabled."); setQr(null); setCode("") } else setTwoMsg(r.error || "Invalid code") }
+  return (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Security</h2>
+      <div className="space-y-3 rounded-lg border bg-card p-3">
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Change password</div>
+          <input value={cur} onChange={(e) => setCur(e.target.value)} type="password" placeholder="Current password" autoComplete="current-password" className={inpCls} />
+          <input value={nw} onChange={(e) => setNw(e.target.value)} type="password" placeholder="New password (8+ chars)" autoComplete="new-password" className={inpCls} />
+          {pwMsg && <p className="text-xs text-muted-foreground">{pwMsg}</p>}
+          <div className="flex justify-end"><Button size="sm" variant="outline" onClick={doChange} disabled={!cur || !nw}>Update password</Button></div>
+        </div>
+        <div className="border-t pt-3">
+          <div className="flex items-center justify-between"><span className="text-sm font-medium">Two-factor (TOTP)</span>{!qr && <Button size="sm" variant="outline" onClick={startTwo}>Enable 2FA</Button>}</div>
+          {qr && (
+            <div className="mt-2 space-y-2">
+              <img src={qr} alt="2FA QR" className="size-40 rounded-md border bg-white p-1" />
+              <div className="flex gap-2"><input value={code} onChange={(e) => setCode(e.target.value)} placeholder="6-digit code" className={inpCls} /><Button size="sm" onClick={confirmTwo}>Confirm</Button></div>
+            </div>
+          )}
+          {twoMsg && <p className="mt-1 text-xs text-muted-foreground">{twoMsg}</p>}
+        </div>
+        <div className="flex items-center justify-between border-t pt-3">
+          <span className="text-sm font-medium">Export my data</span>
+          <Button size="sm" variant="outline" onClick={() => window.open("/api/export", "_blank")}>Download JSON</Button>
+        </div>
+      </div>
+    </section>
+  )
+}
 
 function PresetSection() {
   const { data: presets } = usePresets()
@@ -217,6 +261,8 @@ export function SettingsRoute() {
         )}
 
         <PresetSection />
+
+        <AccountSecurity />
 
         <AdminSections />
 
