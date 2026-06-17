@@ -34,6 +34,24 @@ def _ics_naive_dtstart(dt):
         return datetime(dt.year, dt.month, dt.day)
     return dt
 
+
+def _ensure_positive_duration(start_dt, end_dt, all_day):
+    """Clamp an imported event's end so it has a positive duration.
+
+    Some .ics exporters write a single-day all-day event with DTEND equal to
+    DTSTART (treating DTEND as inclusive rather than the RFC 5545 exclusive
+    bound). Stored verbatim that produces a zero-duration row, which the
+    list_events overlap filter (dtstart < end AND dtend > start) silently
+    drops — the event never appears on the calendar even though the web UI
+    would otherwise show it. Normalize a non-positive end to the same default
+    span used when DTEND is absent: one day for all-day events, one hour
+    otherwise.
+    """
+    if end_dt <= start_dt:
+        return start_dt + (timedelta(days=1) if all_day else timedelta(hours=1))
+    return end_dt
+
+
 # Single-user fallback identity. Used only when:
 #   1. The app is configured for single-user (no auth middleware), AND
 #   2. The request didn't resolve to an authenticated user.
@@ -1226,7 +1244,7 @@ def setup_calendar_routes() -> APIRouter:
                 db.commit()
                 db.refresh(target_cal)
 
-            imported = skipped = 0
+            imported = skipped = repaired = 0
             for comp in cal_data.walk():
                 if comp.name != "VEVENT":
                     continue
@@ -1262,6 +1280,18 @@ def setup_calendar_routes() -> APIRouter:
                         .first()
                     )
                     if existing:
+                        # An import predating the clamp below may have stored
+                        # this same event with a non-positive duration, which
+                        # the list_events overlap filter hides. Re-importing
+                        # lands here and would skip without touching that row,
+                        # so the event would stay invisible. Backfill the clamp
+                        # onto the stored row before skipping it.
+                        fixed_end = _ensure_positive_duration(
+                            existing.dtstart, existing.dtend, bool(existing.all_day)
+                        )
+                        if fixed_end != existing.dtend:
+                            existing.dtend = fixed_end
+                            repaired += 1
                         skipped += 1
                         continue
 
@@ -1295,6 +1325,8 @@ def setup_calendar_routes() -> APIRouter:
                     else:
                         end_dt = start_dt + timedelta(hours=1)
 
+                end_dt = _ensure_positive_duration(start_dt, end_dt, all_day)
+
                 ev = CalendarEvent(
                     uid=uid_val,
                     calendar_id=target_cal.id,
@@ -1315,6 +1347,7 @@ def setup_calendar_routes() -> APIRouter:
                 "ok": True,
                 "imported": imported,
                 "skipped": skipped,
+                "repaired": repaired,
                 "calendar": cal_display,
                 "calendar_id": target_cal.id,
             }
