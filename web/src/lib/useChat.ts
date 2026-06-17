@@ -58,35 +58,6 @@ export function useChat(sessionId?: string) {
     if (history?.history) { setMessages(historyToMessages(history.history)); seededRef.current = sid }
   }, [sessionId, history, streaming])
 
-  // Reconnect to a detached run still streaming server-side (e.g. the user
-  // navigated away mid-response and came back). Additive: only fires when this
-  // hook isn't itself streaming and there's a genuinely active stream.
-  useEffect(() => {
-    const sid = sessionId
-    if (!sid || streaming || resumeRef.current === sid) return
-    let cancelled = false
-    const ctrl = new AbortController()
-    ;(async () => {
-      try {
-        const s = await fetch(`/api/chat/stream_status/${sid}`, { credentials: "same-origin" })
-        if (!s.ok || cancelled || sidRef.current !== sid) return
-        resumeRef.current = sid
-        setMessages((prev) => prev[prev.length - 1]?.streaming ? prev : [...prev, { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
-        setStreaming(true)
-        try {
-          await streamResume(sid, (e) => handleEvent(e, sid), ctrl.signal)
-        } finally {
-          patchAi((m) => ({ ...m, streaming: false }))
-          setStreaming(false)
-          seededRef.current = null // re-seed from the now-complete saved history
-          qc.invalidateQueries({ queryKey: ["history", sid] })
-          qc.invalidateQueries({ queryKey: ["sessions"] })
-        }
-      } catch { /* no active stream (404) — normal case */ }
-    })()
-    return () => { cancelled = true; ctrl.abort() }
-  }, [sessionId, streaming, handleEvent, patchAi, qc])
-
   const patchAi = useCallback((fn: (m: ChatMessage) => ChatMessage) =>
     setMessages((prev) => {
       const c = [...prev]; const i = c.length - 1
@@ -182,6 +153,36 @@ export function useChat(sessionId?: string) {
     if (sid) { try { await fetch(`/api/chat/stop/${sid}`, { method: "POST", credentials: "same-origin" }) } catch { /* ignore */ } }
     setStreaming(false)
   }, [])
+
+  // Reconnect to a detached run still streaming server-side (e.g. the user
+  // navigated away mid-response and came back). Additive: only fires when this
+  // hook isn't itself streaming and there's a genuinely active stream.
+  // Declared after handleEvent/patchAi so it doesn't reference them in the TDZ.
+  useEffect(() => {
+    const sid = sessionId
+    if (!sid || streaming || resumeRef.current === sid) return
+    let cancelled = false
+    const ctrl = new AbortController()
+    ;(async () => {
+      try {
+        const s = await fetch(`/api/chat/stream_status/${sid}`, { credentials: "same-origin" })
+        if (!s.ok || cancelled || sidRef.current !== sid) return
+        resumeRef.current = sid
+        setMessages((prev) => prev[prev.length - 1]?.streaming ? prev : [...prev, { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
+        setStreaming(true)
+        try {
+          await streamResume(sid, (e) => handleEvent(e, sid), ctrl.signal)
+        } finally {
+          patchAi((m) => ({ ...m, streaming: false }))
+          setStreaming(false)
+          seededRef.current = null // re-seed from the now-complete saved history
+          qc.invalidateQueries({ queryKey: ["history", sid] })
+          qc.invalidateQueries({ queryKey: ["sessions"] })
+        }
+      } catch { /* no active stream (404) — normal case */ }
+    })()
+    return () => { cancelled = true; ctrl.abort() }
+  }, [sessionId, streaming, handleEvent, patchAi, qc])
 
   return { messages, streaming, send, stop }
 }
