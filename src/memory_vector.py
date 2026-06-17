@@ -101,10 +101,11 @@ class MemoryVectorStore:
 
         return collections
 
-    def add(self, memory_id: str, text: str):
+    def add(self, memory_id: str, text: str, workspace_id: str = None):
         """Add a single memory entry to the vector index."""
         if not self._healthy:
             return
+        meta = {"source": "memory", "workspace_id": workspace_id or ""}
         for lane in self._lanes:
             try:
                 existing = lane.collection.get(ids=[memory_id])
@@ -114,7 +115,7 @@ class MemoryVectorStore:
                     ids=[memory_id],
                     embeddings=lane.encode([text]),
                     documents=[text],
-                    metadatas=[{"source": "memory"}],
+                    metadatas=[meta],
                 )
             except Exception as e:
                 logger.warning("memory add failed in %s lane for %s: %s", lane.name, memory_id, e)
@@ -129,15 +130,29 @@ class MemoryVectorStore:
             except Exception as e:
                 logger.warning(f"memory remove {memory_id}: {e}")
 
-    def search(self, query: str, k: int = 8) -> List[Dict]:
+    def search(self, query: str, k: int = 8, workspace_id: str = None) -> List[Dict]:
         """Search for the most relevant memory IDs by semantic similarity.
         Returns list of {"memory_id": str, "score": float}.
 
         ChromaDB cosine distance = 1 - cosine_similarity.
         We convert back: similarity = 1.0 - distance.
+
+        If workspace_id is given, returns memories from that workspace plus
+        global memories (workspace_id == ""). Legacy entries without the
+        workspace_id metadata key are treated as global.
         """
         if not self._healthy or self.count() == 0:
             return []
+
+        # Build ChromaDB where clause for workspace scoping.
+        # Entries added before workspace support have no workspace_id key —
+        # treat them as global (no filter, let JSON-level filter handle it).
+        where_clause = None
+        if workspace_id:
+            where_clause = {"$or": [
+                {"workspace_id": {"$eq": workspace_id}},
+                {"workspace_id": {"$eq": ""}},
+            ]}
 
         out = []
         lane_priority = {LANE_CUSTOM: 0, LANE_FASTEMBED: 1}
@@ -145,11 +160,14 @@ class MemoryVectorStore:
             try:
                 if lane.count() == 0:
                     continue
-                results = lane.collection.query(
+                query_kwargs = dict(
                     query_embeddings=lane.encode([query]),
                     n_results=min(k, lane.count()),
                     include=["distances"],
                 )
+                if where_clause:
+                    query_kwargs["where"] = where_clause
+                results = lane.collection.query(**query_kwargs)
                 for idx, mid in enumerate(results["ids"][0]):
                     distance = results["distances"][0][idx]
                     out.append({

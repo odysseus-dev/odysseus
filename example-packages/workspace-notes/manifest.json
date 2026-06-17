@@ -1,0 +1,12 @@
+{
+  "id": "workspace-notes",
+  "name": "Workspace Notes",
+  "version": "1.0.0",
+  "author": "Odysseus",
+  "description": "Per-workspace sticky notes. Demonstrates the register_db hook for adding custom database tables via packages.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": ["WRITE_FILES"],
+  "frontend_hooks": {
+    "sidebarWidget": "widget.js"
+  }
+}

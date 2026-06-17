@@ -38,6 +38,7 @@ class MemoryAddRequest(BaseModel):
     category: str = Field(default="fact", description="Memory category")
     source: str = Field(default="user", description="Memory source")
     session_id: Optional[str] = Field(default=None, description="Associated session ID")
+    workspace_id: Optional[str] = Field(default=None, description="Docker workspace scope (isolates memory)")
 
     @field_validator('category')
     @classmethod

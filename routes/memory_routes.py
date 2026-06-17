@@ -102,7 +102,8 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         text = (memory_data.text or "").strip()
         if not text:
             raise HTTPException(400, "empty memory")
-        user_mem = memory_manager.load(owner=user)
+        workspace_id = memory_data.workspace_id or None
+        user_mem = memory_manager.load(owner=user, workspace_id=workspace_id)
         if memory_manager.find_duplicates(text, user_mem):
             return {"ok": True, "count": len(user_mem), "message": "Memory already exists"}
 
@@ -113,7 +114,21 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 raise HTTPException(404, "Session not found")
             _assert_session_owner(session_obj, user)
 
-        new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user)
+        if workspace_id:
+            # Verify the caller owns the referenced workspace
+            try:
+                from core.database import get_db_session, DockerWorkspace
+                with get_db_session() as _db:
+                    ws = _db.query(DockerWorkspace).filter(DockerWorkspace.id == workspace_id).first()
+                if not ws:
+                    raise HTTPException(404, f"Workspace '{workspace_id}' not found")
+                if user and ws.owner != user:
+                    raise HTTPException(403, "Not your workspace")
+            except ImportError:
+                pass  # docker-workspaces package not loaded
+
+        new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category,
+                                             owner=user, workspace_id=workspace_id)
         if memory_data.session_id:
             new_entry["session_id"] = memory_data.session_id
         all_mem = memory_manager.load_all()
@@ -121,7 +136,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         memory_manager.save(all_mem)
         # Sync vector index
         if memory_vector and memory_vector.healthy:
-            memory_vector.add(new_entry["id"], text)
+            memory_vector.add(new_entry["id"], text, workspace_id=workspace_id)
         try:
             from src.event_bus import fire_event
             fire_event("memory_added", user)
@@ -136,10 +151,11 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         return {"memory": memory_manager.load(owner=user)}
 
     @router.post("/search")
-    def search_memories(request: Request, query: str = Form(...), session_id: str = Form(None), category: str = Form(None)):
+    def search_memories(request: Request, query: str = Form(...), session_id: str = Form(None),
+                        category: str = Form(None), workspace_id: str = Form(None)):
         """Search across all memories with optional filters."""
         user = _owner(request)
-        memories = memory_manager.load(owner=user)
+        memories = memory_manager.load(owner=user, workspace_id=workspace_id or None)
 
         if session_id:
             memories = [m for m in memories if m.get("session_id") == session_id]

@@ -36,10 +36,20 @@ class PackageManager:
         self.static_packages_dir.mkdir(parents=True, exist_ok=True)
         self._loaded_modules: dict = {}
         self._app = None
+        # DB references for the register_db(engine, SessionLocal, Base) hook
+        self._engine = None
+        self._SessionLocal = None
+        self._Base = None
 
     def set_app(self, app) -> None:
         """Store the FastAPI app so packages can register routes via register_routes(app)."""
         self._app = app
+
+    def set_db(self, engine, SessionLocal, Base) -> None:
+        """Store DB references so packages can define models and migrations via register_db()."""
+        self._engine = engine
+        self._SessionLocal = SessionLocal
+        self._Base = Base
 
     def install_package(self, zip_path: str, owner: str | None = None) -> dict:
         """
@@ -199,6 +209,12 @@ class PackageManager:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             self._loaded_modules[pkg_id] = module
+            if self._engine is not None and hasattr(module, "register_db"):
+                try:
+                    module.register_db(self._engine, self._SessionLocal, self._Base)
+                    logger.info(f"Plugin {pkg_id}: DB tables registered")
+                except Exception as e:
+                    logger.error(f"Plugin {pkg_id}: register_db failed: {e}")
             if self._app is not None and hasattr(module, "register_routes"):
                 try:
                     module.register_routes(self._app)

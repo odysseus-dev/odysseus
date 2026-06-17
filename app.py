@@ -801,6 +801,8 @@ _package_manager = PackageManager(
 # Give the package manager a reference to the app so installed packages can
 # register their own FastAPI routes via register_routes(app) in backend.py
 _package_manager.set_app(app)
+from core.database import engine as _db_engine, SessionLocal as _db_session_factory, Base as _db_base
+_package_manager.set_db(_db_engine, _db_session_factory, _db_base)
 app.include_router(setup_packages_routes(_package_manager))
 # Load all previously installed packages (registers their backend routes now,
 # before the server starts accepting traffic)
