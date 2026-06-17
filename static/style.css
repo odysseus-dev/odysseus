@@ -9425,27 +9425,28 @@ details a:hover {
   border-radius: 4px;
 }
 
-/* Keywords & control flow — purple/magenta */
+/* Keywords & control flow — purple/magenta. Hardcoded fallbacks so a custom
+   theme that doesn't set the --hl-* vars still highlights instead of going flat. */
 .hljs-keyword,
-.hljs-selector-tag { color: var(--hl-keyword); }
+.hljs-selector-tag { color: var(--hl-keyword, #c678dd); }
 
 /* Strings & regex — warm yellow/orange */
 .hljs-string,
 .hljs-regexp,
-.hljs-addition { color: var(--hl-string); }
+.hljs-addition { color: var(--hl-string, #98c379); }
 
 /* Comments & docs — muted. font-style intentionally omitted: italics shift
    glyph widths in the highlight overlay relative to the transparent textarea
    above it, which makes the caret drift away from the visible character. */
 .hljs-comment,
 .hljs-quote,
-.hljs-meta { color: var(--hl-comment); }
+.hljs-meta { color: var(--hl-comment, #7f848e); }
 
 /* Functions & method names — blue */
 .hljs-function,
 .hljs-title,
 .hljs-title.function_,
-.hljs-section { color: var(--hl-function); }
+.hljs-section { color: var(--hl-function, #61afef); }
 
 /* Numbers & constants — distinct from strings */
 .hljs-number,
@@ -9460,7 +9461,10 @@ details a:hover {
 /* Variables & identifiers — fg with slight distinction */
 .hljs-variable,
 .hljs-template-variable,
-.hljs-attr { color: var(--hl-variable, var(--hl-fg, var(--fg))); }
+.hljs-attr,
+/* CSS property names emit `.hljs-attribute` (distinct from `.hljs-attr`); without
+   this rule they stayed default-coloured in CSS docs. */
+.hljs-attribute { color: var(--hl-variable, var(--hl-fg, var(--fg))); }
 
 /* Operators & punctuation — slightly dimmed fg */
 .hljs-operator,

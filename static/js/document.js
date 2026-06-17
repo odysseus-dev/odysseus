@@ -6454,6 +6454,11 @@ import * as Modals from './modalManager.js';
     }
   }
 
+  // Dropdown options that are document TYPES, not highlight.js grammars — hljs
+  // has no grammar for them, so they render as plain text (no highlight, and no
+  // auto-detect which would mis-colour their content).
+  const _NO_HLJS_GRAMMAR = new Set(['csv', 'email', 'pdf']);
+
   /** Sync highlighted overlay with textarea content */
   function syncHighlighting() {
     const textarea = document.getElementById('doc-editor-textarea');
@@ -6472,8 +6477,12 @@ import * as Modals from './modalManager.js';
     // hljs has no 'svg' grammar — highlight it as xml (the dropdown value stays
     // 'svg' so the preview/run routing still treats it as renderable markup).
     const _hlLang = lang === 'svg' ? 'xml' : lang;
-    codeEl.className = _hlLang ? `language-${_hlLang}` : '';
-    if (window.hljs && _hlLang) {
+    if (_NO_HLJS_GRAMMAR.has(lang)) {
+      // csv/email/pdf are document TYPES, not hljs grammars — render plain
+      // (and DON'T auto-detect: that would mis-colour CSV/email content).
+      codeEl.className = '';
+    } else if (window.hljs && _hlLang) {
+      codeEl.className = `language-${_hlLang}`;
       codeEl.removeAttribute('data-highlighted');
       window.hljs.highlightElement(codeEl);
     } else if (window.hljs && text.trim()) {
@@ -6486,6 +6495,8 @@ import * as Modals from './modalManager.js';
         codeEl.className = 'hljs';
         codeEl.innerHTML = r.value;
       } catch (_) { codeEl.className = ''; }
+    } else {
+      codeEl.className = _hlLang ? `language-${_hlLang}` : '';
     }
     // Markdown post-processing: colorize standalone [brackets] and heading markers
     if (lang === 'markdown') {
