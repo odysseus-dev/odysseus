@@ -655,6 +655,34 @@ def _list_emails_across_accounts(folder="INBOX", max_results=20,
     return combined[:max_results], errors
 
 
+def _build_email_search_cmd(query):
+    """Build an IMAP SEARCH criteria string for a free-text query.
+
+    Each term is matched in FROM, SUBJECT, or body TEXT. The query may contain
+    boolean ``OR`` (case-insensitive, e.g. ``"unsubscribe OR sale OR deal"``) to
+    match ANY of the terms. A bare query with no ``OR`` is treated as a single
+    literal phrase, preserving the original behaviour. IMAP's SEARCH OR is
+    binary, so multiple terms are chained with prefix ``OR`` tokens:
+    ``OR OR g1 g2 g3`` parses as ``((g1 OR g2) OR g3)``."""
+    def _esc(s):
+        return str(s).replace("\\", "\\\\").replace('"', '\\"')
+
+    terms = [t.strip() for t in re.split(r"\s+OR\s+", str(query).strip(),
+                                         flags=re.IGNORECASE) if t.strip()]
+    if not terms:
+        terms = [str(query).strip()]
+    terms = terms[:20]  # guard against absurdly long OR chains
+
+    def _group(t):
+        e = _esc(t)
+        return f'(OR OR FROM "{e}" SUBJECT "{e}" TEXT "{e}")'
+
+    groups = [_group(t) for t in terms]
+    if len(groups) == 1:
+        return groups[0]
+    return ("OR " * (len(groups) - 1)) + " ".join(groups)
+
+
 def _search_emails(query, folders=None, max_results=20, account=None):
     """IMAP-search emails by free-text query. Matches FROM, SUBJECT, and
     body TEXT. Walks multiple folders so older threads outside INBOX
@@ -662,10 +690,7 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     _list_emails plus an `_folder` tag."""
     if not query or not str(query).strip():
         return []
-    q = str(query).replace("\\", "\\\\").replace('"', '\\"')
-    # Mail clients commonly use OR FROM/SUBJECT/TEXT to match either field.
-    # IMAP SEARCH OR is binary, so we nest it.
-    search_cmd = f'(OR OR FROM "{q}" SUBJECT "{q}" TEXT "{q}")'
+    search_cmd = _build_email_search_cmd(query)
     if folders is None:
         folders = ["INBOX", "Sent", "Archive"]
     cache = _get_cached_summaries()
