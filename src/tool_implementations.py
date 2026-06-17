@@ -19,6 +19,40 @@ from core.constants import internal_api_base
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Active email state
+# ---------------------------------------------------------------------------
+
+# When the user has an email reader window open, the frontend tells the
+# backend about it on each chat submit. Email tools can resolve "this email"
+# without guessing a UID. Cleared between requests by chat_routes.
+_active_email_ref: Optional[Dict[str, str]] = None
+
+
+def set_active_email(uid: Optional[str], folder: Optional[str] = None, account: Optional[str] = None,
+                     subject: Optional[str] = None, sender: Optional[str] = None) -> None:
+    """Stash the email currently open in the UI. None clears it."""
+    global _active_email_ref
+    if not uid:
+        _active_email_ref = None
+        return
+    _active_email_ref = {
+        "uid": str(uid),
+        "folder": str(folder or "INBOX"),
+        "account": str(account or ""),
+        "subject": str(subject or ""),
+        "from": str(sender or ""),
+    }
+
+
+def get_active_email() -> Optional[Dict[str, str]]:
+    return _active_email_ref
+
+
+def clear_active_email() -> None:
+    global _active_email_ref
+    _active_email_ref = None
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
@@ -611,6 +645,137 @@ async def do_manage_endpoints(content: str, owner: Optional[str] = None) -> Dict
 # MCP server management tool
 # ---------------------------------------------------------------------------
 
+# Parallel to routes/cookbook_helpers._validate_serve_cmd but deliberately the
+# opposite policy: that gate guards an admin-only serve command and allows
+# interpreters (python3/etc) because model-serving needs them, whereas this is
+# the model/prompt-injection-reachable manage_mcp path, so interpreters and
+# runners are denied here.
+#
+# Commands that can execute arbitrary code regardless of their arguments. These
+# are NEVER accepted on the manage_mcp agent path, even if an operator lists one
+# in ODYSSEUS_MCP_ALLOWED_COMMANDS -- a stdio server that genuinely needs an
+# interpreter or package runner must be registered via the trusted admin route.
+_MCP_DENIED_COMMANDS = frozenset({
+    "sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "ash", "busybox",
+    "cmd", "command.com", "powershell", "pwsh",
+    "python", "pypy", "node", "nodejs", "deno", "bun", "ruby", "jruby",
+    "perl", "raku", "php", "lua", "luajit", "tclsh", "wish", "expect", "rscript",
+    "groovy", "scala", "elixir", "erl", "iex", "java", "javac", "jshell", "jbang",
+    "kotlin", "kotlinc", "dotnet", "mono", "swift", "osascript", "tsx", "ts-node",
+    "npx", "bunx", "uvx", "pipx", "npm", "pnpm", "yarn", "pip", "uv",
+    "gem", "cargo", "go", "bundle", "poetry", "conda", "mamba", "brew",
+    "apt", "apt-get", "yum", "dnf", "pacman", "apk",
+    "env", "xargs", "nohup", "setsid", "nice", "ionice", "time", "timeout",
+    "watch", "stdbuf", "unbuffer", "script", "ssh", "scp", "sshpass", "sudo",
+    "doas", "su", "make", "cmake", "docker", "podman", "kubectl", "find",
+    "awk", "gawk", "sed", "vi", "vim", "nvim", "emacs", "ed", "tee", "eval",
+})
+
+# Argv flags that make even an allowlisted binary execute inline code. Matched
+# by prefix so glued forms (-cimport os, --eval=...) are caught, not just the
+# exact-token form.
+_MCP_CODE_EXEC_SHORT_FLAGS = ("-c", "-e", "-m")
+_MCP_CODE_EXEC_LONG_FLAGS = ("--eval", "--exec", "--print", "--module", "--command", "--require")
+
+_MCP_URL_SCHEMES = ("http://", "https://", "ftp://", "ftps://", "file://", "data:", "jar:", "blob:")
+
+# Shell metacharacters refused in command/args. Args are passed as an argv list
+# (no shell), but refusing these keeps the surface narrow and obvious.
+_MCP_SHELL_METACHARS = set(";|&$`><\n\r")
+
+# Env vars that let a child process load attacker-supplied code before main().
+_MCP_DANGEROUS_ENV = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH", "PYTHONPATH", "PYTHONSTARTUP",
+    "PYTHONHOME", "PYTHONEXECUTABLE", "NODE_OPTIONS", "NODE_PATH", "BASH_ENV",
+    "ENV", "SHELLOPTS", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB", "GEM_PATH",
+    "R_PROFILE", "R_HOME", "PATH", "IFS", "PROMPT_COMMAND",
+})
+
+
+def _mcp_allowed_commands() -> set:
+    """Operator-configured allowlist of safe MCP launcher basenames for the agent
+    path. Empty by default; set ODYSSEUS_MCP_ALLOWED_COMMANDS (comma-separated)
+    to opt specific trusted binaries in. Denied commands are rejected even if
+    listed here."""
+    raw = os.environ.get("ODYSSEUS_MCP_ALLOWED_COMMANDS", "")
+    return {c.strip().lower() for c in raw.split(",") if c.strip()}
+
+
+def _validate_mcp_command(command, args, env) -> Optional[str]:
+    """Validate a model-supplied stdio MCP registration. Returns an error string
+    if it must be rejected, else None.
+
+    Closes the RCE where manage_mcp 'add' passed prompt-injection-controlled
+    command/args/env straight to a subprocess spawn (issue #438): a payload
+    smuggled into a skill description, memory entry, fetched page, or email body
+    could register a stdio server running arbitrary code as the app UID.
+    """
+    if not isinstance(command, str) or not command.strip():
+        return "command must be a non-empty string"
+    command = command.strip()
+    if "/" in command or "\\" in command:
+        return "command must be a bare executable name, not a path"
+    if any(ch in _MCP_SHELL_METACHARS for ch in command):
+        return "command contains shell metacharacters"
+    base = command.lower()
+    if base.endswith(".exe") or base.endswith(".cmd") or base.endswith(".bat"):
+        base = base.rsplit(".", 1)[0]
+    # Canonicalize a trailing version suffix so versioned aliases collapse to the
+    # family name (python3.11 -> python, node18 -> node, pip3 -> pip); both the
+    # raw basename and the canonical form are denied, so an operator cannot
+    # accidentally allowlist a runtime alias back into the path.
+    canon = re.sub(r"[-_.]?\d+(?:\.\d+)*$", "", base)
+    if base in _MCP_DENIED_COMMANDS or canon in _MCP_DENIED_COMMANDS:
+        return (
+            f"command '{command}' is not allowed on the agent MCP path: "
+            "interpreters, runtimes, package runners, and shells can execute "
+            "arbitrary code. Register such a server via the admin route instead."
+        )
+    if base not in _mcp_allowed_commands():
+        return (
+            f"command '{command}' is not in the MCP allowlist. Add it to "
+            "ODYSSEUS_MCP_ALLOWED_COMMANDS if you trust it, or register the "
+            "server via the admin route."
+        )
+
+    if args is not None:
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except Exception:
+                return "args must be a JSON list"
+        if not isinstance(args, list):
+            return "args must be a list"
+        for a in args:
+            if not isinstance(a, str):
+                return "args must all be strings"
+            s = a.strip()
+            low = s.lower()
+            if any(s == f or s.startswith(f) for f in _MCP_CODE_EXEC_SHORT_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low == f or low.startswith(f + "=") for f in _MCP_CODE_EXEC_LONG_FLAGS):
+                return f"arg '{a}' is a code-execution flag and is not allowed"
+            if any(low.startswith(u) for u in _MCP_URL_SCHEMES):
+                return f"arg '{a}' is a remote URL and is not allowed"
+            if any(ch in _MCP_SHELL_METACHARS for ch in a):
+                return f"arg '{a}' contains shell metacharacters"
+
+    if env:
+        if isinstance(env, str):
+            try:
+                env = json.loads(env)
+            except Exception:
+                return "env must be a JSON object"
+        if not isinstance(env, dict):
+            return "env must be an object"
+        for k in env:
+            if str(k).strip().upper() in _MCP_DANGEROUS_ENV:
+                return f"env var '{k}' can inject code into the child process and is not allowed"
+
+    return None
+
+
 async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
     """Manage MCP servers: list, add, delete, enable, disable, reconnect."""
     try:
@@ -650,6 +815,12 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
         env = args.get("env", {})
         if not name or not command:
             return {"error": "name and command are required", "exit_code": 1}
+        # Validate BEFORE any DB write or spawn: a rejected registration must
+        # leave no enabled row (which would otherwise auto-reconnect on restart)
+        # and must not attempt a connection.
+        _mcp_err = _validate_mcp_command(command, cmd_args, env)
+        if _mcp_err:
+            return {"error": f"manage_mcp: refused unsafe server registration: {_mcp_err}", "exit_code": 1}
         sid = str(_uuid.uuid4())[:8]
         db = SessionLocal()
         try:
@@ -1445,7 +1616,15 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
     """Handle manage_calendar tool calls: list/create/update/delete calendar events (local SQLite)."""
     from datetime import datetime, timedelta
     from core.database import SessionLocal, CalendarCal, CalendarEvent, Note
-    from routes.calendar_routes import _ensure_default_calendar, _parse_dt, _parse_dt_pair, parse_due_for_user, _resolve_base_uid
+    from routes.calendar_routes import (
+        _ensure_default_calendar,
+        _parse_dt,
+        _parse_dt_pair,
+        parse_due_for_user,
+        _resolve_base_uid,
+        _push_caldav_event_after_commit,
+        _record_caldav_delete_tombstone,
+    )
     import uuid as _uuid
 
     try:
@@ -1537,10 +1716,10 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
         text = str(raw).strip().lower()
         if text in {"none", "no", "off", "false"}:
             return None
-        m = re.search(r"(\d+)\s*(?:m|min|minute|minutes)\b", text)
+        m = re.search(r"(\d+)\s*(?:minutes?|mins?|m)\b", text)
         if m:
             return max(0, int(m.group(1)))
-        m = re.search(r"(\d+)\s*(?:h|hr|hour|hours)\b", text)
+        m = re.search(r"(\d+)\s*(?:hours?|hrs?|h)\b", text)
         if m:
             return max(0, int(m.group(1)) * 60)
         if text.isdigit():
@@ -1553,7 +1732,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             return desc
         reminder_only = re.compile(
             r"^\s*(?:remind(?:er)?|alarm)\s*:?\s*\d+\s*"
-            r"(?:m|min|minute|minutes|h|hr|hour|hours)\b.*$",
+            r"(?:minutes?|mins?|m|hours?|hrs?|h)\b.*$",
             re.I,
         )
         return "" if reminder_only.match(desc) else desc
@@ -1642,6 +1821,9 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     end_dt = start_dt + timedelta(days=14)
             except ValueError as e:
                 return {"error": f"Invalid date format: {e}", "exit_code": 1}
+
+            if end_dt <= start_dt:
+                end_dt = start_dt + timedelta(days=1)
 
             q = _event_query().filter(
                 CalendarEvent.dtstart < end_dt,
@@ -1822,6 +2004,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 rrule=args.get("rrule", "") or "",
                 event_type=event_type,
                 importance=importance,
+                caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
             reminder_note_id = None
@@ -1836,6 +2019,8 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                     dtstart_is_utc and not all_day,
                 )
             db.commit()
+            if cal.source == "caldav":
+                await _push_caldav_event_after_commit(owner, uid, "create")
             tag_blurb = f" [{event_type}]" if event_type else ""
             if minutes_before is None:
                 reminder_blurb = ""
@@ -1893,7 +2078,12 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.event_type = _tag or None
             if args.get("importance") is not None:
                 ev.importance = args["importance"]
+            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_caldav:
+                ev.caldav_sync_pending = "update"
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "update")
             return {"response": f"Updated event {uid}", "exit_code": 0}
 
         elif action == "delete_event":
@@ -1907,8 +2097,13 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             ev = _event_query().filter(CalendarEvent.uid == base_uid).first()
             if not ev:
                 return {"error": f"Event {uid} not found", "exit_code": 1}
+            is_caldav = ev.calendar and ev.calendar.source == "caldav" and ev.remote_href
+            if is_caldav:
+                _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
             db.commit()
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "delete")
             return {"response": f"Deleted event {uid}", "exit_code": 0}
 
         else:
@@ -2054,13 +2249,14 @@ async def _cookbook_env_for_host(host: str) -> Dict[str, Any]:
         else:
             env_prefix = f'eval "$(conda shell.bash hook)" && conda activate {env_path}'
 
+    from routes.cookbook_helpers import load_stored_hf_token
     return {
         "env_prefix": env_prefix,
         "env_type": env_kind,
         "env_path": env_path,
         "gpus": env_root.get("gpus") or "",
         "platform": platform,
-        "hf_token": env_root.get("hfToken") or "",
+        "hf_token": load_stored_hf_token(),
         "ssh_port": ssh_port,
     }
 
@@ -3738,7 +3934,7 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
     if not name:
         return {"error": "name is required", "exit_code": 1}
 
-    contacts = {}  # email -> {name, source}
+    contacts = {}  # email_or_phone -> {name, source, phone?}
 
     # 1. CardDAV (Radicale) — structured contacts. Call in-process: a
     # server-side httpx GET to /api/contacts/search carries no session
@@ -3753,10 +3949,18 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
             match = q in hay_name or any(q in (e or "").lower() for e in c.get("emails", []))
             if not match:
                 continue
+            has_email = False
             for email in (c.get("emails") or []):
                 email = (email or "").strip().lower()
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
+                    has_email = True
+            # Fall back to phone numbers when the contact has no email address
+            if not has_email:
+                for phone in (c.get("phones") or []):
+                    phone = (phone or "").strip()
+                    if phone:
+                        contacts[phone] = {"name": c.get("name") or phone, "source": "contacts", "phone": phone}
     except Exception:
         pass
 
@@ -3776,8 +3980,11 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
         return {"output": f"No contacts found matching '{name}'.", "exit_code": 0}
 
     lines = [f"Contacts matching '{name}':"]
-    for email, info in contacts.items():
-        lines.append(f"- {info['name']} <{email}> ({info['source']})")
+    for key, info in contacts.items():
+        if info.get("phone"):
+            lines.append(f"- {info['name']} — phone: {info['phone']} ({info['source']})")
+        else:
+            lines.append(f"- {info['name']} <{key}> ({info['source']})")
     return {"output": "\n".join(lines), "exit_code": 0}
 
 

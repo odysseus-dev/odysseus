@@ -30,6 +30,10 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.cookbook_output import (
+    error_aware_output_tail, classify_dead_download,
+    HF_CACHE_COMPLETE_PROBE, HF_CACHE_INCOMPLETE_PROBE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +43,13 @@ from routes.cookbook_helpers import (
     _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
+    load_stored_hf_token,
+    _append_vllm_linux_preflight_lines, _ollama_bind_from_cmd, _pip_install_fallback_chain,
+    _pip_install_no_cache, _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _diagnose_serve_output, run_ssh_command_async,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _pip_install_no_cache,
     _user_shell_path_bootstrap, _venv_safe_local_pip_install_cmd,
+    _normalize_llama_cpp_python_cache_types,
     ModelDownloadRequest, ServeRequest,
 )
 
@@ -49,7 +58,7 @@ _HF_TOKEN_STATUS_SNIPPET = (
     'echo "[odysseus] HF token: applied"; '
     'else '
     'echo "[odysseus] HF token: NOT SET — gated/private models will be denied. '
-    'Add one in Odysseus Settings -> Cookbook -> HuggingFace Token."; '
+    'Add one in Odysseus Cookbook -> Settings -> HuggingFace Token."; '
     'fi'
 )
 
@@ -166,6 +175,16 @@ def setup_cookbook_routes() -> APIRouter:
                 [{"label": "install vLLM in Cookbook Dependencies", "op": "dependency", "package": "vllm"}],
             ),
             (
+                r"sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|"
+                r"(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|"
+                r"Please ensure sgl_kernel is properly installed",
+                "SGLang native dependencies are missing on this server.",
+                [
+                    {"label": "install OS packages: libnuma-dev python3.12-dev build-essential", "op": "manual"},
+                    {"label": "upgrade sglang-kernel after OS packages are installed", "op": "manual"},
+                ],
+            ),
+            (
                 r"sglang.*command not found|No module named sglang|SGLang is not installed",
                 "SGLang is not installed or not in PATH on this server.",
                 [{"label": "install SGLang in Cookbook Dependencies", "op": "dependency", "package": "sglang[all]"}],
@@ -233,14 +252,7 @@ def setup_cookbook_routes() -> APIRouter:
         return state
 
     def _load_stored_hf_token() -> str:
-        if not _cookbook_state_path.exists():
-            return ""
-        try:
-            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
-            env = state.get("env") if isinstance(state, dict) else {}
-            return _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
-        except Exception:
-            return ""
+        return load_stored_hf_token(state_path=_cookbook_state_path)
 
     def _cookbook_ssh_dir() -> Path:
         # The Docker image keeps cookbook keys under /app/.ssh; that path only
@@ -355,7 +367,11 @@ def setup_cookbook_routes() -> APIRouter:
             # all output to the log the poller reads. Paths handed to bash use
             # POSIX form + shell-quoting so drive paths / spaces survive.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
+            pp = shlex.quote(pid_path.as_posix())
+            inner.write_text(
+                f"printf '%s\\n' \"$$\" > {pp}\n" + "\n".join(bash_lines) + "\n",
+                encoding="utf-8",
+            )
             lp = shlex.quote(log_path.as_posix())
             ip = shlex.quote(inner.as_posix())
             script_path = TMUX_LOG_DIR / f"{session_id}.sh"
@@ -660,7 +676,7 @@ def setup_cookbook_routes() -> APIRouter:
             _spf = f"-p {_port} " if _port and _port != "22" else ""
             setup_cmd = (
                 f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
+                f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
             )
         else:
             # Local: run hf download in the background (tmux on POSIX, a detached
@@ -692,7 +708,7 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 wrapper_script.chmod(0o755)
-            setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            setup_cmd = None if IS_WINDOWS else f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (backend={'ollama' if is_ollama_download else 'hf'}, include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
@@ -968,9 +984,9 @@ def setup_cookbook_routes() -> APIRouter:
             ssh_args = ["ssh"]
             if ssh_port and ssh_port != "22":
                 ssh_args.extend(["-p", str(ssh_port)])
-            capture_cmd = ssh_args + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-200"]
+            capture_cmd = ssh_args + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-2000"]
         else:
-            capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-200"]
+            capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-2000"]
 
         _exit_re = re.compile(r"=== Process exited with code (-?\d+) ===")
         for wait_s in _waits:
@@ -1213,6 +1229,7 @@ def setup_cookbook_routes() -> APIRouter:
         # many downstream `"engine" in req.cmd` membership checks can't hit
         # `TypeError: argument of type 'NoneType'` (a 500 instead of a clean 400).
         req.cmd = _validate_serve_cmd(req.cmd) or ""
+        req.cmd = _normalize_llama_cpp_python_cache_types(req.cmd) or ""
         req.cmd = _venv_safe_local_pip_install_cmd(
             req.cmd,
             local=not bool(req.remote_host),
@@ -1267,6 +1284,11 @@ def setup_cookbook_routes() -> APIRouter:
         # LOCAL execution on a native-Windows host never uses tmux (detached
         # process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
+        if is_windows and remote and "diffusion_server.py" in req.cmd:
+            raise HTTPException(
+                400,
+                "Remote Windows Diffusers serving is not supported yet; use local Windows or a Linux remote server.",
+            )
 
         if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
@@ -1560,10 +1582,10 @@ def setup_cookbook_routes() -> APIRouter:
                 setup_cmd = (
                     f"{scp_extras}"
                     f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                    f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
+                    f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
                 )
             else:
-                setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
+                setup_cmd = f"tmux set-option -g history-limit 100000 2>/dev/null; tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
 
         if setup_cmd is None:
             # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
@@ -2608,6 +2630,193 @@ def setup_cookbook_routes() -> APIRouter:
             "error": _ollama_library_cache["error"],
         }
 
+    # ── vLLM recipe scraper ─────────────────────────────────────────────
+    # Fetches the official YAML recipe for a model from vllm-project/recipes
+    # and normalizes it into a small JSON the frontend can consume. Cached
+    # per-repo so the GitHub raw endpoint isn't hammered.
+    _vllm_recipe_cache: dict[str, tuple[float, dict | None]] = {}
+    # Manifest of all <org>/<model> ids that have a recipe in the upstream
+    # repo. Cheap to fetch (one Git Tree API call), so we cache the whole
+    # set for ~12h. Per-row "does this model have a recipe?" lookups hit
+    # this set instead of doing 912 individual recipe fetches.
+    _vllm_recipe_manifest: dict = {"fetched_at": 0.0, "models": set(), "error": ""}
+
+    @router.get("/api/cookbook/vllm-recipe-manifest")
+    async def vllm_recipe_manifest(refresh: int = 0):
+        """Return the set of <org>/<model> ids known to have a vLLM recipe.
+        One GitHub Tree API call, 12h cache. The frontend uses this to badge
+        rows in the model list before the user expands them."""
+        import time as _time
+        import httpx as _httpx
+        TTL = 12 * 3600.0
+        now = _time.time()
+        if (
+            refresh
+            or (now - _vllm_recipe_manifest["fetched_at"]) > TTL
+            or not _vllm_recipe_manifest["models"]
+        ):
+            url = (
+                "https://api.github.com/repos/vllm-project/recipes/"
+                "git/trees/main?recursive=1"
+            )
+            def _fetch_sync() -> tuple[int, dict | None, str]:
+                try:
+                    headers = {"Accept": "application/vnd.github+json"}
+                    with _httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                        r = client.get(url, headers=headers)
+                        if r.status_code != 200:
+                            return r.status_code, None, r.text[:200]
+                        return 200, r.json(), ""
+                except Exception as e:
+                    return 0, None, f"fetch error: {e}"
+            status, data, err = await asyncio.to_thread(_fetch_sync)
+            if status == 200 and isinstance(data, dict):
+                models: set[str] = set()
+                for entry in data.get("tree") or []:
+                    path = (entry or {}).get("path") or ""
+                    if not path.startswith("models/") or not path.endswith(".yaml"):
+                        continue
+                    # path = "models/<org>/<model>.yaml" → "<org>/<model>"
+                    body = path[len("models/"):-len(".yaml")]
+                    if "/" in body:
+                        models.add(body)
+                _vllm_recipe_manifest["models"] = models
+                _vllm_recipe_manifest["fetched_at"] = now
+                _vllm_recipe_manifest["error"] = ""
+            else:
+                _vllm_recipe_manifest["error"] = (
+                    f"HTTP {status}: {err}" if status else err
+                )
+                # Don't clobber a stale-but-usable list on transient failures.
+                if not _vllm_recipe_manifest["models"]:
+                    return {
+                        "models": [],
+                        "count": 0,
+                        "error": _vllm_recipe_manifest["error"],
+                    }
+        return {
+            "models": sorted(_vllm_recipe_manifest["models"]),
+            "count": len(_vllm_recipe_manifest["models"]),
+            "fetched_at": _vllm_recipe_manifest["fetched_at"],
+            "error": _vllm_recipe_manifest["error"],
+        }
+
+    @router.get("/api/cookbook/vllm-recipe")
+    async def vllm_recipe(repo: str, refresh: int = 0):
+        """Return the vLLM official recipe for a HuggingFace repo, if one
+        exists at vllm-project/recipes. `repo` is the full HF id like
+        'MiniMaxAI/MiniMax-M2'. Cached 6h."""
+        import time as _time
+        import httpx as _httpx
+        import yaml as _yaml
+
+        TTL = 6 * 3600.0
+        now = _time.time()
+        repo = (repo or "").strip().strip("/")
+        if "/" not in repo:
+            return {"exists": False, "error": "repo must be <org>/<model>"}
+
+        cached = _vllm_recipe_cache.get(repo)
+        if cached and not refresh and (now - cached[0]) < TTL:
+            return cached[1] or {"exists": False, "cached": True}
+
+        url = (
+            f"https://raw.githubusercontent.com/vllm-project/recipes/"
+            f"main/models/{repo}.yaml"
+        )
+
+        def _fetch_sync() -> tuple[int, str]:
+            try:
+                with _httpx.Client(timeout=8.0, follow_redirects=True) as client:
+                    r = client.get(url)
+                    return r.status_code, r.text
+            except Exception as e:
+                return 0, f"fetch error: {e}"
+
+        status, text = await asyncio.to_thread(_fetch_sync)
+        if status == 404:
+            _vllm_recipe_cache[repo] = (now, {"exists": False})
+            return {"exists": False}
+        if status != 200:
+            return {"exists": False, "error": f"HTTP {status}", "transient": True}
+
+        try:
+            doc = _yaml.safe_load(text) or {}
+        except Exception as e:
+            return {"exists": False, "error": f"yaml parse: {e}"}
+
+        meta = doc.get("meta") or {}
+        model = doc.get("model") or {}
+        features = doc.get("features") or {}
+        deps = doc.get("dependencies") or []
+        variants = doc.get("variants") or {}
+        hw_overrides = doc.get("hardware_overrides") or {}
+        strat_overrides = doc.get("strategy_overrides") or {}
+
+        # Tool-call + reasoning parsers, as flat arg arrays, so the frontend
+        # can drop them straight into the launch command.
+        tool_calling = features.get("tool_calling") or {}
+        reasoning = features.get("reasoning") or {}
+
+        normalized = {
+            "exists": True,
+            "source_url": url,
+            "title": meta.get("title") or "",
+            "provider": meta.get("provider") or "",
+            "description": meta.get("description") or "",
+            "date_updated": str(meta.get("date_updated") or ""),
+            "hardware_support": meta.get("hardware") or {},
+            "model_id": model.get("model_id") or repo,
+            "min_vllm_version": model.get("min_vllm_version") or "",
+            "architecture": model.get("architecture") or "",
+            "parameter_count": model.get("parameter_count") or "",
+            "active_parameters": model.get("active_parameters") or "",
+            "context_length": model.get("context_length") or 0,
+            "base_args": list(model.get("base_args") or []),
+            "base_env": dict(model.get("base_env") or {}),
+            "tool_calling": {
+                "description": tool_calling.get("description") or "",
+                "args": list(tool_calling.get("args") or []),
+            } if tool_calling else None,
+            "reasoning": {
+                "description": reasoning.get("description") or "",
+                "args": list(reasoning.get("args") or []),
+            } if reasoning else None,
+            "dependencies": [
+                {
+                    "note": (d.get("note") or "").strip(),
+                    "command": (d.get("command") or "").strip(),
+                    "optional": bool(d.get("optional", False)),
+                }
+                for d in deps if isinstance(d, dict)
+            ],
+            "variants": {
+                k: {
+                    "model_id": v.get("model_id") or model.get("model_id") or repo,
+                    "precision": v.get("precision") or "",
+                    "vram_minimum_gb": v.get("vram_minimum_gb") or 0,
+                    "description": v.get("description") or "",
+                    "extra_args": list(v.get("extra_args") or []),
+                    "extra_env": dict(v.get("extra_env") or {}),
+                }
+                for k, v in variants.items() if isinstance(v, dict)
+            },
+            "hardware_overrides": {
+                hw: {
+                    "extra_args": list((ov or {}).get("extra_args") or []),
+                    "extra_env": dict((ov or {}).get("extra_env") or {}),
+                }
+                for hw, ov in hw_overrides.items() if isinstance(ov, dict)
+            },
+            "strategy_overrides": {
+                strat: dict(ov or {})
+                for strat, ov in strat_overrides.items() if isinstance(ov, dict)
+            },
+            "compatible_strategies": list(doc.get("compatible_strategies") or []),
+        }
+        _vllm_recipe_cache[repo] = (now, normalized)
+        return normalized
+
     @router.get("/api/cookbook/tasks/status")
     async def cookbook_tasks_status(request: Request):
         """Check status of all active cookbook tmux sessions.
@@ -2622,30 +2831,20 @@ def setup_cookbook_routes() -> APIRouter:
     def _cookbook_tasks_status_sync():
         import subprocess
 
-        def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "") -> bool:
+        def _download_cache_complete(repo_id: str, remote_host: str = "", ssh_port: str = "", cache_root: str = "") -> bool:
             """Best-effort check for a completed HF cache entry.
 
             tmux output can stop at a stale progress line if the pane/session
             disappears before Cookbook captures the final DOWNLOAD_OK marker.
             In that case, trust the cache shape: a snapshot directory with files
             and no *.incomplete blobs means HuggingFace finished materializing the
-            model.
+            model. cache_root is the task's custom download dir — the runner
+            pointed HF_HOME there, so the cache lives under <cache_root>/hub,
+            not wherever this probe's environment says.
             """
             if not repo_id or "/" not in repo_id:
                 return False
-            py = (
-                "import os,sys;"
-                "repo=sys.argv[1];"
-                "base=os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub');"
-                "d=os.path.join(base,'models--'+repo.replace('/','--'));"
-                "snap=os.path.join(d,'snapshots');"
-                "ok=os.path.isdir(snap) and any(os.path.isdir(os.path.join(snap,x)) and os.listdir(os.path.join(snap,x)) for x in os.listdir(snap));"
-                "inc=False;"
-                "blobs=os.path.join(d,'blobs');"
-                "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
-                "sys.exit(0 if ok and not inc else 1)"
-            )
-            cmd = ["python3", "-c", py, repo_id]
+            cmd = ["python3", "-c", HF_CACHE_COMPLETE_PROBE, repo_id, cache_root or ""]
             try:
                 if remote_host:
                     ssh_base = ["ssh"]
@@ -2659,7 +2858,7 @@ def setup_cookbook_routes() -> APIRouter:
             except Exception:
                 return False
 
-        def _download_cache_incomplete(repo_id: str, remote_host: str = "", ssh_port: str = "") -> bool:
+        def _download_cache_incomplete(repo_id: str, remote_host: str = "", ssh_port: str = "", cache_root: str = "") -> bool:
             """Best-effort check for resumable HF partial blobs.
 
             A lost SSH/tmux session can leave a real download still incomplete.
@@ -2668,16 +2867,7 @@ def setup_cookbook_routes() -> APIRouter:
             """
             if not repo_id or "/" not in repo_id:
                 return False
-            py = (
-                "import os,sys;"
-                "repo=sys.argv[1];"
-                "base=os.environ.get('HUGGINGFACE_HUB_CACHE') or os.path.join(os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface')), 'hub');"
-                "d=os.path.join(base,'models--'+repo.replace('/','--'));"
-                "blobs=os.path.join(d,'blobs');"
-                "inc=os.path.isdir(blobs) and any(x.endswith('.incomplete') for x in os.listdir(blobs));"
-                "sys.exit(0 if inc else 1)"
-            )
-            cmd = ["python3", "-c", py, repo_id]
+            cmd = ["python3", "-c", HF_CACHE_INCOMPLETE_PROBE, repo_id, cache_root or ""]
             try:
                 if remote_host:
                     ssh_base = ["ssh"]
@@ -2873,6 +3063,7 @@ def setup_cookbook_routes() -> APIRouter:
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
             # when the PID is gone instead of blindly reporting "stopped".
             download_zero_files = False
+            exit_code = None
             status = "unknown"
             download_has_ok = task_type == "download" and "DOWNLOAD_OK" in full_snapshot
             download_has_failed = task_type == "download" and "DOWNLOAD_FAILED" in full_snapshot
@@ -2881,7 +3072,7 @@ def setup_cookbook_routes() -> APIRouter:
                 and (
                     ".incomplete" in full_snapshot
                     or bool(re.search(r'model-\d+-of-\d+\.[A-Za-z0-9_.-]+:\s+(?:[0-9]|[1-8][0-9])%', full_snapshot))
-                    or _download_cache_incomplete(_payload.get("repo_id") or model, remote, str(_tport or ""))
+                    or _download_cache_incomplete(_payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or "")
                 )
             )
             if is_alive or (local_win_task and full_snapshot):
@@ -2922,11 +3113,19 @@ def setup_cookbook_routes() -> APIRouter:
                 else:
                     status = "running"
             else:
-                # Session is dead — check if it completed or crashed
-                if (
+                # Session is dead — check if it completed or crashed. The
+                # runner markers in the retained output are conclusive
+                # (DOWNLOAD_OK only prints after exit 0), so check them before
+                # the cache probe, which can't see ollama pulls at all.
+                marker = classify_dead_download(full_snapshot) if task_type == "download" else None
+                if marker is not None:
+                    status, download_zero_files = marker
+                    if status == "completed" and not progress_text:
+                        progress_text = "Download complete"
+                elif (
                     task_type == "download"
                     and not download_has_incomplete_evidence
-                    and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or ""))
+                    and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or ""), _payload.get("local_dir") or "")
                 ):
                     status = "completed"
                     if not progress_text:
@@ -2946,7 +3145,7 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
-            output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
+            output_tail = error_aware_output_tail(full_snapshot, status)
 
             results.append({
                 "session_id": session_id,
@@ -2957,6 +3156,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "phase": serve_phase,
                 "diagnosis": diagnosis,
                 "output_tail": output_tail,
+                "exit_code": exit_code,
                 "cmd": _payload.get("_cmd") or "",
                 "tps": phase_info.get("tps"),
                 "reqs": phase_info.get("reqs"),

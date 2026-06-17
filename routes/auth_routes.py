@@ -12,8 +12,8 @@ import re
 from pathlib import Path
 
 from core.atomic_io import atomic_write_json, atomic_write_text
-from core.auth import AuthManager
-from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, SKILLS_DIR
+from core.auth import AuthManager, RESERVED_USERNAMES, SetAdminResult
+from src.constants import DEEP_RESEARCH_DIR, MEMORY_FILE, PASSWORD_MIN_LENGTH, SKILLS_DIR
 from src.rate_limiter import RateLimiter
 from src.settings_scrub import scrub_settings
 from src.settings import (
@@ -73,6 +73,11 @@ class DeleteUserRequest(BaseModel):
 class RenameUserRequest(BaseModel):
     username: str
 
+
+class SetAdminRequest(BaseModel):
+    is_admin: bool
+
+
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
@@ -97,8 +102,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(429, "Too many requests — try again later")
         if auth_manager.is_configured:
             raise HTTPException(400, "Already configured")
-        if len(body.password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        if len(body.password) < PASSWORD_MIN_LENGTH:
+            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        if len(body.username.strip()) < 1:
+            raise HTTPException(400, "Username is required")
+        if body.username.lower() in RESERVED_USERNAMES:
+            raise HTTPException(403, "Username is reserved")
         ok = await asyncio.to_thread(auth_manager.setup, body.username, body.password)
         if not ok:
             raise HTTPException(500, "Setup failed")
@@ -113,10 +122,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             raise HTTPException(400, "Run setup first")
         if not auth_manager.signup_enabled:
             raise HTTPException(403, "Registration is disabled. Ask an admin for an account.")
-        if len(body.password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        if len(body.password) < PASSWORD_MIN_LENGTH:
+            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
         if len(body.username.strip()) < 1:
             raise HTTPException(400, "Username is required")
+        if body.username.lower() in RESERVED_USERNAMES:
+            raise HTTPException(403, "Username is reserved")
         ok = await asyncio.to_thread(auth_manager.create_user, body.username, body.password, is_admin=False)
         if not ok:
             raise HTTPException(409, "Username already taken")
@@ -139,6 +150,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 raise HTTPException(401, "Invalid 2FA code")
         # All checks passed — create session (password already verified above)
         token = await asyncio.to_thread(auth_manager.create_session_trusted, username)
+        if not token:
+            raise HTTPException(401, "Invalid credentials")
         cookie_kwargs = dict(
             key=SESSION_COOKIE,
             value=token,
@@ -177,13 +190,18 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             pass
         return result
 
+    @router.get("/policy")
+    async def auth_policy():
+        """Return public auth policy constants for the frontend."""
+        return auth_manager.policy()
+
     @router.post("/change-password")
     async def change_password(body: ChangePasswordRequest, request: Request):
         user = _get_current_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
-        if len(body.new_password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        if len(body.new_password) < PASSWORD_MIN_LENGTH:
+            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
         current_token = request.cookies.get(SESSION_COOKIE)
         ok = await asyncio.to_thread(auth_manager.change_password, user, body.current_password, body.new_password)
         if not ok:
@@ -263,8 +281,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         user = _get_current_user(request)
         if not user or not auth_manager.is_admin(user):
             raise HTTPException(403, "Admin only")
-        if len(body.password) < 8:
-            raise HTTPException(400, "Password must be at least 8 characters")
+        if len(body.password) < PASSWORD_MIN_LENGTH:
+            raise HTTPException(400, f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        if len(body.username.strip()) < 1:
+            raise HTTPException(400, "Username is required")
+        if body.username.lower() in RESERVED_USERNAMES:
+            raise HTTPException(403, "Username is reserved")
         ok = auth_manager.create_user(body.username, body.password, body.is_admin)
         if not ok:
             raise HTTPException(409, "Username already taken")
@@ -416,6 +438,34 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         except Exception as e:
             logger.warning("Failed to rename memory.json owner references %s -> %s: %s", old_username, new_username, e)
 
+        # uploads.json: upload rows use owner metadata for access checks and
+        # owner-prefixed index keys for dedupe. Rename both so attachments keep
+        # resolving after the account username changes.
+        try:
+            upload_handler = getattr(request.app.state, "upload_handler", None)
+            rename_owner = getattr(upload_handler, "rename_owner", None)
+            if callable(rename_owner):
+                rename_owner(old_username, new_username)
+        except Exception as e:
+            logger.warning("Failed to rename upload owner references %s -> %s: %s", old_username, new_username, e)
+
+        # direct personal RAG uploads live in per-owner directories and the
+        # vector metadata also carries the username used for owner-filtered
+        # search. Keep both in sync with the auth rename.
+        try:
+            from routes.personal_routes import rename_personal_upload_owner
+            personal_docs_manager = getattr(request.app.state, "personal_docs_manager", None)
+            if personal_docs_manager is not None:
+                rag_manager = getattr(personal_docs_manager, "rag_manager", None)
+                rename_personal_upload_owner(
+                    old_username,
+                    new_username,
+                    personal_docs_manager=personal_docs_manager,
+                    rag_manager=rag_manager,
+                )
+        except Exception as e:
+            logger.warning("Failed to rename personal RAG upload owner references %s -> %s: %s", old_username, new_username, e)
+
         # skills: SKILL.md frontmatter carries owner: <username>; the usage
         # sidecar (_usage.json) keys entries as owner::skill-name. Both must
         # be updated or the renamed user's Skills panel goes empty.
@@ -475,6 +525,31 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         if callable(invalidator):
             invalidator()
         return {"ok": True, "username": new_username, "renamed_self": old_username == user}
+
+    @router.put("/users/{username}/admin")
+    async def set_user_admin(username: str, body: SetAdminRequest, request: Request):
+        """Promote/demote a user to/from admin. Admin only.
+
+        The last remaining admin can't be demoted (no lockout). Self-demotion
+        is allowed while another admin exists; the `self` flag tells the UI to
+        reload the acting user into the normal-user view.
+        """
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        result = auth_manager.set_admin(username, body.is_admin, user)
+        if result is SetAdminResult.USER_NOT_FOUND:
+            raise HTTPException(404, "User not found")
+        if result is SetAdminResult.NOT_AUTHORIZED:
+            raise HTTPException(403, "Admin only")
+        if result is SetAdminResult.LAST_ADMIN:
+            raise HTTPException(400, "Cannot demote the last admin")
+        target = (username or "").strip().lower()
+        return {
+            "ok": True,
+            "is_admin": body.is_admin,
+            "self": target == (user or "").strip().lower(),
+        }
 
     @router.post("/signup-toggle", deprecated=True)
     async def toggle_signup(request: Request):
