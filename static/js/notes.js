@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import { topToolWindowZ } from './toolWindowZOrder.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -202,17 +203,7 @@ function _restoreNotesSidebarDock(pane) {
 
 // Notes is not a `.modal`; its backdrop is the top-level stacking surface.
 function _topToolWindowZ(exclude = null) {
-  let top = 250;
-  document.querySelectorAll('body > .modal, body > .research-overlay, body > .notes-pane-backdrop')
-    .forEach(el => {
-      if (!el || el === exclude) return;
-      if (el.classList.contains('hidden') || el.classList.contains('modal-minimized')) return;
-      const cs = getComputedStyle(el);
-      if (cs.display === 'none' || cs.visibility === 'hidden') return;
-      const z = parseInt(cs.zIndex, 10);
-      if (Number.isFinite(z)) top = Math.max(top, z);
-    });
-  return top;
+  return topToolWindowZ({ exclude });
 }
 
 function _bringNotesToFront(pane = document.getElementById('notes-pane')) {
@@ -1220,7 +1211,6 @@ export function openPanel() {
   });
   backdrop.appendChild(pane);
   document.body.appendChild(backdrop);
-  _bringNotesToFront(pane);
   _wireNotesWindow(pane);
   _restoreNotesSidebarDock(pane);
   _bringNotesToFront(pane);
