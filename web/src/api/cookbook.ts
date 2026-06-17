@@ -1,5 +1,27 @@
-import { useQuery } from "@tanstack/react-query"
-import { apiJson } from "@/lib/api"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { apiJson, apiFetch } from "@/lib/api"
+
+export function useCookbookMutations() {
+  const qc = useQueryClient()
+  const inv = () => qc.invalidateQueries({ queryKey: ["cookbook", "cached"] })
+  return {
+    download: useMutation({
+      mutationFn: async (v: { repo_id: string; backend: string }) => {
+        const r = await apiFetch("/api/model/download", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) })
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Download failed to start") }
+        return r.json()
+      },
+      onSuccess: inv,
+    }),
+    serve: useMutation({
+      mutationFn: async (v: { repo_id: string; cmd: string }) => {
+        const r = await apiFetch("/api/model/serve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) })
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Serve failed to start") }
+        return r.json()
+      },
+    }),
+  }
+}
 
 export interface CachedModel {
   repo_id: string; size?: string; nb_files?: number; status?: string; path?: string;

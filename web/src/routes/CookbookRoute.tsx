@@ -1,8 +1,38 @@
-import { FlaskConical, Cpu, HardDrive } from "lucide-react"
-import { useCachedModels, useGpus } from "@/api/cookbook"
+import { useState } from "react"
+import { FlaskConical, Cpu, HardDrive, Download } from "lucide-react"
+import { useCachedModels, useGpus, useCookbookMutations } from "@/api/cookbook"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 function gb(mb?: number) { return mb != null ? `${(mb / 1024).toFixed(1)} GB` : "—" }
+
+function DownloadForm() {
+  const { download } = useCookbookMutations()
+  const [repo, setRepo] = useState("")
+  const [backend, setBackend] = useState("hf")
+  const [msg, setMsg] = useState("")
+  const go = () => {
+    if (!repo.trim()) { setMsg("Repo ID required"); return }
+    download.mutate({ repo_id: repo.trim(), backend }, {
+      onSuccess: () => { setMsg(`Download started for ${repo.trim()} — track it under cached models.`); setRepo("") },
+      onError: (e) => setMsg(e instanceof Error ? e.message : "Failed"),
+    })
+  }
+  const inp = "h-9 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
+  return (
+    <section>
+      <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground"><Download className="size-3.5" />Download a model</h2>
+      <div className="space-y-2 rounded-lg border bg-card p-3">
+        <div className="flex gap-2">
+          <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder={backend === "ollama" ? "qwen2.5:0.5b" : "org/model-name (HF repo)"} className={cn(inp, "flex-1")} />
+          <select value={backend} onChange={(e) => setBackend(e.target.value)} className={inp}><option value="hf">HuggingFace</option><option value="ollama">Ollama</option></select>
+          <Button disabled={download.isPending} onClick={go}><Download className="size-4" />{download.isPending ? "Starting…" : "Download"}</Button>
+        </div>
+        {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
+      </div>
+    </section>
+  )
+}
 
 export function CookbookRoute() {
   const { data: cached, isLoading: cl } = useCachedModels()
@@ -14,6 +44,7 @@ export function CookbookRoute() {
     <div className="mx-auto flex h-full w-full max-w-4xl flex-col">
       <header className="flex h-13 shrink-0 items-center gap-2 border-b px-4 text-sm font-semibold"><FlaskConical className="size-4" />Cookbook</header>
       <div className="flex-1 space-y-6 overflow-y-auto p-4">
+        <DownloadForm />
         <section>
           <h2 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground"><Cpu className="size-3.5" />Hardware</h2>
           {gl ? <p className="text-sm text-muted-foreground">Probing GPUs…</p>
