@@ -12947,12 +12947,10 @@ mark.doc-find-mark.current {
 .doc-editor-textarea:focus,
 .doc-editor-textarea:active {
   background: transparent !important;
-  /* Used to force `color: transparent` here so the hidden two-layer
-     textarea wouldn't bleed through on hover/focus. Now that the
-     textarea renders its OWN visible text (overlay is hidden), forcing
-     transparent here makes typed text disappear the moment the cursor
-     enters the page. Keep the visible fg color instead. */
-  color: var(--fg) !important;
+  /* Don't paint the textarea's own text here. The highlight overlay behind it
+     is the visible layer for normal docs; the textarea's glyphs must stay
+     transparent (base rule) so the coloured overlay shows through. Email docs
+     keep visible text via the .email-mode rule below. */
   outline: none !important;
 }
 .doc-editor-textarea::placeholder {
@@ -29769,18 +29767,16 @@ button .spinner-whirlpool {
   font-variant-emoji: emoji;
 }
 
-/* Single-layer rendering for ALL documents (not just email): the highlight
-   overlay (<pre> with hljs spans) and the transparent textarea use two
-   different rendering paths internally — the textarea uses the browser's
-   native form line-breaker, the overlay uses CSS line-breaking — and they
-   can never be guaranteed to wrap byte-identical no matter how many CSS
-   properties are pinned. Pick one source of truth: make the textarea its
-   own visible text, hide the overlay. Trade-off: no syntax highlighting in
-   the live editor (rendered markdown preview / chat output still has it).
-   The caret is now glued to the typed text by definition since both are
-   rendered by the same element. */
-.doc-editor-highlight,
-#doc-editor-code.email-mode .doc-editor-highlight {
+/* Two-layer rendering (transparent textarea over an hljs-highlighted <pre>)
+   is restored for normal documents so the live editor shows syntax colours.
+   Both layers pin identical metrics (font-size/line-height/padding, ligatures
+   off, scrollbar-gutter stable) so soft-wrap stays aligned between them; minor
+   wrap divergence on very long wrapped lines is the accepted trade-off for
+   having highlighting (product decision: keep soft-wrap).
+   EMAIL documents keep single-layer rendering — the overlay is hidden and the
+   textarea renders its own visible text — because email composes in a separate
+   rich editor and doesn't want code highlighting. */
+.doc-editor-highlight.email-mode {
   display: none !important;
 }
 /* Find bar is open: float the highlight overlay ON TOP of the
@@ -29794,8 +29790,12 @@ body.doc-find-active #doc-editor-code.email-mode .doc-editor-highlight {
   background: transparent !important;
   pointer-events: none;
 }
-body.doc-find-active .doc-editor-highlight,
-body.doc-find-active .doc-editor-highlight * {
+/* Only email (single-layer) needs the floated overlay's text forced transparent
+   so the textarea below stays the text source. Normal two-layer docs keep the
+   overlay's coloured code visible during find — the solid <mark> spans simply
+   render in place. */
+body.doc-find-active .doc-editor-highlight.email-mode,
+body.doc-find-active .doc-editor-highlight.email-mode * {
   color: transparent !important;
   background: transparent !important;
 }
@@ -29810,11 +29810,16 @@ body.doc-find-active mark.doc-find-mark.current {
   box-shadow: 0 0 0 2px var(--fg) !important;
   outline: 1px solid var(--fg) !important;
 }
-.doc-editor-textarea,
-#doc-editor-code.email-mode .doc-editor-textarea {
-  color: var(--fg) !important;
-  caret-color: var(--fg) !important;
+.doc-editor-textarea {
+  /* On top of the overlay, transparent text (base rule) so colours show
+     through; caret stays visible via caret-color. */
   z-index: 1;
+}
+.doc-editor-textarea.email-mode {
+  /* Email is single-layer: the textarea is the visible text layer. */
+  color: var(--fg) !important;
+  -webkit-text-fill-color: var(--fg) !important;
+  caret-color: var(--fg) !important;
 }
 
 /* Emoji picker (monochrome icon picker) */
