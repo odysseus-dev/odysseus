@@ -2084,7 +2084,11 @@ export function buildAgentProcessPanel(metadata, modelName, options = {}) {
     if (maxRounds) bits.push(`${usedRounds}/${maxRounds} rounds`);
     bits.push(`${usedTools}/${toolLimit} tools`);
     bits.push(`verifier ${limits.verifier_enabled ? 'on' : 'off'}`);
-    if (limits.workspace_bound) bits.push(`workspace policy ${limits.workspace_shell_writes_blocked ? 'on' : 'active'}`);
+    if (limits.workspace_bound) {
+      const workspaceLabel = String(limits.workspace_label || limits.workspace_path || '').trim();
+      bits.push(workspaceLabel ? `workspace ${workspaceLabel}` : 'workspace active');
+      bits.push(`workspace policy ${limits.workspace_shell_writes_blocked ? 'on' : 'active'}`);
+    }
     const meta = document.createElement('div');
     meta.className = 'agent-process-meta';
     meta.textContent = `Limits: ${bits.join(' | ')}`;

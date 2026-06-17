@@ -247,7 +247,7 @@ def _captured_agent_request(monkeypatch, *, workspace, prompt="look at the local
             [{"role": "user", "content": prompt}],
             max_rounds=1, relevant_tools=None, owner="admin", workspace=workspace,
         )
-        return [c async for c in gen]
+        captured["chunks"] = [c async for c in gen]
 
     asyncio.run(_run())
     return captured
@@ -257,6 +257,19 @@ def _sent_tool_names(monkeypatch, *, workspace, prompt="look at the local projec
     captured = _captured_agent_request(monkeypatch, workspace=workspace, prompt=prompt)
     schemas = captured["tools"] or []
     return {t["function"]["name"] for t in schemas if isinstance(t, dict) and "function" in t}
+
+
+def _events_from_chunks(chunks):
+    events = []
+    for chunk in chunks:
+        for line in str(chunk).splitlines():
+            if not line.startswith("data: "):
+                continue
+            payload = line[6:]
+            if payload == "[DONE]":
+                continue
+            events.append(json.loads(payload))
+    return events
 
 
 def test_low_signal_with_workspace_surfaces_readonly_file_tools(monkeypatch):
@@ -317,6 +330,39 @@ def test_workspace_contract_prompt_is_injected(monkeypatch):
     assert "write_file" in contract["content"]
     assert "verify the artifact" in contract["content"]
     assert "Do not say you lack permission" in contract["content"]
+
+
+def test_workspace_contract_includes_configured_label(monkeypatch):
+    import src.agent_loop as al
+
+    monkeypatch.setenv("ODYSSEUS_DEFAULT_WORKSPACE", "/workspace")
+    monkeypatch.setenv("ODYSSEUS_WORKSPACE_LABEL", r"D:\Odysseus_Workspace")
+    captured = _captured_agent_request(monkeypatch, workspace="/workspace")
+    messages = captured["messages"]
+    contract = next(
+        (m for m in messages if "ACTIVE WORKSPACE CONTRACT" in (m.get("content") or "")),
+        None,
+    )
+
+    assert contract is not None
+    assert r"D:\Odysseus_Workspace (mounted as /workspace)" in contract["content"]
+    assert "same workspace" in contract["content"]
+    assert al._workspace_display_label("/workspace") == r"D:\Odysseus_Workspace (mounted as /workspace)"
+
+
+def test_agent_limits_include_workspace_label(monkeypatch):
+    monkeypatch.setenv("ODYSSEUS_DEFAULT_WORKSPACE", "/workspace")
+    monkeypatch.setenv("ODYSSEUS_WORKSPACE_LABEL", r"D:\Odysseus_Workspace")
+    captured = _captured_agent_request(monkeypatch, workspace="/workspace")
+    metrics = next(
+        e["data"] for e in _events_from_chunks(captured["chunks"])
+        if e.get("type") == "metrics"
+    )
+
+    limits = metrics["agent_limits"]
+    assert limits["workspace_bound"] is True
+    assert limits["workspace_path"] == "/workspace"
+    assert limits["workspace_label"] == r"D:\Odysseus_Workspace (mounted as /workspace)"
 
 
 def test_final_answer_contract_prompt_is_injected(monkeypatch):

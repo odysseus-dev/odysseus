@@ -9,6 +9,7 @@ The LLM decides when to use tools by writing fenced code blocks.
 import asyncio
 import collections
 import json
+import os
 import re
 import time
 import logging
@@ -625,6 +626,18 @@ _ADMIN_SCHEMA_NAMES = frozenset([
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
 
 
+def _workspace_display_label(workspace: Optional[str]) -> str:
+    """Return a user-facing label for a bound workspace, if configured."""
+    ws = str(workspace or "").strip()
+    if not ws:
+        return ""
+    label = os.environ.get("ODYSSEUS_WORKSPACE_LABEL", "").strip()
+    alias_path = os.environ.get("ODYSSEUS_DEFAULT_WORKSPACE", "/workspace").strip()
+    if label and alias_path and os.path.normpath(ws) == os.path.normpath(alias_path):
+        return f"{label} (mounted as {ws})"
+    return ws
+
+
 def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
     """Return True for local Ollama's OpenAI-compatible /v1 surface.
 
@@ -954,12 +967,21 @@ def _build_system_prompt(
         _ws = str(workspace).strip()
         if _ws:
             _ws_prompt = _ws.replace("`", "\\`")
+            _ws_label = _workspace_display_label(_ws)
+            _ws_label_prompt = _ws_label.replace("`", "\\`")
+            _alias_line = ""
+            if _ws_label and _ws_label != _ws:
+                _alias_line = (
+                    f"- User-facing workspace label: `{_ws_label_prompt}`. "
+                    f"Treat references to `{_ws_prompt}` and this label as the same workspace; use `{_ws_prompt}` or relative paths in file tools.\n"
+                )
             _workspace_message = {
                 "role": "system",
                 "_protected": True,
                 "content": (
                     "## ACTIVE WORKSPACE CONTRACT\n"
                     f"An approved workspace is active for this turn: `{_ws_prompt}`.\n"
+                    f"{_alias_line}"
                     "- The user may refer to this as the workspace, project, repo, folder, or local files.\n"
                     "- File tools (`get_workspace`, `ls`, `glob`, `grep`, `read_file`, `write_file`, `edit_file`) are allowed inside this workspace and may use paths relative to it.\n"
                     "- For file reads/searches/edits, prefer those file tools over shell commands.\n"
@@ -3037,6 +3059,8 @@ async def stream_agent_loop(
         "verifier_enabled": bool(get_setting("agent_verifier_subagent", False)),
         "verifier_max_rounds": _VERIFIER_MAX_ROUNDS,
         "workspace_bound": bool(workspace),
+        "workspace_path": str(workspace or ""),
+        "workspace_label": _workspace_display_label(workspace),
         "workspace_shell_writes_blocked": bool(workspace),
     }
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"

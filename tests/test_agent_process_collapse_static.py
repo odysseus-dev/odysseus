@@ -32,6 +32,8 @@ def test_live_agent_completion_collapses_process_after_done():
     renderer = _read("static/js/chatRenderer.js")
     assert "metadata.agent_limits" in renderer
     assert "agent-process-meta" in renderer
+    assert "limits.workspace_label || limits.workspace_path" in renderer
+    assert "workspace policy" in renderer
     assert "body.innerHTML = sourcesPrefix" in renderer
     assert "body.insertBefore(panel, body.firstChild)" in renderer
     assert "markdownModule.processWithThinking(markdownModule.squashOutsideCode(finalText))" in renderer
