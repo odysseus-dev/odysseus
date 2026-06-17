@@ -74,7 +74,23 @@ def test_background_poll_recovers_done_for_stopped_dependency_install():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const depDone = !!task.payload?._dep && _depInstallSucceeded(task.output);" in source
-    assert "depDone ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped')" in source
+    assert "(depDone || downloadDone) ? 'done' : (task.type === 'download' ? 'crashed' : 'stopped')" in source
+
+
+def test_background_poll_recovers_done_for_completed_download():
+    """When the backend reports a finished model download as "stopped" (its
+    tmux pane is gone after DOWNLOAD_OK, so the dead-session check can miss the
+    landed snapshot), the reconciler must recover "done" from the terminal
+    DOWNLOAD_OK sentinel instead of downgrading the card to crashed. The
+    background poll keys off DOWNLOAD_OK only (not the "/snapshots/" path, which
+    can appear mid-stream for multi-file downloads)."""
+    source = _read("static/js/cookbookRunning.js")
+
+    normalized = " ".join(source.split())
+    assert (
+        "const downloadDone = task.type === 'download' "
+        "&& String(task.output || '').includes('DOWNLOAD_OK');"
+    ) in normalized
 
 
 def test_dependency_install_payload_keeps_env_path_for_refresh():
