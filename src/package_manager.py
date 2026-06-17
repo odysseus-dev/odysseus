@@ -35,6 +35,11 @@ class PackageManager:
         self.packages_dir.mkdir(parents=True, exist_ok=True)
         self.static_packages_dir.mkdir(parents=True, exist_ok=True)
         self._loaded_modules: dict = {}
+        self._app = None
+
+    def set_app(self, app) -> None:
+        """Store the FastAPI app so packages can register routes via register_routes(app)."""
+        self._app = app
 
     def install_package(self, zip_path: str, owner: str | None = None) -> dict:
         """
@@ -90,7 +95,8 @@ class PackageManager:
             shutil.copytree(extract_root, install_dir)
 
             # Publish frontend widgets to /static/packages/<pkg_id>/
-            frontend_hooks = manifest.get("frontendHooks", {})
+            # Accept both camelCase (frontendHooks) and snake_case (frontend_hooks)
+            frontend_hooks = manifest.get("frontendHooks") or manifest.get("frontend_hooks") or {}
             if frontend_hooks:
                 static_pkg_dir = self.static_packages_dir / pkg_id
                 static_pkg_dir.mkdir(exist_ok=True)
@@ -129,6 +135,7 @@ class PackageManager:
         from core.database import get_db_session, Package
         with get_db_session() as db:
             existing = db.query(Package).filter(Package.id == manifest["id"]).first()
+            _fhooks = manifest.get("frontendHooks") or manifest.get("frontend_hooks") or {}
             if existing:
                 existing.version = manifest.get("version", "1.0.0")
                 existing.author = manifest.get("author")
@@ -137,7 +144,7 @@ class PackageManager:
                 existing.risk_level = scan_result["risk"]
                 existing.install_path = str(install_dir)
                 existing.permissions = manifest.get("requiredPermissions", [])
-                existing.frontend_hooks = manifest.get("frontendHooks", {})
+                existing.frontend_hooks = _fhooks
                 existing.entry_point = manifest.get("entryPoint", "")
             else:
                 db.add(Package(
@@ -149,7 +156,7 @@ class PackageManager:
                     status="installed",
                     permissions=manifest.get("requiredPermissions", []),
                     entry_point=manifest.get("entryPoint", ""),
-                    frontend_hooks=manifest.get("frontendHooks", {}),
+                    frontend_hooks=_fhooks,
                     install_path=str(install_dir),
                     risk_level=scan_result["risk"],
                     owner=owner,
@@ -180,11 +187,26 @@ class PackageManager:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             self._loaded_modules[pkg_id] = module
+            if self._app is not None and hasattr(module, "register_routes"):
+                try:
+                    module.register_routes(self._app)
+                    logger.info(f"Plugin {pkg_id}: routes registered")
+                except Exception as re:
+                    logger.error(f"Plugin {pkg_id}: route registration failed: {re}")
             logger.info(f"Plugin loaded: {pkg_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to load plugin {pkg_id}: {e}")
             return False
+
+    def load_all_active(self) -> int:
+        """Load every installed (non-disabled) package. Called at startup."""
+        from core.database import get_db_session, Package as _Pkg
+        with get_db_session() as db:
+            pkg_ids = [p.id for p in db.query(_Pkg).filter(_Pkg.status == "installed").all()]
+        count = sum(1 for pid in pkg_ids if self.load_plugin(pid))
+        logger.info(f"Loaded {count}/{len(pkg_ids)} active packages at startup")
+        return count
 
     def unload_plugin(self, pkg_id: str) -> bool:
         """Remove a plugin from memory (does not uninstall)."""

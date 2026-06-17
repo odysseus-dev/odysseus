@@ -798,21 +798,13 @@ _package_manager = PackageManager(
     packages_dir=DATA_DIR + "/packages",
     static_dir=STATIC_DIR,
 )
+# Give the package manager a reference to the app so installed packages can
+# register their own FastAPI routes via register_routes(app) in backend.py
+_package_manager.set_app(app)
 app.include_router(setup_packages_routes(_package_manager))
-
-# Docker Workspace Manager — stateful AI container workspaces
-from routes.docker_workspace_routes import setup_docker_workspace_routes
-from src.workspace_manager import WorkspaceManager
-_workspace_manager = WorkspaceManager()
-app.include_router(setup_docker_workspace_routes(_workspace_manager))
-
-# Hardware routes — metrics, Wi-Fi control, network interfaces
-from routes.hardware_routes import setup_hardware_routes
-app.include_router(setup_hardware_routes())
-
-# ExecutionGuard approval routes — MEDIUM-risk command approval flow
-from routes.guard_routes import setup_guard_routes
-app.include_router(setup_guard_routes())
+# Load all previously installed packages (registers their backend routes now,
+# before the server starts accepting traffic)
+_package_manager.load_all_active()
 
 # Package extension API — LLM call endpoint for package widgets
 from routes.pkg_routes import setup_pkg_routes
