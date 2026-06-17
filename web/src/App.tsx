@@ -5,7 +5,6 @@ import { queryClient } from "@/lib/queryClient"
 import { AppShell } from "@/components/shell/AppShell"
 import { ChatConsole } from "@/routes/ChatConsole"
 import { MemoryRoute } from "@/routes/MemoryRoute"
-import { ComingSoon } from "@/routes/ComingSoon"
 import { NotesRoute } from "@/routes/NotesRoute"
 import { TasksRoute } from "@/routes/TasksRoute"
 import { SettingsRoute } from "@/routes/SettingsRoute"
@@ -15,6 +14,7 @@ import { GalleryRoute } from "@/routes/GalleryRoute"
 import { EmailRoute } from "@/routes/EmailRoute"
 import { DocumentsRoute } from "@/routes/DocumentsRoute"
 import { CompareRoute } from "@/routes/CompareRoute"
+import { CookbookRoute } from "@/routes/CookbookRoute"
 import { useUi } from "@/stores/ui"
 
 function ThemedApp() {
@@ -33,7 +33,7 @@ function ThemedApp() {
         <Route path="/library" element={<DocumentsRoute />} />
         <Route path="/notes" element={<NotesRoute />} />
         <Route path="/tasks" element={<TasksRoute />} />
-        <Route path="/cookbook" element={<ComingSoon title="Cookbook" />} />
+        <Route path="/cookbook" element={<CookbookRoute />} />
         <Route path="/skills" element={<SkillsRoute />} />
         <Route path="/settings" element={<SettingsRoute />} />
         <Route path="*" element={<Navigate to="/chat" replace />} />
