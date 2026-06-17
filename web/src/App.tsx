@@ -16,6 +16,9 @@ import { EmailRoute } from "@/routes/EmailRoute"
 import { DocumentsRoute } from "@/routes/DocumentsRoute"
 import { CompareRoute } from "@/routes/CompareRoute"
 import { CookbookRoute } from "@/routes/CookbookRoute"
+import { ResearchRoute } from "@/routes/ResearchRoute"
+import { RagRoute } from "@/routes/RagRoute"
+import { PersonalRoute } from "@/routes/PersonalRoute"
 import { useUi } from "@/stores/ui"
 
 const FONT_STACKS: Record<string, string> = {
@@ -46,11 +49,14 @@ function ThemedApp() {
           <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/chat/:sessionId?" element={<ChatConsole />} />
           <Route path="/compare" element={<CompareRoute />} />
+          <Route path="/research" element={<ResearchRoute />} />
           <Route path="/memory" element={<MemoryRoute />} />
           <Route path="/gallery" element={<GalleryRoute />} />
           <Route path="/calendar" element={<CalendarRoute />} />
           <Route path="/email" element={<EmailRoute />} />
           <Route path="/library" element={<DocumentsRoute />} />
+          <Route path="/personal" element={<PersonalRoute />} />
+          <Route path="/knowledge" element={<RagRoute />} />
           <Route path="/notes" element={<NotesRoute />} />
           <Route path="/tasks" element={<TasksRoute />} />
           <Route path="/cookbook" element={<CookbookRoute />} />

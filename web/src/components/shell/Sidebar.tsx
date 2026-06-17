@@ -3,6 +3,7 @@ import { NavLink, useNavigate, useParams } from "react-router-dom"
 import {
   Plus, Search, PanelLeft, MessageSquare, GitCompareArrows, Image, Brain,
   Calendar, Mail, StickyNote, ListChecks, FileText, FlaskConical, Sparkles,
+  Telescope, Database, FolderOpen,
   Settings, Trash2, Moon, Sun, LogOut, EyeOff, Keyboard, ChevronsUpDown, Pencil, Pin, Check,
 } from "lucide-react"
 import { useUi } from "@/stores/ui"
@@ -15,6 +16,7 @@ import { cn } from "@/lib/utils"
 const PRIMARY = [
   { to: "/chat", icon: MessageSquare, label: "Chat" },
   { to: "/compare", icon: GitCompareArrows, label: "Compare" },
+  { to: "/research", icon: Telescope, label: "Research" },
   { to: "/gallery", icon: Image, label: "Gallery" },
   { to: "/memory", icon: Brain, label: "Memory" },
 ]
@@ -24,6 +26,8 @@ const WORKSPACE = [
   { to: "/notes", icon: StickyNote, label: "Notes" },
   { to: "/tasks", icon: ListChecks, label: "Tasks" },
   { to: "/library", icon: FileText, label: "Library" },
+  { to: "/personal", icon: FolderOpen, label: "Personal files" },
+  { to: "/knowledge", icon: Database, label: "Knowledge" },
   { to: "/cookbook", icon: FlaskConical, label: "Cookbook" },
   { to: "/skills", icon: Sparkles, label: "Skills" },
 ]

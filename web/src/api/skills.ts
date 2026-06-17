@@ -38,10 +38,117 @@ export function useSkillMarkdown(id: string | null) {
   })
 }
 
+// ── Run / invoke a skill ────────────────────────────────────────────────────
+// Expands a skill into a skill-pinned prompt against the user's request. This
+// only returns the prompt text the model would receive (today's behaviour);
+// there is no backend endpoint that runs the prompt through a model and returns
+// a completion, so the run panel renders this expanded prompt.
+export function useRunSkill() {
+  return useMutation({
+    mutationFn: async (v: { id: string; request: string }) => {
+      const r = await apiFetch(`/api/skills/${encodeURIComponent(v.id)}/invoke`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request: v.request }),
+      })
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Run failed") }
+      return r.json() as Promise<{ ok: boolean; type: string; name: string; command: string; message: string }>
+    },
+  })
+}
+
+// ── Single-skill test (background job + polling) ─────────────────────────────
+export interface SkillVerdict {
+  verdict: "pass" | "needs_work" | "fail" | "inconclusive" | "unknown"
+  confidence: number
+  summary?: string
+  issues?: string[]
+}
+export interface SkillTestLogEntry {
+  type: string
+  text?: string
+  tool?: string
+  command?: string
+  output?: string
+  round?: number
+  task?: string
+  skill?: string
+  model?: string
+  error?: string
+}
+export interface SkillTestStatus {
+  status: "none" | "running" | "done"
+  task?: string
+  model?: string
+  log?: SkillTestLogEntry[]
+  verdict?: SkillVerdict | null
+}
+
+export function useStartSkillTest() {
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiFetch(`/api/skills/${encodeURIComponent(id)}/test`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+      })
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Test failed to start") }
+      return r.json() as Promise<{ ok: boolean; status: string; skill: string; model: string }>
+    },
+  })
+}
+
+export function useSkillTestStatus(id: string | null, poll: boolean) {
+  return useQuery({
+    queryKey: ["skill-test-status", id],
+    enabled: !!id,
+    refetchInterval: poll ? 1500 : false,
+    queryFn: () => apiJson<SkillTestStatus>(`/api/skills/${encodeURIComponent(id as string)}/test-status`),
+  })
+}
+
+// ── Built-in tool override (admin-gated PUT/DELETE) ──────────────────────────
+export interface BuiltinDetail { name: string; text: string; default: string; is_overridden: boolean }
+export function useBuiltinSkill(name: string | null) {
+  return useQuery({
+    queryKey: ["builtin-skill", name],
+    enabled: !!name,
+    queryFn: () => apiJson<BuiltinDetail>(`/api/skills/builtin/${encodeURIComponent(name as string)}`),
+  })
+}
+
 export function useSkillMutations() {
   const qc = useQueryClient()
   const inv = () => qc.invalidateQueries({ queryKey: ["skills"] })
+  const invBuiltin = (name?: string) => {
+    qc.invalidateQueries({ queryKey: ["builtin-skills"] })
+    if (name) qc.invalidateQueries({ queryKey: ["builtin-skill", name] })
+  }
   return {
+    importFromUrl: useMutation({
+      mutationFn: async (url: string) => {
+        const r = await apiFetch("/api/skills/import-from-url", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }),
+        })
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Import failed") }
+        return r.json() as Promise<{ ok: boolean; skill: Skill; files: number }>
+      },
+      onSuccess: inv,
+    }),
+    saveBuiltinOverride: useMutation({
+      mutationFn: async (v: { name: string; text: string }) => {
+        const r = await apiFetch(`/api/skills/builtin/${encodeURIComponent(v.name)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: v.text }),
+        })
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Save failed") }
+        return r.json()
+      },
+      onSuccess: (_d, v) => invBuiltin(v.name),
+    }),
+    resetBuiltinOverride: useMutation({
+      mutationFn: async (name: string) => {
+        const r = await apiFetch(`/api/skills/builtin/${encodeURIComponent(name)}`, { method: "DELETE" })
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Reset failed") }
+        return r.json()
+      },
+      onSuccess: (_d, name) => invBuiltin(name),
+    }),
     remove: useMutation({
       mutationFn: async (id: string) => { await apiFetch(`/api/skills/${id}`, { method: "DELETE" }) },
       onSuccess: inv,
