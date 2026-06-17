@@ -472,6 +472,47 @@ function _processQueue() {
   }
 }
 
+// Recover orphaned "queue-" placeholders. A download interrupted (page
+// close/reload) after _startQueuedDownload flips it to 'running' under its
+// synthetic id, but before the real session id arrives, is left 'running' with
+// no tmux session — the render/reconcile guards skip "queue-" ids, so nothing
+// else corrects it and it blocks the host's queue. A real launch resolves within
+// ~1-2s, so a placeholder still 'running' past the stale window is an orphan:
+// re-queue it and pump. Anything still inside the window may be another tab/device
+// mid-launch, so leave it and re-check once it would go stale (self-reschedule),
+// instead of relying on the background monitor, which can stop when nothing is
+// actively running.
+let _queueRecoverTimer = null;
+const _QUEUE_STALE_LAUNCH_MS = 60000;
+function _recoverStaleQueuePlaceholders() {
+  const now = Date.now();
+  const tasks = _loadTasks();
+  let requeued = false;
+  let nextCheckMs = null;
+  for (const t of tasks) {
+    if (t.type !== 'download' || t.status !== 'running' || !String(t.sessionId || '').startsWith('queue-')) continue;
+    const age = t._launchStartedAt ? now - t._launchStartedAt : Infinity;
+    if (age > _QUEUE_STALE_LAUNCH_MS) {
+      t.status = 'queued';
+      delete t._startLaunched;
+      delete t._launchStartedAt;
+      requeued = true;
+    } else {
+      const remaining = _QUEUE_STALE_LAUNCH_MS - age;
+      nextCheckMs = nextCheckMs == null ? remaining : Math.min(nextCheckMs, remaining);
+    }
+  }
+  if (requeued) {
+    _saveTasks(tasks);
+    _renderRunningTab();
+    _processQueue();
+  }
+  if (nextCheckMs != null) {
+    clearTimeout(_queueRecoverTimer);
+    _queueRecoverTimer = setTimeout(_recoverStaleQueuePlaceholders, nextCheckMs + 500);
+  }
+}
+
 async function _startQueuedDownload(task) {
   if (!task.payload) {
     _updateTask(task.sessionId, { status: 'error', output: 'No payload' });
@@ -489,6 +530,7 @@ async function _startQueuedDownload(task) {
       if (_pt.status === 'running' && _pt._startLaunched) return;  // already being started
       _pt.status = 'running';
       _pt._startLaunched = true;
+      _pt._launchStartedAt = Date.now();
       _saveTasks(_pre);
     }
   }
@@ -2399,6 +2441,16 @@ export function _renderRunningTab() {
 
     // Wire reconnect
     el.querySelector('.cookbook-task-action-reconnect').addEventListener('click', () => {
+      // A "queue-" placeholder has no tmux session to reconnect to — the download
+      // failed before its real session id was assigned. Flipping it to 'running'
+      // would strand it (the reconnect guard + reconcile skip never correct it).
+      // Re-queue it and let the queue relaunch it cleanly.
+      if (String(task.sessionId || '').startsWith('queue-')) {
+        _updateTask(task.sessionId, { status: 'queued', _startLaunched: false, _launchStartedAt: null });
+        _renderRunningTab();
+        _processQueue();
+        return;
+      }
       _updateTask(task.sessionId, { status: 'running' });
       el.dataset.status = 'running';
       const badge = el.querySelector('.cookbook-task-status');
@@ -2543,7 +2595,14 @@ export function _renderRunningTab() {
     // responds; without this, the user opens the Running tab and sees
     // only the placeholder ("Launched by scheduled task …") because
     // _reconnectTask never fires for status 'ready'/'loading'/'warming'.
-    if (['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status)) {
+    // Never reconnect a still-queued task: its sessionId is a "queue-" placeholder
+    // with no tmux session behind it. _startQueuedDownload flips a queued task to
+    // 'running' SYNCHRONOUSLY (under the old queue- id) before its POST swaps in
+    // the real session id; without this guard a render in that window starts a
+    // reconnect loop against the placeholder, the has-session probe fails, and the
+    // download gets crash-labeled even though it never launched.
+    if (['running', 'ready', 'loading', 'warming', 'starting'].includes(task.status)
+        && !String(task.sessionId || '').startsWith('queue-')) {
       _reconnectTask(el, task);
     }
   }
@@ -2575,6 +2634,10 @@ export function _renderRunningTab() {
 // ── Reconnect task (polling loop) ──
 
 async function _reconnectTask(el, task) {
+  // Defense-in-depth: a "queue-" placeholder id has no tmux session, so probing
+  // it would always read "dead" and crash-label a download that hasn't launched.
+  // The real session id is swapped in by _startQueuedDownload after its POST.
+  if (!task || String(task.sessionId || '').startsWith('queue-')) return;
   const output = el.querySelector('.cookbook-output-pre');
   const controller = new AbortController();
   el._abort = controller;
@@ -3583,6 +3646,12 @@ async function _pollBackgroundStatus() {
       for (const task of localTasks) {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
+        // A still-queued download has no real tmux session yet — its sessionId is
+        // a synthetic "queue-" placeholder. The backend reports that placeholder as
+        // "stopped" (has-session fails), which the mapping below would wrongly turn
+        // into "crashed". Leave queued tasks alone; _processQueue / _startQueuedDownload
+        // own their lifecycle until a real session id is assigned.
+        if (String(task.sessionId || '').startsWith('queue-')) continue;
         const updates = {};
         // A finished dependency install whose tmux pane is gone is reported
         // "stopped" by the backend (its pip package is never in the HF cache the
@@ -3809,6 +3878,10 @@ export function initRunning(shared) {
     try {
       await _syncFromServer();
     } catch {}
+    // Recover orphaned "queue-" placeholders left by a reload mid-launch (see
+    // _recoverStaleQueuePlaceholders). Self-reschedules to re-check any still
+    // inside the stale window.
+    try { _recoverStaleQueuePlaceholders(); } catch {}
     _startBackgroundMonitor();
   })();
 }
