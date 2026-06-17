@@ -17,13 +17,18 @@ close / navigation / refresh). It does NOT survive a server restart.
 import asyncio
 import json
 import logging
+import os
+import time
 from typing import AsyncGenerator, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class _Run:
-    __slots__ = ("buffer", "subscribers", "status", "task", "evict_task")
+    __slots__ = (
+        "buffer", "subscribers", "status", "task", "evict_task",
+        "watchdog_task", "started_at", "last_event_at", "stop_reason",
+    )
 
     def __init__(self) -> None:
         self.buffer: list = []          # ordered SSE event strings (replay log)
@@ -31,6 +36,11 @@ class _Run:
         self.status: str = "running"    # running | done | error | stopped
         self.task: Optional[asyncio.Task] = None
         self.evict_task: Optional[asyncio.Task] = None
+        self.watchdog_task: Optional[asyncio.Task] = None
+        now = time.monotonic()
+        self.started_at: float = now
+        self.last_event_at: float = now
+        self.stop_reason: str = ""
 
 
 _RUNS: Dict[str, _Run] = {}
@@ -40,10 +50,25 @@ _RUNS: Dict[str, _Run] = {}
 # replay the result. After this, the run is evicted to bound memory — without
 # it, every session that ever streamed kept its entire event log forever.
 _EVICT_GRACE_S = 180
+_WATCHDOG_POLL_S = 5.0
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default) or default)
+    except (TypeError, ValueError):
+        return default
+
+
+# 0 disables either cap. Long-running tools normally emit progress heartbeats,
+# so the idle timeout catches silent/wedged streams while allowing active work.
+_AGENT_RUN_MAX_WALL_S = _env_int("ODYSSEUS_AGENT_RUN_MAX_WALL_SECONDS", 7200)
+_AGENT_RUN_IDLE_TIMEOUT_S = _env_int("ODYSSEUS_AGENT_RUN_IDLE_TIMEOUT_SECONDS", 900)
 
 
 def _publish(run: _Run, ev: str) -> None:
     """Append one SSE event and fan it out to every live subscriber."""
+    run.last_event_at = time.monotonic()
     run.buffer.append(ev)
     seq = len(run.buffer) - 1
     for q in list(run.subscribers):
@@ -75,6 +100,49 @@ def _schedule_evict(session_id: str) -> None:
     run.evict_task = asyncio.create_task(_evict(run))
 
 
+async def _watchdog(session_id: str, run_ref: _Run) -> None:
+    """Cancel a detached run that exceeds wall-clock or no-progress limits."""
+    while True:
+        try:
+            await asyncio.sleep(_WATCHDOG_POLL_S)
+        except asyncio.CancelledError:
+            return
+        cur = _RUNS.get(session_id)
+        if cur is not run_ref or cur.status != "running":
+            return
+
+        now = time.monotonic()
+        reason = ""
+        if _AGENT_RUN_MAX_WALL_S > 0 and (now - cur.started_at) >= _AGENT_RUN_MAX_WALL_S:
+            reason = "wall_clock_timeout"
+        elif _AGENT_RUN_IDLE_TIMEOUT_S > 0 and (now - cur.last_event_at) >= _AGENT_RUN_IDLE_TIMEOUT_S:
+            reason = "idle_timeout"
+        if not reason:
+            continue
+
+        cur.stop_reason = reason
+        logger.warning("[agent-run] %s stopped by %s watchdog", session_id, reason)
+        _publish(
+            cur,
+            "data: "
+            + json.dumps({
+                "type": "run_timeout",
+                "reason": reason,
+                "message": (
+                    "Agent run stopped by the server watchdog after exceeding "
+                    "the wall-clock limit." if reason == "wall_clock_timeout"
+                    else "Agent run stopped by the server watchdog after no stream progress."
+                ),
+                "wall_seconds": round(now - cur.started_at, 3),
+                "idle_seconds": round(now - cur.last_event_at, 3),
+            })
+            + "\n\n",
+        )
+        if cur.task and not cur.task.done():
+            cur.task.cancel()
+        return
+
+
 def is_active(session_id: str) -> bool:
     r = _RUNS.get(session_id)
     return bool(r and r.status == "running")
@@ -83,6 +151,11 @@ def is_active(session_id: str) -> bool:
 def get_status(session_id: str) -> Optional[str]:
     r = _RUNS.get(session_id)
     return r.status if r else None
+
+
+def get_stop_reason(session_id: str) -> str:
+    r = _RUNS.get(session_id)
+    return r.stop_reason if r else ""
 
 
 async def _drain(session_id: str, agen: AsyncGenerator[str, None],
@@ -126,6 +199,8 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         )
         _publish(run, "data: [DONE]\n\n")
     finally:
+        if run.watchdog_task and not run.watchdog_task.done():
+            run.watchdog_task.cancel()
         # Wake every subscriber with the end sentinel so their SSE closes.
         for q in list(run.subscribers):
             try:
@@ -145,13 +220,17 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
     prev_task: Optional[asyncio.Task] = None
     if prev:
         if prev.task and not prev.task.done():
+            prev.stop_reason = "replaced"
             prev.task.cancel()
             prev_task = prev.task   # new run awaits this before it starts writing
         if prev.evict_task and not prev.evict_task.done():
             prev.evict_task.cancel()
+        if prev.watchdog_task and not prev.watchdog_task.done():
+            prev.watchdog_task.cancel()
     run = _Run()
     _RUNS[session_id] = run
     run.task = asyncio.create_task(_drain(session_id, agen, prev_task))
+    run.watchdog_task = asyncio.create_task(_watchdog(session_id, run))
     return run
 
 
@@ -196,6 +275,7 @@ def stop(session_id: str) -> bool:
     """Cancel an in-flight run (the wrapped generator saves its partial)."""
     run = _RUNS.get(session_id)
     if run and run.task and not run.task.done():
+        run.stop_reason = "user_stop"
         run.task.cancel()
         return True
     return False

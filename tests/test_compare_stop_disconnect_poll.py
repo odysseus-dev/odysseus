@@ -73,6 +73,7 @@ def test_cancelled_placeholder_is_saved_once_for_empty_explicit_stop():
     assert msg.content == ""
     assert msg.metadata["stopped"] is True
     assert msg.metadata["cancelled"] is True
+    assert msg.metadata["stop_reason"] == "user_stop"
     assert msg.metadata["model"] == "actual-model"
     assert msg.metadata["requested_model"] == "requested-model"
 
@@ -94,6 +95,26 @@ def test_cancelled_placeholder_is_not_saved_for_incognito():
     assert saved is False
     assert manager.saved == 0
     assert session.history == []
+
+
+def test_timeout_placeholder_is_not_marked_user_cancelled():
+    session = _PlaceholderSession()
+    manager = _PlaceholderSessionManager(session)
+
+    saved = _save_cancelled_stream_placeholder(
+        manager,
+        "sess-stop-placeholder",
+        stop_reason="idle_timeout",
+    )
+
+    assert saved is True
+    msg = session.history[-1]
+    assert msg.role == "assistant"
+    assert msg.content == ""
+    assert msg.metadata["stopped"] is True
+    assert msg.metadata["cancelled"] is False
+    assert msg.metadata["timed_out"] is True
+    assert msg.metadata["stop_reason"] == "idle_timeout"
 
 
 # --------------------------------------------------------------------------- #
@@ -231,6 +252,57 @@ async def test_normal_completion_saves_exactly_once_not_partial():
     assert sink.saves == []
 
 
+@pytest.mark.asyncio
+async def test_idle_watchdog_stops_silent_detached_run(monkeypatch):
+    """A detached run that produces no progress is cancelled by the watchdog."""
+    monkeypatch.setattr(agent_runs, "_WATCHDOG_POLL_S", 0.01)
+    monkeypatch.setattr(agent_runs, "_AGENT_RUN_IDLE_TIMEOUT_S", 0.03)
+    monkeypatch.setattr(agent_runs, "_AGENT_RUN_MAX_WALL_S", 0)
+
+    async def _hang_forever():
+        await asyncio.Event().wait()
+        yield "data: never\n\n"
+
+    session_id = "sess-detached-idle-watchdog"
+    agent_runs._RUNS.pop(session_id, None)
+    run = agent_runs.start(session_id, _hang_forever())
+
+    try:
+        await asyncio.wait_for(run.task, timeout=1)
+        assert run.status == "stopped"
+        assert run.stop_reason == "idle_timeout"
+        assert any("run_timeout" in ev and "idle_timeout" in ev for ev in run.buffer)
+    finally:
+        agent_runs._RUNS.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_watchdog_stops_active_detached_run(monkeypatch):
+    """Wall-clock limits still stop a run that is actively streaming progress."""
+    monkeypatch.setattr(agent_runs, "_WATCHDOG_POLL_S", 0.01)
+    monkeypatch.setattr(agent_runs, "_AGENT_RUN_IDLE_TIMEOUT_S", 10)
+    monkeypatch.setattr(agent_runs, "_AGENT_RUN_MAX_WALL_S", 0.04)
+
+    async def _progress_forever():
+        i = 0
+        while True:
+            await asyncio.sleep(0.005)
+            yield f"data: progress-{i}\n\n"
+            i += 1
+
+    session_id = "sess-detached-wall-watchdog"
+    agent_runs._RUNS.pop(session_id, None)
+    run = agent_runs.start(session_id, _progress_forever())
+
+    try:
+        await asyncio.wait_for(run.task, timeout=1)
+        assert run.status == "stopped"
+        assert run.stop_reason == "wall_clock_timeout"
+        assert any("run_timeout" in ev and "wall_clock_timeout" in ev for ev in run.buffer)
+    finally:
+        agent_runs._RUNS.pop(session_id, None)
+
+
 # --------------------------------------------------------------------------- #
 # chat_stream: Compare panes must NOT be detached, so the Stop button (closing
 # the SSE) cancels the upstream generator promptly — exercising the same
@@ -365,3 +437,12 @@ def test_empty_cancelled_bubble_uses_server_stop_persistence():
     assert "/api/chat/stop/" in src
     assert "inject_messages" not in fn_src
     assert "Persistence is handled by POST /api/chat/stop/{session_id}" in fn_src
+
+
+def test_timeout_stopped_bubble_does_not_offer_continue():
+    src = (Path(__file__).resolve().parents[1] / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+
+    assert "metadata.stop_reason === 'idle_timeout'" in src
+    assert "metadata.stop_reason === 'wall_clock_timeout'" in src
+    assert "[Agent stopped after timeout]" in src
+    assert "if (!metadata.cancelled && !timedOut)" in src

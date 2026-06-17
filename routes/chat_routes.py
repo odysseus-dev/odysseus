@@ -70,6 +70,7 @@ def _save_cancelled_stream_placeholder(
     *,
     model: str = "",
     requested_model: str = "",
+    stop_reason: str = "user_stop",
     incognito: bool = False,
 ) -> bool:
     """Persist an empty stopped assistant row for explicit user cancellation.
@@ -94,13 +95,20 @@ def _save_cancelled_stream_placeholder(
             getattr(last, "role", "") == "assistant"
             and not (getattr(last, "content", "") or "").strip()
             and md.get("stopped")
-            and md.get("cancelled")
         ):
             return False
 
     selected_model = str(requested_model or getattr(sess, "model", "") or "").strip()
     actual_model = str(model or selected_model).strip()
-    metadata = {"stopped": True, "cancelled": True}
+    reason = str(stop_reason or "user_stop")
+    timed_out = reason in {"idle_timeout", "wall_clock_timeout"}
+    metadata = {
+        "stopped": True,
+        "cancelled": reason == "user_stop",
+        "stop_reason": reason,
+    }
+    if timed_out:
+        metadata["timed_out"] = True
     if actual_model:
         metadata["model"] = actual_model
     if selected_model:
@@ -1217,6 +1225,17 @@ def setup_chat_routes(
                         sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
                         if not incognito:
                             session_manager.save_sessions()
+                    else:
+                        _stop_reason = agent_runs.get_stop_reason(session)
+                        if _stop_reason:
+                            _save_cancelled_stream_placeholder(
+                                session_manager,
+                                session,
+                                model=_actual_model or _answered_by or _requested_model,
+                                requested_model=_requested_model,
+                                stop_reason=_stop_reason,
+                                incognito=incognito,
+                            )
                     raise
                 finally:
                     _active_streams.pop(session, None)
@@ -1364,6 +1383,17 @@ def setup_chat_routes(
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
                             if not incognito:
                                 session_manager.save_sessions()
+                        else:
+                            _stop_reason2 = agent_runs.get_stop_reason(session)
+                            if _stop_reason2:
+                                _save_cancelled_stream_placeholder(
+                                    session_manager,
+                                    session,
+                                    model=_actual_model or _answered_by or _requested_model,
+                                    requested_model=_requested_model,
+                                    stop_reason=_stop_reason2,
+                                    incognito=incognito,
+                                )
                     except Exception:
                         logger.exception("Failed to save partial response on disconnect (session %s)", session)
                     raise
@@ -1432,6 +1462,7 @@ def setup_chat_routes(
                 session_id,
                 model=str(rec.get("model") or ""),
                 requested_model=str(rec.get("requested_model") or ""),
+                stop_reason=agent_runs.get_stop_reason(session_id) or "user_stop",
                 incognito=bool(rec.get("incognito")),
             )
         return {"stopped": stopped, "placeholder_saved": placeholder_saved}
