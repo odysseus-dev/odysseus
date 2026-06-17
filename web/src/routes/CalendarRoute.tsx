@@ -1,5 +1,7 @@
-import { useMemo } from "react"
-import { useEvents, type CalEvent } from "@/api/calendar"
+import { useMemo, useState } from "react"
+import { Plus } from "lucide-react"
+import { useEvents, useQuickAddEvent, type CalEvent } from "@/api/calendar"
+import { Button } from "@/components/ui/button"
 
 export function CalendarRoute() {
   const { start, end } = useMemo(() => {
@@ -8,6 +10,10 @@ export function CalendarRoute() {
     return { start: s.toISOString(), end: e.toISOString() }
   }, [])
   const { data: events } = useEvents(start, end)
+  const qa = useQuickAddEvent()
+  const [text, setText] = useState("")
+  const add = () => { if (text.trim()) qa.mutate(text, { onSuccess: () => setText("") }) }
+
   const sorted = [...(events || [])].sort((a, b) => (a.dtstart || "").localeCompare(b.dtstart || ""))
   const groups: Record<string, CalEvent[]> = {}
   for (const ev of sorted) {
@@ -19,6 +25,18 @@ export function CalendarRoute() {
       <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">
         Calendar <span className="ml-2 font-normal text-muted-foreground">· next 30 days</span>
       </header>
+      <div className="border-b p-3">
+        <div className="flex gap-2">
+          <input
+            value={text} onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") add() }}
+            placeholder="Add an event — e.g. “lunch with Sara Friday 1pm downtown”"
+            className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
+          />
+          <Button onClick={add} disabled={qa.isPending}><Plus className="size-4" />{qa.isPending ? "Adding…" : "Add"}</Button>
+        </div>
+        {qa.isError && <p className="mt-1.5 text-xs text-destructive">{(qa.error as Error)?.message || "Couldn't add that event"}</p>}
+      </div>
       <div className="flex-1 space-y-5 overflow-y-auto p-4">
         {Object.entries(groups).map(([day, evs]) => (
           <div key={day}>
