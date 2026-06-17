@@ -1,0 +1,15 @@
+{
+  "name": "Odysseus",
+  "short_name": "Odysseus",
+  "description": "Self-hosted AI chat with memory, documents, and tools",
+  "start_url": "/v2",
+  "scope": "/v2",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
