@@ -75,6 +75,7 @@ export function useChat(sessionId?: string) {
     if (composer.incognito) fd.set("incognito", "true")
     if (composer.model) fd.set("model", composer.model)
     if (composer.endpointId) fd.set("endpoint_id", composer.endpointId)
+    if (composer.presetId) fd.set("preset_id", composer.presetId)
 
     const ctrl = new AbortController(); abortRef.current = ctrl
     try {

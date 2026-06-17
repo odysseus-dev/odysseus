@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import type { ReactNode } from "react"
 import { useModels, useDefaultChat } from "@/api/models"
+import { usePresets } from "@/api/presets"
 import { useComposer } from "@/stores/composer"
 import { cn } from "@/lib/utils"
 
@@ -14,10 +15,12 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
     </button>
   )
 }
+const selectCls = "h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring"
 
 export function ConfigPanel() {
   const { data: models } = useModels()
   const { data: def } = useDefaultChat()
+  const { data: presets } = usePresets()
   const c = useComposer()
 
   useEffect(() => {
@@ -36,11 +39,7 @@ export function ConfigPanel() {
     <aside className="hidden w-80 shrink-0 flex-col gap-5 overflow-y-auto border-l bg-card p-4 lg:flex">
       <div>
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Model</h2>
-        <select
-          value={c.endpointId + "::" + c.model}
-          onChange={(e) => onModelChange(e.target.value)}
-          className="h-9 w-full rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring"
-        >
+        <select value={c.endpointId + "::" + c.model} onChange={(e) => onModelChange(e.target.value)} className={selectCls}>
           {!c.model && <option value="::">Select a model…</option>}
           {(models?.items || []).map((ep) => (
             <optgroup key={ep.endpoint_id} label={ep.endpoint_name || ep.url}>
@@ -52,16 +51,21 @@ export function ConfigPanel() {
         </select>
       </div>
 
+      {(presets || []).length > 0 && (
+        <div>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Preset</h2>
+          <select value={c.presetId} onChange={(e) => c.setPreset(e.target.value)} className={selectCls}>
+            <option value="">None</option>
+            {(presets || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </div>
+      )}
+
       <div>
         <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mode</h2>
         <div className="flex rounded-lg bg-muted p-0.5">
           {(["chat", "agent"] as const).map((mode) => (
-            <button
-              key={mode} onClick={() => c.setMode(mode)}
-              className={cn("flex-1 rounded-md py-1.5 text-sm font-medium capitalize transition-colors", c.mode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
-            >
-              {mode}
-            </button>
+            <button key={mode} onClick={() => c.setMode(mode)} className={cn("flex-1 rounded-md py-1.5 text-sm font-medium capitalize transition-colors", c.mode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{mode}</button>
           ))}
         </div>
       </div>
