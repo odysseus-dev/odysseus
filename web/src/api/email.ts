@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { apiJson } from "@/lib/api"
+import { apiJson, apiFetch } from "@/lib/api"
 import type { EmailMsg } from "@/types"
 
 export function useInbox() {
@@ -23,3 +23,11 @@ export function useEmail(uid: string | null) {
     queryFn: () => apiJson<EmailBody>(`/api/email/read/${uid}?folder=INBOX`),
   })
 }
+
+export interface ComposePayload { to: string; subject: string; body: string; account_id?: string }
+async function post(path: string, p: ComposePayload): Promise<{ success?: boolean; error?: string }> {
+  const r = await apiFetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p) })
+  try { return await r.json() } catch { return { success: r.ok } }
+}
+export const sendEmail = (p: ComposePayload) => post("/api/email/send", p)
+export const saveDraft = (p: ComposePayload) => post("/api/email/draft", p)

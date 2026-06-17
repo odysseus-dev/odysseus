@@ -1,6 +1,6 @@
 import { useState } from "react"
-import { ArrowLeft } from "lucide-react"
-import { useInbox, useEmail } from "@/api/email"
+import { ArrowLeft, PenSquare, Send, X } from "lucide-react"
+import { useInbox, useEmail, sendEmail, saveDraft } from "@/api/email"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -18,15 +18,42 @@ function Reader({ uid, onBack }: { uid: string; onBack: () => void }) {
           <div className="truncate text-xs text-muted-foreground">{from}{data?.date ? ` · ${new Date(data.date).toLocaleString()}` : ""}</div>
         </div>
       </header>
-      {isLoading ? (
-        <div className="p-6 text-sm text-muted-foreground">Loading…</div>
-      ) : data?.error ? (
-        <div className="p-6 text-sm text-muted-foreground">Couldn't load this message.</div>
-      ) : html ? (
-        <iframe title="email" sandbox="" srcDoc={html} className="min-h-0 flex-1 w-full bg-white" />
-      ) : (
-        <pre className="flex-1 overflow-auto whitespace-pre-wrap p-6 text-sm">{text || "(empty)"}</pre>
-      )}
+      {isLoading ? <div className="p-6 text-sm text-muted-foreground">Loading…</div>
+        : data?.error ? <div className="p-6 text-sm text-muted-foreground">Couldn't load this message.</div>
+        : html ? <iframe title="email" sandbox="" srcDoc={html} className="min-h-0 w-full flex-1 bg-white" />
+        : <pre className="flex-1 overflow-auto whitespace-pre-wrap p-6 text-sm">{text || "(empty)"}</pre>}
+    </div>
+  )
+}
+
+function Compose({ onClose }: { onClose: () => void }) {
+  const [to, setTo] = useState("")
+  const [subject, setSubject] = useState("")
+  const [body, setBody] = useState("")
+  const [busy, setBusy] = useState("")
+  const [err, setErr] = useState("")
+  const act = async (kind: "send" | "draft") => {
+    if (!to.trim()) { setErr("Recipient required"); return }
+    setBusy(kind); setErr("")
+    try {
+      const r = kind === "send" ? await sendEmail({ to, subject, body }) : await saveDraft({ to, subject, body })
+      if (r && r.success === false) setErr(r.error || "Failed"); else onClose()
+    } catch { setErr("Failed") } finally { setBusy("") }
+  }
+  const inp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg rounded-xl border bg-popover p-4 shadow-lg">
+        <div className="mb-3 flex items-center justify-between"><div className="text-sm font-semibold">New message</div><button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-4" /></button></div>
+        <input value={to} onChange={(e) => setTo(e.target.value)} placeholder="To" className={cn(inp, "mb-2")} />
+        <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className={cn(inp, "mb-2")} />
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write a message…" rows={8} className="mb-3 w-full resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring" />
+        {err && <p className="mb-2 text-xs text-destructive">{err}</p>}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" size="sm" disabled={!!busy} onClick={() => act("draft")}>{busy === "draft" ? "Saving…" : "Save draft"}</Button>
+          <Button size="sm" disabled={!!busy} onClick={() => act("send")}><Send className="size-4" />{busy === "send" ? "Sending…" : "Send"}</Button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -34,33 +61,39 @@ function Reader({ uid, onBack }: { uid: string; onBack: () => void }) {
 export function EmailRoute() {
   const { data } = useInbox()
   const [uid, setUid] = useState<string | null>(null)
+  const [composing, setComposing] = useState(false)
   const emails = data?.emails || []
-  if (uid) return <div className="mx-auto h-full w-full max-w-3xl"><Reader uid={uid} onBack={() => setUid(null)} /></div>
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
-      <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">
-        Email <span className="ml-2 font-normal text-muted-foreground">· Inbox</span>
-      </header>
-      <div className="flex-1 overflow-y-auto">
-        {data?.error && <p className="p-4 text-sm text-muted-foreground">No mail account connected (or unavailable).</p>}
-        <div className="divide-y">
-          {emails.map((m) => {
-            const from = m.from || m.from_addr || m.sender || "Unknown"
-            const unread = m.unread ?? m.seen === false
-            return (
-              <div key={m.uid} onClick={() => setUid(m.uid)} className="flex cursor-pointer items-baseline gap-3 px-4 py-3 hover:bg-accent/50">
-                <div className={cn("w-44 shrink-0 truncate text-sm", unread ? "font-semibold text-foreground" : "text-muted-foreground")}>{from}</div>
-                <div className="min-w-0 flex-1">
-                  <span className={cn("text-sm", unread ? "font-medium text-foreground" : "text-muted-foreground")}>{m.subject || "(no subject)"}</span>
-                  {(m.snippet || m.preview) && <span className="ml-2 text-sm text-muted-foreground">— {m.snippet || m.preview}</span>}
-                </div>
-                {m.date && <div className="shrink-0 text-xs text-muted-foreground">{new Date(m.date).toLocaleDateString()}</div>}
-              </div>
-            )
-          })}
-        </div>
-        {!data?.error && emails.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">Inbox empty.</p>}
-      </div>
+    <div className="relative mx-auto flex h-full w-full max-w-3xl flex-col">
+      {composing && <Compose onClose={() => setComposing(false)} />}
+      {uid ? <Reader uid={uid} onBack={() => setUid(null)} /> : (
+        <>
+          <header className="flex h-13 shrink-0 items-center justify-between border-b px-4">
+            <div className="text-sm font-semibold">Email <span className="font-normal text-muted-foreground">· Inbox</span></div>
+            <Button size="sm" onClick={() => setComposing(true)}><PenSquare className="size-4" />Compose</Button>
+          </header>
+          <div className="flex-1 overflow-y-auto">
+            {data?.error && <p className="p-4 text-sm text-muted-foreground">No mail account connected (or unavailable).</p>}
+            <div className="divide-y">
+              {emails.map((m) => {
+                const from = m.from || m.from_addr || m.sender || "Unknown"
+                const unread = m.unread ?? m.seen === false
+                return (
+                  <div key={m.uid} onClick={() => setUid(m.uid)} className="flex cursor-pointer items-baseline gap-3 px-4 py-3 hover:bg-accent/50">
+                    <div className={cn("w-44 shrink-0 truncate text-sm", unread ? "font-semibold text-foreground" : "text-muted-foreground")}>{from}</div>
+                    <div className="min-w-0 flex-1">
+                      <span className={cn("text-sm", unread ? "font-medium text-foreground" : "text-muted-foreground")}>{m.subject || "(no subject)"}</span>
+                      {(m.snippet || m.preview) && <span className="ml-2 text-sm text-muted-foreground">— {m.snippet || m.preview}</span>}
+                    </div>
+                    {m.date && <div className="shrink-0 text-xs text-muted-foreground">{new Date(m.date).toLocaleDateString()}</div>}
+                  </div>
+                )
+              })}
+            </div>
+            {!data?.error && emails.length === 0 && <p className="p-8 text-center text-sm text-muted-foreground">Inbox empty.</p>}
+          </div>
+        </>
+      )}
     </div>
   )
 }
