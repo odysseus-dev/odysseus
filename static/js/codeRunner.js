@@ -314,11 +314,18 @@ export async function runServer(code, panel, lang) {
   // JSON.stringify turns \n into literal \\n which python3 -c sees as backslash-n;
   // base64 avoids every quoting/escaping pitfall.
   const b64 = btoa(unescape(encodeURIComponent(code)));
+  // Decode into a real temp file and run THAT, instead of
+  // `python3 -c "exec(base64…)"`. The inline-exec form made every traceback
+  // point at line 1 and underline the entire base64 blob with a wall of ^
+  // carets — unreadable. Running a file gives clean `File "…", line N` frames.
+  // `</dev/null` gives input() an immediate EOF instead of hanging the server
+  // waiting on stdin the in-browser runner can't provide.
+  const _writeFile = `f=$(mktemp); python3 -c "import base64,sys; open(sys.argv[1],'wb').write(base64.b64decode('${b64}'))" "$f"`;
   var command;
   if (lang === 'python' || lang === 'py') {
-    command = `python3 -c "import base64; exec(base64.b64decode('${b64}').decode('utf-8'))"`;
+    command = `${_writeFile} && python3 "$f" </dev/null; rc=$?; rm -f "$f"; exit $rc`;
   } else {
-    command = `python3 -c "import base64, subprocess, sys; sys.exit(subprocess.run(['bash','-c',base64.b64decode('${b64}').decode('utf-8')]).returncode)"`;
+    command = `${_writeFile} && bash "$f" </dev/null; rc=$?; rm -f "$f"; exit $rc`;
   }
   try {
     var res = await fetch('/api/shell/exec', {
@@ -347,6 +354,14 @@ export async function runServer(code, panel, lang) {
       exitEl.style.cssText = 'font-size:0.75rem;opacity:0.5;padding:2px 8px;';
       exitEl.textContent = 'Exit code: ' + data.exit_code;
       panel.appendChild(exitEl);
+    }
+    // Interactive programs (input()) can't read stdin in the runner — that's the
+    // EOFError. Explain it instead of leaving a cryptic traceback.
+    if (data.stderr && /EOFError\b/.test(data.stderr) && /\binput\s*\(/.test(code)) {
+      var noteEl = document.createElement('div');
+      noteEl.style.cssText = 'font-size:0.78rem;opacity:0.85;padding:6px 8px;margin-top:4px;border-top:1px solid var(--border,#333);';
+      noteEl.textContent = 'This program reads interactive input (input()), which the in-browser runner can’t provide — hence the EOFError. Run it in a terminal (e.g. python calculator.py) to use it interactively.';
+      panel.appendChild(noteEl);
     }
   } catch (e) {
     showOutput(panel, 'Execution failed: ' + e.message, true);
