@@ -19,6 +19,7 @@ function typingInField() {
 export function useHotkeys(): [boolean, (v: boolean) => void] {
   const navigate = useNavigate()
   const toggleTheme = useUi((s) => s.toggleTheme)
+  const toggleSidebar = useUi((s) => s.toggleSidebar)
   const [helpOpen, setHelpOpen] = useState(false)
   const leaderRef = useRef(0)
 
@@ -31,7 +32,9 @@ export function useHotkeys(): [boolean, (v: boolean) => void] {
         return
       }
       if (mod && e.key.toLowerCase() === "j") { e.preventDefault(); toggleTheme(); return }
+      if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); toggleSidebar(); return }
       if (typingInField()) return
+      if (e.key === "[") { e.preventDefault(); toggleSidebar(); return }
       if (e.key === "?" || (e.shiftKey && e.key === "/")) { e.preventDefault(); setHelpOpen((o) => !o); return }
       if (e.key === "Escape") { setHelpOpen(false); return }
       // g-leader navigation
@@ -43,9 +46,14 @@ export function useHotkeys(): [boolean, (v: boolean) => void] {
         leaderRef.current = 0
       }
     }
+    const openHelp = () => setHelpOpen(true)
     window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [navigate, toggleTheme])
+    window.addEventListener("odysseus:open-shortcuts", openHelp)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("odysseus:open-shortcuts", openHelp)
+    }
+  }, [navigate, toggleTheme, toggleSidebar])
 
   return [helpOpen, setHelpOpen]
 }

@@ -4,6 +4,7 @@ import { useChat } from "@/lib/useChat"
 import { useSessions } from "@/api/sessions"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
+import { ContextPanel } from "@/components/chat/ContextPanel"
 
 const SUGGESTIONS = [
   "What can you help me with?",
@@ -48,6 +49,7 @@ export function ChatConsole() {
         </div>
         <Composer onSend={send} onStop={stop} streaming={streaming} />
       </div>
+      <ContextPanel />
     </div>
   )
 }

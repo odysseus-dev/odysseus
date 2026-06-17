@@ -1,7 +1,7 @@
 import { X } from "lucide-react"
 
 const GROUPS: { title: string; rows: [string, string][] }[] = [
-  { title: "General", rows: [["⌘/Ctrl K", "New chat"], ["⌘/Ctrl J", "Toggle theme"], ["?", "Show this help"], ["Esc", "Close"]] },
+  { title: "General", rows: [["⌘/Ctrl K", "New chat"], ["⌘/Ctrl B", "Toggle sidebar"], ["⌘/Ctrl J", "Toggle theme"], ["?", "Show this help"], ["Esc", "Close"]] },
   { title: "Go to (press g, then…)", rows: [["g c", "Chat"], ["g k", "Compare"], ["g m", "Memory"], ["g i", "Gallery"], ["g e", "Email"], ["g n", "Notes"], ["g t", "Tasks"], ["g b", "Cookbook"], ["g s", "Skills"], ["g l", "Library"], ["g ,", "Settings"]] },
 ]
 

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react"
-import { ChevronRight, Brain, Telescope, Loader2, Volume2, Square } from "lucide-react"
+import { ChevronRight, Brain, Telescope, Loader2, Volume2, Square, BookOpen } from "lucide-react"
+import { usePanel } from "@/stores/panel"
 import { Markdown } from "./Markdown"
 import { ToolThread } from "./ToolThread"
 import { useVoiceCaps, speak } from "@/api/voice"
@@ -65,11 +66,10 @@ export function Message({ m }: { m: ChatMessage }) {
       )}
       {m.content ? <Markdown>{m.content}</Markdown> : m.streaming && !m.reasoning && !m.research ? <div className="text-sm text-muted-foreground">Thinking…</div> : null}
       {m.sources && m.sources.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          {m.sources.slice(0, 8).map((s, i) => (
-            <a key={i} href={s.url} target="_blank" rel="noreferrer" className="max-w-[220px] truncate rounded-md border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground">{s.title || s.url}</a>
-          ))}
-        </div>
+        <button onClick={() => usePanel.getState().show("sources", { title: `Sources · ${m.sources!.length}`, payload: m.sources })}
+          className="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+          <BookOpen className="size-3.5" /> {m.sources.length} source{m.sources.length === 1 ? "" : "s"}
+        </button>
       )}
       {!m.streaming && (m.model || mt || m.content) && (
         <div className="flex flex-wrap items-center gap-3 pt-0.5 text-[11px] text-muted-foreground">
