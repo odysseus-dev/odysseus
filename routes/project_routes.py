@@ -254,7 +254,13 @@ def setup_project_routes(session_manager=None) -> APIRouter:
                 ProjectDocument.project_id == project_id
             ).all()
             doc_ids = [pd.document_id for pd in pinned]
-            docs = db.query(DocModel).filter(DocModel.id.in_(doc_ids)).all()
+            # Filter by owner so anomalous or legacy cross-owner rows never
+            # return content to a different user — the read path must fail
+            # closed regardless of how the pinning record was created.
+            q = db.query(DocModel).filter(DocModel.id.in_(doc_ids))
+            if owner:
+                q = q.filter(DocModel.owner == owner)
+            docs = q.all()
             return [
                 {
                     "id": d.id,
