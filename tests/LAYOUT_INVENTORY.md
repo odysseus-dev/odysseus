@@ -119,7 +119,7 @@ Read-only checks, run from the repo root on this branch. Note the real API is
 ```bash
 # Compute the area_cli set and confirm test_backup_cli_security.py is
 # area_security. Expected: 28 files, then "security".
-.venv/bin/python - <<'PY'
+./venv/bin/python - <<'PY'
 from pathlib import Path
 from tests._taxonomy import classify_test_path
 
@@ -138,7 +138,7 @@ rg -n "TestClient|FastAPI|create_app|SessionLocal|sqlite|dependency_overrides" \
   tests/test_*cli*.py tests/test_sessions_cli.py
 
 # Hard-coded flat paths to the exact CLI files outside tests/. Expected: no matches.
-.venv/bin/python - <<'PY2' > /tmp/area_cli_paths.txt
+./venv/bin/python - <<'PY2' > /tmp/area_cli_paths.txt
 from pathlib import Path
 from tests._taxonomy import classify_test_path
 
@@ -158,26 +158,26 @@ tokens only (plus the `tests/helpers/` directory rule), so the markers of the
 
 ## Validation for the future move PR
 
-Run with the project venv (`.venv/bin/python`); system `python3` may miss
+Run with the project venv (`./venv/bin/python`); system `python3` may miss
 pinned deps. Before the move, record the baseline; after, compare:
 
 ```bash
 # Selection must match the 28 files before and after the move.
-.venv/bin/python tests/run_focus.py --dry-run --area cli
-.venv/bin/python -m pytest -m area_cli -q
+./venv/bin/python tests/run_focus.py --dry-run --area cli
+./venv/bin/python -m pytest -m area_cli -q
 
 # Moved files pass when targeted directly.
-.venv/bin/python -m pytest tests/cli/ -q
+./venv/bin/python -m pytest tests/cli/ -q
 
 # Whole-suite collection still succeeds (catches import/path breakage).
-.venv/bin/python -m pytest --collect-only -q
+./venv/bin/python -m pytest --collect-only -q
 
 # Taxonomy/runner infrastructure is unaffected.
-.venv/bin/python -m pytest tests/test_taxonomy.py tests/test_run_focus.py -q
+./venv/bin/python -m pytest tests/test_taxonomy.py tests/test_run_focus.py -q
 
 # No stale flat-path references to the moved files. Expected: no matches
 # outside tests/cli/ itself.
-.venv/bin/python - <<'PY2' > /tmp/area_cli_paths.txt
+./venv/bin/python - <<'PY2' > /tmp/area_cli_paths.txt
 from pathlib import Path
 from tests._taxonomy import classify_test_path
 

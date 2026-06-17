@@ -1284,6 +1284,11 @@ def setup_cookbook_routes() -> APIRouter:
         # LOCAL execution on a native-Windows host never uses tmux (detached
         # process path below), regardless of the UI-supplied platform.
         local_windows = IS_WINDOWS and not remote
+        if is_windows and remote and "diffusion_server.py" in req.cmd:
+            raise HTTPException(
+                400,
+                "Remote Windows Diffusers serving is not supported yet; use local Windows or a Linux remote server.",
+            )
 
         if not is_windows and not local_windows and not await _binary_available("tmux", remote, req.ssh_port):
             return {
