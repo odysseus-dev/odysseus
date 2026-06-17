@@ -95,10 +95,15 @@ export function Sidebar() {
   const [q, setQ] = useState("")
   const [editId, setEditId] = useState<string | null>(null)
   const [editName, setEditName] = useState("")
+  const [sortMode, setSortMode] = useState<"recent" | "az" | "oldest">("recent")
   const commitRename = () => { if (editId && editName.trim()) rename.mutate({ id: editId, name: editName.trim() }); setEditId(null) }
 
   const list = (sessions || []).filter((s) => !s.archived).filter((s) => !q || (s.name || "").toLowerCase().includes(q.toLowerCase()))
-  const groups = BUCKETS.map((b) => ({ b, items: list.filter((s) => bucketOf(s) === b) })).filter((g) => g.items.length)
+  const groups = sortMode === "recent"
+    ? BUCKETS.map((b) => ({ b, items: list.filter((s) => bucketOf(s) === b) })).filter((g) => g.items.length)
+    : [{ b: sortMode === "az" ? "A–Z" : "Oldest first", items: [...list].sort((x, y) =>
+        sortMode === "az" ? (x.name || "").localeCompare(y.name || "")
+        : new Date(x.last_message_at || x.updated_at || 0).getTime() - new Date(y.last_message_at || y.updated_at || 0).getTime()) }]
 
   if (collapsed) {
     return (
@@ -138,7 +143,13 @@ export function Sidebar() {
           <NavLink key={to} to={to} className={({ isActive }) => navRow(isActive)}><Icon className="size-4 shrink-0" />{label}</NavLink>
         ))}
       </nav>
-      <div className="mt-3 flex-1 overflow-y-auto px-2 pb-2">
+      <div className="mt-3 flex items-center justify-between px-3 pb-1">
+        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Chats</span>
+        <select value={sortMode} onChange={(e) => setSortMode(e.target.value as "recent" | "az" | "oldest")} className="rounded border-0 bg-transparent text-xs text-muted-foreground outline-none hover:text-foreground">
+          <option value="recent">Recent</option><option value="az">A–Z</option><option value="oldest">Oldest</option>
+        </select>
+      </div>
+      <div className="flex-1 overflow-y-auto px-2 pb-2">
         {groups.map((g) => (
           <div key={g.b} className="mb-2">
             <div className="px-2 py-1 text-xs font-medium text-muted-foreground/80">{g.b}</div>
