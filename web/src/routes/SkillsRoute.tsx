@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Trash2, Sparkles, Wrench, Pencil, ArrowLeft, Save, Plus } from "lucide-react"
 import { useSkills, useBuiltinSkills, useSkillMarkdown, useSkillMutations } from "@/api/skills"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
 const inp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
 
@@ -65,7 +66,7 @@ function CreateForm({ onClose }: { onClose: () => void }) {
 export function SkillsRoute() {
   const { data: skills } = useSkills()
   const { data: builtin } = useBuiltinSkills()
-  const { remove } = useSkillMutations()
+  const { remove, auditAll } = useSkillMutations()
   const [editId, setEditId] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -76,7 +77,10 @@ export function SkillsRoute() {
       {creating && <CreateForm onClose={() => setCreating(false)} />}
       <header className="flex h-13 shrink-0 items-center justify-between border-b px-4">
         <span className="text-sm font-semibold">Skills</span>
-        <Button size="sm" onClick={() => setCreating(true)}><Plus className="size-4" />New skill</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" disabled={auditAll.isPending} onClick={() => auditAll.mutate()} title="Test, judge & auto-publish skills">{auditAll.isPending ? "Auditing…" : "Audit all"}</Button>
+          <Button size="sm" onClick={() => setCreating(true)}><Plus className="size-4" />New skill</Button>
+        </div>
       </header>
       <div className="flex-1 space-y-6 overflow-y-auto p-4">
         <section>
@@ -85,7 +89,11 @@ export function SkillsRoute() {
             {(skills || []).map((s) => (
               <div key={s.id || s.name} className="group flex items-start gap-3 rounded-lg border bg-card p-3">
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium">{s.name}</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{s.name}</span>
+                    {s.status && <span className={cn("rounded-full px-2 py-0.5 text-[10px] capitalize", s.status === "published" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground")}>{s.status}</span>}
+                    {s.confidence != null && <span className="text-[10px] text-muted-foreground">{Math.round(s.confidence * 100)}%</span>}
+                  </div>
                   {s.description && <p className="mt-0.5 text-xs text-muted-foreground">{s.description}</p>}
                 </div>
                 <div className="flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">

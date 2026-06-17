@@ -56,6 +56,13 @@ export function useSkillMutations() {
       },
       onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["skill-md", v.id] }); inv() },
     }),
+    auditAll: useMutation({
+      mutationFn: async () => {
+        const r = await apiFetch("/api/skills/audit-all", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope: "all" }) })
+        if (!r.ok) throw new Error("audit failed"); return r.json()
+      },
+      onSuccess: inv,
+    }),
     create: useMutation({
       mutationFn: async (v: { name: string; description: string; procedure: string; when_to_use?: string }) => {
         const r = await apiFetch("/api/skills/add", {
