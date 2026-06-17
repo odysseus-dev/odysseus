@@ -100,38 +100,46 @@ const PackageManager = (() => {
   function _renderPanel(container) {
     container.innerHTML = `
       <div class="pkg-panel">
-        <div class="pkg-panel-header">
-          <h2 class="pkg-panel-title">Package Manager</h2>
-          <p class="pkg-panel-subtitle">Install extensions to add new AI capabilities, hardware drivers, and UI components.</p>
-        </div>
-
-        <div class="pkg-install-zone" id="pkg-drop-zone">
-          <div class="pkg-drop-inner">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="17 8 12 3 7 8"/>
-              <line x1="12" y1="3" x2="12" y2="15"/>
-            </svg>
-            <p>Drop a <strong>.zip</strong> package here or</p>
-            <label class="pkg-btn pkg-btn-primary pkg-upload-label">
-              Browse Files
-              <input type="file" id="pkg-file-input" accept=".zip" style="display:none">
-            </label>
-          </div>
-          <div class="pkg-install-progress" id="pkg-install-progress" style="display:none">
-            <div class="pkg-progress-bar">
-              <div class="pkg-progress-fill" id="pkg-progress-fill"></div>
+        <div class="admin-card">
+          <h2>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.7">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>
+            </svg>Install Package
+          </h2>
+          <div class="admin-toggle-sub" style="margin-bottom:10px">Install extensions to add new AI capabilities, hardware drivers, and UI components.</div>
+          <div class="pkg-install-zone" id="pkg-drop-zone">
+            <div class="pkg-drop-inner">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <p>Drop a <strong>.zip</strong> package here or</p>
+              <label class="pkg-btn pkg-btn-primary pkg-upload-label">
+                Browse Files
+                <input type="file" id="pkg-file-input" accept=".zip" style="display:none">
+              </label>
             </div>
-            <span id="pkg-progress-msg">Installing...</span>
+            <div class="pkg-install-progress" id="pkg-install-progress" style="display:none">
+              <div class="pkg-progress-bar">
+                <div class="pkg-progress-fill" id="pkg-progress-fill"></div>
+              </div>
+              <span id="pkg-progress-msg">Installing...</span>
+            </div>
           </div>
         </div>
 
-        <div class="pkg-list-header">
-          <h3>Installed Packages</h3>
-          <span class="pkg-count" id="pkg-count">0 packages</span>
-        </div>
-        <div class="pkg-list" id="pkg-list">
-          <div class="pkg-empty">No packages installed yet.</div>
+        <div class="admin-card">
+          <div class="pkg-list-header">
+            <h2 style="margin:0;border:none;padding:0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.7"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>Installed Packages
+            </h2>
+            <span class="pkg-count" id="pkg-count">0 packages</span>
+          </div>
+          <div class="pkg-list" id="pkg-list">
+            <div class="pkg-empty">No packages installed yet.</div>
+          </div>
         </div>
       </div>
     `;
