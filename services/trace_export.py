@@ -1,13 +1,5 @@
 import json
-import sys
 import re
-from pathlib import Path
-
-# Ensure the repo root is on sys.path when executing this file directly.
-repo_root = Path(__file__).resolve().parents[1]
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
 from typing import List
 from core.database import Session as DbSession, ChatMessage as DbChatMessage
 

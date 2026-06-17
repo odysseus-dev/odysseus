@@ -3,13 +3,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import List, Optional, Literal
-from pathlib import Path
-
-# Ensure the repo root is on sys.path when executing this file directly.
-repo_root = Path(__file__).resolve().parents[1]
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-
 from core.database import Session, get_db
 from src.auth_helpers import get_current_user
 from services.trace_export import build_trace_records
