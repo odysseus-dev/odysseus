@@ -41,3 +41,4 @@ export interface EmailMsg {
   uid: string; subject?: string; from?: string; from_addr?: string; sender?: string;
   date?: string; snippet?: string; preview?: string; unread?: boolean; seen?: boolean;
 }
+export interface DocItem { id: string; title?: string; name?: string; language?: string; updated_at?: string; session_name?: string }

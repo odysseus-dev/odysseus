@@ -13,6 +13,7 @@ import { SkillsRoute } from "@/routes/SkillsRoute"
 import { CalendarRoute } from "@/routes/CalendarRoute"
 import { GalleryRoute } from "@/routes/GalleryRoute"
 import { EmailRoute } from "@/routes/EmailRoute"
+import { DocumentsRoute } from "@/routes/DocumentsRoute"
 import { useUi } from "@/stores/ui"
 
 function ThemedApp() {
@@ -27,6 +28,7 @@ function ThemedApp() {
         <Route path="/gallery" element={<GalleryRoute />} />
         <Route path="/calendar" element={<CalendarRoute />} />
         <Route path="/email" element={<EmailRoute />} />
+        <Route path="/library" element={<DocumentsRoute />} />
         <Route path="/notes" element={<NotesRoute />} />
         <Route path="/tasks" element={<TasksRoute />} />
         <Route path="/cookbook" element={<ComingSoon title="Cookbook" />} />
