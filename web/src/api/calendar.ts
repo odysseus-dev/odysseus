@@ -13,6 +13,25 @@ export function useEvents(start: string, end: string) {
   })
 }
 
+export interface EventInput { summary: string; dtstart: string; dtend?: string; all_day?: boolean; location?: string; description?: string }
+export function useEventMutations() {
+  const qc = useQueryClient()
+  const inv = () => qc.invalidateQueries({ queryKey: ["calendar"] })
+  return {
+    create: useMutation({
+      mutationFn: async (v: EventInput) => {
+        const r = await apiFetch("/api/calendar/events", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) })
+        if (!r.ok) throw new Error("Couldn't create event"); return r.json()
+      },
+      onSuccess: inv,
+    }),
+    remove: useMutation({
+      mutationFn: async (uid: string) => { const r = await apiFetch(`/api/calendar/events/${encodeURIComponent(uid)}`, { method: "DELETE" }); if (!r.ok) throw new Error("delete failed") },
+      onSuccess: inv,
+    }),
+  }
+}
+
 interface ParsedEvent { summary?: string; dtstart?: string; dtend?: string; all_day?: boolean; location?: string; description?: string }
 export function useQuickAddEvent() {
   const qc = useQueryClient()

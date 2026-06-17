@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
-import { Plus } from "lucide-react"
-import { useEvents, useQuickAddEvent, type CalEvent } from "@/api/calendar"
+import { Plus, Trash2 } from "lucide-react"
+import { useEvents, useQuickAddEvent, useEventMutations, type CalEvent } from "@/api/calendar"
 import { Button } from "@/components/ui/button"
 
 export function CalendarRoute() {
@@ -11,6 +11,7 @@ export function CalendarRoute() {
   }, [])
   const { data: events } = useEvents(start, end)
   const qa = useQuickAddEvent()
+  const { remove } = useEventMutations()
   const [text, setText] = useState("")
   const add = () => { if (text.trim()) qa.mutate(text, { onSuccess: () => setText("") }) }
 
@@ -43,7 +44,7 @@ export function CalendarRoute() {
             <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{day}</div>
             <div className="space-y-2">
               {evs.map((ev) => (
-                <div key={ev.uid} className="flex items-center gap-3 rounded-lg border bg-card p-3">
+                <div key={ev.uid} className="group flex items-center gap-3 rounded-lg border bg-card p-3">
                   <div className="w-16 shrink-0 text-xs text-muted-foreground">
                     {ev.all_day ? "All day" : ev.dtstart ? new Date(ev.dtstart).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}
                   </div>
@@ -51,6 +52,7 @@ export function CalendarRoute() {
                     <div className="truncate text-sm font-medium">{ev.summary || ev.title || "(untitled)"}</div>
                     {ev.location && <div className="truncate text-xs text-muted-foreground">{ev.location}</div>}
                   </div>
+                  <button onClick={() => { if (confirm("Delete this event?")) remove.mutate(ev.uid) }} title="Delete" className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="size-4" /></button>
                 </div>
               ))}
             </div>
