@@ -1,11 +1,50 @@
 import { useState } from "react"
-import { Trash2, UserPlus } from "lucide-react"
+import { Trash2, UserPlus, Plus } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useAuthStatus, useUsers, useUserMutations, logout } from "@/api/auth"
-import { useModels, useDeleteEndpoint } from "@/api/models"
+import { useModels, useDeleteEndpoint, useEndpointMutations, testEndpoint } from "@/api/models"
 import { AdminSections } from "@/components/settings/AdminSections"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+
+const inpCls = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
+
+function AddEndpointForm() {
+  const { create } = useEndpointMutations()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
+  const [url, setUrl] = useState("")
+  const [key, setKey] = useState("")
+  const [msg, setMsg] = useState("")
+  const [testing, setTesting] = useState(false)
+  const test = async () => {
+    if (!url.trim()) { setMsg("Base URL required"); return }
+    setTesting(true); setMsg("Testing…")
+    try { const r = await testEndpoint({ base_url: url.trim(), api_key: key.trim() }); setMsg(r.error ? `Failed: ${r.error}` : `Reachable · ${r.models?.length ?? 0} models`) }
+    catch { setMsg("Test failed") } finally { setTesting(false) }
+  }
+  const add = () => {
+    if (!url.trim()) { setMsg("Base URL required"); return }
+    create.mutate({ name: name.trim(), base_url: url.trim(), api_key: key.trim() }, {
+      onSuccess: () => { setName(""); setUrl(""); setKey(""); setMsg(""); setOpen(false) },
+      onError: (e: unknown) => setMsg(e instanceof Error ? e.message : "Add failed"),
+    })
+  }
+  if (!open) return <Button variant="outline" size="sm" className="mt-2" onClick={() => setOpen(true)}><Plus className="size-4" />Add endpoint</Button>
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border bg-card p-3">
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional, e.g. OpenAI)" className={inpCls} />
+      <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Base URL — e.g. https://api.openai.com/v1" className={inpCls} />
+      <input value={key} onChange={(e) => setKey(e.target.value)} type="password" placeholder="API key (optional for local)" autoComplete="off" className={inpCls} />
+      {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button>
+        <Button variant="outline" size="sm" disabled={testing} onClick={test}>Test</Button>
+        <Button size="sm" disabled={create.isPending} onClick={add}>{create.isPending ? "Adding…" : "Add"}</Button>
+      </div>
+    </div>
+  )
+}
 
 export function SettingsRoute() {
   const { theme, setTheme } = useUi()
@@ -60,6 +99,7 @@ export function SettingsRoute() {
             ))}
             {endpoints.length === 0 && <p className="py-2 text-sm text-muted-foreground">No saved endpoints.</p>}
           </div>
+          <AddEndpointForm />
         </section>
 
         {userList.length > 0 && (

@@ -15,3 +15,31 @@ export function useDeleteEndpoint() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["models"] }),
   })
 }
+
+export interface NewEndpoint { name?: string; base_url: string; api_key?: string; model_type?: string }
+function endpointForm(v: NewEndpoint) {
+  const fd = new FormData()
+  if (v.name) fd.set("name", v.name)
+  fd.set("base_url", v.base_url)
+  if (v.api_key) fd.set("api_key", v.api_key)
+  fd.set("model_type", v.model_type || "llm")
+  return fd
+}
+export async function testEndpoint(v: NewEndpoint): Promise<{ reachable?: boolean; models?: string[]; error?: string }> {
+  const fd = new FormData(); fd.set("base_url", v.base_url); if (v.api_key) fd.set("api_key", v.api_key)
+  const r = await apiFetch("/api/model-endpoints/test", { method: "POST", body: fd })
+  return r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+}
+export function useEndpointMutations() {
+  const qc = useQueryClient()
+  return {
+    create: useMutation({
+      mutationFn: async (v: NewEndpoint) => {
+        const r = await apiFetch("/api/model-endpoints", { method: "POST", body: endpointForm(v) })
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${r.status}`) }
+        return r.json()
+      },
+      onSuccess: () => { qc.invalidateQueries({ queryKey: ["models"] }); qc.invalidateQueries({ queryKey: ["default-chat"] }) },
+    }),
+  }
+}
