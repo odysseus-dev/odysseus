@@ -103,7 +103,7 @@ export function useChat(sessionId?: string) {
     }
   }, [patchAi])
 
-  const send = useCallback(async (text: string, attachmentIds?: string[]) => {
+  const send = useCallback(async (text: string, attachmentIds?: string[], sendAs?: string) => {
     if (!text.trim() || streaming) return
     let sid = sidRef.current
     if (!sid) {
@@ -121,7 +121,7 @@ export function useChat(sessionId?: string) {
     setStreaming(true)
 
     const fd = new FormData()
-    fd.set("message", text)
+    fd.set("message", sendAs || text)
     fd.set("session", sid)
     if (attachmentIds && attachmentIds.length) fd.set("attachments", JSON.stringify(attachmentIds))
     fd.set("mode", composer.mode)

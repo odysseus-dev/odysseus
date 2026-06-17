@@ -8,6 +8,28 @@ export function useSkills() {
 export function useBuiltinSkills() {
   return useQuery({ queryKey: ["builtin-skills"], queryFn: async () => (await apiJson<{ builtin: BuiltinSkill[] }>("/api/skills/builtin")).builtin })
 }
+
+export interface SlashCommand { token: string; name: string; help?: string; usage?: string; category?: string }
+export function useSlashCatalog() {
+  return useQuery({
+    queryKey: ["slash-catalog"],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async () => {
+      try { return (await apiJson<{ skills?: SlashCommand[] }>("/api/skills/slash-catalog")).skills || [] }
+      catch { return [] as SlashCommand[] }
+    },
+  })
+}
+// Expand a /skill slash command into the model-facing prompt to actually send.
+export async function invokeSkill(name: string, request: string): Promise<string | null> {
+  const r = await apiFetch(`/api/skills/${encodeURIComponent(name)}/invoke`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ request }),
+  })
+  if (!r.ok) return null
+  const j = await r.json()
+  return (j.message as string) || null
+}
 export function useSkillMarkdown(id: string | null) {
   return useQuery({
     queryKey: ["skill-md", id],
