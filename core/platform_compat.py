@@ -64,12 +64,18 @@ def detached_popen_kwargs() -> dict:
     its own process group (so it isn't killed when the parent's console closes)
     and is detached from any console.
     """
+    # Preserve GPU-related environment variables from the parent process
+    # to ensure CUDA-capable tools (like llama.cpp with GPU offloading) work.
+    gpu_env_vars = ["CUDA_VISIBLE_DEVICES", "CUDA_HOME", "CUDA_PATH", "LD_LIBRARY_PATH", "PATH"]
+    env = os.environ.copy()
+    # Only retain meaningful values (non-empty)
+    env = {k: v for k, v in env.items() if k in gpu_env_vars and v}
     if IS_WINDOWS:
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | getattr(
             subprocess, "DETACHED_PROCESS", 0x00000008
         )
-        return {"creationflags": flags}
-    return {"start_new_session": True}
+        return {"creationflags": flags, "env": env}
+    return {"start_new_session": True, "env": env}
 
 
 def pid_alive(pid: Optional[int]) -> bool:
