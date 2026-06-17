@@ -11,6 +11,17 @@ from src.settings import load_settings, save_settings, load_features, save_featu
 
 logger = logging.getLogger(__name__)
 
+# Settings keys that an imported backup file must never be allowed to set,
+# because they control the agent's filesystem reach or where the app sends
+# traffic. A malicious or tampered backup could otherwise escalate file access
+# or redirect the app at an attacker host. Restore these via the settings UI.
+_IMPORT_BLOCKED_SETTING_KEYS = frozenset({
+    "tool_path_extra_roots",   # widens read_file/write_file allowlist
+    "endpoints",               # outbound endpoint overrides
+    "endpoint_overrides",
+    "active_endpoint",
+})
+
 
 def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRouter:
     router = APIRouter(tags=["backup"])
@@ -185,7 +196,17 @@ def setup_backup_routes(memory_manager, preset_manager, skills_manager) -> APIRo
         # ── Settings ──
         if "settings" in body and isinstance(body["settings"], dict):
             current = load_settings()
-            current.update(body["settings"])
+            # Defense-in-depth: never let an imported backup rewrite
+            # security-sensitive keys. tool_path_extra_roots widens the agent's
+            # read_file/write_file allowlist; endpoint/model overrides redirect
+            # the app at attacker-controlled hosts. These are intentionally NOT
+            # restored from a backup file — re-set them in the settings UI.
+            incoming = {k: v for k, v in body["settings"].items()
+                        if k not in _IMPORT_BLOCKED_SETTING_KEYS}
+            dropped = sorted(set(body["settings"]) - set(incoming))
+            if dropped:
+                logger.warning("import_data: ignored security-sensitive setting keys: %s", dropped)
+            current.update(incoming)
             save_settings(current)
             imported.append("settings")
 

@@ -2282,6 +2282,9 @@ _APP_API_BLOCKLIST_PREFIXES = (
     "/api/admin",          # admin one-shots (wipe etc.)
     "/api/shell",          # host shell execution must stay behind named command tooling
     "/api/backup/restore", # destructive restore
+    "/api/import",         # blind settings merge — a prompt-injected agent could
+                           # POST {"settings": {"tool_path_extra_roots": ["/"]}} and
+                           # widen its own read_file/write_file allowlist to the host
 )
 
 # (method, prefix) pairs to refuse specifically. Used for endpoints
