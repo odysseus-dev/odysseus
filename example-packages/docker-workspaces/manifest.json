@@ -1,0 +1,12 @@
+{
+  "id": "docker-workspaces",
+  "name": "Docker Workspaces",
+  "version": "1.0.0",
+  "author": "Example",
+  "description": "Adds AI-managed Docker container workspaces — create, exec, and manage sandboxed environments for code execution.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": ["MANAGE_WORKSPACES"],
+  "frontend_hooks": {
+    "sidebarWidget": "widget.js"
+  }
+}

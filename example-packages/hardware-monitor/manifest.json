@@ -1,0 +1,12 @@
+{
+  "id": "hardware-monitor",
+  "name": "Hardware Monitor",
+  "version": "1.0.0",
+  "author": "Example",
+  "description": "Adds a Hardware & System panel to the sidebar — CPU, memory, disk, network metrics and Wi-Fi control.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": ["HardwareBridgeAccess", "READ_METRICS"],
+  "frontend_hooks": {
+    "sidebarWidget": "widget.js"
+  }
+}
