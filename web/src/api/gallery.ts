@@ -11,8 +11,12 @@ export function useGallery() {
 export function useGalleryMutations() {
   const qc = useQueryClient()
   const inv = () => qc.invalidateQueries({ queryKey: ["gallery"] })
+  const json = (path: string, body: unknown) => apiFetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
   return {
     favorite: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/gallery/${id}/favorite`, { method: "POST" }) }, onSuccess: inv }),
     remove: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/gallery/${id}`, { method: "DELETE" }) }, onSuccess: inv }),
+    rename: useMutation({ mutationFn: async (v: { id: string; name: string }) => { await json(`/api/gallery/${v.id}/rename`, { name: v.name }) }, onSuccess: inv }),
+    rotate: useMutation({ mutationFn: async (v: { id: string; angle: number }) => { await json(`/api/gallery/${v.id}/rotate`, { angle: v.angle }) }, onSuccess: inv }),
+    setTags: useMutation({ mutationFn: async (v: { id: string; tags: string }) => { await apiFetch(`/api/gallery/${v.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags: v.tags }) }) }, onSuccess: inv }),
   }
 }
