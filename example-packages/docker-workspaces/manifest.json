@@ -7,7 +7,6 @@
   "entryPoint": "backend.py",
   "requiredPermissions": ["MANAGE_WORKSPACES"],
   "frontend_hooks": {
-    "sidebarWidget": "widget.js",
-    "chatInputWidget": "shell-select.js"
+    "sidebarWidget": "widget.js"
   }
 }

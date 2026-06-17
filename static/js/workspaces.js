@@ -328,6 +328,7 @@ const WorkspaceManager = (() => {
         formContainer.innerHTML = '';
         await load();
         _refreshList(container);
+        _notifyChanged();
       } catch (e) {
         errEl.textContent = e.message;
         errEl.style.display = 'block';
@@ -355,7 +356,7 @@ const WorkspaceManager = (() => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         btn.disabled = true; btn.textContent = 'Starting...';
-        try { await _api('POST', `/${id}/start`); await load(); _refreshList(container); }
+        try { await _api('POST', `/${id}/start`); await load(); _refreshList(container); _notifyChanged(); }
         catch (e) { alert(`Start failed: ${e.message}`); btn.disabled = false; btn.textContent = 'Start'; }
       });
     });
@@ -364,7 +365,7 @@ const WorkspaceManager = (() => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         btn.disabled = true; btn.textContent = 'Stopping...';
-        try { await _api('POST', `/${id}/stop`); await load(); _refreshList(container); }
+        try { await _api('POST', `/${id}/stop`); await load(); _refreshList(container); _notifyChanged(); }
         catch (e) { alert(`Stop failed: ${e.message}`); btn.disabled = false; btn.textContent = 'Stop'; }
       });
     });
@@ -383,10 +384,15 @@ const WorkspaceManager = (() => {
         const ws = _workspaces.find(w => w.id === id);
         if (!confirm(`DESTROY workspace "${ws?.name || id}"?\n\nThis will permanently delete the container AND all data. This cannot be undone.`)) return;
         btn.disabled = true; btn.textContent = 'Destroying...';
-        try { await _api('DELETE', `/${id}`); await load(); _refreshList(container); }
+        try { await _api('DELETE', `/${id}`); await load(); _renderPanel(container); _notifyChanged(); }
         catch (e) { alert(`Destroy failed: ${e.message}`); btn.disabled = false; btn.textContent = 'Destroy'; }
       });
     });
+  }
+
+  // ── Notify shell selector (and other listeners) that workspaces changed ──
+  function _notifyChanged() {
+    window.dispatchEvent(new CustomEvent('workspace-changed'));
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────

@@ -1,11 +1,13 @@
 /**
- * Docker Workspaces — Shell target selector
+ * Shell Workspace Selector — standalone package
  *
  * Injects a workspace picker next to the shell-mode toggle. While shell mode
  * is active the user can choose a Docker workspace; `/sh` commands then run
  * inside that container instead of the host. Exposes window.OdysseusShellWS so
  * the core shell command (slashCommands.js) can route to the selection. When
  * this package is not installed the global is absent and `/sh` stays on the host.
+ *
+ * Requires the docker-workspaces package to be installed for the API endpoints.
  *
  * Loaded as a chatInputWidget hook; uses window.OdysseusPkg as a fallback mount.
  */
@@ -35,8 +37,6 @@
     }
   }
 
-  // Run a command in a workspace. Returns the raw JSON (exec result or a
-  // {status:'pending_approval', token, command, reason} guard response).
   async function exec(wsId, command, guardToken) {
     const body = guardToken ? { command, guard_token: guardToken } : { command };
     const res = await fetch(`${WS_API}/${wsId}/exec`, {
@@ -81,7 +81,7 @@
 
     const hostOpt = document.createElement('option');
     hostOpt.value = '';
-    hostOpt.textContent = '🖥 Host';
+    hostOpt.textContent = 'Host';
     sel.appendChild(hostOpt);
 
     if (!workspaces.length) {
@@ -97,7 +97,7 @@
       const opt = document.createElement('option');
       opt.value = ws.id;
       const status = ws.status ? ` (${ws.status})` : '';
-      opt.textContent = `📦 ${ws.name}${status}`;
+      opt.textContent = `${ws.name}${status}`;
       if (ws.id === current) { opt.selected = true; stillExists = true; }
       sel.appendChild(opt);
     });
@@ -118,17 +118,10 @@
     if (on) populate();
   }
 
-  // ── Auto-refresh: re-populate when workspaces change ──────────────────────
-  let _refreshTimer = null;
-  function startAutoRefresh() {
-    stopAutoRefresh();
-    _refreshTimer = setInterval(() => {
-      if (shellModeActive()) populate();
-    }, 5000);
-  }
-  function stopAutoRefresh() {
-    if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
-  }
+  // ── Re-populate on workspace change event ─────────────────────────────────
+  window.addEventListener('workspace-changed', () => {
+    if (shellModeActive()) populate();
+  });
 
   // ── Mount: place the selector right after the shell toggle ────────────────
   function mount() {
@@ -138,7 +131,6 @@
       const obs = new MutationObserver(syncVisibility);
       obs.observe(btn, { attributes: true, attributeFilter: ['class', 'style'] });
       syncVisibility();
-      startAutoRefresh();
     } else if (window.OdysseusPkg) {
       window.OdysseusPkg.addWidget('chatInput', sel);
     }

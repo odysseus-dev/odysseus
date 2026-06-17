@@ -1,0 +1,12 @@
+{
+  "id": "shell-workspace-select",
+  "name": "Shell Workspace Selector",
+  "version": "1.0.0",
+  "author": "Odysseus",
+  "description": "Adds a dropdown next to the shell toggle to route /sh commands into a Docker workspace container. Requires docker-workspaces package.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": ["MANAGE_WORKSPACES"],
+  "frontend_hooks": {
+    "chatInputWidget": "widget.js"
+  }
+}

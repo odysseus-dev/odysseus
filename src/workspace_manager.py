@@ -95,6 +95,12 @@ class WorkspaceManager:
         nano_cpus = int(float(limits.get("cpu", 0.5)) * 1_000_000_000)
         mem_limit = limits.get("memory", "512m")
 
+        try:
+            client.images.get(template_image)
+        except Exception:
+            logger.info(f"Pulling image: {template_image}")
+            client.images.pull(template_image)
+
         container = client.containers.create(
             image=template_image,
             name=container_name,
