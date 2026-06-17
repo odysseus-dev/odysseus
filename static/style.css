@@ -38044,6 +38044,23 @@ body.theme-frosted .modal {
 .ws-btn-deny { background: transparent; border: 1px solid var(--border, #2a2a3a); }
 .ws-btn-deny:hover { background: color-mix(in srgb, var(--red, #e06c75) 15%, transparent); }
 
+/* ── Shell-mode workspace selector ─────────────────────────────────────────── */
+.shell-ws-select {
+  height: 28px;
+  max-width: 160px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--input-border, var(--border, #2a2a3a));
+  background: var(--input-bg, var(--panel, #1a1a2e));
+  color: var(--fg, #cdd6f4);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.shell-ws-select:hover { border-color: var(--accent, var(--red, #e06c75)); }
+.shell-ws-select:focus { border-color: var(--accent, var(--red, #e06c75)); }
+
 /* ── Package Runtime Slots ─────────────────────────────────────────────────── */
 #pkg-slot-chat-input {
   display: contents; /* children appear as direct children of #pinned-tools-bar */

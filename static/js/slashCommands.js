@@ -18,6 +18,7 @@ import spinnerModule from './spinner.js';
 import themeModule from './theme.js';
 import documentModule from './document.js';
 import workspaceModule from './workspace.js';
+import ShellWorkspace from './shellWorkspace.js';
 import settingsModule from './settings.js';
 import cookbookModule from './cookbook.js';
 import { EVAL_PROMPTS } from './compare/index.js';
@@ -1841,6 +1842,12 @@ async function _cmdEvent(args, ctx) {
 async function _cmdShell(args, ctx) {
   const cmd = args.join(' ');
   if (!cmd) { slashReply('Usage: /sh command'); return true; }
+
+  // If a Docker workspace is selected in shell mode, run inside it instead of
+  // the host shell. Selection is managed by the shell-mode workspace picker.
+  const wsId = ShellWorkspace.getSelected();
+  if (wsId) return _cmdShellInWorkspace(cmd, wsId, ctx);
+
   slashReply(`<pre>$ ${ctx.esc(cmd)}\nRunning...</pre>`);
   try {
     const res = await fetch(`${API_BASE}/api/shell/exec`, {
@@ -1857,6 +1864,50 @@ async function _cmdShell(args, ctx) {
     slashReply(`<pre>$ ${ctx.esc(cmd)}\n${ctx.esc(out)}\n[exit ${code}]</pre>`);
   } catch (e) {
     slashReply(`<pre>$ ${ctx.esc(cmd)}\nError: ${ctx.esc(e.message)}</pre>`);
+  }
+  return true;
+}
+
+/** Run a /sh command inside the selected Docker workspace container.
+ *  Handles the MEDIUM-risk guard approval flow by rendering an inline
+ *  "Approve & run" button that re-issues the command with a guard token. */
+async function _cmdShellInWorkspace(cmd, wsId, ctx, guardToken) {
+  const tag = `ws:${wsId.slice(0, 8)}`;
+  if (!guardToken) slashReply(`<pre>[${tag}] $ ${ctx.esc(cmd)}\nRunning...</pre>`);
+  try {
+    const result = await ShellWorkspace.exec(wsId, cmd, guardToken);
+
+    if (result.status === 'pending_approval') {
+      const reason = result.reason ? `\n${ctx.esc(result.reason)}` : '';
+      const r = slashReply(
+        `<pre>⚠ Approval required — ${ctx.esc(result.command || cmd)}${reason}</pre>` +
+        `<button type="button" class="pkg-btn pkg-btn-primary shell-approve-btn">Approve &amp; run</button> ` +
+        `<button type="button" class="pkg-btn shell-deny-btn">Deny</button>`
+      );
+      const approveBtn = r.body.querySelector('.shell-approve-btn');
+      const denyBtn = r.body.querySelector('.shell-deny-btn');
+      approveBtn?.addEventListener('click', async () => {
+        approveBtn.disabled = true; if (denyBtn) denyBtn.disabled = true;
+        try {
+          await ShellWorkspace.guardDecide(result.token, 'approve');
+          await _cmdShellInWorkspace(cmd, wsId, ctx, result.token);
+        } catch (e) {
+          slashReply(`<pre>Approval failed: ${ctx.esc(e.message)}</pre>`);
+        }
+      });
+      denyBtn?.addEventListener('click', async () => {
+        approveBtn.disabled = true; denyBtn.disabled = true;
+        try { await ShellWorkspace.guardDecide(result.token, 'deny'); } catch (_) {}
+        slashReply('<pre>Command denied.</pre>');
+      });
+      return true;
+    }
+
+    const out = result.output || '(no output)';
+    const code = result.exit_code != null ? result.exit_code : '?';
+    slashReply(`<pre>[${tag}] $ ${ctx.esc(cmd)}\n${ctx.esc(out)}\n[exit ${code}]</pre>`);
+  } catch (e) {
+    slashReply(`<pre>[${tag}] $ ${ctx.esc(cmd)}\nError: ${ctx.esc(e.message)}</pre>`);
   }
   return true;
 }
