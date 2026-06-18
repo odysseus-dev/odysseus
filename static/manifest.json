@@ -1,7 +1,7 @@
 {
-  "name": "Odysseus",
-  "short_name": "Odysseus",
-  "description": "Self-hosted AI chat with memory, documents, and tools",
+  "name": "Vita Machina",
+  "short_name": "Vita Machina",
+  "description": "Self-hosted AI workspace - Vita Machina",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
