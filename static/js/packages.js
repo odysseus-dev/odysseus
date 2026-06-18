@@ -316,6 +316,8 @@ const PackageManager = (() => {
       _injectWidgets(hooks.chatInputWidget || [], 'pkg-slot-chat-input');
       _injectWidgets(hooks.toolbarWidget   || [], 'package-widgets-toolbar');
       _injectWidgets(hooks.chatPanel       || [], 'pkg-slot-chat-panel');
+      // settingsTab widgets run as scripts that call OdysseusPkg.addSettingsTab()
+      _injectWidgets(hooks.settingsTab     || [], 'pkg-slot-settings-tabs');
       return hooks;
     } catch (e) {
       return {};

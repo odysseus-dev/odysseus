@@ -134,6 +134,10 @@ class WorkspaceManager:
             db.add(ws)
 
         logger.info(f"Workspace created: {ws_id} '{name}' owner={owner} image={template_image}")
+        from src.package_manager import get_manager as _get_pkg_manager
+        _pm = _get_pkg_manager()
+        if _pm:
+            _pm.emit("on_workspace_created", ws_id=ws_id, name=name, owner=owner)
         return self.get_workspace(ws_id) or {}
 
     def stop_workspace(self, ws_id: str, owner: str | None = None) -> bool:
@@ -210,6 +214,10 @@ class WorkspaceManager:
             ws.status = "destroyed"
 
         logger.info(f"Workspace destroyed: {ws_id}")
+        from src.package_manager import get_manager as _get_pkg_manager
+        _pm = _get_pkg_manager()
+        if _pm:
+            _pm.emit("on_workspace_destroyed", ws_id=ws_id, owner=owner)
         return True
 
     def execute_in_workspace(self, ws_id: str, command: str, owner: str | None = None) -> dict:

@@ -142,6 +142,14 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             fire_event("memory_added", user)
         except Exception:
             logger.debug("memory_added event dispatch failed", exc_info=True)
+        try:
+            from src.package_manager import get_manager as _get_pkg_manager
+            _pm = _get_pkg_manager()
+            if _pm:
+                _pm.emit("on_memory_added", memory_id=new_entry["id"], text=text,
+                         owner=user, workspace_id=workspace_id)
+        except Exception:
+            logger.debug("on_memory_added package emit failed", exc_info=True)
         return {"ok": True, "count": len([m for m in all_mem if m.get("owner") == user])}
 
     @router.get("")

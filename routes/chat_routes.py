@@ -604,6 +604,13 @@ def setup_chat_routes(
             _verify_session_owner(request, session)
             sess = session_manager.get_session(session)
             owner = effective_user(request)
+            try:
+                from src.package_manager import get_manager as _get_pkg_manager
+                _pm = _get_pkg_manager()
+                if _pm and message:
+                    _pm.emit("on_chat_message", message=message, owner=owner, session_id=session)
+            except Exception:
+                pass
             if _clear_orphaned_session_endpoint(sess, owner=owner):
                 raise HTTPException(400, "Selected model endpoint was removed. Pick another model in Settings.")
             # Issue #587: picker shows a model from the endpoint cache but

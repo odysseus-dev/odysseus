@@ -27,6 +27,10 @@ class InstallBundledBody(BaseModel):
     id: str
 
 
+class ConfigBody(BaseModel):
+    config: dict = {}
+
+
 def setup_packages_routes(package_manager):
     router = APIRouter(prefix="/api/packages", tags=["packages"])
 
@@ -184,5 +188,23 @@ def setup_packages_routes(package_manager):
             raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found")
         ok = package_manager.remove_package(pkg_id)
         return {"success": ok, "pkg_id": pkg_id}
+
+    @router.get("/{pkg_id}/config")
+    def get_package_config(pkg_id: str, request: Request):
+        """Return the stored config for this package scoped to the current user."""
+        owner = get_current_user(request)
+        if not package_manager.get_package(pkg_id):
+            raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found")
+        config = package_manager.get_config(pkg_id, owner=owner or "")
+        return {"pkg_id": pkg_id, "config": config}
+
+    @router.put("/{pkg_id}/config")
+    def set_package_config(pkg_id: str, body: ConfigBody, request: Request):
+        """Upsert the config blob for this package scoped to the current user."""
+        owner = get_current_user(request)
+        if not package_manager.get_package(pkg_id):
+            raise HTTPException(status_code=404, detail=f"Package '{pkg_id}' not found")
+        saved = package_manager.set_config(pkg_id, owner=owner or "", config=body.config)
+        return {"pkg_id": pkg_id, "config": saved}
 
     return router

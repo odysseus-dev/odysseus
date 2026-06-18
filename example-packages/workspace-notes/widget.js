@@ -129,9 +129,62 @@
     setInterval(_syncWorkspace, 2000);
   }
 
+  // ── Settings tab ──────────────────────────────────────────────────────────
+  function _mountSettingsTab() {
+    const pkg = window.OdysseusPkg;
+    if (!pkg?.addSettingsTab) return;
+
+    const iconSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`;
+
+    pkg.addSettingsTab('workspace-notes', 'Workspace Notes', async (panel) => {
+      panel.innerHTML = `
+        <div class="admin-card">
+          <h2>${iconSvg}Workspace Notes</h2>
+          <div class="admin-toggle-sub" style="margin-bottom:14px">Configure automatic note behaviour for new workspaces.</div>
+          <div id="ws-notes-cfg-msg" style="font-size:11px;min-height:1em;margin-bottom:8px"></div>
+          <div class="settings-row" style="align-items:center;gap:10px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="ws-notes-auto-create" style="width:14px;height:14px">
+              Auto-create a welcome note when a workspace is created
+            </label>
+          </div>
+          <div class="settings-row" style="gap:10px;margin-top:8px">
+            <label style="font-size:13px;flex-shrink:0">Default note title</label>
+            <input type="text" id="ws-notes-default-title" placeholder="Getting Started"
+              style="flex:1;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg)">
+          </div>
+          <div style="margin-top:12px">
+            <button class="admin-btn-add" id="ws-notes-cfg-save" style="font-size:12px">Save</button>
+          </div>
+        </div>
+      `;
+
+      const cfg = await pkg.getConfig('workspace-notes');
+      panel.querySelector('#ws-notes-auto-create').checked = !!cfg.auto_note_on_workspace_create;
+      panel.querySelector('#ws-notes-default-title').value = cfg.default_note_title || '';
+
+      panel.querySelector('#ws-notes-cfg-save').addEventListener('click', async () => {
+        const msgEl = panel.querySelector('#ws-notes-cfg-msg');
+        try {
+          await pkg.setConfig('workspace-notes', {
+            auto_note_on_workspace_create: panel.querySelector('#ws-notes-auto-create').checked,
+            default_note_title: panel.querySelector('#ws-notes-default-title').value.trim() || 'Getting Started',
+          });
+          msgEl.style.color = 'var(--green, #5c9)';
+          msgEl.textContent = 'Saved.';
+          setTimeout(() => { msgEl.textContent = ''; }, 2500);
+        } catch (e) {
+          msgEl.style.color = 'var(--danger, #e55)';
+          msgEl.textContent = `Error: ${e.message}`;
+        }
+      });
+    }, iconSvg);
+  }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', _mount);
+    document.addEventListener('DOMContentLoaded', () => { _mount(); _mountSettingsTab(); });
   } else {
     _mount();
+    _mountSettingsTab();
   }
 })();

@@ -144,7 +144,83 @@ function openPanel(id, title, opts = {}) {
   return bodyEl;
 }
 
-const OdysseusPkg = { addWidget, getChatInput, setChatInput, callLLM, openPanel };
+/**
+ * Fetch this package's stored config for the current user.
+ * @param {string} pkgId  The package ID from manifest.json
+ * @returns {Promise<object>}
+ */
+async function getConfig(pkgId) {
+  const res = await fetch(`/api/packages/${encodeURIComponent(pkgId)}/config`);
+  if (!res.ok) return {};
+  const data = await res.json();
+  return data.config || {};
+}
+
+/**
+ * Persist config updates for this package (shallow merge with existing values).
+ * @param {string} pkgId
+ * @param {object} updates  Key/value pairs to store
+ * @returns {Promise<object>}  Full saved config
+ */
+async function setConfig(pkgId, updates) {
+  const current = await getConfig(pkgId);
+  const merged = { ...current, ...updates };
+  const res = await fetch(`/api/packages/${encodeURIComponent(pkgId)}/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ config: merged }),
+  });
+  if (!res.ok) throw new Error('setConfig failed');
+  const data = await res.json();
+  return data.config || merged;
+}
+
+/**
+ * Register a settings tab for this package inside the Settings modal.
+ * Creates a nav button and a panel container wired to the settings nav system.
+ *
+ * @param {string}   pkgId    Package ID (used for the tab's data attribute)
+ * @param {string}   label    Display name for the tab button
+ * @param {Function} initFn   Called once with the panel <div> when tab is first opened
+ * @param {string}   [iconSvg] Optional SVG string for the nav icon
+ */
+function addSettingsTab(pkgId, label, initFn, iconSvg) {
+  const tabKey = `pkg-${pkgId}`;
+
+  const navSlot = document.getElementById('pkg-slot-settings-tabs');
+  const panelSlot = document.getElementById('pkg-slot-settings-panels');
+  if (!navSlot || !panelSlot) {
+    console.warn('[OdysseusPkg] Settings tab slots not found in DOM:', pkgId);
+    return;
+  }
+
+  // Nav button
+  const btn = document.createElement('button');
+  btn.className = 'settings-nav-item';
+  btn.dataset.settingsTab = tabKey;
+  btn.innerHTML = (iconSvg || '') + `<span>${label}</span>`;
+  navSlot.appendChild(btn);
+
+  // Panel container
+  const panel = document.createElement('div');
+  panel.dataset.settingsPanel = tabKey;
+  panel.className = 'hidden';
+  panelSlot.appendChild(panel);
+
+  // Wire click: hide all panels/deactivate all buttons, then show this one
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.add('hidden'));
+    document.querySelectorAll('.settings-nav-item').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    panel.classList.remove('hidden');
+    if (!panel._pkgInitialized) {
+      panel._pkgInitialized = true;
+      if (initFn) initFn(panel);
+    }
+  });
+}
+
+const OdysseusPkg = { addWidget, getChatInput, setChatInput, callLLM, openPanel, getConfig, setConfig, addSettingsTab };
 
 // Expose globally so widget scripts that can't do ES6 imports can access it
 window.OdysseusPkg = OdysseusPkg;

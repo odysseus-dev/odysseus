@@ -145,6 +145,54 @@ def register_routes(app):
     app.include_router(router)
 
 
+# ── Config hook ───────────────────────────────────────────────────────────────
+
+def register_config():
+    """Declare default config values — stored once per package load if not already set."""
+    return {
+        "auto_note_on_workspace_create": False,
+        "default_note_title": "Getting Started",
+    }
+
+
+# ── Event hooks ───────────────────────────────────────────────────────────────
+
+def on_startup():
+    import logging
+    logging.getLogger(__name__).info("[workspace-notes] loaded and active")
+
+
+def on_workspace_created(ws_id: str, name: str, owner: str):
+    """Auto-create a welcome note when a workspace is created (if configured)."""
+    if _WorkspaceNote is None or _SessionLocal is None:
+        return
+    try:
+        from src.package_manager import get_manager
+        pm = get_manager()
+        if not pm:
+            return
+        cfg = pm.get_config("workspace-notes", owner=owner or "")
+        if not cfg.get("auto_note_on_workspace_create"):
+            return
+        title = cfg.get("default_note_title", "Getting Started")
+        import uuid
+        db = _SessionLocal()
+        try:
+            db.add(_WorkspaceNote(
+                id=str(uuid.uuid4()),
+                workspace_id=ws_id,
+                owner=owner,
+                title=title,
+                content=f"Workspace **{name}** created. Add your notes here.",
+            ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[workspace-notes] on_workspace_created: {e}")
+
+
 def _note_dict(n):
     return {
         "id": n.id,

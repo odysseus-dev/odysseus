@@ -13,6 +13,15 @@ from src.execution_guard import scan_package
 
 logger = logging.getLogger(__name__)
 
+# Module-level singleton — set on PackageManager.__init__ so any module can
+# call get_manager() without needing to thread the instance through app.py.
+_instance: "PackageManager | None" = None
+
+
+def get_manager() -> "PackageManager | None":
+    """Return the active PackageManager instance (set at app startup)."""
+    return _instance
+
 MANIFEST_REQUIRED_FIELDS = {"id", "name", "version", "entryPoint"}
 
 _SUPPORTED_PERMISSIONS = {
@@ -30,6 +39,7 @@ MANIFEST_SCHEMA = {
 
 class PackageManager:
     def __init__(self, packages_dir: str, static_dir: str):
+        global _instance
         self.packages_dir = Path(packages_dir)
         self.static_packages_dir = Path(static_dir) / "packages"
         self.packages_dir.mkdir(parents=True, exist_ok=True)
@@ -40,6 +50,7 @@ class PackageManager:
         self._engine = None
         self._SessionLocal = None
         self._Base = None
+        _instance = self
 
     def set_app(self, app) -> None:
         """Store the FastAPI app so packages can register routes via register_routes(app)."""
@@ -50,6 +61,64 @@ class PackageManager:
         self._engine = engine
         self._SessionLocal = SessionLocal
         self._Base = Base
+
+    # ── Event system ──────────────────────────────────────────────────────────
+
+    def emit(self, event: str, **kwargs) -> None:
+        """Call a named hook on every loaded package that defines it.
+
+        Hooks are plain functions in backend.py, e.g.:
+          def on_startup(): ...
+          def on_workspace_created(ws_id, name, owner): ...
+          def on_chat_message(message, owner, session_id): ...
+          def on_memory_added(memory_id, text, owner, workspace_id): ...
+        Exceptions in one package do not prevent others from running.
+        """
+        for pkg_id, module in list(self._loaded_modules.items()):
+            handler = getattr(module, event, None)
+            if callable(handler):
+                try:
+                    handler(**kwargs)
+                except Exception as e:
+                    logger.error(f"Plugin {pkg_id}: event '{event}' raised: {e}")
+
+    # ── Package config store ──────────────────────────────────────────────────
+
+    def get_config(self, pkg_id: str, owner: str = "") -> dict:
+        """Return the stored config for this package+owner pair (or defaults if none)."""
+        from core.database import get_db_session, PackageConfig
+        with get_db_session() as db:
+            row = db.query(PackageConfig).filter(
+                PackageConfig.pkg_id == pkg_id,
+                PackageConfig.owner == (owner or ""),
+            ).first()
+            return dict(row.config or {}) if row else {}
+
+    def set_config(self, pkg_id: str, owner: str = "", config: dict | None = None) -> dict:
+        """Upsert the config blob for this package+owner pair."""
+        from core.database import get_db_session, PackageConfig
+        config = config or {}
+        with get_db_session() as db:
+            row = db.query(PackageConfig).filter(
+                PackageConfig.pkg_id == pkg_id,
+                PackageConfig.owner == (owner or ""),
+            ).first()
+            if row:
+                row.config = config
+            else:
+                db.add(PackageConfig(pkg_id=pkg_id, owner=(owner or ""), config=config))
+        return config
+
+    def _init_config(self, pkg_id: str, defaults: dict) -> None:
+        """Create a default config row for this package if none exists yet."""
+        from core.database import get_db_session, PackageConfig
+        with get_db_session() as db:
+            exists = db.query(PackageConfig).filter(
+                PackageConfig.pkg_id == pkg_id,
+                PackageConfig.owner == "",
+            ).first()
+            if not exists:
+                db.add(PackageConfig(pkg_id=pkg_id, owner="", config=defaults))
 
     def install_package(self, zip_path: str, owner: str | None = None) -> dict:
         """
@@ -215,6 +284,13 @@ class PackageManager:
                     logger.info(f"Plugin {pkg_id}: DB tables registered")
                 except Exception as e:
                     logger.error(f"Plugin {pkg_id}: register_db failed: {e}")
+            if hasattr(module, "register_config"):
+                try:
+                    defaults = module.register_config() or {}
+                    self._init_config(pkg_id, defaults)
+                    logger.info(f"Plugin {pkg_id}: config defaults registered")
+                except Exception as e:
+                    logger.error(f"Plugin {pkg_id}: register_config failed: {e}")
             if self._app is not None and hasattr(module, "register_routes"):
                 try:
                     module.register_routes(self._app)
@@ -250,6 +326,7 @@ class PackageManager:
                     logger.warning(f"Failed to re-publish widgets for {pkg_id}: {e}")
         count = sum(1 for pkg_id, _, _ in rows if self.load_plugin(pkg_id))
         logger.info(f"Loaded {count}/{len(rows)} active packages at startup")
+        self.emit("on_startup")
         return count
 
     def unload_plugin(self, pkg_id: str) -> bool:
