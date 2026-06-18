@@ -27,6 +27,14 @@
         box-shadow: -4px 0 24px rgba(0,0,0,.35);
       }
       .bc-panel.bc-open { transform: translateX(0); }
+      .bc-resize-handle {
+        position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+        cursor: ew-resize; z-index: 1;
+        transition: background .15s;
+      }
+      .bc-resize-handle:hover, .bc-resize-handle.bc-resizing {
+        background: color-mix(in srgb, var(--accent,#63b3ed) 40%, transparent);
+      }
       .bc-panel-hdr {
         display: flex; align-items: center; justify-content: space-between;
         padding: 10px 12px; border-bottom: 1px solid var(--border);
@@ -142,6 +150,7 @@
   panel.className = 'bc-panel';
   panel.id = 'bc-panel';
   panel.innerHTML = `
+    <div class="bc-resize-handle" id="bc-resize-handle"></div>
     <div class="bc-panel-hdr">
       <span class="bc-panel-title">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;flex-shrink:0"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
@@ -178,13 +187,44 @@
   }
   _injectToggleBtn();
 
+  // ── Resize handle ────────────────────────────────────────────────────────────
+  const resizeHandle = panel.querySelector('#bc-resize-handle');
+  const BC_WIDTH_KEY = 'bc-panel-width';
+  let _resizing = false, _resizeStartX = 0, _resizeStartW = 0;
+
+  const _savedW = parseInt(localStorage.getItem(BC_WIDTH_KEY), 10);
+  if (_savedW >= 280) panel.style.width = _savedW + 'px';
+
+  resizeHandle.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    _resizing = true;
+    resizeHandle.classList.add('bc-resizing');
+    _resizeStartX = e.clientX;
+    _resizeStartW = panel.offsetWidth;
+    panel.style.transition = 'none';
+  });
+  window.addEventListener('mousemove', e => {
+    if (!_resizing) return;
+    const delta = _resizeStartX - e.clientX;
+    const newW = Math.max(280, Math.min(window.innerWidth - 60, _resizeStartW + delta));
+    panel.style.width = newW + 'px';
+  });
+  window.addEventListener('mouseup', () => {
+    if (!_resizing) return;
+    _resizing = false;
+    resizeHandle.classList.remove('bc-resizing');
+    panel.style.transition = '';
+    localStorage.setItem(BC_WIDTH_KEY, panel.offsetWidth);
+  });
+
   // ── Canvas pan state ─────────────────────────────────────────────────────────
   const canvas = panel.querySelector('#bc-canvas');
   const wrap = panel.querySelector('#bc-canvas-wrap');
   let _panX = 0, _panY = 0, _dragging = false, _startX = 0, _startY = 0;
 
   canvas.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || e.target.closest('.bc-btn') || e.target.closest('#bc-resize-handle')) return;
     _dragging = true;
     _startX = e.clientX - _panX;
     _startY = e.clientY - _panY;
@@ -287,48 +327,50 @@
       wrap.appendChild(div);
     }
 
-    // Button handlers
-    wrap.addEventListener('click', async e => {
-      const goBtn = e.target.closest('.bc-btn-go');
-      const branchBtn = e.target.closest('.bc-btn-branch');
-      const delBtn = e.target.closest('.bc-btn-del');
-
-      if (goBtn) {
-        const sid = goBtn.dataset.id;
-        if (window.sessionModule?.selectSession) {
-          await window.sessionModule.selectSession(sid);
-        }
-      } else if (branchBtn) {
-        const sid = branchBtn.dataset.id;
-        try {
-          const data = await _api(`/session/${encodeURIComponent(sid)}/branch`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
-          });
-          if (window.sessionModule?.loadSessions) await window.sessionModule.loadSessions();
-          if (window.sessionModule?.selectSession) await window.sessionModule.selectSession(data.id);
-          _currentSession = data.id;
-          _load();
-        } catch (err) {
-          console.error('[bc] branch failed:', err);
-        }
-      } else if (delBtn) {
-        const sid = delBtn.dataset.id;
-        if (!confirm('Delete this session?')) return;
-        try {
-          await fetch(`/api/session/${encodeURIComponent(sid)}`, { method: 'DELETE' });
-          if (window.sessionModule?.loadSessions) await window.sessionModule.loadSessions();
-          _load();
-        } catch (err) {
-          console.error('[bc] delete failed:', err);
-        }
-      }
-    });
-
     wrap.style.width = maxX + 'px';
     wrap.style.height = maxY + 'px';
   }
+
+  // ── Node button handler (added ONCE, delegates via event bubbling) ───────────
+  wrap.addEventListener('click', async e => {
+    const goBtn = e.target.closest('.bc-btn-go');
+    const branchBtn = e.target.closest('.bc-btn-branch');
+    const delBtn = e.target.closest('.bc-btn-del');
+
+    if (goBtn) {
+      const sid = goBtn.dataset.id;
+      if (window.sessionModule?.selectSession) await window.sessionModule.selectSession(sid);
+    } else if (branchBtn) {
+      branchBtn.disabled = true;
+      try {
+        const sid = branchBtn.dataset.id;
+        const data = await _api(`/session/${encodeURIComponent(sid)}/branch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (window.sessionModule?.loadSessions) await window.sessionModule.loadSessions();
+        if (window.sessionModule?.selectSession) await window.sessionModule.selectSession(data.id);
+        _currentSession = data.id;
+        _load();
+      } catch (err) {
+        console.error('[bc] branch failed:', err);
+      } finally {
+        branchBtn.disabled = false;
+      }
+    } else if (delBtn) {
+      const sid = delBtn.dataset.id;
+      if (!confirm('Delete this session?')) return;
+      delBtn.disabled = true;
+      try {
+        await fetch(`/api/session/${encodeURIComponent(sid)}`, { method: 'DELETE' });
+        if (window.sessionModule?.loadSessions) await window.sessionModule.loadSessions();
+        _load();
+      } catch (err) {
+        console.error('[bc] delete failed:', err);
+      }
+    }
+  });
 
   // ── Load tree for current session ────────────────────────────────────────────
   async function _load() {
