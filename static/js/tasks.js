@@ -8,6 +8,7 @@ import * as spinnerModule from './spinner.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { sortModelIds } from './modelSort.js';
 import { ordinalSuffix } from './util/ordinal.js';
+import * as Modals from './modalManager.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -2483,6 +2484,11 @@ function _renderMainView() {
 // ---- Modal ----
 
 export function openTasks(focusId) {
+  if (Modals.isRegistered('tasks-modal') && Modals.isMinimized('tasks-modal')) {
+    Modals.restore('tasks-modal');
+    if (focusId) _focusTask(focusId);
+    return;
+  }
   if (_open) {
     // Already open — just focus the requested task.
     if (focusId) _focusTask(focusId);
@@ -2525,6 +2531,16 @@ export function openTasks(focusId) {
     </div>
   `;
   document.body.appendChild(modal);
+  Modals.register('tasks-modal', {
+    railBtnId: 'rail-tasks',
+    sidebarBtnId: 'tool-tasks-btn',
+    closeFn: () => _doCloseTasks(),
+    restoreFn: () => {
+      _open = true;
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    },
+  });
+  try { Modals.injectMinimizeButton(modal, 'tasks-modal'); } catch (_) {}
 
   // Tab routing
   modal.querySelectorAll('.tasks-tab').forEach(btn => {
@@ -2621,7 +2637,15 @@ function _focusTask(taskId) {
 }
 
 export function closeTasks() {
-  if (!_open) return;
+  if (Modals.isRegistered('tasks-modal')) {
+    Modals.close('tasks-modal');
+    return;
+  }
+  _doCloseTasks();
+}
+
+function _doCloseTasks() {
+  if (!_open && !document.getElementById('tasks-modal')) return;
   _open = false;
   _viewingRuns = null;
   const modal = document.getElementById('tasks-modal');

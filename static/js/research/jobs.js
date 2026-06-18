@@ -26,49 +26,71 @@ function _markDismissed(ids) {
   _saveDismissed(set);
 }
 
+function _normalizeQuery(query) {
+  return String(query || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function _jobFingerprint(query, settings = {}) {
+  const s = settings || {};
+  return JSON.stringify({
+    query: _normalizeQuery(query),
+    max_rounds: String(s.max_rounds || ''),
+    depth: String(s.depth || ''),
+    report_layout: String(s.report_layout || ''),
+    search_provider: String(s.search_provider || ''),
+    endpoint_id: String(s.endpoint_id || ''),
+    model: String(s.model || ''),
+    category: String(s.category || ''),
+  });
+}
+
+function _isActiveJob(job) {
+  return !!job && (job.status === 'queued' || job.status === 'running' || job._launching);
+}
+
+function _isInFlightJob(job) {
+  return !!job && (job.status === 'running' || job._launching);
+}
+
+function _ensureFingerprint(job) {
+  if (!job) return '';
+  if (!job.fingerprint) job.fingerprint = _jobFingerprint(job.query, job.settings || {});
+  return job.fingerprint;
+}
+
+function _findMatchingJob(query, settings, predicate, exceptJob = null) {
+  const fp = _jobFingerprint(query, settings);
+  return _jobs.find(j => j !== exceptJob && _ensureFingerprint(j) === fp && predicate(j));
+}
+
+function _removeQueuedDuplicates(keeper) {
+  const fp = _ensureFingerprint(keeper);
+  if (!fp) return;
+  for (let i = _jobs.length - 1; i >= 0; i--) {
+    const job = _jobs[i];
+    if (job === keeper) continue;
+    if (job.status === 'queued' && !_isInFlightJob(job) && _ensureFingerprint(job) === fp) {
+      _jobs.splice(i, 1);
+    }
+  }
+}
+
 let _activePollInterval = null;
 
 export function init(apiBase) {
   _apiBase = apiBase;
-  _reconnectActive();
-  // Poll for active sessions periodically so research started elsewhere
-  // (e.g. by the agent via trigger_research) gets adopted into the
-  // sidebar — _reconnectActive only ran once at load before, so
-  // agent-started jobs never appeared until a page reload.
+  _loadRecentCompleted();
   if (_activePollInterval) clearInterval(_activePollInterval);
-  _activePollInterval = setInterval(() => { _reconnectActive(); }, 12000);
+  _activePollInterval = setInterval(() => { _loadRecentCompleted(); }, 12000);
 }
 
-// Allow an immediate adopt when the chat stream signals a new research
-// session (research_started ui_event) — faster than the 12s poll.
 export function adoptSession(sessionId) {
-  if (!sessionId || _jobs.some(j => j.id === sessionId)) return;
-  _reconnectActive();
+  if (!sessionId) return;
+  _loadRecentCompleted();
 }
 
-async function _reconnectActive() {
+async function _loadRecentCompleted() {
   try {
-    // Reconnect to running tasks
-    const res = await fetch(`${_apiBase}/api/research/active`, { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      for (const task of (data.active || [])) {
-        if (_jobs.some(j => j.id === task.session_id)) continue;
-        const job = {
-          id: task.session_id, query: task.query, status: 'running',
-          progress: task.progress || {},
-          startedAt: task.started_at ? task.started_at * 1000 : Date.now(),
-          elapsed: task.started_at ? Date.now() - task.started_at * 1000 : 0,
-          result: null, sources: null, findings: null,
-          errorMsg: null, avgDuration: null, modelName: null,
-          settings: {}, _es: null, _timerInterval: null,
-        };
-        _jobs.push(job);
-        _connectStream(job);
-      }
-    }
-
-    // Load recent completed research from disk
     const libRes = await fetch(`${_apiBase}/api/research/library?sort=recent&limit=20`, { credentials: 'same-origin' });
     if (libRes.ok) {
       const libData = await libRes.json();
@@ -85,7 +107,7 @@ async function _reconnectActive() {
           sourceCount: item.source_count || 0,
           category: item.category || '',
           errorMsg: null, avgDuration: null, modelName: null,
-          settings: { max_rounds: item.rounds || 8 },
+          settings: { max_rounds: item.rounds || 8, report_layout: item.report_layout || 'auto' },
           _es: null, _timerInterval: null, _fromLibrary: true,
         });
       }
@@ -104,6 +126,8 @@ export function setRenderCallback(cb) { _renderCb = cb; }
 export function getJobs() { return _jobs; }
 
 export function addToQueue(query, settings) {
+  const existing = _findMatchingJob(query, settings, _isActiveJob);
+  if (existing) return existing;
   const job = _makeJob(query, settings);
   _jobs.push(job);
   _notify();
@@ -111,6 +135,11 @@ export function addToQueue(query, settings) {
 }
 
 export async function startJob(query, settings) {
+  const existing = _findMatchingJob(query, settings, _isActiveJob);
+  if (existing) {
+    if (existing.status === 'queued' && !existing._launching) await _launchJob(existing);
+    return existing;
+  }
   const job = addToQueue(query, settings);
   await _launchJob(job);
   return job;
@@ -118,30 +147,17 @@ export async function startJob(query, settings) {
 
 export async function startQueued(jobId) {
   const job = _jobs.find(j => j.id === jobId);
-  if (!job || job.status !== 'queued') return;
+  if (!job || job.status !== 'queued' || job._launching) return;
   await _launchJob(job);
 }
 
 export async function startAllQueued() {
-  const queued = _jobs.filter(j => j.status === 'queued');
+  const queued = _jobs.filter(j => j.status === 'queued' && !j._launching);
   await Promise.all(queued.map(j => _launchJob(j)));
 }
 
 /** Run queued jobs one at a time — waits for each to finish before launching
  *  the next. Useful when you want to avoid hammering the same model server. */
-export async function startAllQueuedSequential() {
-  const queued = _jobs.filter(j => j.status === 'queued');
-  for (const job of queued) {
-    await _launchJob(job);
-    // Wait until this specific job is no longer running
-    await new Promise(resolve => {
-      const tick = setInterval(() => {
-        if (job.status !== 'running') { clearInterval(tick); resolve(); }
-      }, 1000);
-    });
-  }
-}
-
 export async function retryJob(jobId) {
   const job = _jobs.find(j => j.id === jobId);
   if (!job) return;
@@ -213,6 +229,7 @@ function _makeJob(query, settings) {
   return {
     id: `pending-${++_idCounter}`,
     query, settings, status: 'queued',
+    fingerprint: _jobFingerprint(query, settings),
     progress: {}, startedAt: null, elapsed: 0,
     result: null, sources: null, findings: null,
     category: settings?.category || '',
@@ -223,6 +240,24 @@ function _makeJob(query, settings) {
 }
 
 async function _launchJob(job) {
+  if (!job || job._launching) return job;
+  if (job.status === 'running' && !String(job.id || '').startsWith('pending-')) return job;
+  const inFlight = _findMatchingJob(job.query, job.settings || {}, _isInFlightJob, job);
+  if (inFlight) {
+    if (job.status === 'queued') {
+      const idx = _jobs.indexOf(job);
+      if (idx >= 0) _jobs.splice(idx, 1);
+      _notify();
+    }
+    return inFlight;
+  }
+  job._launching = true;
+  job.status = 'running';
+  job.startedAt = job.startedAt || Date.now();
+  job.progress = job.progress && Object.keys(job.progress).length ? job.progress : { phase: 'planning' };
+  _removeQueuedDuplicates(job);
+  _notify();
+
   const body = { query: job.query, ...job.settings };
   let data;
   try {
@@ -235,6 +270,7 @@ async function _launchJob(job) {
       const txt = await res.text();
       try { job.errorMsg = JSON.parse(txt).detail || txt; } catch { job.errorMsg = txt; }
       job.status = 'error';
+      job._launching = false;
       _notify();
       return;
     }
@@ -242,17 +278,23 @@ async function _launchJob(job) {
   } catch (e) {
     job.errorMsg = e.message;
     job.status = 'error';
+    job._launching = false;
     _notify();
     return;
   }
   job.id = data.session_id;
-  job.status = 'running';
-  job.startedAt = Date.now();
-  _connectStream(job);
+  job._launching = false;
+  job.startedAt = job.startedAt || Date.now();
+  if (!['done', 'cancelled', 'error'].includes(job.status)) {
+    job.status = 'running';
+    _connectStream(job);
+  }
   _notify();
+  return job;
 }
 
 function _connectStream(job) {
+  if (!job || job._es) return;
   job._timerInterval = setInterval(() => {
     job.elapsed = Date.now() - job.startedAt;
     _notify();
@@ -302,16 +344,33 @@ async function _pollFallback(job) {
 
 function _finishJob(job, status) {
   job.status = status;
+  job._launching = false;
   if (job._es) { job._es.close(); job._es = null; }
   if (job._timerInterval) { clearInterval(job._timerInterval); job._timerInterval = null; }
   job.elapsed = Date.now() - (job.startedAt || Date.now());
   if (status === 'done') {
-    if ('Notification' in window && Notification.permission === 'granted') {
+    const nativeNotified = _notifyAndroidResearchComplete(job);
+    if (!nativeNotified && 'Notification' in window && Notification.permission === 'granted') {
       try { new Notification('Research Complete', { body: job.query.slice(0, 80) }); } catch {}
     }
     if (_onCompleteCb) _onCompleteCb(job);
   }
   _notify();
+}
+
+function _notifyAndroidResearchComplete(job) {
+  try {
+    const bridge = window.OdysseusAndroid;
+    if (!bridge || typeof bridge.notifyResearchComplete !== 'function') return false;
+    // Standalone Android research is notified by the native backend worker even
+    // when the WebView is paused. Avoid double-alerting that local path.
+    const href = String(window.location.href || '');
+    if (/^https?:\/\/127\.0\.0\.1:70[1-3][0-9]\b/i.test(href)) return false;
+    bridge.notifyResearchComplete(String(job?.id || ''), String(job?.query || ''));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 let _onCompleteCb = null;
@@ -328,6 +387,9 @@ async function _fetchResult(job) {
     job.sources = d.sources;
     job.findings = d.raw_findings;
     if (d.category && !job.category) job.category = d.category;
+    if (d.report_layout) {
+      job.settings = { ...(job.settings || {}), report_layout: d.report_layout };
+    }
     _notify();
   } catch {}
 }

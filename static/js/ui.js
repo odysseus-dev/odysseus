@@ -1059,6 +1059,13 @@ if ('ontouchstart' in window) {
 
   document.addEventListener('touchmove', (e) => {
     if (!_swipeTarget || _cancelled) return;
+    if (window._modalWindowDragging) {
+      _swipeTarget.style.transform = '';
+      _swipeTarget = null;
+      _cancelled = true;
+      _startedInGrabTapZone = false;
+      return;
+    }
     const touch = e.touches[0];
     const dx = Math.abs(touch.clientX - _startX);
     const dy = touch.clientY - _startY;

@@ -34,10 +34,81 @@ export function initSidebarLayout(Storage, opts) {
   // ── Icon rail + sidebar toggle ──
   const iconRail = document.getElementById('icon-rail');
   const hamburgerBtn = document.getElementById('hamburger-btn');
+  let landscapeForcedSidebarSide = false;
+  const isTouchLandscape = () =>
+    window.matchMedia('(orientation: landscape)').matches &&
+    (window.matchMedia('(pointer: coarse)').matches ||
+      window.matchMedia('(hover: none)').matches ||
+      navigator.maxTouchPoints > 0);
+
+  let safeAreaProbe = null;
+  function cssPx(prop) {
+    if (!safeAreaProbe) {
+      safeAreaProbe = document.createElement('div');
+      safeAreaProbe.style.cssText = [
+        'position:fixed',
+        'inset:0',
+        'visibility:hidden',
+        'pointer-events:none',
+        'padding-left:env(safe-area-inset-left)',
+        'padding-right:env(safe-area-inset-right)',
+        'padding-top:env(safe-area-inset-top)',
+        'padding-bottom:env(safe-area-inset-bottom)',
+      ].join(';');
+      document.body.appendChild(safeAreaProbe);
+    }
+    const n = parseFloat(getComputedStyle(safeAreaProbe).getPropertyValue(prop) || '0');
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function androidCutoutSide() {
+    try {
+      const side = window.OdysseusAndroid?.getCutoutSide?.();
+      return side === 'left' || side === 'right' ? side : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function cssCutoutSide() {
+    const left = cssPx('padding-left');
+    const right = cssPx('padding-right');
+    if (left > right + 2) return 'left';
+    if (right > left + 2) return 'right';
+    return '';
+  }
+
+  function landscapeSidebarSide() {
+    const cutoutSide = androidCutoutSide() || cssCutoutSide();
+    if (cutoutSide === 'left') return 'right';
+    if (cutoutSide === 'right') return 'left';
+    return Storage.get(Storage.KEYS.SIDEBAR_SIDE) === 'left' ? 'left' : 'right';
+  }
+
+  function syncLandscapeSidebarSide(sidebar) {
+    if (!sidebar) return;
+    const wasRight = sidebar.classList.contains('right-side');
+    if (isTouchLandscape()) {
+      sidebar.classList.toggle('right-side', landscapeSidebarSide() === 'right');
+      landscapeForcedSidebarSide = true;
+      if (sidebar.classList.contains('right-side') !== wasRight && documentModule && documentModule.swapSide) {
+        try { documentModule.swapSide(); } catch (_) {}
+      }
+      return;
+    }
+    if (landscapeForcedSidebarSide) {
+      sidebar.classList.toggle('right-side', Storage.get(Storage.KEYS.SIDEBAR_SIDE) === 'right');
+      landscapeForcedSidebarSide = false;
+      if (sidebar.classList.contains('right-side') !== wasRight && documentModule && documentModule.swapSide) {
+        try { documentModule.swapSide(); } catch (_) {}
+      }
+    }
+  }
 
   function _syncRailSideCore() {
     const sidebar = document.getElementById('sidebar');
     if (!iconRail) return;
+    syncLandscapeSidebarSide(sidebar);
     const isRight = sidebar.classList.contains('right-side');
     const sidebarHidden = sidebar.classList.contains('hidden');
     const railHidden = iconRail.classList.contains('rail-hidden');
@@ -125,10 +196,13 @@ export function initSidebarLayout(Storage, opts) {
     // the direction). Persist it + re-anchor the doc panel, same as a
     // shift-click on the hamburger.
     if (side === 'left' || side === 'right') {
+      if (isTouchLandscape()) side = landscapeSidebarSide();
       const wantRight = side === 'right';
       if (sidebar.classList.contains('right-side') !== wantRight) {
         sidebar.classList.toggle('right-side', wantRight);
-        try { Storage.set(Storage.KEYS.SIDEBAR_SIDE, side); } catch (_) {}
+        if (!isTouchLandscape()) {
+          try { Storage.set(Storage.KEYS.SIDEBAR_SIDE, side); } catch (_) {}
+        }
         if (documentModule && documentModule.swapSide) { try { documentModule.swapSide(); } catch (_) {} }
       }
     }
@@ -144,6 +218,12 @@ export function initSidebarLayout(Storage, opts) {
       e.stopPropagation();
       const sidebar = document.getElementById('sidebar');
       if (e.shiftKey) {
+        if (isTouchLandscape()) {
+          sidebar.classList.toggle('right-side', landscapeSidebarSide() === 'right');
+          syncRailSide();
+          if (documentModule && documentModule.swapSide) documentModule.swapSide();
+          return;
+        }
         sidebar.classList.toggle('right-side');
         Storage.set(Storage.KEYS.SIDEBAR_SIDE, sidebar.classList.contains('right-side') ? 'right' : 'left');
         syncRailSide();
@@ -164,10 +244,11 @@ export function initSidebarLayout(Storage, opts) {
           sidebar.classList.add('hidden');
           if (backdrop) backdrop.classList.remove('visible');
         } else {
-          // Mobile: the hamburger always opens the sidebar from the RIGHT.
-          // (Not persisted — keeps the desktop side preference untouched.)
-          if (!sidebar.classList.contains('right-side')) {
-            sidebar.classList.add('right-side');
+          // Mobile portrait keeps the sidebar on the right. Touch landscape
+          // uses the side opposite the camera cutout.
+          const wantRight = isTouchLandscape() ? landscapeSidebarSide() === 'right' : true;
+          if (sidebar.classList.contains('right-side') !== wantRight) {
+            sidebar.classList.toggle('right-side', wantRight);
             if (documentModule && documentModule.swapSide) { try { documentModule.swapSide(); } catch (_) {} }
           }
           // Opening sidebar — blur keyboard first, then open after layout settles
@@ -255,10 +336,22 @@ export function initSidebarLayout(Storage, opts) {
     }
   }
 
-  window.addEventListener('resize', () => {
+  function handleViewportSideChange() {
     _userToggledSidebar = false; // allow auto-collapse on actual resize
+    syncLandscapeSidebarSide(document.getElementById('sidebar'));
+    syncRailSide();
     requestAnimationFrame(checkSidebarAutoCollapse);
-  });
+  }
+  window.addEventListener('resize', handleViewportSideChange);
+  window.addEventListener('orientationchange', handleViewportSideChange);
+  window.addEventListener('odysseus:cutoutchange', handleViewportSideChange);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleViewportSideChange);
+    window.visualViewport.addEventListener('scroll', handleViewportSideChange);
+  }
+  if (screen.orientation && screen.orientation.addEventListener) {
+    screen.orientation.addEventListener('change', handleViewportSideChange);
+  }
   // Also re-check when doc panel toggles
   new MutationObserver(() => requestAnimationFrame(checkSidebarAutoCollapse))
     .observe(document.body, { attributes: true, attributeFilter: ['class'] });

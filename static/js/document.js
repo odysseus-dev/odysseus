@@ -87,17 +87,26 @@ import * as Modals from './modalManager.js';
   }
 
   function _accountCanSend(account) {
-    return !!(account && account.smtp_host && account.smtp_user && account.has_smtp_password);
+    return !!(account
+      && account.enabled !== false
+      && account.smtp_host
+      && (account.smtp_user || account.imap_user)
+      && (account.has_smtp_password || account.has_imap_password));
   }
 
   async function _resolveComposeSendAccountId() {
     const activeAccountId = window.__odysseusActiveEmailAccount || null;
-    if (!activeAccountId) return null;
     const accounts = await _getEmailAccountsCached();
-    const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
-    if (!activeAccount || _accountCanSend(activeAccount)) return activeAccountId;
-    if (uiModule) uiModule.showToast('Selected email account is receive-only; using your SMTP account.');
-    return null;
+    const sendAccounts = accounts.filter(_accountCanSend);
+    if (activeAccountId) {
+      const activeAccount = accounts.find(a => String(a.id) === String(activeAccountId));
+      if (!activeAccount || _accountCanSend(activeAccount)) return activeAccountId;
+      if (uiModule) uiModule.showToast('Selected email account is receive-only; using your SMTP account.');
+    }
+    const preferred = sendAccounts.find(a => a.is_default) || sendAccounts[0];
+    if (preferred && preferred.id) return preferred.id;
+    const fallback = accounts.find(a => a.is_default) || accounts[0];
+    return fallback?.id || null;
   }
 
   // Inject tab menu styles immediately (must exist before any hover)

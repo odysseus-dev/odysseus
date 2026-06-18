@@ -868,6 +868,89 @@ body.bg-pattern-sparkles {
       z-index: 100;
       pointer-events: none;
     }
+    #minimized-dock.dock-single-row {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    #minimized-dock.dock-single-row::-webkit-scrollbar {
+      display: none;
+    }
+    #minimized-dock.dock-paged-row {
+      flex-wrap: nowrap;
+      gap: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      scroll-behavior: smooth;
+      scroll-padding-left: 0;
+      scroll-padding-right: 0;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x;
+      padding: 0;
+      border-radius: 999px;
+      background:
+        linear-gradient(90deg,
+          color-mix(in srgb, var(--bg) 88%, transparent),
+          color-mix(in srgb, var(--panel, var(--bg)) 74%, transparent) 18% 82%,
+          color-mix(in srgb, var(--bg) 88%, transparent));
+      box-shadow:
+        inset 16px 0 14px -18px color-mix(in srgb, var(--accent, var(--red)) 70%, transparent),
+        inset -16px 0 14px -18px color-mix(in srgb, var(--accent, var(--red)) 70%, transparent),
+        0 8px 24px rgba(0,0,0,0.28);
+      pointer-events: auto;
+    }
+    #minimized-dock.dock-paged-row::-webkit-scrollbar {
+      display: none;
+    }
+    #minimized-dock.dock-paged-row .minimized-dock-page {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 8px;
+      flex: 0 0 100%;
+      min-width: 100%;
+      box-sizing: border-box;
+      padding: 6px;
+      scroll-snap-align: start;
+    }
+    #minimized-dock.dock-paged-row.dock-stacked-pages .minimized-dock-page {
+      flex-direction: column-reverse;
+      width: 100%;
+      height: 100%;
+      min-width: 100%;
+      min-height: 100%;
+    }
+    #minimized-dock.dock-paged-row.dock-stacked-pages {
+      flex-direction: column;
+      overflow-x: hidden;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+      scroll-padding-top: 0;
+      scroll-padding-bottom: 0;
+      overscroll-behavior-y: contain;
+      touch-action: pan-y;
+      background:
+        linear-gradient(180deg,
+          color-mix(in srgb, var(--bg) 88%, transparent),
+          color-mix(in srgb, var(--panel, var(--bg)) 74%, transparent) 18% 82%,
+          color-mix(in srgb, var(--bg) 88%, transparent));
+      box-shadow:
+        inset 0 16px 14px -18px color-mix(in srgb, var(--accent, var(--red)) 70%, transparent),
+        inset 0 -16px 14px -18px color-mix(in srgb, var(--accent, var(--red)) 70%, transparent),
+        0 8px 24px rgba(0,0,0,0.28);
+    }
+    #minimized-dock.dock-paged-row .minimized-dock-chip {
+      flex: 0 0 40px;
+      width: 40px;
+      height: 40px;
+      scroll-snap-align: none;
+    }
     .minimized-dock-chip {
       pointer-events: auto;
       display: inline-flex; align-items: center; gap: 6px;
@@ -917,6 +1000,36 @@ body.bg-pattern-sparkles {
     }
     .minimized-dock-chip svg { opacity: 0.7; flex-shrink: 0; }
     .minimized-dock-label { white-space: nowrap; }
+
+    .minimized-dock-chip.chip-compact-touch {
+      width: 40px;
+      height: 40px;
+      padding: 0 !important;
+      border-radius: 50% !important;
+      justify-content: center;
+      position: relative;
+      overflow: visible;
+      touch-action: none;
+    }
+    .minimized-dock-chip.chip-compact-touch svg {
+      width: 18px;
+      height: 18px;
+      opacity: 0.9;
+    }
+    .minimized-dock-chip.chip-compact-touch .minimized-dock-label,
+    .minimized-dock-chip.chip-compact-touch .minimized-dock-x {
+      display: none !important;
+    }
+    .minimized-dock-chip.chip-compact-touch.chip-free-drag {
+      box-shadow: 0 8px 22px rgba(0,0,0,0.55),
+                  0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
+    }
+    .minimized-dock-chip.chip-compact-touch.chip-active {
+      border-color: var(--accent, var(--red)) !important;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35),
+                  0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
+    }
+    .minimized-dock-chip.chip-compact-touch.chip-active svg { opacity: 1; }
 
     /* Mobile: chips are icon-only round pills. Tap to restore, drag toward
        the trash zone at top-center to close. touch-action:none lets the
@@ -15295,6 +15408,291 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 .modal.modal-left-docked .recipient-chip {
   max-width: 100%;
 }
+@media (orientation: landscape) and (hover: none),
+       (orientation: landscape) and (pointer: coarse) {
+  #email-lib-modal.modal-left-docked .doclib-modal-content,
+  #email-lib-modal.modal-right-docked .doclib-modal-content,
+  .email-reader-tab-modal.modal-left-docked .modal-content,
+  .email-reader-tab-modal.modal-right-docked .modal-content,
+  .email-window-modal.modal-left-docked .modal-content,
+  .email-window-modal.modal-right-docked .modal-content {
+    overflow: hidden !important;
+    padding: 4px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .modal-header,
+  #email-lib-modal.modal-right-docked .modal-header {
+    min-height: 40px !important;
+    padding: 4px 8px !important;
+    gap: 6px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .modal-header h4,
+  #email-lib-modal.modal-right-docked .modal-header h4 {
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+
+  #email-lib-modal.modal-left-docked #email-lib-stats,
+  #email-lib-modal.modal-right-docked #email-lib-stats {
+    display: none !important;
+  }
+
+  #email-lib-modal.modal-left-docked .modal-body,
+  #email-lib-modal.modal-right-docked .modal-body,
+  #email-lib-modal.modal-left-docked .admin-card,
+  #email-lib-modal.modal-right-docked .admin-card,
+  #email-lib-modal.modal-left-docked .doclib-grid,
+  #email-lib-modal.modal-right-docked .doclib-grid {
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+
+  #email-lib-modal.modal-left-docked .modal-body,
+  #email-lib-modal.modal-right-docked .modal-body,
+  #email-lib-modal.modal-left-docked .admin-card,
+  #email-lib-modal.modal-right-docked .admin-card {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  #email-lib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded)),
+  #email-lib-modal.modal-right-docked .doclib-grid:not(:has(.doclib-card-expanded)) {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #email-lib-modal.modal-left-docked .doclib-card.doclib-card-expanded,
+  #email-lib-modal.modal-right-docked .doclib-card.doclib-card-expanded {
+    min-width: 0 !important;
+    padding: 4px 6px !important;
+    overflow: hidden !important;
+  }
+
+  #email-lib-modal.modal-left-docked .doclib-card.email-card-expanded.memory-item > div:first-child,
+  #email-lib-modal.modal-right-docked .doclib-card.email-card-expanded.memory-item > div:first-child {
+    min-width: 0 !important;
+    margin-top: 0 !important;
+    padding: 4px 6px 6px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .doclib-card-expanded .email-card-titlerow,
+  #email-lib-modal.modal-right-docked .doclib-card-expanded .email-card-titlerow {
+    min-width: 0 !important;
+    gap: 4px !important;
+    padding: 0 !important;
+    line-height: 1.25 !important;
+  }
+
+  #email-lib-modal.modal-left-docked .doclib-card-expanded .email-card-titlerow,
+  #email-lib-modal.modal-left-docked .doclib-card-expanded .email-card-titlerow > *,
+  #email-lib-modal.modal-right-docked .doclib-card-expanded .email-card-titlerow,
+  #email-lib-modal.modal-right-docked .doclib-card-expanded .email-card-titlerow > * {
+    top: 0 !important;
+    left: 0 !important;
+  }
+
+  #email-lib-modal.modal-left-docked .doclib-card-expanded .memory-item-title,
+  #email-lib-modal.modal-right-docked .doclib-card-expanded .memory-item-title {
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 12px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .doclib-card-expanded .memory-item-meta,
+  #email-lib-modal.modal-right-docked .doclib-card-expanded .memory-item-meta {
+    margin-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-card-nav-arrows,
+  #email-lib-modal.modal-right-docked .email-card-nav-arrows {
+    flex: 0 0 auto !important;
+    transform: none !important;
+    left: 0 !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-card-nav-btn,
+  #email-lib-modal.modal-right-docked .email-card-nav-btn {
+    width: 34px !important;
+    min-width: 34px !important;
+    height: 32px !important;
+    padding: 4px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-card-reader,
+  #email-lib-modal.modal-right-docked .email-card-reader,
+  .email-reader-tab-modal.modal-left-docked .email-card-reader,
+  .email-reader-tab-modal.modal-right-docked .email-card-reader,
+  .email-window-modal.modal-left-docked .email-card-reader,
+  .email-window-modal.modal-right-docked .email-card-reader {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-header,
+  #email-lib-modal.modal-right-docked .email-reader-header,
+  .email-reader-tab-modal.modal-left-docked .email-reader-header,
+  .email-reader-tab-modal.modal-right-docked .email-reader-header,
+  .email-window-modal.modal-left-docked .email-reader-header,
+  .email-window-modal.modal-right-docked .email-reader-header {
+    flex-direction: row !important;
+    align-items: flex-start !important;
+    padding: 6px !important;
+    gap: 6px !important;
+    min-width: 0 !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-meta,
+  #email-lib-modal.modal-right-docked .email-reader-meta,
+  .email-reader-tab-modal.modal-left-docked .email-reader-meta,
+  .email-reader-tab-modal.modal-right-docked .email-reader-meta,
+  .email-window-modal.modal-left-docked .email-reader-meta,
+  .email-window-modal.modal-right-docked .email-reader-meta {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-actions,
+  #email-lib-modal.modal-right-docked .email-reader-actions,
+  .email-reader-tab-modal.modal-left-docked .email-reader-actions,
+  .email-reader-tab-modal.modal-right-docked .email-reader-actions,
+  .email-window-modal.modal-left-docked .email-reader-actions,
+  .email-window-modal.modal-right-docked .email-reader-actions {
+    width: auto !important;
+    max-width: min(184px, 48%) !important;
+    flex: 0 0 auto !important;
+    min-width: 0 !important;
+    align-self: flex-start !important;
+    flex-direction: column !important;
+    justify-content: flex-end !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-actions-row,
+  #email-lib-modal.modal-right-docked .email-reader-actions-row,
+  .email-reader-tab-modal.modal-left-docked .email-reader-actions-row,
+  .email-reader-tab-modal.modal-right-docked .email-reader-actions-row,
+  .email-window-modal.modal-left-docked .email-reader-actions-row,
+  .email-window-modal.modal-right-docked .email-reader-actions-row {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-end !important;
+    gap: 4px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-actions::-webkit-scrollbar,
+  #email-lib-modal.modal-right-docked .email-reader-actions::-webkit-scrollbar,
+  .email-reader-tab-modal.modal-left-docked .email-reader-actions::-webkit-scrollbar,
+  .email-reader-tab-modal.modal-right-docked .email-reader-actions::-webkit-scrollbar,
+  .email-window-modal.modal-left-docked .email-reader-actions::-webkit-scrollbar,
+  .email-window-modal.modal-right-docked .email-reader-actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
+  #email-lib-modal.modal-right-docked .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
+  .email-reader-tab-modal.modal-left-docked .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
+  .email-reader-tab-modal.modal-right-docked .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
+  .email-window-modal.modal-left-docked .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
+  .email-window-modal.modal-right-docked .email-reader-actions .memory-toolbar-btn.reader-icon-btn {
+    width: 40px !important;
+    height: 38px !important;
+    padding: 3px 2px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .reader-btn-label,
+  #email-lib-modal.modal-right-docked .reader-btn-label,
+  .email-reader-tab-modal.modal-left-docked .reader-btn-label,
+  .email-reader-tab-modal.modal-right-docked .reader-btn-label,
+  .email-window-modal.modal-left-docked .reader-btn-label,
+  .email-window-modal.modal-right-docked .reader-btn-label {
+    font-size: 8px !important;
+    line-height: 1 !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-body,
+  #email-lib-modal.modal-right-docked .email-reader-body,
+  .email-reader-tab-modal.modal-left-docked .email-reader-body,
+  .email-reader-tab-modal.modal-right-docked .email-reader-body,
+  .email-window-modal.modal-left-docked .email-reader-body,
+  .email-window-modal.modal-right-docked .email-reader-body {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    overflow-x: hidden !important;
+    padding: 8px 6px !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-body.html-body :where(img, video, canvas, table, tbody, thead, tfoot, tr, td, th, div, section, article, p, pre, blockquote),
+  #email-lib-modal.modal-right-docked .email-reader-body.html-body :where(img, video, canvas, table, tbody, thead, tfoot, tr, td, th, div, section, article, p, pre, blockquote),
+  .email-reader-tab-modal.modal-left-docked .email-reader-body.html-body :where(img, video, canvas, table, tbody, thead, tfoot, tr, td, th, div, section, article, p, pre, blockquote),
+  .email-reader-tab-modal.modal-right-docked .email-reader-body.html-body :where(img, video, canvas, table, tbody, thead, tfoot, tr, td, th, div, section, article, p, pre, blockquote),
+  .email-window-modal.modal-left-docked .email-reader-body.html-body :where(img, video, canvas, table, tbody, thead, tfoot, tr, td, th, div, section, article, p, pre, blockquote),
+  .email-window-modal.modal-right-docked .email-reader-body.html-body :where(img, video, canvas, table, tbody, thead, tfoot, tr, td, th, div, section, article, p, pre, blockquote) {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-body.html-body img,
+  #email-lib-modal.modal-right-docked .email-reader-body.html-body img,
+  .email-reader-tab-modal.modal-left-docked .email-reader-body.html-body img,
+  .email-reader-tab-modal.modal-right-docked .email-reader-body.html-body img,
+  .email-window-modal.modal-left-docked .email-reader-body.html-body img,
+  .email-window-modal.modal-right-docked .email-reader-body.html-body img {
+    width: auto !important;
+    height: auto !important;
+    max-width: 100% !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-body.html-body table,
+  #email-lib-modal.modal-right-docked .email-reader-body.html-body table,
+  .email-reader-tab-modal.modal-left-docked .email-reader-body.html-body table,
+  .email-reader-tab-modal.modal-right-docked .email-reader-body.html-body table,
+  .email-window-modal.modal-left-docked .email-reader-body.html-body table,
+  .email-window-modal.modal-right-docked .email-reader-body.html-body table {
+    display: block !important;
+    width: 100% !important;
+    inline-size: 100% !important;
+    min-width: 0 !important;
+    min-inline-size: 0 !important;
+    table-layout: fixed !important;
+    overflow: hidden !important;
+  }
+
+  #email-lib-modal.modal-left-docked .email-reader-body.html-body td,
+  #email-lib-modal.modal-left-docked .email-reader-body.html-body th,
+  #email-lib-modal.modal-right-docked .email-reader-body.html-body td,
+  #email-lib-modal.modal-right-docked .email-reader-body.html-body th,
+  .email-reader-tab-modal.modal-left-docked .email-reader-body.html-body td,
+  .email-reader-tab-modal.modal-left-docked .email-reader-body.html-body th,
+  .email-reader-tab-modal.modal-right-docked .email-reader-body.html-body td,
+  .email-reader-tab-modal.modal-right-docked .email-reader-body.html-body th,
+  .email-window-modal.modal-left-docked .email-reader-body.html-body td,
+  .email-window-modal.modal-left-docked .email-reader-body.html-body th,
+  .email-window-modal.modal-right-docked .email-reader-body.html-body td,
+  .email-window-modal.modal-right-docked .email-reader-body.html-body th {
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+  }
+}
 .archive-list {
   margin-top: 8px;
   border-top: 1px solid var(--border);
@@ -28291,6 +28689,50 @@ button .spinner-whirlpool {
 }
 .email-reader-body.html-body img { max-width: 100%; height: auto; }
 .email-reader-body.html-body table { max-width: 100%; border-collapse: collapse; }
+.email-card-reader.email-reader-fit-page {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.email-card-reader.email-reader-fit-page .email-reader-body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+.email-card-reader.email-reader-fit-page .email-reader-body.html-body,
+.email-card-reader.email-reader-fit-page .email-reader-body.html-body :where(div, section, article, p, blockquote, pre, table, tbody, thead, tfoot, tr, td, th, img, video, canvas),
+.email-card-reader.email-reader-fit-page .email-bubble-body,
+.email-card-reader.email-reader-fit-page .email-bubble-body :where(div, section, article, p, blockquote, pre, table, tbody, thead, tfoot, tr, td, th, img, video, canvas),
+.email-card-reader.email-reader-fit-page .email-thread-turn-body,
+.email-card-reader.email-reader-fit-page .email-thread-turn-body :where(div, section, article, p, blockquote, pre, table, tbody, thead, tfoot, tr, td, th, img, video, canvas) {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+.email-card-reader.email-reader-fit-page .email-reader-body.html-body img,
+.email-card-reader.email-reader-fit-page .email-bubble-body img,
+.email-card-reader.email-reader-fit-page .email-thread-turn-body img {
+  width: auto !important;
+  height: auto !important;
+  max-width: 100% !important;
+}
+.email-card-reader.email-reader-fit-page .email-reader-body.html-body table,
+.email-card-reader.email-reader-fit-page .email-bubble-body table,
+.email-card-reader.email-reader-fit-page .email-thread-turn-body table {
+  display: block !important;
+  width: 100% !important;
+  inline-size: 100% !important;
+  min-width: 0 !important;
+  min-inline-size: 0 !important;
+  table-layout: fixed !important;
+  overflow: hidden !important;
+}
+.email-card-reader.email-reader-fit-page .email-reader-body.html-body pre,
+.email-card-reader.email-reader-fit-page .email-bubble-body pre,
+.email-card-reader.email-reader-fit-page .email-thread-turn-body pre {
+  white-space: pre-wrap !important;
+}
 /* Preserve highlights — sender's intent (snark, callouts) gets through, but
    rendered with a theme-aware accent so it stays legible in any theme. The
    sanitizer rewrites `<span style="background:yellow">…</span>` to <mark>. */
@@ -33774,11 +34216,135 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 #calendar-modal.modal-full-expanded #cal-body {
   flex: 1 1 0;
   min-height: 0;
+  overflow: hidden;
+}
+#calendar-modal.modal-left-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-right-docked #cal-body.cal-form-mode,
+#calendar-modal.modal-full-expanded #cal-body.cal-form-mode {
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   touch-action: pan-y;
+}
+#calendar-modal #cal-body.cal-form-mode > .cal-form {
+  flex: 0 0 auto;
+}
+@media (orientation: landscape) {
+  #calendar-modal.modal-left-docked #cal-body,
+  #calendar-modal.modal-right-docked #cal-body,
+  #calendar-modal.modal-full-expanded #cal-body {
+    gap: 4px;
+  }
+  #calendar-modal.modal-left-docked #cal-body > .cal-grid,
+  #calendar-modal.modal-right-docked #cal-body > .cal-grid,
+  #calendar-modal.modal-full-expanded #cal-body > .cal-grid,
+  #calendar-modal.modal-left-docked #cal-body > .cal-wk-wrap,
+  #calendar-modal.modal-right-docked #cal-body > .cal-wk-wrap,
+  #calendar-modal.modal-full-expanded #cal-body > .cal-wk-wrap {
+    min-height: 0;
+    max-height: none;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar,
+  #calendar-modal.modal-right-docked .cal-toolbar,
+  #calendar-modal.modal-full-expanded .cal-toolbar {
+    gap: 4px;
+    margin-bottom: 0;
+    row-gap: 4px;
+    flex-wrap: nowrap;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar-nav,
+  #calendar-modal.modal-right-docked .cal-toolbar-nav,
+  #calendar-modal.modal-full-expanded .cal-toolbar-nav {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 3px;
+    min-width: 0;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar-right,
+  #calendar-modal.modal-right-docked .cal-toolbar-right,
+  #calendar-modal.modal-full-expanded .cal-toolbar-right {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-left: 0;
+    margin-top: 0;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  #calendar-modal.modal-left-docked .cal-toolbar-right::-webkit-scrollbar,
+  #calendar-modal.modal-right-docked .cal-toolbar-right::-webkit-scrollbar,
+  #calendar-modal.modal-full-expanded .cal-toolbar-right::-webkit-scrollbar {
+    display: none;
+  }
+  #calendar-modal.modal-left-docked .cal-title,
+  #calendar-modal.modal-right-docked .cal-title,
+  #calendar-modal.modal-full-expanded .cal-title {
+    max-width: 116px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    height: 22px;
+    line-height: 24px;
+    padding: 0 4px;
+    font-size: 12px;
+  }
+  #calendar-modal.modal-left-docked button.cal-nav,
+  #calendar-modal.modal-right-docked button.cal-nav,
+  #calendar-modal.modal-full-expanded button.cal-nav,
+  #calendar-modal.modal-left-docked .cal-filter-toggle,
+  #calendar-modal.modal-right-docked .cal-filter-toggle,
+  #calendar-modal.modal-full-expanded .cal-filter-toggle {
+    height: 22px;
+    line-height: 20px;
+    padding: 0 6px;
+    font-size: 10px;
+  }
+  #calendar-modal.modal-left-docked button.cal-view-btn,
+  #calendar-modal.modal-right-docked button.cal-view-btn,
+  #calendar-modal.modal-full-expanded button.cal-view-btn {
+    height: 22px;
+    padding: 1px 7px;
+    font-size: 10px;
+  }
+  #calendar-modal.modal-left-docked .cal-quickadd-row,
+  #calendar-modal.modal-right-docked .cal-quickadd-row,
+  #calendar-modal.modal-full-expanded .cal-quickadd-row {
+    gap: 6px;
+    margin-bottom: 0;
+    padding: 0 8px;
+    border-radius: 6px;
+  }
+  #calendar-modal.modal-left-docked .cal-quickadd-input,
+  #calendar-modal.modal-right-docked .cal-quickadd-input,
+  #calendar-modal.modal-full-expanded .cal-quickadd-input {
+    height: 20px;
+    font-size: 11px;
+  }
+  #calendar-modal.modal-left-docked .cal-quickadd-hint,
+  #calendar-modal.modal-right-docked .cal-quickadd-hint,
+  #calendar-modal.modal-full-expanded .cal-quickadd-hint {
+    font-size: 11px;
+  }
+  #calendar-modal.modal-left-docked .cal-splitter,
+  #calendar-modal.modal-right-docked .cal-splitter,
+  #calendar-modal.modal-full-expanded .cal-splitter {
+    height: 10px;
+    margin-top: 0;
+  }
+  #calendar-modal.modal-left-docked .cal-splitter-grip,
+  #calendar-modal.modal-right-docked .cal-splitter-grip,
+  #calendar-modal.modal-full-expanded .cal-splitter-grip {
+    height: 2px;
+  }
+  #calendar-modal.modal-left-docked .cal-day-detail,
+  #calendar-modal.modal-right-docked .cal-day-detail,
+  #calendar-modal.modal-full-expanded .cal-day-detail {
+    margin-top: 0;
+    padding-top: 6px;
+  }
 }
 @media (max-width: 768px) {
   /* Let the calendar pane shrink to nothing on mobile so the day-detail
@@ -34535,6 +35101,7 @@ button.cal-view-btn {
   border-top: 1px solid var(--border);
   padding-top: 8px;
   height: var(--cal-detail-h, 240px);
+  box-sizing: border-box;
   overflow-y: auto;
   overscroll-behavior: contain;
   flex-shrink: 0;

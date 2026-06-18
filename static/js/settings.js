@@ -13,6 +13,12 @@ let modalEl = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+function isMobileStandaloneEmailUnsupported(d) {
+  return !!(d && (d.mobile_standalone_unsupported || d.standalone_unsupported));
+}
+function mobileStandaloneEmailMessage(d) {
+  return d?.detail || d?.error || d?.imap?.error || 'This email backend did not accept the request.';
+}
 function safeRasterDataUrl(raw) {
   const value = String(raw || '').trim();
   return /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(value) ? value : '';
@@ -2660,10 +2666,30 @@ async function initEmailAccountsSettings() {
   if (!listEl || !addBtn || !formEl) return;
 
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  let mobileEmailUnsupported = false;
+  let mobileEmailUnsupportedText = '';
 
   async function fetchAccounts() {
     const r = await fetch('/api/email/accounts', { credentials: 'same-origin' });
     const d = await r.json();
+    mobileEmailUnsupported = isMobileStandaloneEmailUnsupported(d);
+    mobileEmailUnsupportedText = mobileEmailUnsupported ? mobileStandaloneEmailMessage(d) : '';
+    if (mobileEmailUnsupported) {
+      if (msgEl) {
+        msgEl.textContent = mobileEmailUnsupportedText;
+        msgEl.style.color = 'var(--red)';
+      }
+      if (addBtn) {
+        addBtn.disabled = true;
+        addBtn.style.opacity = '0.55';
+      }
+    } else {
+      if (msgEl) msgEl.textContent = '';
+      if (addBtn) {
+        addBtn.disabled = false;
+        addBtn.style.opacity = '';
+      }
+    }
     return d.accounts || [];
   }
 
@@ -2685,6 +2711,10 @@ async function initEmailAccountsSettings() {
 
   async function renderList() {
     const accs = await fetchAccounts();
+    if (mobileEmailUnsupported) {
+      listEl.innerHTML = `<div style="padding:12px;color:var(--red);font-size:12px;line-height:1.45;text-align:center">${esc(mobileEmailUnsupportedText)}</div>`;
+      return;
+    }
     if (!accs.length) {
       listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No email accounts configured</div>';
       return;
@@ -2859,6 +2889,9 @@ async function initEmailAccountsSettings() {
           el('eaf-msg').textContent = 'Saved';
           el('eaf-msg').style.color = 'var(--green,#50fa7b)';
           setTimeout(() => { formEl.style.display = 'none'; renderList(); }, 400);
+        } else if (isMobileStandaloneEmailUnsupported(d)) {
+          el('eaf-msg').textContent = mobileStandaloneEmailMessage(d);
+          el('eaf-msg').style.color = 'var(--red)';
         } else {
           el('eaf-msg').textContent = d.error || 'Save failed';
           el('eaf-msg').style.color = 'var(--red)';
@@ -4406,7 +4439,17 @@ async function initUnifiedIntegrations() {
           body: JSON.stringify(body),
         });
         const d = await r.json();
-        if (d.ok) {
+        if (isMobileStandaloneEmailUnsupported(d)) {
+          btn.style.background = 'var(--red)';
+          btn.style.borderColor = 'var(--red)';
+          btn.style.color = '#fff';
+          btn.style.boxShadow =
+            '0 0 0 2px color-mix(in srgb, var(--red) 25%, transparent),'
+          + ' 0 0 10px 2px color-mix(in srgb, var(--red) 55%, transparent)';
+          ico.innerHTML = btn.dataset.origIco;
+          msg.textContent = mobileStandaloneEmailMessage(d);
+          msg.style.color = 'var(--red)';
+        } else if (d.ok) {
           // Button becomes the indicator — green checkmark with the
           // cookbook-style halo + breathing animation. No status text;
           // the glow is the signal.
@@ -4467,6 +4510,11 @@ async function initUnifiedIntegrations() {
           body: JSON.stringify(body),
         });
         const d = await r.json();
+        if (isMobileStandaloneEmailUnsupported(d)) {
+          el('uf-email-msg').textContent = mobileStandaloneEmailMessage(d);
+          el('uf-email-msg').style.color = 'var(--red)';
+          return;
+        }
         if (!(d.ok || d.id)) {
           el('uf-email-msg').textContent = d.error || 'Failed';
           el('uf-email-msg').style.color = 'var(--red)';

@@ -6,6 +6,7 @@ import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
+import * as Modals from '../modalManager.js';
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
 // the SVG keeps its accumulated nodes/edges between progress events.
@@ -42,6 +43,7 @@ let _expandedJobId = null;
 let _markdownModule = null;
 let _sessionModule = null;
 let _settingsCollapsed = false;
+let _lastStartSubmitAt = 0;
 const _SETTINGS_KEY = 'odysseus-research-settings';
 const _COLLAPSE_KEY = 'odysseus-research-settings-collapsed';
 
@@ -52,6 +54,8 @@ function _saveSettingsToStorage() {
     const activeCat = document.querySelector('.research-cat.active');
     localStorage.setItem(_SETTINGS_KEY, JSON.stringify({
       max_rounds: document.getElementById('research-rounds')?.value || '0',
+      depth: document.getElementById('research-depth')?.value || 'standard',
+      report_layout: document.getElementById('research-report-layout')?.value || 'auto',
       search_provider: document.getElementById('research-search-provider')?.value || '',
       endpoint_id: document.getElementById('research-endpoint')?.value || '',
       model: document.getElementById('research-model')?.value || '',
@@ -199,6 +203,7 @@ export function init(apiBase, markdownMod, sessionMod) {
 
 export function isOpen() { return _open; }
 export function toggle() {
+  if (Modals.toggle('research-overlay')) return;
   if (_open) {
     // If minimized, restore instead of closing
     const overlay = document.getElementById('research-overlay');
@@ -215,6 +220,11 @@ export function toggle() {
 }
 
 export function openPanel(focusJobId) {
+  if (Modals.isRegistered('research-overlay') && Modals.isMinimized('research-overlay')) {
+    Modals.restore('research-overlay');
+    if (focusJobId) _focusJob(focusJobId);
+    return;
+  }
   if (_open) {
     const overlay = document.getElementById('research-overlay');
     if (overlay && overlay.style.display === 'none') {
@@ -244,15 +254,31 @@ export function openPanel(focusJobId) {
   const pane = document.createElement('div');
   pane.id = 'research-pane';
   pane.className = 'modal-content doclib-modal-content research-pane';
-  // Mobile: full-screen so the content has room and the jobs list can scroll
-  // inside it. Desktop: centered ~640px / 85vh modal like the rest.
+  // Mobile: full-height like the other tool overlays so the content has room
+  // and the jobs list can scroll inside it. Desktop: centered ~640px / 85vh modal.
   pane.style.cssText = (window.innerWidth <= 768)
-    ? 'width:100vw;max-width:100vw;height:90dvh;max-height:90dvh;border-radius:14px 14px 0 0;background:var(--bg);'
+    ? 'width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;border-radius:14px 14px 0 0;background:var(--bg);'
     : 'width:min(640px, 92vw);max-height:85vh;background:var(--bg);';
   pane.innerHTML = _buildPanelHTML();
 
   overlay.appendChild(pane);
   document.body.appendChild(overlay);
+  Modals.register('research-overlay', {
+    railBtnId: 'rail-research',
+    sidebarBtnId: 'tool-research-btn',
+    closeFn: () => _doClosePanel(),
+    restoreFn: () => {
+      _open = true;
+      document.body.classList.add('research-panel-view');
+      const btn = document.getElementById('tool-research-btn');
+      if (btn) {
+        btn.classList.add('active');
+        btn.classList.remove('minimized');
+      }
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    },
+  });
+  try { Modals.injectMinimizeButton(overlay, 'research-overlay'); } catch (_) {}
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) closePanel();
@@ -290,7 +316,6 @@ export function openPanel(focusJobId) {
 // chat anchor-link delegate ([Topic](#research-<session_id>)).
 function _focusJob(jobId) {
   if (!jobId) return;
-  // jobs may still be loading from /api/research/active — retry a few times.
   let tries = 0;
   const tryFocus = () => {
     const card = document.querySelector(`[data-job-id="${jobId}"]`);
@@ -306,7 +331,15 @@ function _focusJob(jobId) {
 }
 
 export function closePanel() {
-  if (!_open) return;
+  if (Modals.isRegistered('research-overlay')) {
+    Modals.close('research-overlay');
+    return;
+  }
+  _doClosePanel();
+}
+
+function _doClosePanel() {
+  if (!_open && !document.getElementById('research-overlay')) return;
   _open = false;
 
   if (_onDocKeydown) {
@@ -323,15 +356,39 @@ export function closePanel() {
 }
 
 function _buildPanelHTML() {
-  const searchProviders = ['', 'searxng', 'duckduckgo', 'tavily', 'brave', 'google', 'serper'];
-  const providerOpts = searchProviders.map(p =>
-    `<option value="${p}">${p || 'Default'}</option>`
+  const searchProviders = [
+    ['', 'Default'],
+    ['searxng', 'SearXNG'],
+    ['duckduckgo', 'DuckDuckGo'],
+    ['tavily', 'Tavily'],
+    ['brave', 'Brave'],
+    ['google_pse', 'Google PSE'],
+    ['serper', 'Serper'],
+  ];
+  const providerOpts = searchProviders.map(([value, label]) =>
+    `<option value="${value}">${label}</option>`
   ).join('');
 
   let roundOpts = '<option value="0" selected>Auto</option>';
   for (let i = 1; i <= 20; i++) {
     roundOpts += `<option value="${i}">${i}</option>`;
   }
+  const depthOpts = [
+    ['standard', 'Standard'],
+    ['quick', 'Quick'],
+    ['detailed', 'Detailed'],
+    ['exhaustive', 'Exhaustive'],
+  ].map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+  const layoutOpts = [
+    ['auto', 'Auto'],
+    ['magazine', 'Magazine'],
+    ['briefing', 'Briefing'],
+    ['paper', 'Paper'],
+    ['atlas', 'Atlas'],
+    ['side_index', 'Classic side'],
+    ['top_index', 'Top index'],
+    ['reader', 'Reader'],
+  ].map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
 
   const settingsHidden = _settingsCollapsed ? ' style="display:none"' : '';
   const chevronCls = _settingsCollapsed ? ' collapsed' : '';
@@ -366,6 +423,14 @@ function _buildPanelHTML() {
           Settings<span class="research-settings-chevron">${_chevronIcon}</span>
         </button>
         <div id="research-settings-body" class="research-settings-row"${settingsHidden}>
+          <label class="research-setting">
+            <span class="research-setting-label">Depth</span>
+            <select id="research-depth">${depthOpts}</select>
+          </label>
+          <label class="research-setting">
+            <span class="research-setting-label">Layout</span>
+            <select id="research-report-layout">${layoutOpts}</select>
+          </label>
           <label class="research-setting">
             <span class="research-setting-label">Rounds</span>
             <select id="research-rounds">${roundOpts}</select>
@@ -425,10 +490,7 @@ function _resetCategoryToAuto() {
 function _wireEvents(pane) {
   pane.querySelector('#research-panel-close').addEventListener('click', closePanel);
   pane.querySelector('#research-panel-minimize')?.addEventListener('click', () => {
-    const overlay = document.getElementById('research-overlay');
-    if (overlay) overlay.style.display = 'none';
-    const btn = document.getElementById('tool-research-btn');
-    if (btn) btn.classList.add('minimized');
+    Modals.minimize('research-overlay');
   });
   pane.querySelector('#research-start-btn').addEventListener('click', _handleStart);
   pane.querySelector('#research-add-btn').addEventListener('click', _handleAdd);
@@ -469,6 +531,8 @@ function _readSettings() {
   const category = activeCat?.dataset.cat || undefined;
   const settings = {
     max_rounds: parseInt(document.getElementById('research-rounds')?.value || '0', 10),
+    depth: document.getElementById('research-depth')?.value || undefined,
+    report_layout: document.getElementById('research-report-layout')?.value || undefined,
     search_provider: document.getElementById('research-search-provider')?.value || undefined,
     endpoint_id: document.getElementById('research-endpoint')?.value || undefined,
     model: document.getElementById('research-model')?.value || undefined,
@@ -512,6 +576,10 @@ function _editJob(job) {
   const s = job.settings || {};
   const roundsEl = document.getElementById('research-rounds');
   if (roundsEl && s.max_rounds) roundsEl.value = s.max_rounds;
+  const depthEl = document.getElementById('research-depth');
+  if (depthEl && s.depth) depthEl.value = s.depth;
+  const layoutEl = document.getElementById('research-report-layout');
+  if (layoutEl && s.report_layout) layoutEl.value = s.report_layout;
   const spEl = document.getElementById('research-search-provider');
   if (spEl && s.search_provider) spEl.value = s.search_provider;
   const epEl = document.getElementById('research-endpoint');
@@ -527,20 +595,10 @@ function _editJob(job) {
 async function _handleStart() {
   const queryEl = document.getElementById('research-query');
   const startBtn = document.getElementById('research-start-btn');
+  const now = Date.now();
+  if (now - _lastStartSubmitAt < 900) return;
+  _lastStartSubmitAt = now;
   const query = (queryEl?.value || '').trim();
-
-  // "Start All" mode: more than one job queued → let the user pick parallel
-  // vs sequential before launching. Queue any freshly-typed query first so
-  // it joins the batch, then open the picker anchored to this button.
-  const queuedCount = jobs.getJobs().filter(j => j.status === 'queued').length;
-  if (queuedCount > 1) {
-    if (query) { _saveSettingsToStorage(); jobs.addToQueue(query, _readSettings()); queryEl.value = ''; }
-    _resetCategoryToAuto();
-    if (window.innerWidth <= 768) _dismissKeyboard(queryEl);
-    const total = jobs.getJobs().filter(j => j.status === 'queued').length;
-    _promptParallelOrSequential(total, startBtn);
-    return;
-  }
 
   // Visual + spinner feedback while the launch request is in flight
   const _setBusy = (busy) => {
@@ -600,6 +658,10 @@ function _restoreSavedSettings() {
   }
   // Rounds intentionally defaults to "Auto" on every open — don't restore.
   // Users can pick a specific cap each time if needed.
+  const depth = document.getElementById('research-depth');
+  if (depth && saved.depth) depth.value = saved.depth;
+  const layout = document.getElementById('research-report-layout');
+  if (layout && saved.report_layout) layout.value = saved.report_layout;
   const search = document.getElementById('research-search-provider');
   if (search && saved.search_provider !== undefined) search.value = saved.search_provider;
   const ep = document.getElementById('research-endpoint');
@@ -814,67 +876,6 @@ function _renderJobs() {
   _addSection('past', 'Past research', recentDone.concat(past));
 }
 
-/** Pick parallel vs sequential as a small popover anchored to the
- *  Start-All button. Drops down by default; flips to drop-up if there
- *  isn't enough room below the button. Outside-click / Esc dismiss. */
-function _promptParallelOrSequential(count, anchorBtn) {
-  // Strip any prior instance so a second click closes-then-reopens cleanly.
-  const existing = document.getElementById('research-run-mode-popover');
-  if (existing) { existing.remove(); return; }
-  if (!anchorBtn) return;
-
-  const rect = anchorBtn.getBoundingClientRect();
-  const pop = document.createElement('div');
-  pop.id = 'research-run-mode-popover';
-  pop.className = 'research-run-mode-popover';
-  // Same parallel / sequential glyphs the model-comparison picker uses.
-  const ICON_PARALLEL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>';
-  const ICON_SEQUENTIAL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/></svg>';
-  pop.innerHTML =
-    '<button class="research-run-mode-row" data-mode="parallel">' + ICON_PARALLEL + '<span class="rrm-title">Parallel</span></button>'
-    + '<button class="research-run-mode-row" data-mode="sequential">' + ICON_SEQUENTIAL + '<span class="rrm-title">Sequential</span></button>';
-  document.body.appendChild(pop);
-
-  // Position: prefer dropping down from the button's bottom-right corner.
-  // If there isn't enough room below the viewport, flip to drop-up above.
-  const popHeight = pop.offsetHeight;
-  const margin = 6;
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const goUp = spaceBelow < popHeight + margin && rect.top > popHeight + margin;
-  const top = goUp ? (rect.top - popHeight - margin) : (rect.bottom + margin);
-  // Right-align to the button so the menu doesn't extend off-screen on the right
-  const right = Math.max(8, window.innerWidth - rect.right);
-  pop.style.top = `${Math.round(top)}px`;
-  pop.style.right = `${Math.round(right)}px`;
-  pop.classList.add(goUp ? 'rrm-up' : 'rrm-down');
-
-  const close = () => {
-    pop.remove();
-    document.removeEventListener('click', onDocClick, true);
-    document.removeEventListener('keydown', onKey, true);
-  };
-  const onDocClick = (e) => {
-    if (pop.contains(e.target) || e.target === anchorBtn) return;
-    close();
-  };
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
-  };
-  setTimeout(() => {
-    document.addEventListener('click', onDocClick, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
-
-  pop.querySelectorAll('.research-run-mode-row').forEach(b => {
-    b.addEventListener('click', () => {
-      const mode = b.dataset.mode;
-      close();
-      if (mode === 'parallel') jobs.startAllQueued();
-      else jobs.startAllQueuedSequential();
-    });
-  });
-}
-
 function _buildJobCard(job) {
   const card = document.createElement('div');
   card.className = `research-job-card ${job.status}${job._fromLibrary ? ' from-library' : ''}`;
@@ -914,14 +915,17 @@ function _buildJobCard(job) {
     });
 
   } else if (job.status === 'running') {
-    // Auto mode (max_rounds=0/undefined) — show round number without total,
-    // and base the progress bar on a heuristic cap of 8 rounds.
+    // Auto mode (max_rounds=0/undefined) still shows "Round X" without a
+    // configured total, but the bar should follow the backend's query count.
     const userMaxR = job.settings?.max_rounds || 0;
     const phaseMaxR = userMaxR || 0;  // 0 = formatPhase shows "Round X" without total
     const phase = jobs.formatPhase(job.progress, phaseMaxR);
-    const round = job.progress?.round || 0;
-    const barCap = userMaxR || 8;
-    const pct = Math.min(100, Math.round((round / barCap) * 100));
+    const round = Number(job.progress?.round || 0);
+    const backendQueries = Number(job.progress?.queries || 0);
+    const barCap = userMaxR || backendQueries || 8;
+    let pct = Math.min(100, Math.round((round / barCap) * 100));
+    if (job.progress?.phase === 'analyzing') pct = Math.max(pct, 88);
+    if (job.progress?.phase === 'writing') pct = Math.max(pct, 96);
     card.innerHTML = `
       <div class="research-job-header">
         <span class="research-job-query">${_esc(job.query)}</span>${job.category ? `<span class="research-cat-badge">${_esc(job.category)}</span>` : ""}

@@ -26,7 +26,15 @@
  */
 
 import { previewZoneAt, clearPreview, snapModalToZone, restoreModalSnap } from './tileManager.js';
-import { suspendDock, resumeDock, clearRightDock, applyEdgeDock, clearDockSide } from './modalSnap.js';
+import {
+  suspendDock,
+  resumeDock,
+  clearRightDock,
+  applyEdgeDock,
+  clearDockSide,
+  canUseEdgeDock,
+  preferredEdgeDockSide,
+} from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
@@ -49,6 +57,7 @@ function _getRememberedDock(id) {
   }
 }
 function _applyRememberedDock(id) {
+  if (_androidAutoDockEnabled()) return;
   const side = _getRememberedDock(id);
   if (!side) return;
   const modal = document.getElementById(id);
@@ -393,6 +402,10 @@ const _DOCK_STORAGE_KEY = 'odysseus.mobileDockState.v1';
 const DEFAULT_DOCK_RESET_RADIUS = 72;
 const DEFAULT_DOCK_HOME_BAND_HEIGHT = 132;
 const TOP_LEFT_FALLBACK_SLOP = 16;
+const TOUCH_DOCK_PAGE_CHIPS = 4;
+const TOUCH_DOCK_ROW_PAGE_WIDTH = (TOUCH_DOCK_PAGE_CHIPS * 40) + ((TOUCH_DOCK_PAGE_CHIPS - 1) * 8) + 12;
+const TOUCH_DOCK_STACK_PAGE_WIDTH = 52;
+const TOUCH_DOCK_STACK_PAGE_HEIGHT = TOUCH_DOCK_ROW_PAGE_WIDTH;
 let _dockStateLoaded = false;
 let _dockPosByLayout = {};
 let _dockLayout = _dockLayoutKey();
@@ -489,6 +502,71 @@ function _isTouchLandscape() {
 
 function _isTouchPortrait() {
   return window.matchMedia('(orientation: portrait)').matches && _isTouchInput();
+}
+
+function _usesCompactTouchChips() {
+  return (_isTouchPortrait() || _isTouchLandscape());
+}
+
+function _isOdysseusAndroidApp() {
+  const ua = navigator.userAgent || '';
+  return /\bOdysseusAndroid\b/i.test(ua) || !!window.OdysseusAndroid;
+}
+
+function _androidAutoDockEnabled() {
+  return _isOdysseusAndroidApp() && _isTouchLandscape() && canUseEdgeDock();
+}
+
+function _isModalVisible(modal) {
+  if (!modal || modal.classList?.contains('hidden') || modal.classList?.contains('modal-minimized')) return false;
+  if (modal.style?.display === 'none') return false;
+  const cs = getComputedStyle(modal);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  const content = _modalWindowContent(modal);
+  const rect = content?.getBoundingClientRect?.();
+  return !!rect && rect.width > 0 && rect.height > 0;
+}
+
+function _isAndroidAutoDockTarget(id, modal) {
+  if (!id || !modal || id === 'doc-panel') return false;
+  if (_AUTO_WIRE[id]) return true;
+  if (id.startsWith('email-reader-')) return true;
+  return !!modal.classList?.contains('email-window-modal');
+}
+
+function _isDockedOrExpanded(modal) {
+  if (_isFullExpanded(modal)) return true;
+  const docked = !!(modal?.classList?.contains('modal-left-docked')
+    || modal?.classList?.contains('modal-right-docked')
+    || modal?.classList?.contains('email-snap-left'));
+  if (!docked) return false;
+  return !_modalWindowContent(modal)?._dockSuspended;
+}
+
+function _scheduleAndroidDefaultDock(id, modal) {
+  if (!_androidAutoDockEnabled() || !_isAndroidAutoDockTarget(id, modal)) return false;
+  if (_isDockedOrExpanded(modal)) return true;
+  const token = (modal._mmAndroidAutoDockToken || 0) + 1;
+  modal._mmAndroidAutoDockToken = token;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (modal._mmAndroidAutoDockToken !== token) return;
+    if (!_androidAutoDockEnabled() || !_isAndroidAutoDockTarget(id, modal) || !_isModalVisible(modal)) return;
+    if (_isDockedOrExpanded(modal)) return;
+    try {
+      const content = _modalWindowContent(modal);
+      if (content?._dockSuspended) delete content._dockSuspended;
+      applyEdgeDock(modal, preferredEdgeDockSide(modal));
+    } catch (e) {
+      console.warn('Android auto dock failed', e);
+    }
+  }));
+  return true;
+}
+
+function _handleModalShown(id, modal) {
+  _bringToFront(modal);
+  if (!_scheduleAndroidDefaultDock(id, modal)) _applyRememberedDock(id);
+  _emitModalOpened(id, modal);
 }
 
 function _readRootPx(name) {
@@ -616,8 +694,144 @@ function _dockWorkspaceBounds() {
   return { left, right };
 }
 
+function _isTouchMenuOpen() {
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar && !sidebar.classList.contains('hidden') && _visibleRect(sidebar)) return true;
+  const rail = document.getElementById('icon-rail');
+  return !!(rail && rail.classList.contains('mobile-mini') && _visibleRect(rail));
+}
+
+function _isPortraitMenuOpen() {
+  return _isTouchMenuOpen();
+}
+
+function _syncDockRowMode(dock, bounds = _dockWorkspaceBounds()) {
+  if (!dock) return;
+  const touchPortrait = _isTouchPortrait();
+  const touchLandscape = _isTouchLandscape();
+  const compactTouchChips = _usesCompactTouchChips();
+  const menuOpen = _isTouchMenuOpen();
+  const pagedTouchDock = touchPortrait || (touchLandscape && menuOpen);
+  const stackedTouchPages = touchPortrait && menuOpen;
+  const previousPaged = dock.classList.contains('dock-paged-row');
+  const previousStacked = dock.classList.contains('dock-stacked-pages');
+  const previousPageSize = Math.max(44, (previousStacked ? dock.clientHeight : dock.clientWidth)
+    || (previousStacked ? TOUCH_DOCK_STACK_PAGE_HEIGHT : TOUCH_DOCK_ROW_PAGE_WIDTH));
+  const previousScroll = previousStacked ? (dock.scrollTop || 0) : (dock.scrollLeft || 0);
+  const previousPageIndex = previousPaged ? Math.round(previousScroll / previousPageSize) : 0;
+  const available = Math.max(44, bounds.right - bounds.left - 16);
+  const touchPageWidth = stackedTouchPages ? TOUCH_DOCK_STACK_PAGE_WIDTH : TOUCH_DOCK_ROW_PAGE_WIDTH;
+  const maxWidth = pagedTouchDock ? Math.min(available, touchPageWidth) : available;
+  dock.style.maxWidth = `${Math.round(maxWidth)}px`;
+  if (stackedTouchPages) {
+    dock.style.height = `${Math.round(TOUCH_DOCK_STACK_PAGE_HEIGHT)}px`;
+  } else {
+    dock.style.removeProperty('height');
+  }
+  dock.classList.toggle('dock-single-row', touchLandscape && !pagedTouchDock);
+  dock.classList.toggle('dock-paged-row', pagedTouchDock);
+  dock.classList.toggle('dock-stacked-pages', stackedTouchPages);
+  dock.classList.toggle('dock-compact-chips', compactTouchChips);
+  if (previousPaged !== pagedTouchDock || previousStacked !== stackedTouchPages) {
+    requestAnimationFrame(() => {
+      if (!dock.classList.contains('dock-paged-row')) {
+        dock.scrollLeft = 0;
+        dock.scrollTop = 0;
+        return;
+      }
+      const pages = [...dock.querySelectorAll('.minimized-dock-page')];
+      const stacked = dock.classList.contains('dock-stacked-pages');
+      const targetPage = pages[Math.max(0, Math.min(pages.length - 1, previousPageIndex))];
+      const maxScroll = stacked
+        ? Math.max(0, dock.scrollHeight - dock.clientHeight)
+        : Math.max(0, dock.scrollWidth - dock.clientWidth);
+      const next = targetPage
+        ? Math.max(0, Math.min(maxScroll, stacked
+            ? targetPage.offsetTop - dock.clientTop
+            : targetPage.offsetLeft - dock.clientLeft))
+        : 0;
+      if (stacked) {
+        dock.scrollTo({ top: next, behavior: 'auto' });
+      } else {
+        dock.scrollTo({ left: next, behavior: 'auto' });
+      }
+    });
+  }
+}
+
+function _pageTouchDock(dock, direction, { wrap = false } = {}) {
+  if (!dock || !dock.classList.contains('dock-paged-row')) return false;
+  const stacked = dock.classList.contains('dock-stacked-pages');
+  const maxScroll = stacked
+    ? Math.max(0, dock.scrollHeight - dock.clientHeight)
+    : Math.max(0, dock.scrollWidth - dock.clientWidth);
+  if (maxScroll <= 1) return false;
+  const current = stacked ? (dock.scrollTop || 0) : (dock.scrollLeft || 0);
+  const rawPageOffsets = [...dock.querySelectorAll('.minimized-dock-page')]
+    .map(page => Math.max(0, Math.min(maxScroll, stacked
+      ? page.offsetTop - dock.clientTop
+      : page.offsetLeft - dock.clientLeft)))
+    .filter((offset, index, offsets) => index === 0 || Math.abs(offset - offsets[index - 1]) > 2);
+  const offsetOrigin = rawPageOffsets[0] || 0;
+  const pageOffsets = rawPageOffsets
+    .map(offset => Math.max(0, Math.min(maxScroll, offset - offsetOrigin)))
+    .filter((offset, index, offsets) => index === 0 || Math.abs(offset - offsets[index - 1]) > 2);
+  const fallbackPageWidth = dock.classList.contains('dock-stacked-pages')
+    ? TOUCH_DOCK_STACK_PAGE_HEIGHT
+    : TOUCH_DOCK_ROW_PAGE_WIDTH;
+  const page = Math.max(44, (stacked ? dock.clientHeight : dock.clientWidth) || fallbackPageWidth);
+  let next = direction > 0
+    ? Math.min(maxScroll, current + page)
+    : Math.max(0, current - page);
+  if (pageOffsets.length) {
+    if (direction > 0) {
+      next = pageOffsets.find(offset => offset > current + 2);
+      if (next == null) next = wrap ? pageOffsets[0] : maxScroll;
+    } else {
+      next = [...pageOffsets].reverse().find(offset => offset < current - 2);
+      if (next == null) next = wrap ? pageOffsets[pageOffsets.length - 1] : 0;
+    }
+  } else if (wrap) {
+    if (direction > 0 && current >= maxScroll - 2) next = 0;
+    if (direction < 0 && current <= 2) next = maxScroll;
+  }
+  if (Math.abs(next - current) < 2) return false;
+  try {
+    if (stacked) dock.scrollTo({ top: next, behavior: 'smooth' });
+    else dock.scrollTo({ left: next, behavior: 'smooth' });
+  } catch (_) {
+    if (stacked) dock.scrollTop = next;
+    else dock.scrollLeft = next;
+  }
+  _settleTouchDockPage(dock, next, stacked);
+  return true;
+}
+
+function _settleTouchDockPage(dock, next, stacked) {
+  if (!stacked || !dock) return;
+  if (dock._touchDockSettleTimers) {
+    dock._touchDockSettleTimers.forEach(clearTimeout);
+  }
+  const forcePage = () => {
+    const current = dock.scrollTop || 0;
+    if (Math.abs(current - next) <= 2) return;
+    const previousSnap = dock.style.scrollSnapType;
+    dock.style.scrollSnapType = 'none';
+    dock.scrollTop = next;
+    requestAnimationFrame(() => {
+      dock.scrollTop = next;
+      dock.style.scrollSnapType = previousSnap;
+    });
+  };
+  dock._touchDockSettleTimers = [
+    setTimeout(forcePage, 260),
+    setTimeout(forcePage, 560),
+  ];
+}
+
 function _clampDockPosition(dock, left, top) {
   const bounds = _dockWorkspaceBounds();
+  _syncDockRowMode(dock, bounds);
   const width = Math.max(44, dock.offsetWidth || 44);
   const height = Math.max(36, dock.offsetHeight || 36);
   const minLeft = bounds.left + 8;
@@ -645,6 +859,7 @@ function _clampChipPosition(left, top, width = 44, height = 44) {
 function _applyDockPos(dock) {
   _syncDockLayout();
   const bounds = _dockWorkspaceBounds();
+  _syncDockRowMode(dock, bounds);
   if (!_dockPos) {
     dock.style.left = `${Math.round((bounds.left + bounds.right) / 2)}px`;
     dock.style.right = 'auto';
@@ -671,6 +886,10 @@ function _wireDockPlacement(dock) {
       const current = document.getElementById('minimized-dock');
       if (!current || current.style.display === 'none') return;
       _applyDockPos(current);
+      const hasChips = !!current.querySelector('.minimized-dock-chip');
+      const hasPagedStructure = !!current.querySelector('.minimized-dock-page');
+      const wantsPagedStructure = current.classList.contains('dock-paged-row');
+      if (hasChips && hasPagedStructure !== wantsPagedStructure) _renderDock();
     });
   };
   window.addEventListener('resize', schedule);
@@ -692,6 +911,10 @@ function _wireDockPlacement(dock) {
     attributes: true,
     attributeFilter: ['style'],
   });
+  const navObserver = new MutationObserver(schedule);
+  for (const el of [document.getElementById('sidebar'), document.getElementById('icon-rail')]) {
+    if (el) navObserver.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+  }
 }
 
 // True when `chipRect` is close enough to the dock's current location that
@@ -726,8 +949,8 @@ function _renderDock() {
   // On mobile we ALSO keep chips around for any modal that's been
   // free-positioned on screen — even while it's open — so the chip acts as
   // a persistent toggle (tap to minimize, tap again to restore).
-  const isMobile = window.innerWidth <= 768;
-  const persistentIds = isMobile
+  const isTouchChipDock = _usesCompactTouchChips();
+  const persistentIds = isTouchChipDock
     ? [..._state.entries()].filter(([id, _]) => _chipPositions.has(id)).map(([id]) => id)
     : [];
   const allIds = Array.from(new Set([...minimizedIds, ...persistentIds]));
@@ -804,12 +1027,28 @@ function _renderDock() {
   // first time it re-populates after every chip was restored.
   _applyDockPos(dock);
   dock.innerHTML = '';
+  let touchPage = null;
+  let touchPageChipCount = 0;
+  const appendDockChip = (chip) => {
+    if (dock.classList.contains('dock-paged-row')) {
+      if (!touchPage || touchPageChipCount % TOUCH_DOCK_PAGE_CHIPS === 0) {
+        touchPage = document.createElement('div');
+        touchPage.className = 'minimized-dock-page';
+        dock.appendChild(touchPage);
+      }
+      touchPage.appendChild(chip);
+      touchPageChipCount += 1;
+      return;
+    }
+    dock.appendChild(chip);
+  };
   for (const id of renderIds) {
     const meta = _LABELS[id] || { label: id, icon: '' };
     const chip = document.createElement('button');
     chip.type = 'button';
     chip.className = 'minimized-dock-chip';
     chip.dataset.modalId = id;
+    if (isTouchChipDock) chip.classList.add('chip-compact-touch');
     chip.title = `Restore ${meta.label}`;
     // Restore any external data-* attributes the previous chip carried
     // (e.g. emailLibrary's data-tab-num slot-number badge).
@@ -856,14 +1095,14 @@ function _renderDock() {
     // transform: translateX(-50%) doesn't shift their `position: fixed`
     // coords. Dock-resident chips render as normal flex children.
     const pos = _chipPositions.get(id);
-    if (pos && window.innerWidth <= 768) {
+    if (pos && isTouchChipDock) {
       chip.style.setProperty('position', 'fixed', 'important');
       chip.style.setProperty('left', `${pos.left}px`, 'important');
       chip.style.setProperty('top', `${pos.top}px`, 'important');
       chip.style.setProperty('z-index', '10020', 'important');
       document.body.appendChild(chip);
     } else {
-      dock.appendChild(chip);
+      appendDockChip(chip);
     }
   }
   _applyDockPos(dock);
@@ -941,7 +1180,7 @@ const LONG_PRESS_MS = 380;
 const REDOCK_RADIUS = 90;
 
 function _detachToFreeDrag(chip, dock, chipStartLeft, chipStartTop) {
-  if (chip.parentElement === dock) {
+  if (chip.parentElement === dock || dock.contains(chip)) {
     chip.style.setProperty('position', 'fixed', 'important');
     chip.style.setProperty('left', `${chipStartLeft}px`, 'important');
     chip.style.setProperty('top', `${chipStartTop}px`, 'important');
@@ -1098,6 +1337,7 @@ function _wireChipDrag(chip, dock) {
   let chipSnapZone = null;   // desktop: snap zone under the cursor while dragging a chip
   let dragArmed = false;
   let movedBeforeArm = false;
+  let pagedSwipeHandled = false;
   const CAPTURE_RADIUS = 70;
 
   const suppressTrailingClick = (ms = 350) => {
@@ -1148,6 +1388,7 @@ function _wireChipDrag(chip, dock) {
     startX = e.clientX; startY = e.clientY; dragging = false;
     dragArmed = false;
     movedBeforeArm = false;
+    pagedSwipeHandled = false;
     activePointerId = e.pointerId;
     // Flag global "a chip is being touched" so other touch handlers (e.g.
     // the chat container's edge-swipe-to-open-sidebar) know to stand down.
@@ -1160,7 +1401,7 @@ function _wireChipDrag(chip, dock) {
     chipStartLeft = cr.left;
     chipStartTop = cr.top;
 
-    const onTouch = (e.pointerType === 'touch' || window.innerWidth <= 768);
+    const onTouch = (e.pointerType === 'touch' || _usesCompactTouchChips());
     if (onTouch) {
       const isFree = _chipPositions.has(chip.dataset.modalId);
       trashZone = _ensureTrashZone();
@@ -1277,8 +1518,24 @@ function _wireChipDrag(chip, dock) {
     // Touch fingers drift a few pixels even on a "still" tap, so the touch
     // threshold is generous — otherwise a tap-to-restore reads as a drag
     // and the click gets eaten when the chain settles.
-    const DRAG_THRESHOLD = (e.pointerType === 'touch' || window.innerWidth <= 768) ? 14 : 5;
+    const DRAG_THRESHOLD = (e.pointerType === 'touch' || _usesCompactTouchChips()) ? 14 : 5;
     if (!dragging && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    if (!dragging && !dragArmed && dock.classList.contains('dock-paged-row')) {
+      const stackedDock = dock.classList.contains('dock-stacked-pages');
+      const horizontalSwipe = !stackedDock && Math.abs(dx) > Math.abs(dy) * 1.25;
+      const verticalStackSwipe = stackedDock && Math.abs(dy) > Math.abs(dx) * 1.05;
+      if (horizontalSwipe || verticalStackSwipe) {
+        cancelLongPress();
+        movedBeforeArm = true;
+        if (!pagedSwipeHandled) {
+          const direction = verticalStackSwipe ? (dy < 0 ? 1 : -1) : (dx < 0 ? 1 : -1);
+          pagedSwipeHandled = _pageTouchDock(dock, direction, { wrap: stackedDock });
+        }
+        suppressTrailingClick(220);
+        e.preventDefault && e.preventDefault();
+        return;
+      }
+    }
     if (!dragging && !dragArmed) {
       movedBeforeArm = true;
       suppressTrailingClick(160);
@@ -1447,6 +1704,7 @@ function _wireChipDrag(chip, dock) {
     dragArmed = false;
     if (movedBeforeArm && !dragging) suppressTrailingClick(160);
     movedBeforeArm = false;
+    pagedSwipeHandled = false;
     // Clear the global drag flag so the chat container's edge-swipe handler
     // can resume opening the sidebar on plain swipes.
     setTimeout(() => { window._chipDragging = false; }, 0);
@@ -1709,9 +1967,7 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
     const obs = new MutationObserver(() => {
       const vis = _isVisible();
       if (vis && !_modalEl._mmAutoStackLast) {
-        _bringToFront(_modalEl);
-        _applyRememberedDock(id);
-        _emitModalOpened(id, _modalEl);
+        _handleModalShown(id, _modalEl);
       }
       _modalEl._mmAutoStackLast = vis;
     });
@@ -1720,9 +1976,7 @@ export function register(id, { restoreFn, closeFn, railBtnId, sidebarBtnId, labe
     // If it's already visible at register time (e.g. modal opened before
     // register completes), bump it once now too.
     if (_modalEl._mmAutoStackLast) {
-      _bringToFront(_modalEl);
-      _applyRememberedDock(id);
-      _emitModalOpened(id, _modalEl);
+      _handleModalShown(id, _modalEl);
     }
     _settleMobileSheet(_modalEl);
   }
@@ -1813,9 +2067,11 @@ export function restore(id) {
     // should bring this tool to the front, not leave it stuck behind one with
     // a higher static z-index.
     _bringToFront(modal);
-    // If the window was edge-docked when minimized, re-apply the dock so the
-    // chat nudges back in and the window returns exactly where it was.
-    try { resumeDock(modal); } catch (e) { console.warn('resumeDock on restore failed', e); }
+    if (!_scheduleAndroidDefaultDock(id, modal)) {
+      // If the window was edge-docked when minimized, re-apply the dock so the
+      // chat nudges back in and the window returns exactly where it was.
+      try { resumeDock(modal); } catch (e) { console.warn('resumeDock on restore failed', e); }
+    }
     _emitModalOpened(id, modal);
     _settleMobileSheet(modal);
   }
@@ -2050,7 +2306,9 @@ window.addEventListener('odysseus:edge-dock-minimize', (e) => {
 window.addEventListener('odysseus:edge-dock-replace', (e) => {
   const modal = e.detail?.modal;
   if (!modal || modal === e.detail?.replacement) return;
-  _minimizeDockedModal(modal, 'replace');
+  if (_minimizeDockedModal(modal, 'replace')) {
+    e.preventDefault();
+  }
 });
 
 // Watch the document for tool modals being added/shown and inject the `_`
@@ -2062,6 +2320,7 @@ function _scanAndWire() {
     const modal = document.getElementById(id);
     if (!modal) continue;
     injectMinimizeButton(modal, id);
+    if (_isModalVisible(modal)) _scheduleAndroidDefaultDock(id, modal);
   }
 }
 const _scanTimer = setInterval(_scanAndWire, 1000);

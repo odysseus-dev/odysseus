@@ -630,11 +630,14 @@ async function loadEndpoints() {
                 <a href="#" data-ep-select-none="${epId}">None</a>
               </span>
             </div>${warningHtml}${showSearch ? `<input type="search" class="mcp-tools-search" placeholder="Search ${sortedModels.length} models..." data-ep-search="${epId}">` : ''}<div class="mcp-tools-list">` + sortedModels.map(m =>
-              `<label title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
-                <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
-                <span class="adm-check-dot" aria-hidden="true"></span>
-                <span>${esc(m.display)}</span>
-              </label>`
+              `<div title="${esc(m.id)}" data-ep-model-row data-search="${esc((m.display + ' ' + m.id).toLowerCase())}" class="adm-model-row">
+                <label class="adm-model-toggle">
+                  <input type="checkbox" class="adm-cb-hidden" data-ep-model-id="${esc(m.id)}" ${!m.is_hidden ? 'checked' : ''}>
+                  <span class="adm-check-dot" aria-hidden="true"></span>
+                  <span class="adm-model-name">${esc(m.display)}</span>
+                </label>
+                <button type="button" class="adm-model-unload" data-ep-unload-model="${esc(m.id)}" title="Unload this model from its runtime">Unload</button>
+              </div>`
             ).join('') + '</div>';
             const filterRows = (q) => {
               const needle = q.trim().toLowerCase();
@@ -657,6 +660,41 @@ async function loadEndpoints() {
                 if (row.style.display !== 'none') row.querySelector('input[type=checkbox]').checked = false;
               });
               _saveEpModelState(epId, panel);
+            });
+            panel.querySelectorAll('[data-ep-unload-model]').forEach(btn => {
+              btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const model = btn.dataset.epUnloadModel || '';
+                const row = btn.closest('[data-ep-model-row]');
+                const label = row?.querySelector('.adm-model-name')?.textContent || model;
+                const prev = btn.textContent;
+                btn.disabled = true;
+                btn.textContent = '...';
+                try {
+                  const res = await fetch(`/api/model-endpoints/${epId}/unload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ model }),
+                  });
+                  let data = {};
+                  try { data = await res.json(); } catch (_) {}
+                  if (!res.ok || !data.ok) {
+                    throw new Error(data.detail || data.message || `Unload failed (${res.status})`);
+                  }
+                  if (uiModule && uiModule.showToast) {
+                    uiModule.showToast(data.message || `Unload requested for ${label}`, 2600);
+                  }
+                } catch (err) {
+                  if (uiModule && uiModule.showToast) {
+                    uiModule.showToast(err && err.message ? err.message : 'Unload failed', 5200);
+                  }
+                } finally {
+                  btn.disabled = false;
+                  btn.textContent = prev;
+                }
+              });
             });
             panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
               cb.addEventListener('change', () => _saveEpModelState(epId, panel));
@@ -856,6 +894,7 @@ function initEndpointForm() {
   }
   function _normalizeBaseUrl(raw) {
     let u = raw.trim();
+    u = u.replace(/\\/g, '/');
     // Fix common protocol typos
     u = u.replace(/^https?:\/(?!\/)/, m => m + '/');  // https:/ → https://
     u = u.replace(/^htp:/, 'http:').replace(/^htps:/, 'https:');
@@ -875,6 +914,18 @@ function initEndpointForm() {
     u = u.split('?')[0].split('#')[0];
     try {
       const parsed = new URL(u);
+      const host = parsed.hostname.toLowerCase();
+      const knownOpenAiV1Hosts = new Set([
+        'api.deepseek.com',
+        'api.openai.com',
+        'api.x.ai',
+        'api.mistral.ai',
+        'api.together.xyz',
+      ]);
+      if (knownOpenAiV1Hosts.has(host) && (!parsed.pathname || parsed.pathname === '/')) {
+        parsed.pathname = '/v1';
+        u = parsed.toString().replace(/\/+$/, '');
+      }
       if (parsed.hostname.endsWith('ollama.com')) {
         u = 'https://ollama.com/api';
       }
@@ -890,6 +941,52 @@ function initEndpointForm() {
     }
     return u;
   }
+
+  function _isMobileStandalone() {
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      if (params.get('mobile') === 'standalone') return true;
+    } catch (_) {}
+    try {
+      const ua = navigator.userAgent || '';
+      return /\bOdysseusAndroid\b/i.test(ua) && /^https?:\/\/127\.0\.0\.1:70[1-3][0-9]\b/i.test(window.location.href || '');
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function _clearStandaloneEndpointDrafts() {
+    if (!_isMobileStandalone()) return;
+    const resetKey = 'odysseus.mobileStandalone.endpointDraftReset.v1';
+    let shouldReset = true;
+    try { shouldReset = localStorage.getItem(resetKey) !== '1'; } catch (_) {}
+
+    const localUrlInput = el('adm-epLocalUrl');
+    if (shouldReset && localUrlInput && localUrlInput.value.trim()) {
+      const normalized = _normalizeBaseUrl(localUrlInput.value);
+      if (_isLocalEndpoint(normalized)) localUrlInput.value = '';
+    }
+    if (shouldReset) {
+      const localKey = el('adm-epLocalApiKey');
+      const apiKey = el('adm-epApiKey');
+      if (localKey) localKey.value = '';
+      if (apiKey) apiKey.value = '';
+      try { localStorage.setItem(resetKey, '1'); } catch (_) {}
+    }
+
+    if (!urlInput) return;
+    const rawApiUrl = urlInput.value.trim();
+    if (provider && provider.value && !DEVICE_AUTH_PROVIDER_VALUES.has(provider.value)) {
+      const hasStaleDraft = rawApiUrl && rawApiUrl !== provider.value;
+      if (!rawApiUrl || hasStaleDraft || rawApiUrl.includes('\\')) urlInput.value = provider.value;
+    } else if (rawApiUrl.includes('\\')) {
+      urlInput.value = _normalizeBaseUrl(rawApiUrl);
+    }
+  }
+
+  _clearStandaloneEndpointDrafts();
+  setTimeout(_clearStandaloneEndpointDrafts, 0);
+  setTimeout(_clearStandaloneEndpointDrafts, 250);
 
   async function _defaultOllamaUrl() {
     try {

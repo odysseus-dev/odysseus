@@ -177,13 +177,23 @@ function initializeEventListeners() {
   }
 
   // Scrolling
-  el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
+  const _updateChatAtBottomState = () => {
     const box = el('chat-history');
+    if (!box) return false;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
-    uiModule.setAutoScroll(atBottom);
+    const hasMessages = !!box.querySelector(':scope > .msg');
+    document.body.classList.toggle('chat-at-bottom', hasMessages && atBottom);
+    return atBottom;
+  };
+  _updateChatAtBottomState();
+  new MutationObserver(() => requestAnimationFrame(_updateChatAtBottomState))
+    .observe(el('chat-history'), { childList: true });
+  el('chat-history').addEventListener('scroll', uiModule.debounce(() => {
+    uiModule.setAutoScroll(_updateChatAtBottomState());
   }, 100));
   // Close all footer popups immediately on any scroll
   el('chat-history').addEventListener('scroll', () => {
+    _updateChatAtBottomState();
     document.querySelectorAll('.ctx-popup, .memory-used-detail, .msg-overflow-menu').forEach(p => p.remove());
     document.querySelectorAll('.memory-used-pill').forEach(p => { p._openDetail = null; });
   }, { passive: true });
@@ -861,12 +871,11 @@ function initializeEventListeners() {
   // Document library tool button
   const toolDoclibBtn = el('tool-doclib-btn');
   if (toolDoclibBtn) {
-    toolDoclibBtn.addEventListener('click', () => {
+    toolDoclibBtn.addEventListener('click', async () => {
       if (_closeCompareIfActive()) return;
       if (documentModule) {
-        if (documentModule.isLibraryOpen()) {
-          documentModule.closeLibrary();
-        } else {
+        const Modals = await import('./js/modalManager.js');
+        if (!Modals.toggle('doclib-modal')) {
           documentModule.openLibrary();
         }
       }
@@ -895,9 +904,12 @@ function initializeEventListeners() {
     btn.addEventListener("click", () => {
     });
   });
-    toolTasksBtn.addEventListener('click', () => {
+    toolTasksBtn.addEventListener('click', async () => {
       if (tasksModule) {
-        tasksModule.isTasksOpen() ? tasksModule.closeTasks() : tasksModule.openTasks();
+        const Modals = await import('./js/modalManager.js');
+        if (!Modals.toggle('tasks-modal')) {
+          tasksModule.openTasks();
+        }
       }
     });
   }
@@ -2749,7 +2761,7 @@ function initializeEventListeners() {
     // custom-preset-modal (the Prompt window) is handled by the new
     // modalManager dock (registered in _AUTO_WIRE), so the legacy dock must
     // not also inject a `_`/chip for it.
-    const SKIP_IDS = new Set(['styled-confirm-overlay', 'custom-preset-modal']);
+    const SKIP_IDS = new Set(['styled-confirm-overlay', 'custom-preset-modal', 'gallery-modal']);
     const dockEntries = new Map(); // modal element -> dock entry element
 
     let dock = document.getElementById('modal-dock');

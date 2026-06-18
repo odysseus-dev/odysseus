@@ -976,15 +976,41 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "manage_gallery",
+            "description": "List, search, inspect, or describe images saved in the user's Gallery. Use this when the user asks whether you can see their gallery/photos, wants to find/use a gallery image, or asks what is in a saved image. action='describe' uses the configured vision model when available.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["list", "search", "get", "describe"], "description": "list/search returns matching Gallery images; get returns metadata; describe sends one image to the vision model."},
+                    "query": {"type": "string", "description": "Search text for prompt/name/tags/model. Also used to pick the newest match when image_id is omitted for get/describe."},
+                    "image_id": {"type": "string", "description": "Gallery image ID for get/describe."},
+                    "tag": {"type": "string", "description": "Optional comma-separated tag filter for list/search."},
+                    "album_id": {"type": "string", "description": "Optional album ID filter for list/search."},
+                    "favorites": {"type": "boolean", "description": "Only return favorited images."},
+                    "limit": {"type": "integer", "description": "Maximum list/search results to return, 1-25."},
+                    "include_description": {"type": "boolean", "description": "For get, also run vision description."}
+                },
+                "required": ["action"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "edit_image",
-            "description": "Edit a gallery image: upscale, remove background, inpaint, or harmonize.",
+            "description": "Edit a saved Gallery image and save the edited copy back to Gallery. Use manage_gallery first when you need an image_id. Inpaint requires a mask or mask_image_id; harmonize needs a configured diffusion/img2img endpoint; sharpen works locally.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "image_id": {"type": "string", "description": "Gallery image ID"},
-                    "action": {"type": "string", "enum": ["upscale", "rembg", "inpaint", "harmonize"], "description": "Edit action"},
-                    "prompt": {"type": "string", "description": "For inpaint: what to fill the masked area with"},
+                    "action": {"type": "string", "enum": ["sharpen", "denoise", "upscale", "rembg", "remove_bg", "inpaint", "harmonize", "enhance_face"], "description": "Edit action"},
+                    "prompt": {"type": "string", "description": "For inpaint/harmonize: the desired visual change"},
                     "scale": {"type": "number", "description": "For upscale: scale factor (default 2)"},
+                    "amount": {"type": "number", "description": "For sharpen: amount 0-100 (default 50)"},
+                    "strength": {"type": "number", "description": "For denoise/harmonize/inpaint: edit strength 0-1"},
+                    "mask": {"type": "string", "description": "Base64 PNG mask for inpaint; white pixels mark the area to regenerate"},
+                    "mask_image_id": {"type": "string", "description": "Gallery image ID containing a mask for inpaint"},
+                    "name": {"type": "string", "description": "Optional name for the edited copy saved to Gallery"}
                 },
                 "required": ["image_id", "action"]
             }

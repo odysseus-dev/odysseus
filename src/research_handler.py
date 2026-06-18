@@ -253,6 +253,7 @@ class ResearchHandler:
         max_rounds: int = 20,
         search_provider: str = None,
         category: str = None,
+        report_layout: str = None,
         extraction_timeout: int = None,
         extraction_concurrency: int = None,
         owner: str = "",
@@ -302,6 +303,7 @@ class ResearchHandler:
             "result": None,
             "started_at": time.time(),
             "category": category,
+            "report_layout": report_layout or "auto",
             # SECURITY: track ownership so all reads / saves can filter by user.
             "owner": owner or "",
         }
@@ -623,6 +625,7 @@ class ResearchHandler:
                 "raw_findings": raw_findings,
                 "stats": entry.get("stats"),
                 "category": entry.get("category"),
+                "report_layout": entry.get("report_layout", "auto"),
                 "started_at": entry["started_at"],
                 "completed_at": time.time(),
                 # SECURITY: stamp owner so route handlers can filter by user.
@@ -672,6 +675,7 @@ class ResearchHandler:
                 category=data.get("category"),
                 session_id=session_id,
                 hidden_images=data.get("hidden_images") or [],
+                report_layout=data.get("report_layout", "auto"),
             )
             logger.info(f"Visual report generated for {session_id}")
             return html_content

@@ -24,12 +24,32 @@ import {
 import { state } from './emailLibrary/state.js';
 
 const API_BASE = window.location.origin;
+const _EMAIL_DESKTOP_PAGE_LIMIT = 100;
+const _EMAIL_MOBILE_PAGE_LIMIT = 40;
 let _emailUnreadChipClickWired = false;
 let _libLoadSeq = 0;
 let _libFolderSeq = 0;
 let _libSearchSeq = 0;
 let _libSearchHadResults = false;
 let _activeEmailReaderForSelectAll = null;
+
+function _isCompactEmailViewport() {
+  try {
+    return (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) || window.innerWidth <= 768;
+  } catch (_) {
+    return window.innerWidth <= 768;
+  }
+}
+
+function _clampEmailLimit(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(1, Math.min(_EMAIL_DESKTOP_PAGE_LIMIT, Math.floor(n)));
+}
+
+function _emailPageLimit() {
+  return _isCompactEmailViewport() ? _EMAIL_MOBILE_PAGE_LIMIT : _EMAIL_DESKTOP_PAGE_LIMIT;
+}
 
 function _isEmailTypingTarget(t) {
   return !!(t && (
@@ -62,6 +82,38 @@ function _markEmailReaderActive(reader) {
 }
 
 const _COPY_EMAIL_ICON = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const _EMAIL_FIT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/><path d="M9 4 4 9"/><path d="m15 4 5 5"/><path d="m9 20-5-5"/><path d="m15 20 5-5"/></svg>';
+
+function _fitPageButtonHtml() {
+  return `<button class="memory-toolbar-btn reader-icon-btn email-reader-fit-btn" data-act="fit-page" type="button" title="Fit email to page" aria-label="Fit email to page" aria-pressed="false">${_EMAIL_FIT_ICON}<span class="reader-btn-label">Fit</span></button>`;
+}
+
+function _syncEmailReaderFitButton(reader) {
+  const btn = reader?.querySelector?.('[data-act="fit-page"]');
+  if (!btn) return;
+  const active = !!reader?.classList?.contains('email-reader-fit-page');
+  btn.classList.toggle('active', active);
+  btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  btn.title = active ? 'Use original email width' : 'Fit email to page';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function _toggleEmailReaderFitPage(reader) {
+  if (!reader) return;
+  const active = reader.classList.toggle('email-reader-fit-page');
+  const body = reader.querySelector?.('.email-reader-body');
+  if (body && active) body.scrollLeft = 0;
+  _syncEmailReaderFitButton(reader);
+}
+
+function _wireEmailReaderFitPage(reader) {
+  if (!reader) return;
+  _syncEmailReaderFitButton(reader);
+  reader.querySelector?.('[data-act="fit-page"]')?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    _toggleEmailReaderFitPage(reader);
+  });
+}
 
 function _decodeAttrValue(v) {
   const tmp = document.createElement('textarea');
@@ -642,23 +694,25 @@ function _loadEmailsFresh() {
   return _loadEmails({ force: true, useCache: false });
 }
 
-export function prewarmEmailLibrary({ delay = 2500 } = {}) {
+export function prewarmEmailLibrary({ delay = 2500, limit = null } = {}) {
   if (_libPrewarmTimer || _libPrewarmPromise) return;
   const elapsed = Date.now() - _libLastPrewarmAt;
   if (elapsed >= 0 && elapsed < 60000) return;
+  const warmLimit = _clampEmailLimit(limit, _emailPageLimit());
   _libPrewarmTimer = setTimeout(() => {
     _libPrewarmTimer = null;
-    _libPrewarmPromise = _prewarmDefaultEmailView()
+    _libPrewarmPromise = _prewarmDefaultEmailView({ limit: warmLimit })
       .catch(() => {})
       .finally(() => { _libPrewarmPromise = null; });
   }, Math.max(0, Number(delay) || 0));
 }
 
-async function _prewarmDefaultEmailView() {
+async function _prewarmDefaultEmailView({ limit = null } = {}) {
   if (state._libOpen) return;
   _libLastPrewarmAt = Date.now();
   const folder = 'INBOX';
   const filter = 'all';
+  const warmLimit = _clampEmailLimit(limit, _emailPageLimit());
   const accountId = state._libAccountId || '';
   const ck = _libCacheKeyFor(accountId, folder, filter, false);
   if (_libCacheGet(ck)) return;
@@ -675,7 +729,7 @@ async function _prewarmDefaultEmailView() {
   } catch (_) {}
 
   const accountQS = accountId ? `&account_id=${encodeURIComponent(accountId)}` : '';
-  const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folder)}${accountQS}&limit=100&offset=0&filter=${filter}`, {
+  const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folder)}${accountQS}&limit=${warmLimit}&offset=0&filter=${filter}`, {
     credentials: 'same-origin',
   });
   if (!res.ok) return;
@@ -1641,6 +1695,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
   const offsetAtStart = state._libOffset;
   const searchAtStart = state._libSearch;
   const hasAttachmentsAtStart = state._libHasAttachments;
+  const pageLimit = _emailPageLimit();
 
   const grid = document.getElementById('email-lib-grid');
   if (!grid) { if (seq === _libLoadSeq) state._libLoading = false; return; }
@@ -1690,7 +1745,7 @@ async function _loadEmails({ force = false, useCache = true } = {}) {
       // opens omit it so rapid close/reopen returns instantly; the
       // Refresh button passes `force: true` to add it back.
       const buster = force ? `&_=${Date.now()}` : '';
-      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=100&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
+      const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(folderAtStart)}${accountQS}&limit=${pageLimit}&offset=${offsetAtStart}&filter=${filterAtStart}${attQS}${buster}`);
       const data = await res.json();
       if (seq !== _libLoadSeq || accountAtStart !== (state._libAccountId || '')) return;
       if (data.error) throw new Error(data.error);
@@ -2295,6 +2350,7 @@ async function _toggleCardPreview(card, em) {
           <div class="email-reader-actions-row email-reader-actions-row-secondary">
             <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            ${_fitPageButtonHtml()}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
@@ -2335,6 +2391,7 @@ async function _toggleCardPreview(card, em) {
     const _isMobileUA = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
     _wireAttachmentHandlers(reader, state._libFolder);
+    _wireEmailReaderFitPage(reader);
 
     reader.querySelector('[data-act="reply"]')?.addEventListener('click', async (ev) => {
       ev.stopPropagation();
@@ -3893,7 +3950,7 @@ async function _openEmailAsTab(em, folder) {
       document.removeEventListener('mouseup', stopDrag);
     };
     mh.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.close-btn, .minimize-btn, .modal-minimize-btn')) return;
+      if (e.target.closest('.close-btn, .minimize-btn, .modal-minimize-btn, .modal-expand-btn')) return;
       e.preventDefault();
       startDrag(e.clientX, e.clientY);
       document.addEventListener('mousemove', onDrag);
@@ -3968,6 +4025,7 @@ async function _openEmailAsTab(em, folder) {
           <div class="email-reader-actions-row email-reader-actions-row-secondary">
             <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            ${_fitPageButtonHtml()}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
@@ -3981,6 +4039,7 @@ async function _openEmailAsTab(em, folder) {
     _markEmailReaderActive(reader);
     _wireRecipientChips(reader);
     try { _wireAttachmentHandlers(reader, useFolder); } catch {}
+    _wireEmailReaderFitPage(reader);
     const attsWrap = reader.querySelector('.email-reader-atts-wrap');
     if (attsWrap) {
       const attsToggle = attsWrap.querySelector('.email-reader-atts-header');
@@ -4122,6 +4181,7 @@ async function _openEmailWindow(em, folder) {
           <div class="email-reader-actions-row email-reader-actions-row-secondary">
             <button class="memory-toolbar-btn reader-icon-btn" data-act="ai-reply" title="${data.cached_ai_reply ? 'AI Reply (cached draft ready)' : 'AI Reply (suggest a draft)'}">${_aiReplyIcon(data)}<span class="reader-btn-label">AI reply</span></button>
             <button class="memory-toolbar-btn reader-icon-btn" data-act="summarize" title="Summarize">${_summaryIcon(data)}<span class="reader-btn-label">Summary</span></button>
+            ${_fitPageButtonHtml()}
             <button class="memory-toolbar-btn reader-icon-btn" data-act="from-sender" title="Search text in this thread"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span class="reader-btn-label">Search</span></button>
             <div class="email-reader-more-wrap" style="position:relative">
               <button class="memory-toolbar-btn reader-icon-btn" data-act="more" title="More actions"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg><span class="reader-btn-label">More</span></button>
@@ -4136,6 +4196,7 @@ async function _openEmailWindow(em, folder) {
     _wireRecipientChips(bodyEl);
     // Wire all the same action handlers the inline reader has.
     try { _wireAttachmentHandlers(bodyEl, useFolder); } catch {}
+    _wireEmailReaderFitPage(bodyEl);
     const attsWrap = bodyEl.querySelector('.email-reader-atts-wrap');
     if (attsWrap) {
       const attsToggle = attsWrap.querySelector('.email-reader-atts-header');
@@ -4278,13 +4339,15 @@ async function _summarizeEmail(reader, data, btn) {
       existing.style.display = '';
       if (btn) {
         btn.classList.add('active');
-        btn.querySelector('.btn-label').textContent = 'Summary';
+        const label = btn.querySelector('.reader-btn-label, .btn-label');
+        if (label) label.textContent = 'Summary';
       }
     } else {
       existing.style.display = 'none';
       if (btn) {
         btn.classList.remove('active');
-        btn.querySelector('.btn-label').textContent = 'Summary';
+        const label = btn.querySelector('.reader-btn-label, .btn-label');
+        if (label) label.textContent = 'Summary';
       }
     }
     return;
@@ -4305,7 +4368,7 @@ async function _summarizeEmail(reader, data, btn) {
     body.insertBefore(prompt, body.firstChild);
     if (btn) {
       btn.classList.add('active');
-      const label = btn.querySelector('.btn-label');
+      const label = btn.querySelector('.reader-btn-label, .btn-label');
       if (label) label.textContent = 'Summary';
     }
     // No Cancel button — toggling the Summary button again hides this panel
@@ -4359,7 +4422,8 @@ async function _generateSummary(reader, data, btn) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        body: data.body,
+        body: data.body || '',
+        body_html: data.body_html || '',
         subject: data.subject,
         from: `${data.from_name} <${data.from_address}>`,
         // Send identifiers so the backend can fetch the raw message and
@@ -4375,18 +4439,18 @@ async function _generateSummary(reader, data, btn) {
     content.innerHTML = '';
     if (result.success && result.summary) {
       content.textContent = result.summary;
+      data.cached_summary = result.summary;
       if (btn) {
         btn.classList.add('active');
-        const label = btn.querySelector('.btn-label');
+        const label = btn.querySelector('.reader-btn-label, .btn-label');
         if (label) label.textContent = 'Summary';
       }
     } else {
       content.innerHTML = `<span style="color:var(--red)">${_esc(result.error || 'Failed to summarize')}</span>`;
-      panel.remove();
     }
   } catch (e) {
     sp.destroy();
-    panel.remove();
+    content.innerHTML = `<span style="color:var(--red)">${_esc(e?.message || 'Failed to summarize')}</span>`;
     if (uiModule) uiModule.showError?.('Failed to summarize');
   } finally {
     if (btn) btn.disabled = false;

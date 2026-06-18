@@ -81,6 +81,7 @@ PLAN_MODE_READONLY_TOOLS = {
     "search_hf_models",
     "list_serve_presets",
     "list_cookbook_servers",
+    "manage_gallery",
     "resolve_contact",
     "chat_with_model",
     "ask_teacher",

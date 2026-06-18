@@ -9,7 +9,7 @@ import * as Modals from './modalManager.js';
 import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
-import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import { applyEdgeDock, clearDockSide, preferredEdgeDockSide } from './modalSnap.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -161,6 +161,7 @@ function _wireNotesWindow(pane) {
     header,
     fsClass: 'notes-window-fullscreen',
     skipSelector: 'button, input, select, textarea, label, .notes-mobile-grabber',
+    mobileSkip: _isNotesMobileMode() ? 9999 : 768,
     enableDock: true,
     enableLeftDock: true,
     onEnterFullscreen: () => {
@@ -184,7 +185,7 @@ function _clearNotesSnapStyles(pane) {
   if (hadLeft) clearDockSide('left', pane);
   if (hadRight) clearDockSide('right', pane);
   ['position', 'left', 'top', 'right', 'bottom', 'width', 'max-width', 'height',
-    'max-height', 'margin', 'transform', 'border-radius']
+    'max-height', 'margin', 'transform', 'border-radius', 'overflow', 'border-bottom']
     .forEach((prop) => pane.style.removeProperty(prop));
   delete pane.dataset._tilePreSnap;
   delete pane.dataset._tileZone;
@@ -194,10 +195,10 @@ function _clearNotesSnapStyles(pane) {
 }
 
 function _restoreNotesSidebarDock(pane) {
-  if (!pane || window.innerWidth <= 768) return;
+  if (!pane || (_isNotesMobileLayout() && !_isNotesAndroidDockMode())) return;
   _clearNotesSnapStyles(pane);
   if (!pane.isConnected) return;
-  applyEdgeDock(pane, 'right');
+  applyEdgeDock(pane, preferredEdgeDockSide(pane));
 }
 
 function _loadPendingHighlights() {
@@ -421,7 +422,14 @@ async function _saveNote(note) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(note),
   });
-  if (!res.ok) throw new Error('Failed to save note');
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      detail = data.detail || data.error || detail;
+    } catch {}
+    throw new Error(detail);
+  }
   return await res.json();
 }
 
@@ -1107,10 +1115,11 @@ export function openPanel() {
   if (!container) return;
 
   document.body.classList.add('notes-view');
+  const mobileLayout = _isNotesMobileLayout();
 
   // On mobile the notes panel takes the whole screen — auto-close the
   // sidebar so the panel isn't cropped underneath it.
-  if (window.innerWidth <= 768) {
+  if (mobileLayout) {
     const sb = document.getElementById('sidebar');
     if (sb) sb.classList.add('hidden');
     document.body.classList.add('sidebar-collapsed');
@@ -1166,12 +1175,16 @@ export function openPanel() {
   // side panel. Set inline so it wins over the base .notes-pane rule regardless
   // of cascade specifics (the CSS @media override wasn't reliably applying,
   // which left it as a side panel squeezing the chat).
-  if (window.innerWidth <= 768) {
+  if (mobileLayout) {
     pane.style.position = 'fixed';
     pane.style.inset = '0';
     pane.style.width = '100%';
     pane.style.maxWidth = '100%';
+    pane.style.height = '100dvh';
+    pane.style.maxHeight = '100dvh';
+    pane.style.overflow = 'hidden';
     pane.style.zIndex = '170';
+    pane.style.borderBottom = 'none';
     pane.style.borderRadius = '14px 14px 0 0';
     pane.style.animation = 'sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both';
     pane.style.transformOrigin = 'bottom center';
@@ -1931,7 +1944,7 @@ function _applyMasonry(body) {
   if (!body) return;
   const pane = body.closest('.notes-pane');
   const isGrid = pane?.classList.contains('notes-view-grid');
-  const isMobileGrid = isGrid && window.matchMedia('(max-width: 768px)').matches;
+  const isMobileGrid = isGrid && _isNotesMobileLayout();
   // Tear down any prior observer (defensive — _renderNotes wipes body.innerHTML).
   if (_masonryObserver) { try { _masonryObserver.disconnect(); } catch {} _masonryObserver = null; }
   if (!isGrid) {
@@ -2084,7 +2097,7 @@ function _renderQuickAdd(body) {
       if (titleEl) titleEl.value = initialText;
     }
     const mobileGrid = body.closest('.notes-pane')?.classList.contains('notes-view-grid')
-      && window.matchMedia('(max-width: 768px)').matches;
+      && _isNotesMobileLayout();
     if (mobileGrid) {
       form.style.gridColumn = '1 / -1';
       form.style.gridRowEnd = 'span 64';
@@ -2974,7 +2987,7 @@ function _buildForm(note = null) {
       // for a drawn note (the canvas image IS the card content), so hide them.
       const bgPicker = form.querySelector('.note-color-picker');
       if (bgPicker) bgPicker.style.display = (newType === 'draw') ? 'none' : '';
-      if (form.closest('.notes-pane.notes-view-grid') && window.matchMedia('(max-width: 768px)').matches) {
+      if (form.closest('.notes-pane.notes-view-grid') && _isNotesMobileLayout()) {
         form.style.gridColumn = '1 / -1';
         form.style.gridRowEnd = newType === 'draw' ? 'span 152' : 'span 64';
       }
@@ -3568,11 +3581,12 @@ function _buildForm(note = null) {
     // Optimistic update — update local state first, render, then save in background
     _editingId = null;
     _clearDraft(isEdit ? note.id : '__new__');  // saved → discard the draft
+    const tmpId = isEdit ? null : 'tmp_' + _uid();
     if (isEdit) {
       const idx = _notes.findIndex(n => n.id === note.id);
       if (idx >= 0) _notes[idx] = { ..._notes[idx], ...payload };
     } else {
-      _notes.unshift({ ...payload, id: 'tmp_' + _uid(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+      _notes.unshift({ ...payload, id: tmpId, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
     }
     _renderNotes();
     // Background save
@@ -3582,7 +3596,7 @@ function _buildForm(note = null) {
         // existing card's `data-note-id="tmp_xxx"` is stale after Object.assign
         // bumps the in-memory id, so all subsequent clicks (edit, done, copy,
         // archive, delete) silently fail to find the note in `_notes`.
-        const tmp = _notes.find(n => n.id.startsWith('tmp_'));
+        const tmp = _notes.find(n => n.id === tmpId);
         if (tmp) Object.assign(tmp, saved);
         _renderNotes();
       }
@@ -3601,7 +3615,7 @@ function _buildForm(note = null) {
   // archive-mode (visually + behaviorally) and flips to Update on the first
   // edit. Lets the user tap a note to skim, then tap ✓ to archive without ever
   // touching a separate Archive button.
-  if (isEdit && window.innerWidth <= 768) {
+  if (isEdit && _isNotesMobileMode()) {
     const _saveLabelEl = _saveBtnEl0.querySelector('.nft-label');
     const _enterArchive = () => {
       _saveBtnEl0.classList.add('archive-mode');
@@ -4489,14 +4503,37 @@ async function _deleteNote(id) {
 
 // ────────────────────────────────────────────────────────────────────
 // MOBILE NOTES UX — fullscreen tap-to-edit + long-press drag-to-reorder.
-// On a touch device ≤768px wide, note tiles become read-only previews;
+// On phone-sized touch layouts, note tiles become read-only previews;
 // a single tap opens the note in a full-bleed overlay (where all real
 // editing happens), and a long-press flips the whole grid into
 // rearrange mode where tiles can be dragged to a new sort_order.
 // ────────────────────────────────────────────────────────────────────
 
+function _isNotesTouchDevice() {
+  const coarsePointer = typeof window.matchMedia === 'function'
+    && window.matchMedia('(pointer: coarse)').matches;
+  return ('ontouchstart' in window)
+    || (navigator.maxTouchPoints || 0) > 0
+    || coarsePointer;
+}
+
+function _isNotesMobileLayout() {
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+  const base = vw <= 768 || (_isNotesTouchDevice() && vh <= 560);
+  return base && !_isNotesAndroidDockMode();
+}
+
 function _isNotesMobileMode() {
-  return ('ontouchstart' in window) && window.innerWidth <= 768;
+  return _isNotesTouchDevice() && _isNotesMobileLayout();
+}
+
+function _isNotesAndroidDockMode() {
+  const ua = navigator.userAgent || '';
+  const androidApp = /\bOdysseusAndroid\b/i.test(ua) || !!window.OdysseusAndroid;
+  return androidApp
+    && _isNotesTouchDevice()
+    && window.matchMedia('(orientation: landscape)').matches;
 }
 
 // ── Fullscreen single-note edit overlay ──────────────────────────────

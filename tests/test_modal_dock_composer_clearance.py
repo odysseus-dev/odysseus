@@ -9,6 +9,8 @@ EMAIL_LIBRARY_JS = Path("static/js/emailLibrary.js").read_text(encoding="utf-8")
 WINDOW_DRAG_JS = Path("static/js/windowDrag.js").read_text(encoding="utf-8")
 UI_JS = Path("static/js/ui.js").read_text(encoding="utf-8")
 MODAL_SNAP_JS = Path("static/js/modalSnap.js").read_text(encoding="utf-8")
+CALENDAR_JS = Path("static/js/calendar.js").read_text(encoding="utf-8")
+NOTES_JS = Path("static/js/notes.js").read_text(encoding="utf-8")
 
 
 def test_both_minimized_window_docks_clear_the_composer():
@@ -109,7 +111,8 @@ def test_shared_modal_controls_include_full_expand_button():
 
 
 def test_full_expand_restores_previous_dock_or_window_state():
-    assert "applyEdgeDock, clearDockSide" in MODAL_MANAGER_JS
+    assert "applyEdgeDock," in MODAL_MANAGER_JS
+    assert "clearDockSide," in MODAL_MANAGER_JS
     assert "function _releaseWindowDockState(modal, content)" in MODAL_MANAGER_JS
     assert "function _captureFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
     assert "function _restoreFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
@@ -132,6 +135,140 @@ def test_edge_docking_clears_the_opposite_side_first():
     assert "suspendDock(existing);" in MODAL_SNAP_JS
     assert "_clearOppositeDockedWindows(side, modal);" in MODAL_SNAP_JS
     assert "_requestDockReplacement(side, modal);" in MODAL_SNAP_JS
+
+
+def test_android_tool_opens_auto_dock_and_replace_existing_dock():
+    assert "canUseEdgeDock," in MODAL_MANAGER_JS
+    assert "preferredEdgeDockSide," in MODAL_MANAGER_JS
+    assert "function _isOdysseusAndroidApp()" in MODAL_MANAGER_JS
+    assert "function _androidAutoDockEnabled()" in MODAL_MANAGER_JS
+    assert "return _isOdysseusAndroidApp() && _isTouchLandscape() && canUseEdgeDock();" in MODAL_MANAGER_JS
+    assert "function _scheduleAndroidDefaultDock(id, modal)" in MODAL_MANAGER_JS
+    assert "return !_modalWindowContent(modal)?._dockSuspended;" in MODAL_MANAGER_JS
+    assert "applyEdgeDock(modal, preferredEdgeDockSide(modal));" in MODAL_MANAGER_JS
+    assert "function _handleModalShown(id, modal)" in MODAL_MANAGER_JS
+    assert "if (!_scheduleAndroidDefaultDock(id, modal)) _applyRememberedDock(id);" in MODAL_MANAGER_JS
+    assert "_handleModalShown(id, _modalEl);" in MODAL_MANAGER_JS
+    assert "if (_isModalVisible(modal)) _scheduleAndroidDefaultDock(id, modal);" in MODAL_MANAGER_JS
+    assert "export function preferredEdgeDockSide(owner = null)" in MODAL_SNAP_JS
+    assert "if (_activeDockedWindows('left', owner).length) return 'left';" in MODAL_SNAP_JS
+    assert "if (_activeDockedWindows('right', owner).length) return 'right';" in MODAL_SNAP_JS
+    assert "return navRight ? 'left' : 'right';" in MODAL_SNAP_JS
+
+
+def test_android_landscape_notes_open_as_docked_page_not_mobile_sheet():
+    assert "preferredEdgeDockSide" in NOTES_JS
+    assert "function _isNotesAndroidDockMode()" in NOTES_JS
+    assert "return base && !_isNotesAndroidDockMode();" in NOTES_JS
+    assert "applyEdgeDock(pane, preferredEdgeDockSide(pane));" in NOTES_JS
+
+
+def test_touch_landscape_minimized_dock_compacts_and_pages_when_menu_open():
+    assert "function _syncDockRowMode(dock, bounds = _dockWorkspaceBounds())" in MODAL_MANAGER_JS
+    assert "function _usesCompactTouchChips()" in MODAL_MANAGER_JS
+    assert "function _isTouchMenuOpen()" in MODAL_MANAGER_JS
+    assert "const touchLandscape = _isTouchLandscape();" in MODAL_MANAGER_JS
+    assert "const menuOpen = _isTouchMenuOpen();" in MODAL_MANAGER_JS
+    assert "const pagedTouchDock = touchPortrait || (touchLandscape && menuOpen);" in MODAL_MANAGER_JS
+    assert "const stackedTouchPages = touchPortrait && menuOpen;" in MODAL_MANAGER_JS
+    assert "dock.style.maxWidth = `${Math.round(maxWidth)}px`;" in MODAL_MANAGER_JS
+    assert "dock.classList.toggle('dock-single-row', touchLandscape && !pagedTouchDock);" in MODAL_MANAGER_JS
+    assert "dock.classList.toggle('dock-paged-row', pagedTouchDock);" in MODAL_MANAGER_JS
+    assert "dock.classList.toggle('dock-compact-chips', compactTouchChips);" in MODAL_MANAGER_JS
+    assert "if (isTouchChipDock) chip.classList.add('chip-compact-touch');" in MODAL_MANAGER_JS
+    assert "_syncDockRowMode(dock, bounds);" in MODAL_MANAGER_JS
+    assert "const hasPagedStructure = !!current.querySelector('.minimized-dock-page');" in MODAL_MANAGER_JS
+    assert "const wantsPagedStructure = current.classList.contains('dock-paged-row');" in MODAL_MANAGER_JS
+    assert "if (hasChips && hasPagedStructure !== wantsPagedStructure) _renderDock();" in MODAL_MANAGER_JS
+    marker = "#minimized-dock.dock-single-row"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index(marker) + 360]
+    assert "flex-wrap: nowrap;" in block
+    assert "overflow-x: auto;" in block
+    assert "overflow-y: hidden;" in block
+    assert "-webkit-overflow-scrolling: touch;" in block
+    marker = ".minimized-dock-chip.chip-compact-touch"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index(marker) + 900]
+    assert "width: 40px;" in block
+    assert "height: 40px;" in block
+    assert ".minimized-dock-chip.chip-compact-touch .minimized-dock-label" in block
+    assert "display: none !important;" in block
+    assert ".minimized-dock-chip.chip-compact-touch.chip-active" in block
+
+
+def test_touch_portrait_minimized_dock_pages_in_four_icon_blocks():
+    assert "const TOUCH_DOCK_PAGE_CHIPS = 4;" in MODAL_MANAGER_JS
+    assert "const TOUCH_DOCK_ROW_PAGE_WIDTH = (TOUCH_DOCK_PAGE_CHIPS * 40) + ((TOUCH_DOCK_PAGE_CHIPS - 1) * 8) + 12;" in MODAL_MANAGER_JS
+    assert "const TOUCH_DOCK_STACK_PAGE_WIDTH = 52;" in MODAL_MANAGER_JS
+    assert "const TOUCH_DOCK_STACK_PAGE_HEIGHT = TOUCH_DOCK_ROW_PAGE_WIDTH;" in MODAL_MANAGER_JS
+    assert "function _isTouchMenuOpen()" in MODAL_MANAGER_JS
+    assert "!sidebar.classList.contains('hidden')" in MODAL_MANAGER_JS
+    assert "const touchPortrait = _isTouchPortrait();" in MODAL_MANAGER_JS
+    assert "const pagedTouchDock = touchPortrait || (touchLandscape && menuOpen);" in MODAL_MANAGER_JS
+    assert "const stackedTouchPages = touchPortrait && menuOpen;" in MODAL_MANAGER_JS
+    assert "dock.style.height = `${Math.round(TOUCH_DOCK_STACK_PAGE_HEIGHT)}px`;" in MODAL_MANAGER_JS
+    assert "dock.classList.toggle('dock-paged-row', pagedTouchDock);" in MODAL_MANAGER_JS
+    assert "dock.classList.toggle('dock-stacked-pages', stackedTouchPages);" in MODAL_MANAGER_JS
+    assert "function _pageTouchDock(dock, direction, { wrap = false } = {})" in MODAL_MANAGER_JS
+    assert "if (next == null) next = wrap ? pageOffsets[pageOffsets.length - 1] : 0;" in MODAL_MANAGER_JS
+    assert "const current = stacked ? (dock.scrollTop || 0) : (dock.scrollLeft || 0);" in MODAL_MANAGER_JS
+    assert "page.offsetTop - dock.clientTop" in MODAL_MANAGER_JS
+    assert "if (stacked) dock.scrollTo({ top: next, behavior: 'smooth' });" in MODAL_MANAGER_JS
+    assert "_settleTouchDockPage(dock, next, stacked);" in MODAL_MANAGER_JS
+    assert "function _settleTouchDockPage(dock, next, stacked)" in MODAL_MANAGER_JS
+    assert "if (!stacked || !dock) return;" in MODAL_MANAGER_JS
+    assert "dock._touchDockSettleTimers.forEach(clearTimeout);" in MODAL_MANAGER_JS
+    assert "dock.style.scrollSnapType = 'none';" in MODAL_MANAGER_JS
+    assert "dock.scrollTop = next;" in MODAL_MANAGER_JS
+    assert "const rawPageOffsets = [...dock.querySelectorAll('.minimized-dock-page')]" in MODAL_MANAGER_JS
+    assert "const offsetOrigin = rawPageOffsets[0] || 0;" in MODAL_MANAGER_JS
+    assert "dock.scrollTo({ left: next, behavior: 'smooth' });" in MODAL_MANAGER_JS
+    assert "touchPage.className = 'minimized-dock-page';" in MODAL_MANAGER_JS
+    assert "touchPageChipCount % TOUCH_DOCK_PAGE_CHIPS === 0" in MODAL_MANAGER_JS
+    assert "dock.contains(chip)" in MODAL_MANAGER_JS
+    assert "let pagedSwipeHandled = false;" in MODAL_MANAGER_JS
+    assert "dock.classList.contains('dock-paged-row')" in MODAL_MANAGER_JS
+    assert "const stackedDock = dock.classList.contains('dock-stacked-pages');" in MODAL_MANAGER_JS
+    assert "const horizontalSwipe = !stackedDock && Math.abs(dx) > Math.abs(dy) * 1.25;" in MODAL_MANAGER_JS
+    assert "const verticalStackSwipe = stackedDock && Math.abs(dy) > Math.abs(dx) * 1.05;" in MODAL_MANAGER_JS
+    assert "const direction = verticalStackSwipe ? (dy < 0 ? 1 : -1) : (dx < 0 ? 1 : -1);" in MODAL_MANAGER_JS
+    assert "pagedSwipeHandled = _pageTouchDock(dock, direction, { wrap: stackedDock });" in MODAL_MANAGER_JS
+    marker = "#minimized-dock.dock-paged-row"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index(marker) + 2600]
+    assert "flex-wrap: nowrap;" in block
+    assert "overflow-x: auto;" in block
+    assert "scroll-snap-type: x mandatory;" in block
+    assert "overscroll-behavior-x: contain;" in block
+    assert "gap: 0;" in block
+    assert "padding: 0;" in block
+    assert "pointer-events: auto;" in block
+    assert "#minimized-dock.dock-paged-row .minimized-dock-page" in block
+    assert "flex-direction: row;" in block
+    assert "flex: 0 0 100%;" in block
+    assert "min-width: 100%;" in block
+    assert "box-sizing: border-box;" in block
+    assert "padding: 6px;" in block
+    assert "scroll-snap-align: start;" in block
+    assert "#minimized-dock.dock-paged-row.dock-stacked-pages .minimized-dock-page" in block
+    assert "flex-direction: column-reverse;" in block
+    assert "min-height: 100%;" in block
+    assert "#minimized-dock.dock-paged-row.dock-stacked-pages" in block
+    assert "flex-direction: column;" in block
+    assert "overflow-y: auto;" in block
+    assert "scroll-snap-type: y mandatory;" in block
+    assert "scroll-padding-top: 0;" in block
+    assert "scroll-padding-bottom: 0;" in block
+    assert "linear-gradient(180deg" in block
+    assert "inset 0 16px 14px -18px" in block
+    assert "inset 0 -16px 14px -18px" in block
+    assert "touch-action: pan-y;" in block
+    assert "#minimized-dock.dock-paged-row .minimized-dock-chip" in block
+    assert "flex: 0 0 40px;" in block
+    assert "width: 40px;" in block
+    assert "height: 40px;" in block
+    assert "#minimized-dock.dock-paged-row .minimized-dock-chip:nth-child(4n+1)" not in block
 
 
 def test_android_touch_docking_is_landscape_only_without_enabling_resize():
@@ -224,10 +361,10 @@ def test_mobile_overlay_lists_have_nested_scrollers():
     assert "-webkit-overflow-scrolling: touch;" in block
 
 
-def test_docked_calendar_body_gets_page_scroll():
+def test_docked_calendar_splitter_keeps_calendar_visible():
     marker = "#calendar-modal.modal-left-docked .cal-modal-content,"
     assert marker in CSS
-    block = CSS[CSS.index(marker): CSS.index(marker) + 1200]
+    block = CSS[CSS.index(marker): CSS.index(marker) + 5200]
     assert "#calendar-modal.modal-right-docked .cal-modal-content" in block
     assert "#calendar-modal.modal-full-expanded .cal-modal-content" in block
     assert "display: flex;" in block
@@ -236,9 +373,36 @@ def test_docked_calendar_body_gets_page_scroll():
     assert "#calendar-modal.modal-right-docked #cal-body," in block
     assert "#calendar-modal.modal-full-expanded #cal-body" in block
     assert "flex: 1 1 0;" in block
+    assert "overflow: hidden;" in block
+    assert "#calendar-modal.modal-left-docked #cal-body.cal-form-mode," in block
+    assert "#calendar-modal.modal-right-docked #cal-body.cal-form-mode," in block
+    assert "#calendar-modal.modal-full-expanded #cal-body.cal-form-mode" in block
     assert "overflow-y: auto;" in block
     assert "-webkit-overflow-scrolling: touch;" in block
     assert "overscroll-behavior: contain;" in block
+    assert "#calendar-modal #cal-body.cal-form-mode > .cal-form" in block
+    assert "@media (orientation: landscape)" in block
+    assert "#calendar-modal.modal-left-docked #cal-body > .cal-grid" in block
+    assert "#calendar-modal.modal-left-docked #cal-body > .cal-wk-wrap" in block
+    assert "flex-wrap: nowrap;" in block
+    assert "overflow-x: auto;" in block
+
+
+def test_calendar_splitter_height_is_clamped_to_current_layout():
+    assert "const CAL_DETAIL_STORAGE_KEY = 'odysseus.cal.detailH';" in CALENDAR_JS
+    assert "function _calDetailLayoutKey()" in CALENDAR_JS
+    assert "modal?.classList?.contains('modal-full-expanded')" in CALENDAR_JS
+    assert "function _calOuterBlockSize(el, { includeBox = true } = {})" in CALENDAR_JS
+    assert "function _calDetailBounds(calBody)" in CALENDAR_JS
+    assert "function _clampCalDetailHeight(calBody, value)" in CALENDAR_JS
+    assert "function _setCalDetailHeight(calBody, value, { persist = false } = {})" in CALENDAR_JS
+    assert "function _restoreCalDetailHeight(calBody)" in CALENDAR_JS
+    assert "function _resetCalDetailHeight(calBody)" in CALENDAR_JS
+    assert "_prepareCalendarBodyForCalendarView(body);" in CALENDAR_JS
+    assert "_prepareCalendarBodyForForm(body);" in CALENDAR_JS
+    assert "const adjustable = Math.max(0, available - gridMargins - detailMargins);" in CALENDAR_JS
+    assert "calBody._calDetailLayoutKey && calBody._calDetailLayoutKey !== key" in CALENDAR_JS
+    assert "visibleMax" not in CALENDAR_JS
 
 
 def test_mobile_email_uses_full_height_sheet():
@@ -255,6 +419,64 @@ def test_mobile_email_uses_full_height_sheet():
     assert ".email-reader-tab-modal," in block
     assert ".email-window-modal" in block
     assert "align-items: stretch !important;" in block
+
+
+def test_opened_email_reader_has_fit_page_toggle():
+    assert "const _EMAIL_FIT_ICON" in EMAIL_LIBRARY_JS
+    assert "function _fitPageButtonHtml()" in EMAIL_LIBRARY_JS
+    assert 'data-act="fit-page"' in EMAIL_LIBRARY_JS
+    assert 'aria-label="Fit email to page"' in EMAIL_LIBRARY_JS
+    assert "function _wireEmailReaderFitPage(reader)" in EMAIL_LIBRARY_JS
+    assert "reader.classList.toggle('email-reader-fit-page')" in EMAIL_LIBRARY_JS
+    assert "_wireEmailReaderFitPage(reader);" in EMAIL_LIBRARY_JS
+    assert "_wireEmailReaderFitPage(bodyEl);" in EMAIL_LIBRARY_JS
+    assert EMAIL_LIBRARY_JS.count("_fitPageButtonHtml()") >= 4
+    marker = ".email-card-reader.email-reader-fit-page"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index(marker) + 2500]
+    assert "overflow-x: hidden;" in block
+    assert ".email-reader-body.html-body" in block
+    assert ".email-bubble-body" in block
+    assert ".email-thread-turn-body" in block
+    assert "max-width: 100% !important;" in block
+    assert "min-width: 0 !important;" in block
+    assert "inline-size: 100% !important;" in block
+    assert "table-layout: fixed !important;" in block
+    assert "white-space: pre-wrap !important;" in block
+
+
+def test_touch_landscape_docked_email_reader_compacts_and_clips_html_width():
+    marker = "#email-lib-modal.modal-left-docked .doclib-modal-content,"
+    assert marker in CSS
+    prelude = CSS[CSS.index(marker) - 120: CSS.index(marker)]
+    assert "@media (orientation: landscape) and (hover: none)" in prelude
+    block = CSS[CSS.index(marker): CSS.index(marker) + 13000]
+    assert ".email-reader-tab-modal.modal-left-docked .modal-content" in block
+    assert ".email-window-modal.modal-right-docked .modal-content" in block
+    assert "#email-lib-modal.modal-left-docked #email-lib-stats" in block
+    assert "display: none !important;" in block
+    assert "#email-lib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded))" in block
+    assert "#email-lib-modal.modal-right-docked .doclib-grid:not(:has(.doclib-card-expanded))" in block
+    assert "overflow-y: auto !important;" in block
+    assert "touch-action: pan-y;" in block
+    assert "overscroll-behavior: contain;" in block
+    assert "#email-lib-modal.modal-left-docked .email-card-reader" in block
+    assert "#email-lib-modal.modal-left-docked .email-reader-actions" in block
+    assert "max-width: min(184px, 48%) !important;" in block
+    assert "#email-lib-modal.modal-left-docked .email-reader-actions-row" in block
+    assert "display: flex !important;" in block
+    assert "overflow-x: auto !important;" in block
+    assert "#email-lib-modal.modal-left-docked .email-reader-body" in block
+    assert "overflow-x: hidden !important;" in block
+    assert ".email-reader-body.html-body :where(img, video, canvas, table" in block
+    assert "max-width: 100% !important;" in block
+    assert ".email-reader-body.html-body table" in block
+    assert "display: block !important;" in block
+    assert "table-layout: fixed !important;" in block
+    assert "inline-size: 100% !important;" in block
+    assert "min-inline-size: 0 !important;" in block
+    assert ".email-reader-body.html-body td" in block
+    assert "overflow-wrap: anywhere !important;" in block
 
 
 def test_mobile_calendar_and_research_keep_scroll_height():

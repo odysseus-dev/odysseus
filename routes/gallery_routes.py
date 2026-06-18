@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user, owner_filter, require_privilege
+from src.auth_helpers import get_current_user, owner_filter, require_privilege, require_user
 from src.upload_limits import (
     read_upload_limited,
     GALLERY_UPLOAD_MAX_BYTES,
@@ -38,6 +38,18 @@ def _current_user_is_admin(request: Request, user: str | None) -> bool:
         return bool(is_admin(user))
     except Exception:
         return False
+
+
+def _gallery_owner_matches(owner: str | None, user: str | None) -> bool:
+    """True when this request may access a gallery row.
+
+    In normal authenticated mode, rows are private to their owner. In
+    auth-disabled / single-user mode, uploaded gallery rows are stamped with a
+    null owner, so the local user must still be able to manage them.
+    """
+    if user:
+        return owner == user
+    return owner in (None, "")
 
 
 def _sanitize_gallery_filename(filename: str) -> str:
@@ -199,13 +211,13 @@ def setup_gallery_routes() -> APIRouter:
         """Replace an existing gallery image file with a new one."""
         from pathlib import Path
 
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
             if not img:
                 raise HTTPException(404, "Image not found")
-            if not user or img.owner != user:
+            if not _gallery_owner_matches(img.owner, user):
                 raise HTTPException(403, "Not your image")
 
             form = await request.form()
@@ -244,7 +256,7 @@ def setup_gallery_routes() -> APIRouter:
         """Rename a gallery photo. Stores the new name in the `prompt`
         column (which serves as the user-facing label for uploaded
         photos that have no AI prompt)."""
-        user = get_current_user(request)
+        user = require_user(request)
         data = await request.json()
         new_name = (data.get("name") or "").strip()
         if not new_name:
@@ -256,7 +268,7 @@ def setup_gallery_routes() -> APIRouter:
             img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
             if not img:
                 raise HTTPException(404, "Image not found")
-            if not user or img.owner != user:
+            if not _gallery_owner_matches(img.owner, user):
                 raise HTTPException(403, "Not your image")
             img.prompt = new_name
             db.commit()
@@ -281,13 +293,13 @@ def setup_gallery_routes() -> APIRouter:
         if angle not in (90, -90, 180, 270):
             raise HTTPException(400, "Angle must be 90, -90, 180, or 270")
 
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
             if not img:
                 raise HTTPException(404, "Image not found")
-            if not user or img.owner != user:
+            if not _gallery_owner_matches(img.owner, user):
                 raise HTTPException(403, "Not your image")
 
             img_path = _gallery_image_path(img.filename)
@@ -613,7 +625,7 @@ def setup_gallery_routes() -> APIRouter:
     @router.post("/api/gallery/albums")
     async def create_album(request: Request):
         import uuid
-        user = get_current_user(request)
+        user = require_user(request)
         data = await request.json()
         name = (data.get("name") or "").strip()
         if not name:
@@ -694,7 +706,7 @@ def setup_gallery_routes() -> APIRouter:
             if not row:
                 raise HTTPException(404, "Image not found")
             img, session_name = row
-            if not user or img.owner != user:
+            if not _gallery_owner_matches(img.owner, user):
                 raise HTTPException(404, "Image not found")
             return _image_to_dict(img, session_name)
         finally:
@@ -703,13 +715,13 @@ def setup_gallery_routes() -> APIRouter:
     # ---- PATCH /api/gallery/{image_id} ----
     @router.patch("/api/gallery/{image_id}")
     async def patch_gallery_image(request: Request, image_id: str, req: GalleryPatch) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
             if not img:
                 raise HTTPException(404, "Image not found")
-            if not user or img.owner != user:
+            if not _gallery_owner_matches(img.owner, user):
                 raise HTTPException(404, "Image not found")
             if req.tags is not None:
                 # Drop any tag from the user-tags field that already lives in
@@ -754,7 +766,7 @@ def setup_gallery_routes() -> APIRouter:
     # of a flood of individual downloads).
     @router.post("/api/gallery/download-zip")
     async def gallery_download_zip(request: Request):
-        user = get_current_user(request)
+        user = require_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
         try:
@@ -894,13 +906,13 @@ def setup_gallery_routes() -> APIRouter:
     # ---- DELETE /api/gallery/{image_id} ----
     @router.delete("/api/gallery/{image_id}")
     async def delete_gallery_image(request: Request, image_id: str) -> Dict[str, str]:
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
             if not img:
                 raise HTTPException(404, "Image not found")
-            if not user or img.owner != user:
+            if not _gallery_owner_matches(img.owner, user):
                 raise HTTPException(404, "Image not found")
 
             img_filename = img.filename
@@ -1682,7 +1694,7 @@ def setup_gallery_routes() -> APIRouter:
         album = db.query(GalleryAlbum).filter(GalleryAlbum.id == album_id).first()
         if not album:
             raise HTTPException(404, "Album not found")
-        if not user or album.owner != user:
+        if not _gallery_owner_matches(album.owner, user):
             raise HTTPException(404, "Album not found")
         return album
 
@@ -1690,13 +1702,13 @@ def setup_gallery_routes() -> APIRouter:
         img = db.query(GalleryImage).filter(GalleryImage.id == image_id).first()
         if not img:
             raise HTTPException(404, "Image not found")
-        if not user or img.owner != user:
+        if not _gallery_owner_matches(img.owner, user):
             raise HTTPException(404, "Image not found")
         return img
 
     @router.put("/api/gallery/albums/{album_id}")
     async def update_album(request: Request, album_id: str):
-        user = get_current_user(request)
+        user = require_user(request)
         data = await request.json()
         db = SessionLocal()
         try:
@@ -1717,7 +1729,7 @@ def setup_gallery_routes() -> APIRouter:
 
     @router.delete("/api/gallery/albums/{album_id}")
     async def delete_album(request: Request, album_id: str):
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             album = _get_or_404_album(db, album_id, user)
@@ -1733,7 +1745,7 @@ def setup_gallery_routes() -> APIRouter:
 
     @router.post("/api/gallery/albums/{album_id}/add")
     async def add_to_album(request: Request, album_id: str):
-        user = get_current_user(request)
+        user = require_user(request)
         data = await request.json()
         ids = data.get("image_ids", [])
         db = SessionLocal()
@@ -1751,7 +1763,7 @@ def setup_gallery_routes() -> APIRouter:
 
     @router.post("/api/gallery/albums/{album_id}/remove")
     async def remove_from_album(request: Request, album_id: str):
-        user = get_current_user(request)
+        user = require_user(request)
         data = await request.json()
         ids = data.get("image_ids", [])
         db = SessionLocal()
@@ -1772,7 +1784,7 @@ def setup_gallery_routes() -> APIRouter:
 
     @router.post("/api/gallery/{image_id}/favorite")
     async def toggle_favorite(request: Request, image_id: str):
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             img = _get_or_404_image(db, image_id, user)
@@ -1790,7 +1802,7 @@ def setup_gallery_routes() -> APIRouter:
         import base64, httpx
         from pathlib import Path
 
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             img = _get_or_404_image(db, image_id, user)

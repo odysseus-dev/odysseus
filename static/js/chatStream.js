@@ -250,6 +250,7 @@ export function notifyResearchComplete(sessionId, query) {
   var isHidden = document.hidden;
   var isOtherSession = sessionModule && sessionModule.getCurrentSessionId() !== sessionId;
   if (!isHidden && !isOtherSession) return;
+  if (_notifyAndroidResearchComplete(sessionId, query)) return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   var body = query ? 'Research on "' + query.substring(0, 60) + '" is ready' : 'Your deep research has completed';
   var notification = new Notification('Research Complete', {
@@ -264,6 +265,17 @@ export function notifyResearchComplete(sessionId, query) {
     notification.close();
   };
   setTimeout(function() { notification.close(); }, 10000);
+}
+
+function _notifyAndroidResearchComplete(sessionId, query) {
+  try {
+    var bridge = window.OdysseusAndroid;
+    if (!bridge || typeof bridge.notifyResearchComplete !== 'function') return false;
+    bridge.notifyResearchComplete(String(sessionId || ''), String(query || ''));
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 const chatStream = {

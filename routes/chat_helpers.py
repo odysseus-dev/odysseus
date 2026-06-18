@@ -124,6 +124,75 @@ def _enforce_chat_privileges(request, sess) -> None:
         raise HTTPException(429, f"Daily message limit reached ({cap}). Try again in 24 hours.")
 
 
+_GALLERY_CONTEXT_RE = re.compile(
+    r"\b(?:gallery|photos?|pictures?|camera roll|uploaded (?:photo|image)|saved (?:photo|image)|my images?)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_gallery_context(message: str) -> bool:
+    return bool(_GALLERY_CONTEXT_RE.search(message or ""))
+
+
+def _build_gallery_context_for_chat(owner: Optional[str], limit: int = 8) -> str:
+    """Return a compact Gallery inventory for plain Chat mode.
+
+    Agent mode has manage_gallery/edit_image tools; this is only a small
+    metadata bridge so ordinary Chat mode does not incorrectly claim it has no
+    access when the user asks about saved Gallery photos.
+    """
+    from core.database import GalleryImage
+    from routes.gallery_helpers import _owner_filter
+
+    db = SessionLocal()
+    try:
+        q = db.query(GalleryImage).filter(GalleryImage.is_active == True)
+        q = _owner_filter(q, owner)
+        total = q.count()
+        rows = (
+            q.order_by(GalleryImage.created_at.desc())
+            .limit(max(1, min(25, limit)))
+            .all()
+        )
+        lines = [
+            "The user's Odysseus Gallery metadata is available below.",
+            "Use it to answer questions about saved Gallery photos/images instead of saying you cannot see the Gallery.",
+            "For actual image editing or vision descriptions, Agent mode can use manage_gallery and edit_image tools.",
+        ]
+        if not rows:
+            lines.append("Gallery: no saved images.")
+            return "\n".join(lines)
+        lines.append("Gallery images, newest first:")
+        for img in rows:
+            label = (img.prompt or img.filename or img.id or "Gallery image").strip()
+            bits = [f"id: {img.id}", f"name: {label}", f"url: /api/generated-image/{img.filename}"]
+            if img.width and img.height:
+                bits.append(f"size: {img.width}x{img.height}")
+            if img.model:
+                bits.append(f"model: {img.model}")
+            tags = []
+            for raw in ((img.tags or ""), (img.ai_tags or "")):
+                tags.extend(t.strip() for t in raw.split(",") if t.strip())
+            if tags:
+                seen = set()
+                deduped = []
+                for tag in tags:
+                    key = tag.lower()
+                    if key not in seen:
+                        seen.add(key)
+                        deduped.append(tag)
+                bits.append("tags: " + ", ".join(deduped[:6]))
+            lines.append("- " + "; ".join(bits))
+        if total > len(rows):
+            lines.append(f"... {total - len(rows)} more images not shown.")
+        return "\n".join(lines)
+    except Exception as e:
+        logger.debug("Failed to build Gallery chat context: %s", e)
+        return ""
+    finally:
+        db.close()
+
+
 def needs_auto_name(name: str) -> bool:
     """Check if a session still has its default/placeholder name."""
     if not name:
@@ -597,6 +666,16 @@ async def build_chat_context(
     # Inject pre-fetched search context (compare mode)
     if search_context and allow_tool_preprocessing:
         preface.append(untrusted_context_message("prefetched search context", search_context))
+
+    if (
+        not agent_mode
+        and not incognito
+        and allow_tool_preprocessing
+        and _wants_gallery_context(preprocessed.text_for_context)
+    ):
+        gallery_context = _build_gallery_context_for_chat(user)
+        if gallery_context:
+            preface.append(untrusted_context_message("gallery context", gallery_context))
 
     # YouTube transcripts
     for transcript in preprocessed.youtube_transcripts:

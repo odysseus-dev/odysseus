@@ -18,6 +18,10 @@ import {
 } from './calendar/utils.js';
 
 const API_BASE = window.location.origin;
+const CAL_DETAIL_STORAGE_KEY = 'odysseus.cal.detailH';
+const CAL_DETAIL_MIN_H = 64;
+const CAL_DETAIL_DEFAULT_H = 240;
+const CAL_GRID_MIN_H = 118;
 // Open a file picker, upload the chosen image, return the URL string.
 function _pickCalBgImage() {
   return new Promise(resolve => {
@@ -711,6 +715,117 @@ function _zoomView(direction) {
 let _renderToken = 0;
 function _isStaleRender(t) { return t !== _renderToken; }
 
+function _prepareCalendarBodyForCalendarView(body) {
+  if (!body) return;
+  body.classList.remove('cal-form-mode');
+  body.scrollTop = 0;
+}
+
+function _prepareCalendarBodyForForm(body) {
+  if (!body) return;
+  body.classList.add('cal-form-mode');
+  body.scrollTop = 0;
+}
+
+function _calDetailLayoutKey() {
+  const modal = document.getElementById('calendar-modal');
+  const constrained = !!(
+    modal?.classList?.contains('modal-left-docked') ||
+    modal?.classList?.contains('modal-right-docked') ||
+    modal?.classList?.contains('modal-full-expanded')
+  );
+  const orientation = window.matchMedia('(orientation: landscape)').matches ? 'landscape' : 'portrait';
+  const compact = window.innerWidth <= 768 || constrained ? 'compact' : 'desktop';
+  return `${CAL_DETAIL_STORAGE_KEY}:${compact}:${orientation}:${_view}`;
+}
+
+function _visibleCalendarChildren(calBody) {
+  return Array.from(calBody?.children || []).filter((el) => {
+    if (!el) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  });
+}
+
+function _calendarRowGap(calBody) {
+  const cs = getComputedStyle(calBody);
+  const raw = cs.rowGap && cs.rowGap !== 'normal' ? cs.rowGap : cs.gap;
+  const n = parseFloat(raw || '0');
+  return Number.isFinite(n) ? n : 0;
+}
+
+function _calOuterBlockSize(el, { includeBox = true } = {}) {
+  if (!el) return 0;
+  const cs = getComputedStyle(el);
+  const top = parseFloat(cs.marginTop || '0') || 0;
+  const bottom = parseFloat(cs.marginBottom || '0') || 0;
+  const box = includeBox ? (el.getBoundingClientRect?.().height || 0) : 0;
+  return box + top + bottom;
+}
+
+function _calDetailBounds(calBody) {
+  const bodyH = Math.max(0, Math.round(calBody?.clientHeight || 0));
+  if (!bodyH) return { min: CAL_DETAIL_MIN_H, max: CAL_DETAIL_DEFAULT_H, def: CAL_DETAIL_DEFAULT_H };
+  const children = _visibleCalendarChildren(calBody);
+  const grid = calBody.querySelector('.cal-grid, .cal-wk-wrap');
+  const splitter = calBody.querySelector('.cal-splitter');
+  const detail = calBody.querySelector('.cal-day-detail');
+  const fixedH = children.reduce((sum, el) => {
+    if (el === grid || el === splitter || el === detail) return sum;
+    return sum + _calOuterBlockSize(el);
+  }, 0);
+  const gapH = Math.max(0, children.length - 1) * _calendarRowGap(calBody);
+  const splitterH = _calOuterBlockSize(splitter);
+  const gridMargins = _calOuterBlockSize(grid, { includeBox: false });
+  const detailMargins = _calOuterBlockSize(detail, { includeBox: false });
+  const available = Math.max(0, bodyH - fixedH - splitterH - gapH);
+  const adjustable = Math.max(0, available - gridMargins - detailMargins);
+  const minDetail = Math.max(CAL_DETAIL_MIN_H, Math.min(110, Math.floor(adjustable * 0.28)));
+  const minGrid = Math.max(88, Math.min(CAL_GRID_MIN_H, Math.floor(adjustable * 0.4)));
+  const maxDetail = Math.max(minDetail, adjustable - minGrid);
+  const def = Math.max(minDetail, Math.min(CAL_DETAIL_DEFAULT_H, Math.floor(adjustable * 0.48), maxDetail));
+  return { min: minDetail, max: maxDetail, def };
+}
+
+function _clampCalDetailHeight(calBody, value) {
+  const bounds = _calDetailBounds(calBody);
+  const requested = Number.isFinite(value) && value > 0 ? value : bounds.def;
+  return Math.max(bounds.min, Math.min(bounds.max, requested));
+}
+
+function _setCalDetailHeight(calBody, value, { persist = false } = {}) {
+  if (!calBody) return 0;
+  const h = _clampCalDetailHeight(calBody, value);
+  calBody.style.setProperty('--cal-detail-h', h + 'px');
+  if (persist) {
+    try {
+      localStorage.setItem(_calDetailLayoutKey(), String(Math.round(h)));
+      localStorage.removeItem(CAL_DETAIL_STORAGE_KEY);
+    } catch {}
+  }
+  return h;
+}
+
+function _restoreCalDetailHeight(calBody) {
+  if (!calBody || calBody.classList.contains('cal-form-mode')) return;
+  const key = _calDetailLayoutKey();
+  let saved = 0;
+  try {
+    saved = parseInt(localStorage.getItem(key) || localStorage.getItem(CAL_DETAIL_STORAGE_KEY) || '0', 10);
+  } catch { saved = 0; }
+  _setCalDetailHeight(calBody, saved || _calDetailBounds(calBody).def);
+  calBody._calDetailLayoutKey = key;
+}
+
+function _resetCalDetailHeight(calBody) {
+  if (!calBody) return;
+  try {
+    localStorage.removeItem(_calDetailLayoutKey());
+    localStorage.removeItem(CAL_DETAIL_STORAGE_KEY);
+  } catch {}
+  _setCalDetailHeight(calBody, _calDetailBounds(calBody).def);
+}
+
 function _render() {
   // Don't rebuild the DOM while the user is typing in quick-add — defer it.
   if (_qaTyping()) { _renderPending = true; return; }
@@ -738,6 +853,7 @@ function _render() {
 function _renderEmpty() {
   const body = document.getElementById('cal-body');
   if (!body) return;
+  _prepareCalendarBodyForCalendarView(body);
   const hasError = !!_calendarsError;
   body.innerHTML = `
     <div class="cal-empty-state">
@@ -917,6 +1033,7 @@ function _eventVisible(e) {
 async function _renderMonth() {
   const body = document.getElementById('cal-body');
   if (!body) return;
+  _prepareCalendarBodyForCalendarView(body);
   const _tk = _renderToken;
   const [rs, re] = _monthRange(_currentDate);
   await _fetchEvents(rs, re);
@@ -1068,8 +1185,9 @@ async function _renderMonth() {
     const todayCell = body.querySelector('.cal-day.cal-today');
     if (todayCell && _newGrid) {
       requestAnimationFrame(() => {
-        try { todayCell.scrollIntoView({ block: 'center', behavior: 'auto' }); }
-        catch { _newGrid.scrollTop = Math.max(0, todayCell.offsetTop - _newGrid.clientHeight / 2); }
+        const target = todayCell.offsetTop - _newGrid.offsetTop - Math.max(0, (_newGrid.clientHeight - todayCell.offsetHeight) / 2);
+        _newGrid.scrollTop = Math.max(0, target);
+        body.scrollTop = 0;
       });
     }
   }
@@ -1166,6 +1284,7 @@ function _wkEventTopHeight(ev, dayStr) {
 async function _renderWeek() {
   const body = document.getElementById('cal-body');
   if (!body) return;
+  _prepareCalendarBodyForCalendarView(body);
   const _tk = _renderToken;
   // Stash current scroll so we can restore after re-render (zoom, drag,
   // etc. all rebuild the body).
@@ -1562,6 +1681,7 @@ function _showEventFormForRange(ds, startHHMM, endHHMM) {
 async function _renderAgenda() {
   const body = document.getElementById('cal-body');
   if (!body) return;
+  _prepareCalendarBodyForCalendarView(body);
   const _tk = _renderToken;
   // Fetch 3 months forward from current date
   const s = _ds(_currentDate);
@@ -1660,6 +1780,7 @@ async function _renderAgenda() {
 async function _renderSearch() {
   const body = document.getElementById('cal-body');
   if (!body) return;
+  _prepareCalendarBodyForCalendarView(body);
   // Search across all events in pool (no fetch needed — use what we have)
   const q = _searchQuery.toLowerCase();
   const results = Object.values(_allEvents)
@@ -1714,6 +1835,7 @@ async function _renderSearch() {
 async function _renderYear() {
   const body = document.getElementById('cal-body');
   if (!body) return;
+  _prepareCalendarBodyForCalendarView(body);
   const _tk = _renderToken;
   const y = _currentDate.getFullYear();
   await _fetchEvents(`${y}-01-01`, `${y + 1}-01-01`);
@@ -1846,20 +1968,38 @@ function _wireAll(body) {
       // the day-detail pane up and down on every character.
       const alreadySet = calBody.style.getPropertyValue('--cal-detail-h');
       if (!alreadySet) {
-        const saved = parseInt(localStorage.getItem('odysseus.cal.detailH') || '0', 10);
-        if (saved && saved > 80) calBody.style.setProperty('--cal-detail-h', saved + 'px');
+        _restoreCalDetailHeight(calBody);
+      } else {
+        calBody._calDetailLayoutKey = _calDetailLayoutKey();
+        _setCalDetailHeight(calBody, parseInt(alreadySet, 10) || 0);
+      }
+      const clampDetail = () => {
+        if (calBody.classList.contains('cal-form-mode')) return;
+        const key = _calDetailLayoutKey();
+        if (calBody._calDetailLayoutKey && calBody._calDetailLayoutKey !== key) {
+          _restoreCalDetailHeight(calBody);
+          return;
+        }
+        calBody._calDetailLayoutKey = key;
+        const cur = parseInt(calBody.style.getPropertyValue('--cal-detail-h'), 10) || 0;
+        _setCalDetailHeight(calBody, cur || _calDetailBounds(calBody).def);
+      };
+      requestAnimationFrame(clampDetail);
+      if (!calBody._calDetailResizeObs && typeof ResizeObserver !== 'undefined') {
+        const obs = new ResizeObserver(() => requestAnimationFrame(clampDetail));
+        obs.observe(calBody);
+        const content = calBody.closest('.modal-content');
+        if (content) obs.observe(content);
+        calBody._calDetailResizeObs = obs;
       }
       let startY = 0, startH = 240, dragging = false;
       const onMove = (ev) => {
         if (!dragging) return;
         const y = ev.touches ? ev.touches[0].clientY : ev.clientY;
-        // Drag UP (smaller y) → bigger day-detail. Allow the pane to grow
-        // all the way to the top of the visible viewport so the user can
-        // hide the calendar entirely. We leave ~24px headroom so the
-        // splitter handle itself stays grabbable to drag back down.
-        const vh = (window.visualViewport?.height) || window.innerHeight;
-        const newH = Math.max(40, Math.min(vh - 24, startH + (startY - y)));
-        calBody.style.setProperty('--cal-detail-h', newH + 'px');
+        // Drag UP (smaller y) gives the day-detail more room, but keep
+        // enough space for the actual calendar grid so the dock never turns
+        // into a blank day-detail scroller.
+        _setCalDetailHeight(calBody, startH + (startY - y));
       };
       const onUp = () => {
         if (!dragging) return;
@@ -1871,7 +2011,7 @@ function _wireAll(body) {
         document.removeEventListener('touchend', onUp);
         const cur = calBody.style.getPropertyValue('--cal-detail-h');
         const px = parseInt(cur, 10);
-        if (px) { try { localStorage.setItem('odysseus.cal.detailH', String(px)); } catch {} }
+        if (px) _setCalDetailHeight(calBody, px, { persist: true });
       };
       const onDown = (ev) => {
         ev.preventDefault();
@@ -1892,8 +2032,7 @@ function _wireAll(body) {
       // pane to its CSS default height.
       let _lastTap = 0;
       const resetSplit = () => {
-        calBody.style.removeProperty('--cal-detail-h');
-        try { localStorage.removeItem('odysseus.cal.detailH'); } catch {}
+        _resetCalDetailHeight(calBody);
       };
       splitter.addEventListener('dblclick', resetSplit);
       splitter.addEventListener('touchend', () => {
@@ -2222,14 +2361,13 @@ function _wireAll(body) {
       if (window.innerWidth > 768) return;
       const calBody = document.getElementById('cal-body');
       if (!calBody) return;
-      const vh = (window.visualViewport?.height) || window.innerHeight;
-      const target = vh - 24;
+      const target = _calDetailBounds(calBody).max;
       // Skip if already expanded — every keystroke triggers a re-render
       // which re-focuses the input. Re-running this on each keystroke
       // would shove the layout around as the user types.
       const cur = parseInt(calBody.style.getPropertyValue('--cal-detail-h'), 10) || 0;
       if (cur >= target - 24) return;
-      calBody.style.setProperty('--cal-detail-h', target + 'px');
+      _setCalDetailHeight(calBody, target);
     });
   }
 
@@ -2678,6 +2816,7 @@ function _parseTitleTime(text) {
 function _showEventForm(existing, defaultDate, defaultEndDate) {
   const body = document.getElementById('cal-body');
   if (!body) return;
+  _prepareCalendarBodyForForm(body);
   const isEdit = !!existing;
   const ds = existing ? _localDateOf(existing.dtstart) : (defaultDate || _today());
   const de = existing && existing.dtend ? _localDateOf(existing.dtend) : (defaultEndDate || ds);

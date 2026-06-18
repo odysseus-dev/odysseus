@@ -46,6 +46,7 @@ _COMMON_TOOL_NAMES = {
     "list_serve_presets",
     "list_served_models",
     "list_sessions",
+    "manage_gallery",
     "ls",
     "manage_calendar",
     "manage_contact",

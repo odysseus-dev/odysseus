@@ -14,6 +14,13 @@ const API_BASE = window.location.origin;
 const _acct = () => window.__odysseusActiveEmailAccount
   ? `&account_id=${encodeURIComponent(window.__odysseusActiveEmailAccount)}`
   : '';
+const _isCompactEmailViewport = () => {
+  try {
+    return (window.matchMedia && window.matchMedia('(max-width: 768px)').matches) || window.innerWidth <= 768;
+  } catch (_) {
+    return window.innerWidth <= 768;
+  }
+};
 
 const _emailSetupHint = () => '<div style="margin-top:6px;opacity:0.72;font-size:11px;">Setup: <span style="color:var(--accent,var(--red));">Settings &rsaquo; Integrations</span></div>';
 
@@ -192,7 +199,11 @@ function _bindEvents() {
   // Initial unread count check, refresh every 60s
   _refreshUnreadCount();
   setInterval(_refreshUnreadCount, 60000);
-  prewarmEmailLibrary({ delay: 3000 });
+  const compactEmailView = _isCompactEmailViewport();
+  prewarmEmailLibrary({
+    delay: compactEmailView ? 12000 : 3000,
+    limit: compactEmailView ? 20 : 100,
+  });
 
   // Deep-link: #email=<folder>:<uid> opens the library and expands that card
   _maybeOpenFromHash();
@@ -226,8 +237,9 @@ async function _refreshUnreadCount() {
   if (dot && !dot._stickyState) dot.style.display = 'none';
   try {
     // Parallel: unread list + urgency state.
+    const unreadLimit = _isCompactEmailViewport() ? 12 : 50;
     const [listRes, urgRes] = await Promise.all([
-      fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=50&filter=unread${_acct()}`),
+      fetch(`${API_BASE}/api/email/list?folder=INBOX&limit=${unreadLimit}&filter=unread${_acct()}`),
       fetch(`${API_BASE}/api/email/urgency-state`, { credentials: 'same-origin' }).catch(() => null),
     ]);
     if (!listRes || !listRes.ok) return;
@@ -303,7 +315,8 @@ export async function loadEmails(append = false) {
 
   try {
     const fromQS = _senderFilter ? `&from=${encodeURIComponent(_senderFilter)}` : '';
-    const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=50&offset=${_offset}${fromQS}${_acct()}&_=${Date.now()}`);
+    const listLimit = _isCompactEmailViewport() ? 30 : 50;
+    const res = await fetch(`${API_BASE}/api/email/list?folder=${encodeURIComponent(_currentFolder)}&limit=${listLimit}&offset=${_offset}${fromQS}${_acct()}&_=${Date.now()}`);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 

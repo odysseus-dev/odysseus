@@ -178,21 +178,67 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
   const chatBar = document.querySelector('.chat-input-bar');
   const attachStrip = document.getElementById('attach-strip');
   const chatContainer = document.getElementById('chat-container');
+  const watchedDocks = typeof WeakSet !== 'undefined' ? new WeakSet() : null;
+  let dockResizeObserver = null;
+  const COMPOSER_DOCK_GAP = 4;
+  const COLLAPSED_OVERLAY_HISTORY_GAP = 4;
+  const TOUCH_DOCK_HISTORY_RATIO = 0.75;
+  const _isTouchDockViewport = () => window.innerWidth <= 768
+    || window.matchMedia('(pointer: coarse)').matches
+    || window.matchMedia('(hover: none)').matches
+    || navigator.maxTouchPoints > 0;
+  const _visibleDockHeight = (dock) => {
+    if (!dock) return 0;
+    const hasItems = dock.children && dock.children.length > 0;
+    if (!hasItems) return 0;
+    const cs = window.getComputedStyle(dock);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return 0;
+    const rect = dock.getBoundingClientRect();
+    const touchDock = dock.id === 'minimized-dock' && _isTouchDockViewport();
+    const reserveHeight = touchDock ? rect.height * TOUCH_DOCK_HISTORY_RATIO : rect.height;
+    return rect.height > 0 ? Math.ceil(reserveHeight + COLLAPSED_OVERLAY_HISTORY_GAP) : 0;
+  };
+  const _watchDock = (dock) => {
+    if (!dock || (watchedDocks && watchedDocks.has(dock))) return;
+    if (watchedDocks) watchedDocks.add(dock);
+    if (dockResizeObserver) dockResizeObserver.observe(dock);
+    if (typeof MutationObserver !== 'undefined') {
+      new MutationObserver(_syncComposerClearance).observe(dock, {
+        attributes: true,
+        childList: true,
+        subtree: true,
+        attributeFilter: ['class', 'style'],
+      });
+    }
+  };
+  const _watchCurrentDocks = () => {
+    _watchDock(document.getElementById('minimized-dock'));
+    _watchDock(document.getElementById('modal-dock'));
+  };
   const _syncComposerClearance = () => {
+    _watchCurrentDocks();
     let top = window.innerHeight;
     for (const el of [attachStrip, chatBar]) {
       if (!el) continue;
       const rect = el.getBoundingClientRect();
       if (rect.height > 0) top = Math.min(top, rect.top);
     }
-    const clearance = Math.max(12, Math.ceil(window.innerHeight - top + 8));
+    const clearance = Math.max(8, Math.ceil(window.innerHeight - top + COMPOSER_DOCK_GAP));
     root.style.setProperty('--composer-clearance', clearance + 'px');
+    const collapsedOverlaySpace = Math.max(
+      _visibleDockHeight(document.getElementById('minimized-dock')),
+      _visibleDockHeight(document.getElementById('modal-dock')),
+    );
+    root.style.setProperty('--collapsed-overlay-space', collapsedOverlaySpace + 'px');
+    document.body.classList.toggle('has-collapsed-overlays', collapsedOverlaySpace > 0);
   };
   requestAnimationFrame(_syncComposerClearance);
   if (typeof ResizeObserver !== 'undefined') {
     const ro = new ResizeObserver(_syncComposerClearance);
     if (chatBar) ro.observe(chatBar);
     if (attachStrip) ro.observe(attachStrip);
+    dockResizeObserver = new ResizeObserver(_syncComposerClearance);
+    _watchCurrentDocks();
   }
   if (chatContainer && typeof MutationObserver !== 'undefined') {
     new MutationObserver(_syncComposerClearance).observe(chatContainer, {
@@ -200,7 +246,16 @@ window.addEventListener('pageshow', clearFreshComposerRestore);
       attributeFilter: ['class'],
     });
   }
+  if (typeof MutationObserver !== 'undefined') {
+    _watchCurrentDocks();
+    new MutationObserver(_syncComposerClearance).observe(document.body, {
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+  }
   if (chatBar) chatBar.addEventListener('transitionend', _syncComposerClearance);
+  window.addEventListener('odysseus:minimized-dock-rendered', _syncComposerClearance);
   window.addEventListener('resize', _syncComposerClearance);
 }
 

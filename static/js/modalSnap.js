@@ -597,6 +597,17 @@ function _activeDockedWindows(side, owner = null) {
   });
 }
 
+export function preferredEdgeDockSide(owner = null) {
+  if (_activeDockedWindows('left', owner).length) return 'left';
+  if (_activeDockedWindows('right', owner).length) return 'right';
+  const sidebar = document.getElementById('sidebar');
+  const rail = document.getElementById('icon-rail');
+  const navRight = _rightNavWidth() > 0
+    || sidebar?.classList?.contains('right-side')
+    || rail?.classList?.contains('right-side');
+  return navRight ? 'left' : 'right';
+}
+
 function _requestDockReplacement(side, owner) {
   for (const existing of _activeDockedWindows(side, owner)) {
     try {

@@ -205,6 +205,7 @@ When referencing app entities by id, use clickable markdown anchors:
 - Sessions: `[Name](#session-<id>)`
 - Documents: `[Title](#document-<id>)`
 - Notes: `[Title](#note-<id>)`
+- Gallery images: `[Caption](#image-<id>)`
 - Emails: `[Subject](#email-<uid>)`
 - Calendar events: `[Summary](#event-<uid>)`
 - Tasks: `[Task name](#task-<id>)`
@@ -262,6 +263,11 @@ _DOMAIN_RULES = {
 - Use `manage_settings` for preferences and tool enable/disable.
 - Use named tools over `app_api` when a named wrapper exists.
 - `app_api` is only for safe UI/API actions without a named tool; do not use it for shell, package installs, engine rebuilds, or sensitive auth/admin paths.""",
+    "gallery": """\
+## Gallery rules
+- Use `manage_gallery` to list/search/get/describe saved Gallery images. Do not claim you cannot see the Gallery without trying this tool when it is available.
+- Use `edit_image` to edit a Gallery image and save the edited copy back to Gallery. Use `manage_gallery` first if you need an image id.
+- Inpaint requires a mask or mask_image_id. For quick local edits, use sharpen. For visual understanding, use `manage_gallery` action `describe`.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -274,6 +280,7 @@ _DOMAIN_TOOL_MAP = {
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
     "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
+    "gallery": {"manage_gallery", "edit_image"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -282,7 +289,7 @@ def _domain_rules_for_tools(tool_names: set) -> list[str]:
     for domain, domain_tools in _DOMAIN_TOOL_MAP.items():
         if names & domain_tools:
             rules.append(_DOMAIN_RULES[domain])
-    if names & {"create_session", "list_sessions", "manage_session", "manage_documents", "manage_notes", "manage_calendar", "manage_tasks", "manage_skills", "manage_research"}:
+    if names & {"create_session", "list_sessions", "manage_session", "manage_documents", "manage_notes", "manage_calendar", "manage_tasks", "manage_skills", "manage_research", "manage_gallery", "edit_image"}:
         rules.append(_LINK_RULES)
     return rules
 
@@ -397,6 +404,22 @@ Suggest changes with explanations (for review/feedback requests).""",
 <quality>
 ```
 Generate an image. Line 1 = description, line 2 = model name, line 3 = WxH (e.g. 1024x1024), line 4 = quality.""",
+
+    "manage_gallery": """\
+```manage_gallery
+{"action": "list", "query": "", "limit": 12}
+```
+List, search, inspect, or describe saved Gallery images/photos. Use this when the user asks "can you see my gallery/photos?", asks what images are saved, wants to use a Gallery image, or needs an image id. Actions:
+- `list` / `search`: optional query/tag/album_id/favorites/limit. Returns clickable `[caption](#image-<id>)` links.
+- `get`: pass `image_id` for metadata and URL.
+- `describe`: pass `image_id` to send that Gallery image to the configured vision model and get a visual description.
+Do not answer that you have no Gallery access when this tool is available; call it first.""",
+
+    "edit_image": """\
+```edit_image
+{"image_id": "<gallery image id>", "action": "sharpen", "amount": 50}
+```
+Edit a saved Gallery image and save the result as a NEW Gallery image. Use `manage_gallery` first if you need the image id. Actions: `sharpen` (local, quick), `denoise`, `upscale`, `rembg`/`remove_bg`, `enhance_face`, `harmonize`, `inpaint`. `inpaint` requires `mask` or `mask_image_id`; do not call it without a mask. `harmonize` needs a configured diffusion/img2img endpoint and may fail with setup instructions if none is running. The tool returns an inline image and clickable `#image-<id>` link.""",
 
     "chat_with_model": "- ```chat_with_model``` — Ask a DIFFERENT AI model and relay its answer. Line 1 = model name (or 'model@endpoint'), rest = your message. Use when the user says 'ask <model>', 'what does <model> think', or wants to compare/their answer from another model.",
     "ask_teacher": "- ```ask_teacher``` — Escalate a hard question to a more capable model. Line 1 = model name or 'auto', rest = the question. Use when stuck or need expert knowledge.",
@@ -1557,6 +1580,7 @@ def _compute_final_metrics(
 _VERIFIER_EFFECTFUL_TOOLS = {
     "create_document", "update_document", "edit_document",
     "bash", "python", "write_file",
+    "edit_image",
 }
 _VERIFIER_MAX_ROUNDS = 2  # cap re-verify cycles per turn — never loop forever
 
@@ -2801,8 +2825,8 @@ async def stream_agent_loop(
                 for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):
                     if k in result:
                         tool_output_data[k] = result[k]
-            # Forward image data from generate_image tool
-            for k in ("image_url", "image_prompt", "image_model", "image_size", "image_quality"):
+            # Forward image data from generate_image/edit_image tools
+            for k in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
                 if k in result:
                     tool_output_data[k] = result[k]
             # Forward screenshots from browser tools (base64 images)
@@ -2861,7 +2885,7 @@ async def stream_agent_loop(
                 "exit_code": result.get("exit_code"),
             }
             if result.get("image_url"):
-                for ik in ("image_url", "image_prompt", "image_model", "image_size", "image_quality"):
+                for ik in ("image_url", "image_id", "image_prompt", "image_model", "image_size", "image_quality"):
                     if result.get(ik):
                         tool_event[ik] = result[ik]
             if result.get("doc_id"):

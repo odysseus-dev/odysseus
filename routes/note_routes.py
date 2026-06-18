@@ -96,6 +96,13 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
     }
 
 
+def _field_provided(model: BaseModel, field: str) -> bool:
+    fields_set = getattr(model, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(model, "__fields_set__", set())
+    return field in fields_set
+
+
 def _reminder_text_from_note(note: Note) -> tuple[str, str]:
     """Return the reminder title/body from a stored note row."""
     title = (note.title or "Note reminder").strip() or "Note reminder"
@@ -675,32 +682,32 @@ def setup_note_routes(task_scheduler=None):
             if user is not None and note.owner != user:
                 raise HTTPException(404, "Note not found")
 
-            if body.title is not None:
-                note.title = body.title
-            if body.content is not None:
+            if _field_provided(body, "title"):
+                note.title = body.title or ""
+            if _field_provided(body, "content"):
                 note.content = body.content
-            if body.items is not None:
-                note.items = json.dumps(body.items)
+            if _field_provided(body, "items"):
+                note.items = json.dumps(body.items) if body.items is not None else None
                 flag_modified(note, "items")
-            if body.note_type is not None:
+            if _field_provided(body, "note_type") and body.note_type is not None:
                 note.note_type = body.note_type
-            if body.color is not None:
+            if _field_provided(body, "color"):
                 note.color = body.color
-            if body.label is not None:
+            if _field_provided(body, "label"):
                 note.label = body.label
-            if body.pinned is not None:
+            if _field_provided(body, "pinned") and body.pinned is not None:
                 note.pinned = body.pinned
-            if body.archived is not None:
+            if _field_provided(body, "archived") and body.archived is not None:
                 note.archived = body.archived
-            if body.due_date is not None:
+            if _field_provided(body, "due_date"):
                 note.due_date = body.due_date
-            if body.image_url is not None:
+            if _field_provided(body, "image_url"):
                 note.image_url = body.image_url
-            if body.repeat is not None:
-                note.repeat = body.repeat
-            if body.sort_order is not None:
+            if _field_provided(body, "repeat"):
+                note.repeat = body.repeat or "none"
+            if _field_provided(body, "sort_order") and body.sort_order is not None:
                 note.sort_order = body.sort_order
-            if body.agent_session_id is not None:
+            if _field_provided(body, "agent_session_id"):
                 note.agent_session_id = body.agent_session_id
 
             db.commit()

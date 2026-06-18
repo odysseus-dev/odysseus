@@ -6,13 +6,14 @@ These handle the actual execution logic for each tool type.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
 
-from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE
+from src.constants import MAX_READ_CHARS, DEEP_RESEARCH_DIR, VAULT_FILE, GENERATED_IMAGES_DIR
 from src.tool_utils import get_mcp_manager
 from core.constants import internal_api_base
 
@@ -3570,31 +3571,462 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
 
 # ── Gallery tools ──
 
-async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
-    """Edit a gallery image (upscale, rembg, inpaint, harmonize)."""
-    import httpx
+def _gallery_auth_disabled() -> bool:
+    try:
+        from src.auth_helpers import _auth_disabled
+        return bool(_auth_disabled())
+    except Exception:
+        return False
+
+
+def _apply_gallery_owner_filter(q, owner: Optional[str], model_cls=None):
+    from core.database import GalleryImage
+    model = model_cls or GalleryImage
+    if owner:
+        return q.filter(model.owner == owner)
+    if _gallery_auth_disabled():
+        return q
+    return q.filter(False)
+
+
+def _gallery_safe_path(filename: str):
+    from pathlib import Path
+
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(str(filename or "")).name)[:128]
+    if not safe_name or safe_name != str(filename or ""):
+        raise ValueError("Unsafe gallery filename")
+    root = Path(GENERATED_IMAGES_DIR).resolve()
+    path = (root / safe_name).resolve()
+    if os.path.commonpath([str(root), str(path)]) != str(root):
+        raise ValueError("Unsafe gallery filename")
+    return path
+
+
+def _gallery_label(img) -> str:
+    label = (getattr(img, "prompt", "") or "").strip()
+    if not label:
+        label = (getattr(img, "filename", "") or getattr(img, "id", "") or "Gallery image").strip()
+    return label[:80]
+
+
+def _gallery_image_summary(img, session_name: Optional[str] = None) -> str:
+    label = _gallery_label(img)
+    bits = []
+    if getattr(img, "width", None) and getattr(img, "height", None):
+        bits.append(f"{img.width}x{img.height}")
+    if getattr(img, "model", None):
+        bits.append(str(img.model))
+    tags = []
+    for raw in ((getattr(img, "tags", "") or ""), (getattr(img, "ai_tags", "") or "")):
+        tags.extend(t.strip() for t in raw.split(",") if t.strip())
+    deduped = []
+    seen = set()
+    for tag in tags:
+        key = tag.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(tag)
+    if deduped:
+        bits.append("tags: " + ", ".join(deduped[:6]))
+    if session_name:
+        bits.append(f"chat: {session_name}")
+    suffix = " - " + "; ".join(bits) if bits else ""
+    return f"- [{label}](#image-{img.id}) (`{img.id}`){suffix}"
+
+
+def _get_gallery_image_for_owner(db, image_id: str, owner: Optional[str]):
+    from core.database import GalleryImage
+
+    q = db.query(GalleryImage).filter(
+        GalleryImage.id == image_id,
+        GalleryImage.is_active == True,
+    )
+    q = _apply_gallery_owner_filter(q, owner, GalleryImage)
+    return q.first()
+
+
+def _coerce_tool_int(value: Any, default: int, min_value: int, max_value: int) -> int:
+    try:
+        iv = int(value)
+    except (TypeError, ValueError):
+        iv = default
+    return max(min_value, min(max_value, iv))
+
+
+def _coerce_tool_float(value: Any, default: float, min_value: float, max_value: float) -> float:
+    try:
+        fv = float(value)
+    except (TypeError, ValueError):
+        fv = default
+    return max(min_value, min(max_value, fv))
+
+
+def _tool_truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+async def do_manage_gallery(content: str, owner: Optional[str] = None) -> Dict:
+    """List, inspect, or describe saved Gallery images."""
     try:
         args = _parse_tool_args(content)
     except ValueError:
         return {"error": "Invalid JSON arguments", "exit_code": 1}
-    image_id = args.get("image_id", "")
-    action = args.get("action", "")
+    if not isinstance(args, dict):
+        args = {}
+
+    action = (args.get("action") or "list").strip().lower()
+    if action in {"search", "find"}:
+        action = "list"
+    if action in {"view", "open", "read"}:
+        action = "get"
+
+    query = (args.get("query") or args.get("search") or "").strip()
+    image_id = (args.get("image_id") or args.get("id") or "").strip()
+    limit = _coerce_tool_int(args.get("limit"), 12, 1, 25)
+
+    from core.database import SessionLocal, GalleryImage
+    from core.database import Session as DbSession
+    from routes.gallery_helpers import _image_to_dict
+
+    db = SessionLocal()
+    try:
+        if action == "list":
+            q = (
+                db.query(GalleryImage, DbSession.name)
+                .outerjoin(DbSession, GalleryImage.session_id == DbSession.id)
+                .filter(GalleryImage.is_active == True)
+            )
+            q = _apply_gallery_owner_filter(q, owner, GalleryImage)
+            if query:
+                from sqlalchemy import or_
+                term = f"%{query}%"
+                q = q.filter(or_(
+                    GalleryImage.prompt.ilike(term),
+                    GalleryImage.filename.ilike(term),
+                    GalleryImage.tags.ilike(term),
+                    GalleryImage.ai_tags.ilike(term),
+                    GalleryImage.model.ilike(term),
+                ))
+            tag = (args.get("tag") or "").strip()
+            if tag:
+                from sqlalchemy import or_
+                for one in (t.strip() for t in tag.split(",")):
+                    if one:
+                        q = q.filter(or_(
+                            GalleryImage.tags.ilike(f"%{one}%"),
+                            GalleryImage.ai_tags.ilike(f"%{one}%"),
+                        ))
+            album_id = (args.get("album_id") or args.get("album") or "").strip()
+            if album_id:
+                q = q.filter(GalleryImage.album_id == album_id)
+            if _tool_truthy(args.get("favorites")) or _tool_truthy(args.get("favorite")):
+                q = q.filter(GalleryImage.favorite == True)
+
+            total = q.count()
+            rows = (
+                q.order_by(GalleryImage.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            if not rows:
+                noun = f" matching '{query}'" if query else ""
+                return {"results": f"No Gallery images found{noun}.", "items": [], "total": 0, "exit_code": 0}
+
+            lines = [f"Found {total} Gallery image(s)" + (f" matching '{query}'" if query else "") + ":"]
+            items = []
+            for img, session_name in rows:
+                lines.append(_gallery_image_summary(img, session_name))
+                items.append(_image_to_dict(img, session_name))
+            if total > len(rows):
+                lines.append(f"... {total - len(rows)} more. Narrow with query/tag or increase limit.")
+            return {"results": "\n".join(lines), "items": items, "total": total, "exit_code": 0}
+
+        if action in {"get", "describe"}:
+            row = None
+            session_name = None
+            if image_id:
+                q = (
+                    db.query(GalleryImage, DbSession.name)
+                    .outerjoin(DbSession, GalleryImage.session_id == DbSession.id)
+                    .filter(GalleryImage.id == image_id, GalleryImage.is_active == True)
+                )
+                q = _apply_gallery_owner_filter(q, owner, GalleryImage)
+                row = q.first()
+            elif query:
+                q = (
+                    db.query(GalleryImage, DbSession.name)
+                    .outerjoin(DbSession, GalleryImage.session_id == DbSession.id)
+                    .filter(GalleryImage.is_active == True)
+                )
+                q = _apply_gallery_owner_filter(q, owner, GalleryImage)
+                from sqlalchemy import or_
+                term = f"%{query}%"
+                row = (
+                    q.filter(or_(
+                        GalleryImage.prompt.ilike(term),
+                        GalleryImage.filename.ilike(term),
+                        GalleryImage.tags.ilike(term),
+                        GalleryImage.ai_tags.ilike(term),
+                    ))
+                    .order_by(GalleryImage.created_at.desc())
+                    .first()
+                )
+            else:
+                return {"error": "image_id is required for get/describe, or pass query to pick the newest match.", "exit_code": 1}
+
+            if not row:
+                return {"error": "Gallery image not found.", "exit_code": 1}
+            img, session_name = row
+            item = _image_to_dict(img, session_name)
+            lines = ["Gallery image:", _gallery_image_summary(img, session_name)]
+            lines.append(f"URL: {item['url']}")
+            if item.get("created_at"):
+                lines.append(f"Created: {item['created_at']}")
+            if item.get("file_size"):
+                lines.append(f"File size: {item['file_size']} bytes")
+
+            if action == "describe" or _tool_truthy(args.get("include_description")):
+                try:
+                    img_path = _gallery_safe_path(img.filename)
+                    if not img_path.exists():
+                        return {"error": "Gallery image file not found on disk.", "exit_code": 1}
+                    from src.document_processor import analyze_image_with_vl_result
+                    vl = analyze_image_with_vl_result(str(img_path), owner=owner)
+                    description = (vl.get("text") or "").strip()
+                    model = vl.get("model") or ""
+                    lines.append("")
+                    lines.append("Vision description:")
+                    lines.append(description or "[No description returned]")
+                    return {
+                        "results": "\n".join(lines),
+                        "item": item,
+                        "description": description,
+                        "vision_model": model,
+                        "exit_code": 0 if description and not description.startswith("[") else 1,
+                    }
+                except Exception as e:
+                    return {"error": f"Failed to describe Gallery image: {e}", "item": item, "exit_code": 1}
+
+            return {"results": "\n".join(lines), "item": item, "exit_code": 0}
+
+        return {"error": "Unknown action. Use list, get, or describe.", "exit_code": 1}
+    except Exception as e:
+        logger.error(f"manage_gallery error: {e}")
+        return {"error": str(e), "exit_code": 1}
+    finally:
+        db.close()
+
+
+def _decode_tool_image_b64(raw: str) -> bytes:
+    value = (raw or "").strip()
+    if "," in value and value.lower().startswith("data:"):
+        value = value.split(",", 1)[1]
+    return base64.b64decode(value)
+
+
+def _save_edited_gallery_image(source_img, image_b64: str, action: str, prompt: str, owner: Optional[str], args: Dict[str, Any]) -> Dict[str, Any]:
+    import base64
+    import hashlib
+    import uuid
+    from io import BytesIO
+    from pathlib import Path
+
+    from PIL import Image
+    from core.database import SessionLocal, GalleryImage
+    from routes.gallery_helpers import _image_to_dict
+
+    raw = _decode_tool_image_b64(image_b64)
+    with Image.open(BytesIO(raw)) as pil:
+        output = BytesIO()
+        pil.save(output, format="PNG")
+        content = output.getvalue()
+        width, height = pil.size
+
+    img_dir = Path(GENERATED_IMAGES_DIR)
+    img_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{uuid.uuid4().hex[:12]}.png"
+    img_path = img_dir / filename
+    img_path.write_bytes(content)
+
+    title = (args.get("name") or args.get("title") or "").strip()
+    if not title:
+        base = _gallery_label(source_img)
+        title = f"{base} - {action.replace('_', ' ')}"
+    if prompt:
+        title = f"{title}: {prompt[:160]}"
+
+    new_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        row = GalleryImage(
+            id=new_id,
+            filename=filename,
+            prompt=title[:500],
+            model=f"edit:{action}",
+            size=f"{width}x{height}",
+            quality=getattr(source_img, "quality", None),
+            tags=getattr(source_img, "tags", "") or "",
+            ai_tags="",
+            session_id=getattr(source_img, "session_id", None),
+            album_id=getattr(source_img, "album_id", None),
+            owner=owner if owner is not None else getattr(source_img, "owner", None),
+            file_hash=hashlib.sha256(content).hexdigest(),
+            file_size=len(content),
+            width=width,
+            height=height,
+        )
+        db.add(row)
+        db.commit()
+        item = _image_to_dict(row)
+        return {
+            "id": new_id,
+            "filename": filename,
+            "url": item["url"],
+            "prompt": row.prompt,
+            "model": row.model,
+            "size": row.size,
+            "item": item,
+        }
+    except Exception:
+        db.rollback()
+        try:
+            img_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    finally:
+        db.close()
+
+
+async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
+    """Edit a gallery image and save the edited result back to Gallery."""
+    import base64
+    import httpx
+
+    try:
+        args = _parse_tool_args(content)
+    except ValueError:
+        return {"error": "Invalid JSON arguments", "exit_code": 1}
+    if not isinstance(args, dict):
+        args = {}
+
+    image_id = (args.get("image_id") or args.get("id") or "").strip()
+    action_raw = (args.get("action") or "").strip().lower().replace("-", "_")
+    aliases = {
+        "rembg": "remove_bg",
+        "remove_background": "remove_bg",
+        "background_remove": "remove_bg",
+        "enhance_face": "enhance_face",
+        "face_enhance": "enhance_face",
+    }
+    action = aliases.get(action_raw, action_raw)
     if not image_id or not action:
         return {"error": "image_id and action are required", "exit_code": 1}
-    payload = {"image_id": image_id}
-    if args.get("prompt"):
-        payload["prompt"] = args["prompt"]
-    if args.get("scale"):
-        payload["scale"] = args["scale"]
+
+    endpoint_by_action = {
+        "sharpen": "/api/image/sharpen",
+        "denoise": "/api/image/denoise",
+        "upscale": "/api/image/upscale-local",
+        "remove_bg": "/api/image/remove-bg",
+        "inpaint": "/api/image/inpaint",
+        "harmonize": "/api/image/harmonize",
+        "enhance_face": "/api/image/enhance-face",
+    }
+    endpoint = endpoint_by_action.get(action)
+    if not endpoint:
+        return {
+            "error": "Unknown edit action. Use sharpen, denoise, upscale, rembg/remove_bg, inpaint, harmonize, or enhance_face.",
+            "exit_code": 1,
+        }
+
+    from core.database import SessionLocal
+
+    db = SessionLocal()
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/gallery/{action}", json=payload)
+        img = _get_gallery_image_for_owner(db, image_id, owner)
+        if not img:
+            return {"error": "Gallery image not found.", "exit_code": 1}
+        img_path = _gallery_safe_path(img.filename)
+        if not img_path.exists():
+            return {"error": "Gallery image file not found on disk.", "exit_code": 1}
+        ext = img_path.suffix.lower().lstrip(".")
+        if ext in {"mp4", "mov", "webm", "mkv", "m4v"}:
+            return {"error": "AI image editing is only available for image files, not videos.", "exit_code": 1}
+
+        source_b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
+        prompt = (args.get("prompt") or "").strip()
+        payload: Dict[str, Any] = {"image": source_b64}
+
+        if action == "upscale":
+            payload["scale"] = _coerce_tool_int(args.get("scale"), 2, 2, 4)
+        elif action == "sharpen":
+            payload["amount"] = _coerce_tool_int(args.get("amount"), 50, 0, 100)
+        elif action == "denoise":
+            payload["strength"] = _coerce_tool_float(args.get("strength"), 0.5, 0.0, 1.0)
+        elif action == "harmonize":
+            payload["prompt"] = prompt or "natural lighting, harmonious color, seamless blend"
+            payload["strength"] = _coerce_tool_float(args.get("strength"), 0.45, 0.05, 0.95)
+            for field in ("mask", "body_mask", "seam_mask"):
+                if args.get(field):
+                    payload[field] = args[field]
+        elif action == "inpaint":
+            mask_b64 = args.get("mask") or args.get("mask_b64")
+            mask_image_id = (args.get("mask_image_id") or "").strip()
+            if not mask_b64 and mask_image_id:
+                mask_img = _get_gallery_image_for_owner(db, mask_image_id, owner)
+                if not mask_img:
+                    return {"error": "Mask image not found.", "exit_code": 1}
+                mask_path = _gallery_safe_path(mask_img.filename)
+                if not mask_path.exists():
+                    return {"error": "Mask image file not found on disk.", "exit_code": 1}
+                mask_b64 = base64.b64encode(mask_path.read_bytes()).decode("ascii")
+            if not mask_b64:
+                return {"error": "Inpaint requires a mask or mask_image_id that marks the area to regenerate.", "exit_code": 1}
+            payload.update({
+                "mask": mask_b64,
+                "prompt": prompt,
+                "width": getattr(img, "width", None) or 1024,
+                "height": getattr(img, "height", None) or 1024,
+                "strength": _coerce_tool_float(args.get("strength"), 0.75, 0.05, 0.95),
+            })
+
+        async with httpx.AsyncClient(timeout=240) as client:
+            resp = await client.post(
+                f"{_INTERNAL_BASE}{endpoint}",
+                json=payload,
+                headers=_internal_headers(owner),
+            )
+        try:
             data = resp.json()
-        if data.get("success") or data.get("id"):
-            return {"output": f"Image edited ({action}). New image ID: {data.get('id', '?')}", "exit_code": 0}
-        return {"error": data.get("error", f"{action} failed"), "exit_code": 1}
+        except Exception:
+            data = {"error": resp.text[:500]}
+        if resp.status_code < 200 or resp.status_code >= 300:
+            detail = data.get("detail") or data.get("error") or f"{action} failed ({resp.status_code})"
+            return {"error": str(detail), "exit_code": 1}
+        if data.get("error") and not data.get("image"):
+            return {"error": str(data["error"]), "exit_code": 1}
+        image_b64 = data.get("image") or data.get("b64_json")
+        if not image_b64:
+            return {"error": f"{action} returned no image.", "exit_code": 1}
+
+        saved = _save_edited_gallery_image(img, image_b64, action, prompt, owner, args)
+        label = saved["prompt"]
+        return {
+            "output": f"Edited image saved: [{label}](#image-{saved['id']})",
+            "image_url": saved["url"],
+            "image_id": saved["id"],
+            "image_prompt": label,
+            "image_model": saved["model"],
+            "image_size": saved["size"],
+            "item": saved["item"],
+            "exit_code": 0,
+        }
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
+    finally:
+        db.close()
 
 
 # ── Research tools ──

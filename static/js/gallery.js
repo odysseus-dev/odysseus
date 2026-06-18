@@ -10,6 +10,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 const API_BASE = window.location.origin;
 let _open = false;
 let _galleryResizeHandler = null;
+let _galleryVisibilityObserver = null;
 
 // Auto-refresh gallery when new image is generated
 window.addEventListener('gallery-refresh', () => {
@@ -60,6 +61,56 @@ let _albums = [];
 let _albumSearch = '';
 let _albumSelectMode = false;
 const _albumSelected = new Set();
+
+function _setGalleryShellActive(active) {
+  document.body.classList.toggle('gallery-open', active);
+  document.getElementById('tool-gallery-btn')?.classList.toggle('active', active);
+  document.getElementById('rail-gallery')?.classList.toggle('active', active);
+}
+
+function _syncGalleryVisibility() {
+  const modal = document.getElementById('gallery-modal');
+  const visible = !!modal
+    && !modal.classList.contains('hidden')
+    && !modal.classList.contains('modal-minimized');
+  _setGalleryShellActive(visible);
+
+  const selecting = visible
+    && !!document.getElementById('gallery-select-btn')?.classList.contains('active');
+  document.body.classList.toggle('gallery-selecting', selecting);
+  if (!visible) document.querySelectorAll('.gallery-bulk-menu').forEach(m => m.remove());
+}
+
+function _wireGalleryVisibilityObserver(modal) {
+  if (_galleryVisibilityObserver) _galleryVisibilityObserver.disconnect();
+  if (!modal) return;
+  _galleryVisibilityObserver = new MutationObserver(_syncGalleryVisibility);
+  _galleryVisibilityObserver.observe(modal, {
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+  });
+  _syncGalleryVisibility();
+}
+
+function _clearGalleryVisibilityObserver() {
+  if (_galleryVisibilityObserver) {
+    _galleryVisibilityObserver.disconnect();
+    _galleryVisibilityObserver = null;
+  }
+}
+
+function _settleGalleryMobileSheet(modal) {
+  if (!modal || !(window.innerWidth <= 768 || 'ontouchstart' in window)) return;
+  const content = modal.querySelector('.gallery-modal-content');
+  if (!content) return;
+  setTimeout(() => {
+    if (content.isConnected
+        && !content.classList.contains('modal-closing')
+        && !modal.classList.contains('hidden')) {
+      content.classList.add('sheet-ready');
+    }
+  }, 260);
+}
 
 // ---- API helpers ----
 
@@ -2002,8 +2053,16 @@ export function openGallery() {
     railBtnId: 'rail-gallery',
     sidebarBtnId: 'tool-gallery-btn',
     closeFn: () => _doCloseGallery(),
-    restoreFn: () => {},
+    restoreFn: () => {
+      _open = true;
+      _syncGalleryVisibility();
+      _settleGalleryMobileSheet(modal);
+      requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    },
   });
+  try { Modals.injectMinimizeButton(modal, 'gallery-modal'); } catch (_) {}
+  _wireGalleryVisibilityObserver(modal);
+  _settleGalleryMobileSheet(modal);
 
   // Allow dragging the modal by its header — same pattern as Email Library,
   // Sessions, etc. The tileManager (corner/edge snap-tiling) listens on
@@ -2735,8 +2794,7 @@ export function openGallery() {
   // we get a chance to close just the photo detail.
   document.addEventListener('keydown', _escHandler, true);
 
-  const btn = document.getElementById('tool-gallery-btn');
-  if (btn) btn.classList.add('active');
+  _syncGalleryVisibility();
 
   // 1) Paint cached state immediately so the user sees photos instantly.
   //    Filters, sort, search box, album chips, and the grid all come from
@@ -2763,6 +2821,8 @@ function _doCloseGallery() {
     return;
   }
   _open = false;
+  _clearGalleryVisibilityObserver();
+  document.body.classList.remove('gallery-selecting');
   clearTimeout(_searchDebounce);
   if (_galleryResizeHandler) {
     window.removeEventListener('resize', _galleryResizeHandler);
@@ -2790,8 +2850,7 @@ function _doCloseGallery() {
     _escHandler = null;
   }
 
-  const btn = document.getElementById('tool-gallery-btn');
-  if (btn) btn.classList.remove('active');
+  _setGalleryShellActive(false);
 }
 
 export function closeGallery() {

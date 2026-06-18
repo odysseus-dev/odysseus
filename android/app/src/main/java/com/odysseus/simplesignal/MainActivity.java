@@ -2,19 +2,32 @@ package com.odysseus.simplesignal;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.print.PrintAttributes;
+import android.print.PrintDocumentAdapter;
+import android.print.PrintManager;
+import android.provider.MediaStore;
+import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -22,6 +35,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebViewDatabase;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -30,6 +44,14 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 public class MainActivity extends Activity {
     private static final String PREFS_NAME = "odysseus_android";
     private static final String PREF_URL = "server_url";
@@ -37,12 +59,14 @@ public class MainActivity extends Activity {
     private static final String MODE_REMOTE = "remote";
     private static final String MODE_STANDALONE = "standalone";
     private static final int FILE_CHOOSER_REQUEST = 1001;
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 1002;
 
     private WebView webView;
     private LinearLayout fallbackView;
     private EditText urlInput;
     private ProgressBar progressBar;
     private ValueCallback<Uri[]> filePathCallback;
+    private volatile String cutoutSide = "none";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,19 +85,40 @@ public class MainActivity extends Activity {
     }
 
     private void startRemoteMode() {
+        ensureNotificationPermission();
         buildLayout();
         configureWebView();
         loadConfiguredUrl();
     }
 
     private void configureSystemBars() {
-        getWindow().setStatusBarColor(Color.rgb(5, 8, 5));
-        getWindow().setNavigationBarColor(Color.rgb(5, 8, 5));
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setStatusBarContrastEnforced(false);
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(attributes);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getWindow().setDecorFitsSystemWindows(false);
+        } else {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            );
+        }
     }
 
     private void buildLayout() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(Color.rgb(5, 8, 5));
+        applySystemBarPadding(root);
 
         webView = new WebView(this);
         root.addView(webView, new FrameLayout.LayoutParams(
@@ -192,6 +237,104 @@ public class MainActivity extends Activity {
         setContentView(root);
     }
 
+    @SuppressWarnings("deprecation")
+    private void applySystemBarPadding(View root) {
+        root.setOnApplyWindowInsetsListener((view, insets) -> {
+            int top;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.graphics.Insets statusBars = insets.getInsets(WindowInsets.Type.statusBars());
+                android.graphics.Insets cutout = insets.getInsets(WindowInsets.Type.displayCutout());
+                top = Math.max(statusBars.top, cutout.top);
+            } else {
+                top = insets.getSystemWindowInsetTop();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    DisplayCutout cutout = insets.getDisplayCutout();
+                    if (cutout != null) {
+                        top = Math.max(top, cutout.getSafeInsetTop());
+                    }
+                }
+            }
+            updateCutoutSide(view, insets);
+            view.setPadding(0, top, 0, 0);
+            return insets;
+        });
+        if (root.isAttachedToWindow()) {
+            root.requestApplyInsets();
+        } else {
+            root.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+                @Override
+                public void onViewAttachedToWindow(View view) {
+                    view.removeOnAttachStateChangeListener(this);
+                    view.requestApplyInsets();
+                }
+
+                @Override
+                public void onViewDetachedFromWindow(View view) {}
+            });
+        }
+    }
+
+    private void updateCutoutSide(View view, WindowInsets insets) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || insets == null) {
+            setCutoutSide("none");
+            return;
+        }
+        DisplayCutout cutout = insets.getDisplayCutout();
+        if (cutout == null) {
+            setCutoutSide("none");
+            return;
+        }
+        int safeLeft = cutout.getSafeInsetLeft();
+        int safeRight = cutout.getSafeInsetRight();
+        if (safeLeft > safeRight && safeLeft > 0) {
+            setCutoutSide("left");
+            return;
+        }
+        if (safeRight > safeLeft && safeRight > 0) {
+            setCutoutSide("right");
+            return;
+        }
+        int width = view == null ? 0 : view.getWidth();
+        if (width <= 0) width = getResources().getDisplayMetrics().widthPixels;
+        List<Rect> rects = cutout.getBoundingRects();
+        if (rects == null || rects.isEmpty() || width <= 0) {
+            setCutoutSide("none");
+            return;
+        }
+        int leftHits = 0;
+        int rightHits = 0;
+        for (Rect rect : rects) {
+            if (rect == null || rect.isEmpty()) continue;
+            int centerX = rect.left + rect.width() / 2;
+            if (centerX < width / 2) {
+                leftHits++;
+            } else {
+                rightHits++;
+            }
+        }
+        if (leftHits > rightHits) {
+            setCutoutSide("left");
+        } else if (rightHits > leftHits) {
+            setCutoutSide("right");
+        } else {
+            setCutoutSide("none");
+        }
+    }
+
+    private void setCutoutSide(String side) {
+        String normalized = ("left".equals(side) || "right".equals(side)) ? side : "none";
+        if (normalized.equals(cutoutSide)) return;
+        cutoutSide = normalized;
+        WebView currentWebView = webView;
+        if (currentWebView == null) return;
+        currentWebView.post(() -> currentWebView.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('odysseus:cutoutchange',{detail:{side:'"
+                        + normalized
+                        + "'}}));",
+                null
+        ));
+    }
+
     private void showModeChooser() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -269,6 +412,7 @@ public class MainActivity extends Activity {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
+    @SuppressWarnings("deprecation")
     private void configureWebView() {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -280,6 +424,7 @@ public class MainActivity extends Activity {
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(false);
         settings.setSupportMultipleWindows(false);
+        settings.setSaveFormData(false);
 
         // Custom User-Agent to help backend/frontend detect the Odysseus Android App
         String originalAgent = settings.getUserAgentString();
@@ -296,6 +441,9 @@ public class MainActivity extends Activity {
 
         webView.setWebViewClient(new OdysseusWebViewClient());
         webView.setWebChromeClient(new OdysseusChromeClient());
+        webView.addJavascriptInterface(new OdysseusAndroidBridge(), "OdysseusAndroid");
+        webView.clearFormData();
+        WebViewDatabase.getInstance(this).clearFormData();
     }
 
     private void loadConfiguredUrl() {
@@ -352,12 +500,28 @@ public class MainActivity extends Activity {
         saveMode(MODE_STANDALONE);
         buildLayout();
         configureWebView();
+        ensureStandaloneBackgroundService();
         try {
             String baseUrl = MobileBackendServer.getInstance().start(this);
             loadUrl(baseUrl + "/static/index.html?mobile=standalone");
         } catch (Exception ex) {
             Toast.makeText(this, "Mobile backend failed: " + ex.getMessage(), Toast.LENGTH_LONG).show();
             showFallback();
+        }
+    }
+
+    private void ensureStandaloneBackgroundService() {
+        ensureNotificationPermission();
+        MobileBackendService.start(this);
+    }
+
+    private void ensureNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                    new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                    NOTIFICATION_PERMISSION_REQUEST
+            );
         }
     }
 
@@ -397,6 +561,152 @@ public class MainActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private void printCurrentWebView(String rawTitle) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) {
+            Toast.makeText(this, "Android print is not available on this device", Toast.LENGTH_LONG).show();
+            return;
+        }
+        PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+        if (printManager == null) {
+            Toast.makeText(this, "Android print service is not available", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String title = safeReportFileName(rawTitle, "odysseus-report").replace(".html", "");
+        PrintDocumentAdapter adapter;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            adapter = webView.createPrintDocumentAdapter(title);
+        } else {
+            adapter = webView.createPrintDocumentAdapter();
+        }
+        PrintAttributes attrs = new PrintAttributes.Builder()
+                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
+                .build();
+        printManager.print(title, adapter, attrs);
+    }
+
+    private void saveHtmlToDownloads(String html, String rawTitle) {
+        String filename = safeReportFileName(rawTitle, "odysseus-report") + ".html";
+        byte[] bytes = formatSavedHtml(html).getBytes(StandardCharsets.UTF_8);
+        try {
+            String location;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentResolver resolver = getContentResolver();
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, filename);
+                values.put(MediaStore.Downloads.MIME_TYPE, "text/html");
+                values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Odysseus");
+                values.put(MediaStore.Downloads.IS_PENDING, 1);
+                Uri uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                if (uri == null) throw new IllegalStateException("Could not create Downloads file");
+                try (OutputStream output = resolver.openOutputStream(uri)) {
+                    if (output == null) throw new IllegalStateException("Could not open Downloads file");
+                    output.write(bytes);
+                }
+                values.clear();
+                values.put(MediaStore.Downloads.IS_PENDING, 0);
+                resolver.update(uri, values, null, null);
+                location = "Downloads/Odysseus/" + filename;
+            } else {
+                File dir = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Odysseus");
+                if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create report folder");
+                File file = new File(dir, filename);
+                try (FileOutputStream output = new FileOutputStream(file)) {
+                    output.write(bytes);
+                }
+                location = file.getAbsolutePath();
+            }
+            String message = "Saved HTML to " + location;
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show());
+        } catch (Exception ex) {
+            String message = "Save HTML failed: " + ex.getMessage();
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show());
+        }
+    }
+
+    private String formatSavedHtml(String html) {
+        String text = valueOr(html, "<!doctype html><html><body></body></html>").trim();
+        if (!text.toLowerCase().startsWith("<!doctype")) {
+            text = "<!doctype html>\n" + text;
+        }
+        text = text.replace("><", ">\n<");
+        text = formatTagBlocks(text, "style", true);
+        text = formatTagBlocks(text, "script", false);
+        return text.trim() + "\n";
+    }
+
+    private String formatTagBlocks(String html, String tag, boolean formatAsCss) {
+        Pattern pattern = Pattern.compile("(?is)<" + tag + "([^>]*)>(.*?)</" + tag + ">");
+        Matcher matcher = pattern.matcher(html);
+        StringBuffer output = new StringBuffer();
+        while (matcher.find()) {
+            String attrs = matcher.group(1);
+            String body = matcher.group(2);
+            String formattedBody = formatAsCss ? formatCssBlock(body) : formatScriptBlock(body);
+            String replacement = "<" + tag + attrs + ">\n" + formattedBody + "\n</" + tag + ">";
+            matcher.appendReplacement(output, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(output);
+        return output.toString();
+    }
+
+    private String formatCssBlock(String css) {
+        return valueOr(css, "").trim()
+                .replace("/*", "\n/*")
+                .replace("*/", "*/\n")
+                .replace("{", " {\n  ")
+                .replace(";", ";\n  ")
+                .replace("}", "\n}\n")
+                .replaceAll("[ \\t]+\\n", "\n")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+    }
+
+    private String formatScriptBlock(String script) {
+        return valueOr(script, "").trim()
+                .replace("{", "{\n  ")
+                .replace(";", ";\n")
+                .replace("}", "\n}\n")
+                .replaceAll("[ \\t]+\\n", "\n")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+    }
+
+    private String safeReportFileName(String rawTitle, String fallback) {
+        String title = rawTitle == null ? "" : rawTitle.trim();
+        if (title.isEmpty()) title = fallback;
+        title = title.replaceAll("[^A-Za-z0-9._-]+", "-").replaceAll("^-+|-+$", "");
+        if (title.isEmpty()) title = fallback;
+        if (title.length() > 80) title = title.substring(0, 80).replaceAll("-+$", "");
+        return title;
+    }
+
+    private String valueOr(String value, String fallback) {
+        return value == null ? fallback : value;
+    }
+
+    private class OdysseusAndroidBridge {
+        @JavascriptInterface
+        public void printReport(String title) {
+            runOnUiThread(() -> printCurrentWebView(title));
+        }
+
+        @JavascriptInterface
+        public void saveHtml(String html, String title) {
+            new Thread(() -> saveHtmlToDownloads(html, title), "OdysseusSaveHtml").start();
+        }
+
+        @JavascriptInterface
+        public void notifyResearchComplete(String researchId, String query) {
+            OdysseusNotifications.showResearchComplete(MainActivity.this, researchId, query);
+        }
+
+        @JavascriptInterface
+        public String getCutoutSide() {
+            return cutoutSide == null ? "none" : cutoutSide;
+        }
     }
 
     private class OdysseusWebViewClient extends WebViewClient {

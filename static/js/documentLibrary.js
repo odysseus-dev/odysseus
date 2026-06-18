@@ -11,6 +11,7 @@ import markdownModule from './markdown.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { langIcon } from './langIcons.js';
 import { registerMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import * as Modals from './modalManager.js';
 
 // ── Injected references from documentModule ──
 let API_BASE = '';
@@ -1568,6 +1569,10 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   }
 
   export function openLibrary(opts) {
+    if (Modals.isRegistered('doclib-modal') && Modals.isMinimized('doclib-modal')) {
+      Modals.restore('doclib-modal');
+      return;
+    }
     if (_libraryOpen) {
       // Recover from stuck state: the swipe-to-dismiss in ui.js adds .hidden
       // to the modal without calling closeLibrary, so _libraryOpen can stay
@@ -1728,6 +1733,18 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       </div>
     `;
     document.body.appendChild(modal);
+    Modals.register('doclib-modal', {
+      railBtnId: 'rail-archive',
+      sidebarBtnId: 'tool-library-btn',
+      closeFn: () => _doCloseLibrary(),
+      restoreFn: () => {
+        _libraryOpen = true;
+        const btn = document.getElementById('tool-doclib-btn');
+        if (btn) btn.classList.add('active');
+        requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+      },
+    });
+    try { Modals.injectMinimizeButton(modal, 'doclib-modal'); } catch (_) {}
 
     // Make modal draggable (same logic as other modals)
     {
@@ -3386,7 +3403,15 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   }
 
   export function closeLibrary() {
-    if (!_libraryOpen) return;
+    if (Modals.isRegistered('doclib-modal')) {
+      Modals.close('doclib-modal');
+      return;
+    }
+    _doCloseLibrary();
+  }
+
+  function _doCloseLibrary() {
+    if (!_libraryOpen && !document.getElementById('doclib-modal')) return;
     _libraryOpen = false;
     _librarySelectMode = false;
     _librarySelectedIds.clear();

@@ -109,6 +109,7 @@ def _resolve_endpoint_runtime(ep, owner=None, model: Optional[str] = None):
 
 def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     router = APIRouter(tags=["research"])
+    recent_panel_starts = {}
 
     def _require_user(request: Request) -> str:
         """All research endpoints require an authenticated user. Research
@@ -125,6 +126,35 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     def _validate_session_id(session_id: str) -> None:
         if not _SESSION_ID_RE.fullmatch(session_id):
             raise HTTPException(400, "Invalid session ID format")
+
+    def _research_start_key(body) -> tuple:
+        query = re.sub(r"\s+", " ", (body.query or "").strip()).casefold()
+        return (
+            query,
+            body.max_rounds or 0,
+            (body.search_provider or "").strip().casefold(),
+            (body.endpoint_id or "").strip(),
+            (body.model or "").strip(),
+            (body.category or "").strip().casefold(),
+            (body.report_layout or "").strip().casefold(),
+        )
+
+    def _recent_duplicate_start(user: str, key: tuple) -> Optional[str]:
+        now = datetime.utcnow().timestamp()
+        stale = [k for k, (_, ts) in recent_panel_starts.items() if now - ts > 15]
+        for k in stale:
+            recent_panel_starts.pop(k, None)
+
+        for sid, entry in research_handler._active_tasks.items():
+            if entry.get("owner", "") != user:
+                continue
+            if entry.get("start_key") == key and entry.get("status") == "running":
+                return sid
+
+        existing = recent_panel_starts.get((user, key))
+        if existing and now - existing[1] <= 15:
+            return existing[0]
+        return None
 
     def _owns_in_memory(session_id: str, user: str) -> bool:
         """Ownership check for an in-flight (in-memory) research task.
@@ -285,6 +315,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "status": d.get("status", "done"),
                     "duration": d.get("stats", {}).get("Duration", ""),
                     "rounds": d.get("stats", {}).get("Rounds", ""),
+                    "report_layout": d.get("report_layout", "auto"),
                     "started_at": d.get("started_at", 0),
                     "completed_at": d.get("completed_at", 0),
                     "archived": bool(d.get("archived")),
@@ -379,6 +410,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         extraction_timeout: Optional[int] = Field(default=None, ge=15, le=3600)
         extraction_concurrency: Optional[int] = Field(default=None, ge=1, le=12)
         category: Optional[str] = None
+        report_layout: Optional[str] = None
 
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
@@ -399,6 +431,16 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     except Exception:
                         pass
                 user = tool_owner
+        start_key = _research_start_key(body)
+        duplicate_session_id = _recent_duplicate_start(user, start_key)
+        if duplicate_session_id:
+            return {
+                "session_id": duplicate_session_id,
+                "status": "running",
+                "query": body.query,
+                "deduped": True,
+            }
+
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
 
         if body.endpoint_id:
@@ -451,20 +493,29 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
         # max_rounds=0 → "Auto", let AI decide; pass 20 as the safety cap.
         effective_max_rounds = body.max_rounds if body.max_rounds > 0 else 20
-        research_handler.start_research(
-            session_id=session_id,
-            query=body.query,
-            llm_endpoint=ep_url,
-            llm_model=ep_model,
-            max_time=body.max_time,
-            llm_headers=ep_headers,
-            max_rounds=effective_max_rounds,
-            search_provider=body.search_provider or None,
-            category=body.category or None,
-            extraction_timeout=body.extraction_timeout,
-            extraction_concurrency=body.extraction_concurrency,
-            owner=user,
-        )
+        recent_panel_starts[(user, start_key)] = (session_id, datetime.utcnow().timestamp())
+        try:
+            research_handler.start_research(
+                session_id=session_id,
+                query=body.query,
+                llm_endpoint=ep_url,
+                llm_model=ep_model,
+                max_time=body.max_time,
+                llm_headers=ep_headers,
+                max_rounds=effective_max_rounds,
+                search_provider=body.search_provider or None,
+                category=body.category or None,
+                report_layout=body.report_layout or "auto",
+                extraction_timeout=body.extraction_timeout,
+                extraction_concurrency=body.extraction_concurrency,
+                owner=user,
+            )
+        except Exception:
+            recent_panel_starts.pop((user, start_key), None)
+            raise
+        entry = research_handler._active_tasks.get(session_id)
+        if entry is not None:
+            entry["start_key"] = start_key
         return {"session_id": session_id, "status": "running", "query": body.query}
 
     @router.get("/api/research/stream/{session_id}")
@@ -518,11 +569,12 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "sources": d.get("sources", []),
                     "raw_findings": d.get("raw_findings", []),
                     "category": d.get("category") or "",
+                    "report_layout": d.get("report_layout", "auto"),
                 }
             raise HTTPException(404, "No research result available")
         sources = research_handler.get_sources(session_id) or []
         raw_findings = research_handler.get_raw_findings(session_id) or []
-        return {"result": result, "sources": sources, "raw_findings": raw_findings, "category": ""}
+        return {"result": result, "sources": sources, "raw_findings": raw_findings, "category": "", "report_layout": "auto"}
 
     @router.post("/api/research/spinoff/{session_id}")
     async def research_spinoff(session_id: str, request: Request):

@@ -809,16 +809,244 @@ body::after {{
   }}
 }}
 
-/* ── Print ─────────────────────────────────────────── */
-@media print {{
-  .toc-sidebar, .toolbar {{ display: none !important; }}
-  .layout {{ grid-template-columns: 1fr; }}
-  .hero {{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
-}}
 {category_css}
+{layout_css}
+
+/* ── Print ─────────────────────────────────────────── */
+@page {{ margin: 12mm; }}
+@media print {{
+  :root {{
+    --bg: #fff !important;
+    --bg-surface: #fff !important;
+    --bg-surface-alt: #f5f7f6 !important;
+    --border: #cfd6d2 !important;
+    --border-strong: #9aa7a0 !important;
+    --text: #111 !important;
+    --text-muted: #555 !important;
+    --text-dim: #666 !important;
+    --accent: #107a38 !important;
+    --accent-light: #107a38 !important;
+    --accent-bg: #eef5f1 !important;
+    --gold: #7c5a18 !important;
+    --gold-bg: #fbf6e8 !important;
+  }}
+  *, *::before, *::after {{
+    animation: none !important;
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+    transition: none !important;
+  }}
+  html, body {{
+    background: #fff !important;
+    color: #111 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }}
+  .toc-sidebar,
+  .toolbar,
+  .chat-cta,
+  .img-hide-btn,
+  .img-reroll-btn {{
+    display: none !important;
+  }}
+  .layout {{
+    display: block !important;
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+  }}
+  .content {{
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+  }}
+  .hero {{
+    padding: 0 0 10mm !important;
+    margin: 0 0 7mm !important;
+    background: #fff !important;
+    color: #111 !important;
+    overflow: visible !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }}
+  .hero::before {{
+    display: none !important;
+  }}
+  .hero::after {{
+    background: #cfd6d2 !important;
+    width: 100% !important;
+  }}
+  .hero-label {{
+    color: #107a38 !important;
+    font-size: 8pt !important;
+    letter-spacing: 0.12em !important;
+    margin-bottom: 4mm !important;
+  }}
+  .hero h1 {{
+    color: #111 !important;
+    font-size: 22pt !important;
+    line-height: 1.18 !important;
+    max-width: none !important;
+    margin: 0 auto !important;
+    letter-spacing: 0 !important;
+  }}
+  .hero-image,
+  .section-image {{
+    margin: 0 0 7mm !important;
+    padding: 0 !important;
+    text-align: center !important;
+    overflow: visible !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }}
+  .section-image {{
+    margin: 6mm 0 !important;
+  }}
+  .hero-image img,
+  .section-image img {{
+    display: block !important;
+    width: auto !important;
+    max-width: 100% !important;
+    height: auto !important;
+    object-fit: contain !important;
+    object-position: center !important;
+    margin: 0 auto !important;
+    border: 1px solid #d8ddd9 !important;
+    border-radius: 2mm !important;
+    background: #fff !important;
+  }}
+  .hero-image img {{
+    max-height: 92mm !important;
+  }}
+  .section-image img {{
+    max-height: 78mm !important;
+  }}
+  .stats-bar {{
+    padding: 0 0 6mm !important;
+    margin: 0 0 7mm !important;
+    background: #fff !important;
+    border-bottom: 1px solid #d8ddd9 !important;
+    color: #555 !important;
+    justify-content: flex-start !important;
+    gap: 5mm !important;
+  }}
+  .stat-value {{
+    color: #111 !important;
+  }}
+  .content h2,
+  .content h3,
+  .content h4 {{
+    color: #111 !important;
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }}
+  .content h2 {{
+    font-size: 17pt !important;
+    margin: 9mm 0 4mm !important;
+    padding-bottom: 2mm !important;
+    border-bottom: 1px solid #cfd6d2 !important;
+    border-image: none !important;
+  }}
+  .content h3 {{
+    font-size: 13pt !important;
+    margin: 7mm 0 3mm !important;
+  }}
+  .content h4 {{
+    font-size: 9pt !important;
+    letter-spacing: 0.04em !important;
+  }}
+  .content p,
+  .content li {{
+    color: #222 !important;
+    font-size: 10.5pt !important;
+    line-height: 1.48 !important;
+    orphans: 3;
+    widows: 3;
+  }}
+  .content > p:first-of-type::first-letter,
+  .content > h2:first-child + p::first-letter {{
+    float: none !important;
+    font: inherit !important;
+    margin: 0 !important;
+    color: inherit !important;
+  }}
+  .content blockquote,
+  .content pre,
+  .sources-panel,
+  .report-footer {{
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }}
+  .content blockquote {{
+    background: #fbf6e8 !important;
+    border-left-color: #7c5a18 !important;
+    color: #222 !important;
+  }}
+  .content code,
+  .content pre {{
+    background: #f5f7f6 !important;
+    color: #111 !important;
+    border-color: #cfd6d2 !important;
+    white-space: pre-wrap !important;
+    overflow-wrap: anywhere !important;
+  }}
+  .content table {{
+    width: 100% !important;
+    table-layout: fixed !important;
+    border-collapse: collapse !important;
+    border: 1px solid #bcc7c0 !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    color: #111 !important;
+    font-size: 8.5pt !important;
+    margin: 5mm 0 !important;
+    break-inside: auto !important;
+    page-break-inside: auto !important;
+  }}
+  .content thead {{
+    display: table-header-group !important;
+  }}
+  .content tr {{
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }}
+  .content th,
+  .content td {{
+    background: #fff !important;
+    color: #111 !important;
+    border: 1px solid #cfd6d2 !important;
+    padding: 5px 6px !important;
+    overflow-wrap: anywhere !important;
+    word-break: normal !important;
+    vertical-align: top !important;
+  }}
+  .content th {{
+    background: #eef2ef !important;
+    font-size: 8pt !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
+  }}
+  .content tr:hover td {{
+    background: #fff !important;
+  }}
+  .sources-panel {{
+    border-top: 1px solid #cfd6d2 !important;
+    margin-top: 8mm !important;
+  }}
+  .sources-panel summary,
+  .sources-list a,
+  .report-footer {{
+    color: #555 !important;
+  }}
+  .report-footer {{
+    border-top: 1px solid #d8ddd9 !important;
+    margin-top: 8mm !important;
+  }}
+}}
 </style>
 </head>
-<body class="{body_class}">
+<body class="{body_class}" data-layout="{report_layout}">
 
 <!-- Toolbar: Export + Restore hidden images -->
 <div class="toolbar">
@@ -1657,6 +1885,434 @@ body.category-product .content h3 + table {
     return palettes + styles.get(category, "")
 
 
+_REPORT_LAYOUT_ALIASES = {
+    "auto": "auto",
+    "classic": "side_index",
+    "side": "side_index",
+    "side_index": "side_index",
+    "sidebar": "side_index",
+    "top": "top_index",
+    "top_index": "top_index",
+    "horizontal": "top_index",
+    "reader": "reader",
+    "no_index": "reader",
+    "noindex": "reader",
+    "article": "reader",
+    "magazine": "magazine",
+    "feature": "magazine",
+    "editorial": "magazine",
+    "briefing": "briefing",
+    "dashboard": "briefing",
+    "board": "briefing",
+    "paper": "paper",
+    "academic": "paper",
+    "journal": "paper",
+    "atlas": "atlas",
+    "visual": "atlas",
+    "gallery": "atlas",
+}
+
+
+def _normalize_report_layout(layout: Optional[str]) -> str:
+    key = str(layout or "auto").strip().lower().replace("-", "_")
+    return _REPORT_LAYOUT_ALIASES.get(key, "auto")
+
+
+def _resolve_report_layout(layout: Optional[str], category: Optional[str]) -> str:
+    normalized = _normalize_report_layout(layout)
+    if normalized != "auto":
+        return normalized
+
+    cat = str(category or "").strip().lower().replace("-", "")
+    if cat in {"product", "comparison", "compare"}:
+        return "briefing"
+    if cat in {"factcheck", "fact"}:
+        return "paper"
+    if cat in {"howto", "guide"}:
+        return "atlas"
+    if cat in {"landscape", "market"}:
+        return "magazine"
+    return "magazine"
+
+
+def _layout_css() -> str:
+    return """
+/* ── Report layout presets ───────────────────────────
+   These change the document structure visually, not just the nav position. */
+body.layout-reader .layout {
+  display: block;
+  max-width: 860px;
+}
+body.layout-reader .toc-sidebar {
+  display: none;
+}
+body.layout-reader .content {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+body.layout-top_index .layout {
+  display: block;
+  max-width: 980px;
+  padding-left: 2rem;
+  padding-right: 2rem;
+}
+body.layout-top_index .toc-sidebar {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  height: auto;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: -0.5rem 0 2rem;
+  padding: 0.75rem 0;
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(12px);
+}
+body.layout-top_index .toc-sidebar nav {
+  display: flex;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+body.layout-top_index .toc-sidebar nav a {
+  flex: 0 0 auto;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+body.layout-top_index .toc-sidebar nav a::before {
+  display: none;
+}
+body.layout-top_index .toc-sidebar nav a.depth-3 {
+  padding-left: 0.75rem;
+}
+body.layout-top_index .content {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 1rem 0 4rem;
+}
+
+body.layout-magazine {
+  --max-w: 900px;
+}
+body.layout-magazine .hero {
+  min-height: min(78vh, 760px);
+  display: grid;
+  align-items: end;
+  text-align: left;
+  padding: 8rem clamp(1.25rem, 5vw, 5rem) 5rem;
+  border-bottom: 1px solid var(--border);
+}
+body.layout-magazine .hero::before {
+  background:
+    linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--bg) 82%, transparent) 88%),
+    radial-gradient(ellipse 70% 60% at 18% 18%, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 66%),
+    radial-gradient(ellipse 55% 48% at 88% 42%, color-mix(in srgb, var(--gold) 15%, transparent) 0%, transparent 72%);
+}
+body.layout-magazine .hero-label,
+body.layout-magazine .hero h1 {
+  max-width: min(920px, 86vw);
+  margin-left: 0;
+}
+body.layout-magazine .hero h1 {
+  font-size: clamp(3rem, 9vw, 6.8rem);
+  line-height: 0.94;
+}
+body.layout-magazine .hero-image {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+body.layout-magazine .hero-image img {
+  width: 100%;
+  max-height: 56vh;
+  border-radius: 0;
+}
+body.layout-magazine .layout {
+  grid-template-columns: minmax(160px, 0.35fr) minmax(0, 1fr);
+  max-width: 1180px;
+}
+body.layout-magazine .content h2 {
+  font-size: clamp(2.2rem, 5vw, 4.2rem);
+  line-height: 0.98;
+  margin-top: 4rem;
+  border-image: none;
+  border-bottom-color: var(--border-strong);
+}
+body.layout-magazine .content > p:first-of-type,
+body.layout-magazine .content > h2:first-child + p {
+  font-size: 1.18rem;
+  line-height: 1.75;
+}
+body.layout-magazine .section-image img {
+  max-height: 460px;
+}
+
+body.layout-briefing {
+  --font-display: var(--font-body);
+  --max-w: 1040px;
+}
+body.layout-briefing .hero {
+  text-align: left;
+  padding: 5rem 2rem 1.5rem;
+}
+body.layout-briefing .hero h1 {
+  max-width: 1040px;
+  font-family: var(--font-body);
+  font-size: clamp(2rem, 4vw, 4rem);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+body.layout-briefing .hero-image {
+  max-width: 1040px;
+  margin-top: 0;
+}
+body.layout-briefing .hero-image img {
+  max-height: 260px;
+}
+body.layout-briefing .stats-bar {
+  justify-content: flex-start;
+  max-width: 1040px;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+body.layout-briefing .layout {
+  grid-template-columns: 260px minmax(0, 1fr);
+  max-width: 1240px;
+  gap: 1.25rem;
+}
+body.layout-briefing .toc-sidebar {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-top: 3rem;
+  padding: 1rem;
+  height: auto;
+  max-height: calc(100vh - 7rem);
+  background: var(--bg-surface);
+}
+body.layout-briefing .content {
+  max-width: none;
+}
+body.layout-briefing .content h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.4rem 0 0.8rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  font-family: var(--font-body);
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+  letter-spacing: 0;
+}
+body.layout-briefing .content h2::before {
+  content: '';
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-bg);
+  flex: 0 0 auto;
+}
+body.layout-briefing .content table,
+body.layout-briefing .content blockquote,
+body.layout-briefing .section-image img {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+body.layout-paper {
+  --font-display: Georgia, 'Times New Roman', serif;
+  --font-body: Georgia, 'Times New Roman', serif;
+  --max-w: 760px;
+  background: color-mix(in srgb, var(--bg-surface-alt) 56%, var(--bg));
+}
+body.layout-paper .hero {
+  max-width: 840px;
+  margin: 3rem auto 0;
+  padding: 4rem 4rem 2rem;
+  text-align: left;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-bottom: 0;
+}
+body.layout-paper .hero::before,
+body.layout-paper .hero::after {
+  display: none;
+}
+body.layout-paper .hero h1 {
+  max-width: none;
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  line-height: 1.05;
+}
+body.layout-paper .hero-image {
+  max-width: 840px;
+  margin: 0 auto;
+  padding: 0 4rem 2rem;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+body.layout-paper .hero-image img {
+  max-height: 240px;
+}
+body.layout-paper .stats-bar {
+  max-width: 840px;
+  margin: 0 auto;
+  justify-content: flex-start;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+body.layout-paper .layout {
+  display: block;
+  max-width: 840px;
+  padding: 0 4rem 4rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-top: 0;
+}
+body.layout-paper .toc-sidebar {
+  display: none;
+}
+body.layout-paper .content {
+  max-width: none;
+  padding: 3rem 0 0;
+}
+body.layout-paper .content p,
+body.layout-paper .content li {
+  line-height: 1.68;
+}
+body.layout-paper .content h2 {
+  font-size: 1.75rem;
+  border-image: none;
+  border-bottom-color: var(--border-strong);
+}
+body.layout-paper .report-footer {
+  max-width: 840px;
+  margin: 0 auto 3rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-top: 0;
+}
+
+body.layout-atlas {
+  --max-w: 980px;
+}
+body.layout-atlas .hero {
+  text-align: left;
+  padding: 5.5rem clamp(1.25rem, 4vw, 3rem) 2rem;
+}
+body.layout-atlas .hero h1 {
+  max-width: 1080px;
+  font-size: clamp(2.3rem, 6vw, 5.4rem);
+}
+body.layout-atlas .hero-image {
+  max-width: min(1180px, calc(100vw - 2rem));
+  margin: 0 auto 2rem;
+  padding: 0;
+}
+body.layout-atlas .hero-image img {
+  max-height: 620px;
+}
+body.layout-atlas .stats-bar {
+  border-top: 1px solid var(--border);
+}
+body.layout-atlas .layout {
+  grid-template-columns: minmax(0, 1fr) 220px;
+  max-width: 1220px;
+}
+body.layout-atlas .toc-sidebar {
+  grid-column: 2;
+  grid-row: 1;
+  border-left: 1px solid var(--border);
+  border-right: 0;
+}
+body.layout-atlas .content {
+  grid-column: 1;
+  grid-row: 1;
+  max-width: none;
+}
+body.layout-atlas .section-image {
+  margin: 2rem 0 2.4rem;
+}
+body.layout-atlas .section-image img {
+  max-height: 520px;
+}
+body.layout-atlas .content h2 {
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+}
+
+@media (max-width: 900px) {
+  body.layout-magazine .hero,
+  body.layout-briefing .hero,
+  body.layout-paper .hero,
+  body.layout-atlas .hero {
+    min-height: auto;
+    padding: 3.5rem 1.1rem 1.8rem;
+  }
+  body.layout-magazine .hero h1,
+  body.layout-atlas .hero h1 {
+    font-size: clamp(2.2rem, 12vw, 4.2rem);
+  }
+  body.layout-paper .hero,
+  body.layout-paper .hero-image,
+  body.layout-paper .stats-bar,
+  body.layout-paper .layout,
+  body.layout-paper .report-footer {
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: 1.1rem;
+    padding-right: 1.1rem;
+    border-left: 0;
+    border-right: 0;
+  }
+  body.layout-briefing .stats-bar {
+    margin-left: 1rem;
+    margin-right: 1rem;
+  }
+  body.layout-magazine .layout,
+  body.layout-briefing .layout,
+  body.layout-top_index .layout,
+  body.layout-atlas .layout {
+    display: block;
+    grid-template-columns: 1fr;
+  }
+  body.layout-magazine .toc-sidebar,
+  body.layout-atlas .toc-sidebar {
+    display: none;
+  }
+  body[class*="layout-"] .content {
+    min-width: 0;
+    width: 100%;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  body[class*="layout-"] .content table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  body[class*="layout-"] .content th,
+  body[class*="layout-"] .content td {
+    min-width: 8rem;
+    overflow-wrap: anywhere;
+  }
+}
+"""
+
+
 _GENERIC_HEADINGS = {
     "report", "deep research report", "research",
     "executive summary", "summary", "tl;dr",
@@ -1718,10 +2374,12 @@ def generate_visual_report(
     category: Optional[str] = None,
     session_id: Optional[str] = None,
     hidden_images: Optional[List[str]] = None,
+    report_layout: Optional[str] = None,
 ) -> str:
     sources = sources or []
     stats = stats or {}
     hidden_images_set = set(hidden_images or [])
+    resolved_layout = _resolve_report_layout(report_layout, category)
 
     # Strip thinking artifacts
     report_markdown = strip_thinking(report_markdown)
@@ -1883,6 +2541,11 @@ def generate_visual_report(
             '</button>'
         )
 
+    body_classes = []
+    if category:
+        body_classes.append(f"category-{html.escape(str(category))}")
+    body_classes.append(f"layout-{html.escape(resolved_layout)}")
+
     return _TEMPLATE.format(
         title=html.escape(title_text),
         description=html.escape(desc_text),
@@ -1897,7 +2560,9 @@ def generate_visual_report(
         restore_btn_html=restore_btn_html,
         timestamp=timestamp,
         category_css=_category_css(category),
-        body_class=f"category-{html.escape(str(category))}" if category else "",
+        layout_css=_layout_css(),
+        body_class=" ".join(body_classes),
+        report_layout=html.escape(resolved_layout),
         session_id_js=json_dumps_str(session_id or ""),
         spare_images_js=_json_for_script(spare_images),
     )

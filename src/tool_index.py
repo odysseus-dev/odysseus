@@ -132,7 +132,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "adopt_served_model": "Register an existing tmux model server (one started manually or outside the cookbook flow) into Cookbook tracking AND add it as a chat endpoint. Use when the user (or a previous turn) launched something via ssh+tmux and now wants it visible in the UI, stoppable via stop_served_model, and usable in the model picker.",
     "list_cookbook_servers": "List the cookbook's configured servers (remote GPU boxes + local) and which is the current default. Use this BEFORE download_model/serve_model when the user didn't name a host — to decide where to run, or to ask the user which server when ambiguous. Downloads/serves default to the cookbook's selected server, NOT localhost.",
     "app_api": "Generic loopback to allowed Odysseus internal endpoints. Use this when the user wants something the UI can do but there's no named tool for it. Covers calendar, gallery, library/documents, memory, notes, tasks, settings, research, compare, cookbook GPUs/state — allowed UI buttons hit /api/* endpoints and you can hit them too. Sensitive auth/user/admin/shell paths and host-control Cookbook mutation routes are blocked; do NOT use app_api for shell commands, package installs, engine rebuilds, or PID signalling. Use named command tooling for shell commands. action='endpoints' with filter=<keyword> lists available endpoints. action='call' takes method+path+body. Hits same routes the UI uses — auth flows free. NOTE: themes are NOT an API endpoint — use the ui_control tool (create_theme / set_theme), not app_api. SESSIONS/CHATS: do NOT use app_api for these — GET /api/sessions returns EMPTY for tool calls (it's owner-filtered and tool calls authenticate as a different identity). EMAIL ACCOUNTS: do NOT use /api/email/accounts via app_api; use list_email_accounts, list_emails, and read_email instead. To list/rename/archive/delete/fork chats use the list_sessions and manage_session tools instead.",
-    "edit_image": "Edit an image in the gallery: upscale (increase resolution), remove background (rembg), inpaint (fill selected area), or harmonize (blend edits). Specify image ID and action.",
+    "manage_gallery": "List, search, get metadata for, and describe saved Gallery images/photos. Use when the user asks if you can see their gallery, wants to use a gallery image, asks what photos/images are saved, wants an image_id, or wants a vision description of a saved image. Returns clickable #image links.",
+    "edit_image": "Edit a saved image in the gallery and save the edited copy back to Gallery: sharpen locally, denoise, upscale, remove background/rembg, inpaint with a mask, harmonize/img2img, or enhance a face. Specify image ID and action. Use manage_gallery first if you need to find the image.",
     "trigger_research": "Start a deep research job on any topic — appears in the Deep Research sidebar, streams progress, produces a detailed report. Use for 'research X', 'look into Y', 'do deep research on Z', 'investigate'. NOT a scheduled task — it runs now and surfaces in the sidebar.",
 }
 
@@ -405,6 +406,14 @@ class ToolIndex:
                    "saved research", "research library", "past research",
                    "research i did", "research about"}):
             {"manage_research", "trigger_research"},
+        # Gallery / saved photo access and edits.
+        frozenset({"gallery", "my gallery", "photo", "photos", "image", "images",
+                   "picture", "pictures", "camera roll", "uploaded photo",
+                   "uploaded image", "saved image", "saved photo", "can you see my gallery",
+                   "see my photos", "describe this photo", "describe my photo",
+                   "edit photo", "edit image", "remove background", "upscale image",
+                   "sharpen image", "enhance face", "inpaint"}):
+            {"manage_gallery", "edit_image", "ui_control"},
         # Document edit/update intent
         frozenset({"edit", "change", "fix", "rewrite", "update",
                    "replace", "add a", "tweak", "modify", "rename", "paragraph",

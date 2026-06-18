@@ -2033,7 +2033,7 @@
               </div>
               <div class="admin-model-form">
                 <div class="admin-model-form-row">
-                  <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" style="flex:1">
+                  <input id="adm-epLocalUrl" type="text" placeholder="Paste endpoint URL, e.g. http://localhost:11434/v1" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url" style="flex:1">
                 </div>
                 <!-- API key row stays in the DOM but is collapsed until the
                      user clicks the Key button on the action row. Local
@@ -2082,7 +2082,7 @@
                      its value so the existing JS that reads adm-epProvider
                      keeps working unchanged. -->
                 <div class="adm-provider-picker adm-provider-combo" id="adm-provider-picker">
-                  <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off">
+                  <input id="adm-epUrl" type="text" placeholder="Base URL or pick provider" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="url">
                   <button type="button" class="adm-provider-btn" id="adm-provider-btn" title="Pick provider">
                     <span class="adm-provider-current"><span class="adm-provider-logo"></span><span class="adm-provider-name">Provider</span></span>
                     <svg class="adm-provider-caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -2363,7 +2363,7 @@
 <script type="module" src="/static/js/theme.js"></script>
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js"></script>
-<script type="module" src="/static/js/admin.js"></script>
+<script type="module" src="/static/js/admin.js?v=20260615unload"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>

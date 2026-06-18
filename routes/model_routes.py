@@ -571,6 +571,76 @@ def _safe_build_headers(api_key: Optional[str], base_url: str) -> dict:
         return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
 
+def _supports_ollama_unload(base_url: str) -> bool:
+    """Return True for local/native Ollama endpoints that support keep_alive=0."""
+    try:
+        parsed = urlparse(_normalize_base(base_url))
+        host = (parsed.hostname or "").lower()
+        if host == "ollama.com" or host.endswith(".ollama.com"):
+            return False
+        return parsed.port == 11434 or "ollama" in host
+    except Exception:
+        return False
+
+
+def _ollama_generate_url_for_unload(base_url: str) -> str:
+    """Map an Ollama /v1 or /api base to native /api/generate."""
+    from src.endpoint_resolver import resolve_url
+
+    base = resolve_url(_normalize_base(base_url)).rstrip("/")
+    if base.endswith("/api/generate"):
+        return base
+    if base.endswith("/generate") and base.rsplit("/", 1)[0].endswith("/api"):
+        return base
+    if base.endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    if base.endswith("/api"):
+        return base + "/generate"
+    return base + "/api/generate"
+
+
+def _ollama_unload_model(base_url: str, api_key: Optional[str], model: str) -> Dict[str, Any]:
+    target_url = _ollama_generate_url_for_unload(base_url)
+    headers = _safe_build_headers(api_key, base_url)
+    headers["Content-Type"] = "application/json"
+    payload = {"model": model, "prompt": "", "stream": False, "keep_alive": 0}
+    try:
+        response = httpx.post(
+            target_url,
+            headers=headers,
+            json=payload,
+            timeout=15,
+            verify=llm_verify(),
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(504, f"Timed out asking Ollama to unload {model}")
+    except Exception as exc:
+        raise HTTPException(502, f"Unload request failed: {str(exc)[:180]}")
+
+    if response.is_success:
+        return {
+            "ok": True,
+            "supported": True,
+            "provider": "ollama",
+            "model": model,
+            "message": f"Unload requested for {model}",
+        }
+
+    detail = f"HTTP {response.status_code}"
+    try:
+        data = response.json()
+        err = data.get("error")
+        if isinstance(err, dict):
+            detail = err.get("message") or detail
+        elif err:
+            detail = str(err)
+    except Exception:
+        text = (response.text or "").strip()
+        if text:
+            detail = text[:220]
+    raise HTTPException(response.status_code, f"Ollama unload failed: {detail}")
+
+
 def _is_discovery_only_provider(provider: str) -> bool:
     return provider == "chatgpt-subscription"
 
@@ -2207,6 +2277,60 @@ def setup_model_routes(model_discovery):
         """Check which settings depend on this endpoint."""
         require_admin(request)
         return {"dependents": _settings_using_endpoint(ep_id)}
+
+    @router.post("/model-endpoints/{ep_id}/unload")
+    async def unload_endpoint_model(ep_id: str, request: Request, response: Response):
+        """Ask a supported local model runtime to unload one model."""
+        require_admin(request)
+        try:
+            body = await request.json() if int(request.headers.get("content-length") or 0) > 0 else {}
+            if not isinstance(body, dict):
+                body = {}
+        except Exception:
+            body = {}
+
+        requested_model = str(body.get("model") or "").strip()
+        db = SessionLocal()
+        try:
+            ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+            if not ep:
+                raise HTTPException(404, "Endpoint not found")
+            try:
+                from src.endpoint_resolver import resolve_endpoint_runtime
+                base_url, api_key = resolve_endpoint_runtime(ep, owner=getattr(ep, "owner", None))
+            except Exception:
+                base_url = _normalize_base(ep.base_url)
+                api_key = ep.api_key
+            visible_models = _visible_models(
+                _cached_model_ids(ep),
+                getattr(ep, "hidden_models", None),
+                getattr(ep, "pinned_models", None),
+            )
+        finally:
+            db.close()
+
+        model = requested_model
+        if not model:
+            if len(visible_models) == 1:
+                model = visible_models[0]
+            else:
+                response.status_code = 400
+                return {
+                    "ok": False,
+                    "supported": False,
+                    "detail": "Pick a model to unload from this endpoint.",
+                }
+
+        if not _supports_ollama_unload(base_url):
+            response.status_code = 400
+            return {
+                "ok": False,
+                "supported": False,
+                "model": model,
+                "detail": "Unload is currently supported for local Ollama endpoints only.",
+            }
+
+        return _ollama_unload_model(base_url, api_key, model)
 
     @router.delete("/model-endpoints/{ep_id}")
     def delete_model_endpoint(ep_id: str, request: Request):
