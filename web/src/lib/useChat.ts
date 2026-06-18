@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { streamChat, streamResume, type SseEvent } from "@/lib/sse"
 import { useComposer } from "@/stores/composer"
 import { usePanel } from "@/stores/panel"
+import { parseArtifact } from "@/lib/artifact"
 import { createSession, useHistory } from "@/api/sessions"
 import type { ChatMessage, HistoryMsg, Source } from "@/types"
 
@@ -47,6 +48,8 @@ export function useChat(sessionId?: string) {
   const sidRef = useRef<string | undefined>(sessionId)
   const seededRef = useRef<string | null>(null)
   const resumeRef = useRef<string | null>(null)
+  const rawRef = useRef<string>("")          // full assistant text this stream (for fence parsing)
+  const artifactRef = useRef<string | null>(null) // title of the doc currently open in the panel
   const { data: history } = useHistory(sessionId)
 
   useEffect(() => { sidRef.current = sessionId }, [sessionId])
@@ -71,23 +74,49 @@ export function useChat(sessionId?: string) {
     const ev = e as Record<string, unknown>
     if (typeof ev.delta === "string") {
       const d = ev.delta as string
-      if (ev.thinking) patchAi((m) => ({ ...m, reasoning: (m.reasoning || "") + d }))
-      else patchAi((m) => ({ ...m, content: m.content + d }))
+      if (ev.thinking) { patchAi((m) => ({ ...m, reasoning: (m.reasoning || "") + d })); return }
+      // Accumulate raw text + detect a `create_document` fence so the doc opens
+      // live in the side panel and the fence is stripped from the chat bubble.
+      rawRef.current += d
+      const { artifact } = parseArtifact(rawRef.current)
+      if (artifact) {
+        const panel = usePanel.getState()
+        if (artifactRef.current !== artifact.title) { panel.showDoc(artifact.title, artifact.language); artifactRef.current = artifact.title }
+        panel.setDocContent(artifact.content)
+      }
+      patchAi((m) => ({ ...m, content: m.content + d, artifact: artifact || m.artifact }))
       return
     }
     switch (e.type) {
       case "model_info": patchAi((m) => ({ ...m, model: ev.model as string })); break
       case "model_actual": patchAi((m) => ({ ...m, modelActual: ev.model as string, model: m.model || (ev.requested_model as string) })); break
-      case "doc_stream_open": usePanel.getState().showDoc((ev.title as string) || "Document", ev.language as string); break
-      case "doc_stream_delta": usePanel.getState().setDocContent((ev.content as string) || ""); break
-      case "doc_update": if (ev.doc_id) usePanel.getState().setDocId(ev.doc_id as string); break
-      case "tool_start": patchAi((m) => ({ ...m, tools: [...(m.tools || []), { name: (ev.tool_name as string) || "tool", input: ev.tool_input }] })); break
-      case "tool_output": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], output: ev.tool_output as string }; return { ...m, tools: t } }); break
-      case "tool_progress": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], progress: ev.progress_text as string }; return { ...m, tools: t } }); break
+      case "model_fallback": case "fallback": patchAi((m) => ({ ...m, modelActual: (ev.model as string) || (ev.to as string) || m.modelActual })); break
+      case "doc_stream_open": {
+        const title = (ev.title as string) || "Document"
+        const language = ev.language as string | undefined
+        if (artifactRef.current !== title) { usePanel.getState().showDoc(title, language); artifactRef.current = title }
+        patchAi((m) => ({ ...m, artifact: { title, language, content: m.artifact?.content || "", closed: false } }))
+        break
+      }
+      case "doc_stream_delta": { const c = (ev.content as string) || ""; usePanel.getState().setDocContent(c); patchAi((m) => ({ ...m, artifact: m.artifact ? { ...m.artifact, content: c } : { title: "Document", content: c, closed: false } })); break }
+      case "doc_update": {
+        if (ev.doc_id) usePanel.getState().setDocId(ev.doc_id as string)
+        const c = ev.content as string | undefined
+        if (c != null) usePanel.getState().setDocContent(c)
+        patchAi((m) => ({ ...m, artifact: m.artifact ? { ...m.artifact, content: c ?? m.artifact.content, closed: true } : m.artifact })); break
+      }
+      // Backend agent loop emits {tool, command, round} / {output, exit_code} / {tail, elapsed_s}.
+      case "tool_start": patchAi((m) => ({ ...m, tools: [...(m.tools || []), { name: (ev.tool as string) || (ev.tool_name as string) || "tool", command: (ev.command as string) || (ev.tool_input as string) || undefined, round: ev.round as number | undefined, running: true }] })); break
+      case "tool_output": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) t[t.length - 1] = { ...t[t.length - 1], output: (ev.output as string) ?? (ev.tool_output as string) ?? "", exitCode: ev.exit_code as number | undefined, running: false }; return { ...m, tools: t } }); break
+      case "tool_progress": patchAi((m) => { const t = [...(m.tools || [])]; if (t.length) { const tail = (ev.tail as string) || (ev.progress_text as string) || ""; const el = ev.elapsed_s as number | undefined; const lastLine = tail ? tail.split("\n").filter(Boolean).slice(-1)[0] : ""; t[t.length - 1] = { ...t[t.length - 1], progress: [el != null ? `${el}s` : "", lastLine].filter(Boolean).join(" · ") || undefined, running: true } } return { ...m, tools: t } }); break
+      case "agent_step": rawRef.current += "\n\n"; patchAi((m) => ({ ...m, content: m.content ? m.content + "\n\n" : m.content })); break // round delimiter — keep each round's text in its own paragraph
       case "web_sources": case "sources": case "research_sources":
         patchAi((m) => ({ ...m, sources: [...(m.sources || []), ...((ev.data as []) || [])] })); break
-      case "metrics":
-        patchAi((m) => ({ ...m, metrics: { tokens_in: ev.tokens_in as number, tokens_out: ev.tokens_out as number, cost: ev.cost as number, tok_per_sec: ev.tok_per_sec as number } })); break
+      case "metrics": {
+        const dm = (ev.data as Record<string, unknown>) || ev
+        patchAi((m) => ({ ...m, metrics: { tokens_in: dm.tokens_in as number, tokens_out: dm.tokens_out as number, cost: dm.cost as number, tok_per_sec: (dm.tok_per_sec ?? dm.tokens_per_sec) as number } })); break
+      }
+      case "error": patchAi((m) => ({ ...m, content: m.content + (m.content ? "\n\n" : "") + `⚠️ ${(ev.text as string) || (ev.error as string) || "Stream error"}` })); break
       case "research_progress":
         patchAi((m) => ({ ...m, research: researchPhase(ev.data as Record<string, unknown>) })); break
       case "research_done": {
@@ -125,6 +154,7 @@ export function useChat(sessionId?: string) {
     }
     setMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
     setStreaming(true)
+    rawRef.current = ""; artifactRef.current = null
 
     const fd = new FormData()
     fd.set("message", sendAs || text)
@@ -176,6 +206,7 @@ export function useChat(sessionId?: string) {
         resumeRef.current = sid
         setMessages((prev) => prev[prev.length - 1]?.streaming ? prev : [...prev, { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
         setStreaming(true)
+        rawRef.current = ""; artifactRef.current = null
         try {
           await streamResume(sid, (e) => handleEvent(e, sid), ctrl.signal)
         } finally {

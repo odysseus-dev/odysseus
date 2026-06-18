@@ -4,7 +4,7 @@ import { apiJson, apiFetch } from "@/lib/api"
 export function useAuthStatus() {
   return useQuery({
     queryKey: ["auth-status"],
-    queryFn: () => apiJson<{ authenticated?: boolean; username?: string; user?: string }>("/api/auth/status"),
+    queryFn: () => apiJson<{ authenticated?: boolean; username?: string; user?: string; is_admin?: boolean; two_factor_enabled?: boolean }>("/api/auth/status"),
   })
 }
 export async function logout() {

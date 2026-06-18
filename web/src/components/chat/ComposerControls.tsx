@@ -4,17 +4,14 @@ import { ChevronDown, SlidersHorizontal } from "lucide-react"
 import { useModels, useDefaultChat } from "@/api/models"
 import { usePresets } from "@/api/presets"
 import { useComposer } from "@/stores/composer"
+import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return <div className="flex items-center justify-between gap-3 py-1.5"><span className="text-sm text-muted-foreground">{label}</span>{children}</div>
 }
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", on ? "bg-primary" : "bg-input")}>
-      <span className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-transform", on ? "translate-x-4" : "translate-x-0.5")} />
-    </button>
-  )
+  return <Switch checked={on} onCheckedChange={onClick} />
 }
 const trigger = "flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
 

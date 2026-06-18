@@ -14,12 +14,13 @@ export interface ModelsResponse { items: Endpoint[]; hosts?: unknown[] }
 export interface DefaultChat { model: string; endpoint_url?: string; endpoint_id?: string; fallbacks?: string[] }
 export interface HistoryMsg { role: string; content: unknown; model?: string; attachments?: unknown[]; metadata?: Record<string, unknown> }
 export interface Source { url?: string; title?: string; snippet?: string }
-export interface ToolEvent { name: string; input?: unknown; output?: string; progress?: string }
+export interface ToolEvent { name: string; input?: unknown; command?: string; output?: string; progress?: string; exitCode?: number; round?: number; running?: boolean }
+export interface Artifact { title: string; language?: string; content: string; closed?: boolean }
 export interface ChatMessage {
   role: "user" | "assistant"; content: string; reasoning?: string; model?: string;
   tools?: ToolEvent[]; sources?: Source[]; streaming?: boolean;
   research?: { phase: string; detail?: string };
-  modelActual?: string;
+  modelActual?: string; artifact?: Artifact;
   metrics?: { tokens_in?: number; tokens_out?: number; cost?: number; tok_per_sec?: number };
 }
 export interface Memory {

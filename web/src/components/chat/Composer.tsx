@@ -148,8 +148,8 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
           )}
           <ToolsMenu />
           <div className="ml-auto flex items-center gap-2">
-            <ModePicker />
             <ModelPicker />
+            <ModePicker />
             {streaming ? (
               <Button size="icon" variant="secondary" onClick={onStop} title="Stop" className="size-8 rounded-lg"><Square className="size-4" /></Button>
             ) : (

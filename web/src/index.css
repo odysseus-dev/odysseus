@@ -2,6 +2,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  color-scheme: light;
   --radius: 0.5rem;
   --background: #ffffff;
   --foreground: #09090b;
@@ -25,6 +26,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: #09090b;
   --foreground: #fafafa;
   --card: #18181b;
@@ -76,6 +78,17 @@
   * { border-color: var(--border); }
   html, body, #root { height: 100%; }
   body { background-color: var(--background); color: var(--foreground); -webkit-font-smoothing: antialiased; }
+
+  /* Themed scrollbars. Without `color-scheme` (set on :root/.dark above) the
+     browser paints the native LIGHT scrollbar — a white track — even in the
+     zinc dark theme. These rules additionally style the overflow scrollbars so
+     the track is transparent and the thumb uses the theme border colour. */
+  * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background-color: var(--border); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+  *::-webkit-scrollbar-thumb:hover { background-color: var(--muted-foreground); }
+  *::-webkit-scrollbar-corner { background: transparent; }
 }
 
 @layer components {
@@ -89,11 +102,36 @@
   .prose-chat li { margin: 0.2em 0; }
   .prose-chat a { color: var(--foreground); text-decoration: underline; text-underline-offset: 2px; }
   .prose-chat :not(pre) > code { background: var(--muted); border-radius: 4px; padding: 0.1em 0.35em; font-size: 0.88em; font-family: ui-monospace, Menlo, Consolas, monospace; }
-  .prose-chat pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+  .prose-chat pre { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow: auto; max-height: 420px; }
   .prose-chat pre code { background: transparent; padding: 0; font-size: 13px; }
   .prose-chat blockquote { border-left: 2px solid var(--border); padding-left: 1em; color: var(--muted-foreground); }
   .prose-chat table { border-collapse: collapse; width: 100%; font-size: 0.92em; }
   .prose-chat th, .prose-chat td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
   .prose-chat th { background: var(--muted); }
   .prose-chat hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
+}
+
+/* ---- Micro-interactions / motion ----
+   Small, fast, eased animations applied via utility classes. Kept subtle and
+   disabled under prefers-reduced-motion. */
+@keyframes odys-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes odys-msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes odys-panel-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@keyframes odys-pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes odys-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+@layer utilities {
+  .animate-msg-in { animation: odys-msg-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-fade-in { animation: odys-fade-in 0.2s ease-out both; }
+  .animate-panel-in { animation: odys-panel-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-pop-in { animation: odys-pop-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-pulse-soft { animation: odys-pulse-soft 1.6s ease-in-out infinite; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

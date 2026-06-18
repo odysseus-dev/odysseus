@@ -1,11 +1,26 @@
 import { useRef, useState } from "react"
-import { ChevronRight, Brain, Telescope, Loader2, Volume2, Square, BookOpen, Copy, Check, RotateCcw, Pencil, ArrowRight } from "lucide-react"
+import { ChevronRight, Brain, Telescope, Loader2, Volume2, Square, BookOpen, Copy, Check, RotateCcw, Pencil, ArrowRight, FileCode2 } from "lucide-react"
 import { usePanel } from "@/stores/panel"
 import { Markdown } from "./Markdown"
 import { ToolThread } from "./ToolThread"
+import { parseArtifact } from "@/lib/artifact"
 import { useVoiceCaps, speak } from "@/api/voice"
 import { cn } from "@/lib/utils"
-import type { ChatMessage } from "@/types"
+import type { ChatMessage, Artifact } from "@/types"
+
+function ArtifactCard({ artifact }: { artifact: Artifact }) {
+  const open = () => { const p = usePanel.getState(); p.showDoc(artifact.title, artifact.language); p.setDocContent(artifact.content) }
+  return (
+    <button onClick={open} className="group flex w-full items-center gap-3 rounded-xl border bg-card p-3 text-left transition-all hover:border-ring/60 hover:bg-accent/40">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><FileCode2 className="size-[18px]" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{artifact.title}</span>
+        <span className="block text-xs text-muted-foreground">{artifact.language || "document"}{artifact.closed ? "" : " · generating…"}</span>
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">Open ›</span>
+    </button>
+  )
+}
 
 const actionBtn = "inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 
@@ -54,7 +69,7 @@ function Reasoning({ text, live }: { text: string; live: boolean }) {
 export function Message({ m, onRegenerate, onEdit }: { m: ChatMessage; onRegenerate?: () => void; onEdit?: () => void }) {
   if (m.role === "user") {
     return (
-      <div className="group flex flex-col items-end">
+      <div className="group flex flex-col items-end animate-msg-in">
         <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl bg-secondary px-4 py-2.5 text-[15px]">{m.content}</div>
         <div className="mt-0.5 flex items-center gap-0.5 text-[11px] opacity-0 transition-opacity group-hover:opacity-100">
           <CopyButton text={m.content} />
@@ -64,8 +79,12 @@ export function Message({ m, onRegenerate, onEdit }: { m: ChatMessage; onRegener
     )
   }
   const mt = m.metrics
+  // Strip the create_document fence out of the bubble — it streams into the
+  // side panel as an artifact instead of showing as raw code in the chat.
+  const { display, artifact } = parseArtifact(m.content)
+  const doc = m.artifact || artifact
   return (
-    <div className="space-y-3">
+    <div className="space-y-3 animate-msg-in">
       {m.reasoning && <Reasoning text={m.reasoning} live={!!m.streaming && !m.content} />}
       {m.tools && m.tools.length > 0 && <ToolThread tools={m.tools} />}
       {m.research && m.streaming && (
@@ -76,7 +95,8 @@ export function Message({ m, onRegenerate, onEdit }: { m: ChatMessage; onRegener
           <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-muted-foreground" />
         </div>
       )}
-      {m.content ? <Markdown>{m.content}</Markdown> : m.streaming && !m.reasoning && !m.research ? <div className="text-sm text-muted-foreground">Thinking…</div> : null}
+      {display ? <Markdown>{display}</Markdown> : (m.streaming && !m.reasoning && !m.research && !doc && (!m.tools || m.tools.length === 0)) ? <div className="animate-pulse-soft text-sm text-muted-foreground">Thinking…</div> : null}
+      {doc && <ArtifactCard artifact={doc} />}
       {m.sources && m.sources.length > 0 && (
         <button onClick={() => usePanel.getState().show("sources", { title: `Sources · ${m.sources!.length}`, payload: m.sources })}
           className="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
@@ -85,9 +105,9 @@ export function Message({ m, onRegenerate, onEdit }: { m: ChatMessage; onRegener
       )}
       {!m.streaming && (m.model || mt || m.content) && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[11px] text-muted-foreground">
-          {m.content && <CopyButton text={m.content} />}
-          {m.content && onRegenerate && <button onClick={onRegenerate} title="Regenerate" className={actionBtn}><RotateCcw className="size-3.5" /></button>}
-          {m.content && <SpeakButton text={m.content} />}
+          {display && <CopyButton text={display} />}
+          {(display || doc) && onRegenerate && <button onClick={onRegenerate} title="Regenerate" className={actionBtn}><RotateCcw className="size-3.5" /></button>}
+          {display && <SpeakButton text={display} />}
           {m.model && (
             <span className="ml-1 inline-flex items-center gap-1">
               {m.model}

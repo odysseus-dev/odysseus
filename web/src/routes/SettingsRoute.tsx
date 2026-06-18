@@ -5,6 +5,7 @@ import { useAuthStatus, useUsers, useUserMutations, logout, changePassword, setu
 import { useModels, useDefaultChat, useDeleteEndpoint, useEndpointMutations, useSetDefaultModel, testEndpoint } from "@/api/models"
 import { usePresets, useCreatePreset } from "@/api/presets"
 import { AdminSections } from "@/components/settings/AdminSections"
+import { AppSettingsSections } from "@/components/settings/AppSettings"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -265,6 +266,8 @@ export function SettingsRoute() {
         <AccountSecurity />
 
         <AdminSections />
+
+        {status?.is_admin && <AppSettingsSections />}
 
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</h2>

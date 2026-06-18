@@ -4,6 +4,7 @@ import { useMcpServers, useWebhooks, useAdminMutations, useFeatures, useSetFeatu
 import { useIntegrations, useIntegrationPresets, useIntegrationMutations, type Integration } from "@/api/integrations"
 import { Button } from "@/components/ui/button"
 import { Markdown } from "@/components/chat/Markdown"
+import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 
 const inp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
@@ -250,7 +251,7 @@ function FeaturesSection() {
         {Object.entries(data).map(([k, v]) => (
           <div key={k} className="flex items-center justify-between py-1.5">
             <span className="text-sm capitalize text-muted-foreground">{k.replace(/_/g, " ")}</span>
-            <button onClick={() => setFeature.mutate({ key: k, value: !v })} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", v ? "bg-primary" : "bg-input")}><span className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-transform", v ? "translate-x-4" : "translate-x-0.5")} /></button>
+            <Switch checked={!!v} onCheckedChange={() => setFeature.mutate({ key: k, value: !v })} />
           </div>
         ))}
       </div>

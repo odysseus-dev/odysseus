@@ -3,12 +3,13 @@ import { Trash2, Plus, Pencil, Check, Settings2 } from "lucide-react"
 import { useMemory, useMemoryMutations } from "@/api/memory"
 import { usePrefs, useSetPref } from "@/api/prefs"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 
 const CATS = ["fact", "preference", "identity", "project", "goal", "task", "contact"]
 
 function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
-  return <button onClick={onClick} className={cn("relative h-5 w-9 shrink-0 rounded-full transition-colors", on ? "bg-primary" : "bg-input")}><span className={cn("absolute top-0.5 size-4 rounded-full bg-background transition-transform", on ? "translate-x-4" : "translate-x-0.5")} /></button>
+  return <Switch checked={on} onCheckedChange={onClick} />
 }
 // Module-scope so it isn't recreated each render (which would reset state).
 function SettingRow({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
