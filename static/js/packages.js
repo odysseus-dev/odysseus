@@ -68,13 +68,24 @@ const PackageManager = (() => {
   // ── Render an installed package row ────────────────────────────────────────
   function _pkgRow(pkg) {
     const enabled = pkg.status === 'installed';
+    const h = pkg.health || {};
     const riskBadge = _riskBadge(pkg.risk_level);
     const statusBadge = enabled
       ? `<span class="admin-badge" style="background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red)">enabled</span>`
       : `<span class="admin-badge admin-badge-off">disabled</span>`;
+    const restartBadge = h.needs_restart
+      ? `<span class="admin-badge" style="background:color-mix(in srgb,#f90 22%,transparent);color:#f90" title="Routes were updated — restart the app to apply">restart needed</span>`
+      : '';
+    const errorBadge = h.last_error
+      ? `<span class="admin-badge" style="background:color-mix(in srgb,var(--color-error,#e06c75) 20%,transparent);color:var(--color-error,#e06c75)" title="${_esc(h.last_error)}">error</span>`
+      : '';
     const perms = (pkg.permissions || []).map(p =>
       `<span class="admin-badge" style="font-size:9px;opacity:0.75">${_esc(p)}</span>`
     ).join('');
+
+    const healthLine = h.is_loaded
+      ? `<span style="font-size:10px;opacity:0.4">${h.events_received || 0} events${h.loaded_at ? ` · loaded ${_relTime(h.loaded_at)}` : ''}</span>`
+      : '';
 
     return `
       <div class="admin-user-row" data-pkg-id="${_esc(pkg.id)}">
@@ -84,9 +95,12 @@ const PackageManager = (() => {
             ${pkg.version ? `<span class="admin-badge" style="font-size:9px;opacity:0.6">v${_esc(pkg.version)}</span>` : ''}
             ${statusBadge}
             ${riskBadge}
+            ${restartBadge}
+            ${errorBadge}
             ${perms}
             ${pkg.author ? `<span style="font-size:10px;opacity:0.4">by ${_esc(pkg.author)}</span>` : ''}
             ${pkg.description ? `<span style="font-size:11px;opacity:0.55;flex-basis:100%;margin-top:1px">${_esc(pkg.description)}</span>` : ''}
+            ${healthLine}
           </div>
           <div style="display:flex;gap:4px;align-items:center;flex-shrink:0;margin-left:8px;">
             <button class="admin-btn-sm pkg-toggle-btn" data-id="${_esc(pkg.id)}" data-enabled="${enabled}">
@@ -97,6 +111,14 @@ const PackageManager = (() => {
         </div>
       </div>
     `;
+  }
+
+  function _relTime(isoStr) {
+    if (!isoStr) return '';
+    const diff = Math.round((Date.now() - new Date(isoStr + 'Z')) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
   }
 
   // ── Render an available (bundled) package row ──────────────────────────────
@@ -212,7 +234,9 @@ const PackageManager = (() => {
       if (fileInput) fileInput.disabled = true;
       try {
         const result = await _upload(file);
-        installMsg.textContent = `Installed: ${result.package_id}`;
+        const verb = result.is_upgrade ? 'Upgraded' : 'Installed';
+        installMsg.textContent = `${verb}: ${result.package_id}`;
+        if (result.needs_restart) setTimeout(() => alert(`Package upgraded.\nNote: routes were updated — restart the app for full effect.`), 100);
         const warnings = result.warnings?.length ? result.warnings.join(', ') : '';
         if (warnings) setTimeout(() => alert(`Package installed.\nWarnings: ${warnings}`), 100);
         setTimeout(() => { installMsg.textContent = ''; }, 3000);

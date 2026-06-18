@@ -205,6 +205,9 @@ const WorkspaceManager = (() => {
         if (result.exit_code !== 0) {
           output.textContent += `\n[Exit code: ${result.exit_code}]`;
         }
+        window.OdysseusPkg?.events?.emit('workspace:exec-done', {
+          wsId, command: cmd, exitCode: result.exit_code, output: result.output,
+        });
       } catch (e) {
         output.textContent = `Error: ${e.message}`;
       }
@@ -481,6 +484,10 @@ const WorkspaceManager = (() => {
   // ── Notify shell selector (and other listeners) that workspaces changed ──
   function _notifyChanged() {
     window.dispatchEvent(new CustomEvent('workspace-changed'));
+    // Also emit through the pkg event bus if available
+    window.OdysseusPkg?.events?.emit('workspace:selected', {
+      wsId: window.OdysseusShellWS?.getSelected?.() ?? null,
+    });
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────

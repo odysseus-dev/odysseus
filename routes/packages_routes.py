@@ -189,6 +189,18 @@ def setup_packages_routes(package_manager):
         ok = package_manager.remove_package(pkg_id)
         return {"success": ok, "pkg_id": pkg_id}
 
+    @router.get("/health")
+    def get_all_health(request: Request):
+        """Runtime health stats for all packages (in-memory, resets on restart)."""
+        get_current_user(request)
+        return {"health": package_manager.get_all_health()}
+
+    @router.get("/{pkg_id}/health")
+    def get_package_health(pkg_id: str, request: Request):
+        """Runtime health stats for a single package."""
+        get_current_user(request)
+        return package_manager.get_health(pkg_id)
+
     @router.get("/{pkg_id}/config")
     def get_package_config(pkg_id: str, request: Request):
         """Return the stored config for this package scoped to the current user."""

@@ -144,6 +144,104 @@ function openPanel(id, title, opts = {}) {
   return bodyEl;
 }
 
+// ── Cross-package event bus ────────────────────────────────────────────────
+const _evtHandlers = {};
+
+/**
+ * Lightweight pub-sub for cross-package and app→package communication.
+ *
+ * Well-known events emitted by the app shell:
+ *   'workspace:selected'  { wsId: string|null }
+ *   'workspace:exec-done' { wsId, command, exitCode }
+ *   'chat:send'           { message: string }
+ *
+ * @example
+ *   const unsub = OdysseusPkg.events.on('workspace:selected', ({ wsId }) => { ... });
+ *   unsub(); // unsubscribe
+ *   OdysseusPkg.events.emit('my-pkg:data-ready', { items: [...] });
+ */
+const events = {
+  on(event, handler) {
+    (_evtHandlers[event] ??= []).push(handler);
+    return () => {
+      _evtHandlers[event] = (_evtHandlers[event] || []).filter(h => h !== handler);
+    };
+  },
+  off(event, handler) {
+    if (_evtHandlers[event])
+      _evtHandlers[event] = _evtHandlers[event].filter(h => h !== handler);
+  },
+  emit(event, data) {
+    for (const h of (_evtHandlers[event] || [])) {
+      try { h(data); } catch (e) { console.error(`[OdysseusPkg.events] '${event}' handler threw:`, e); }
+    }
+  },
+};
+
+// Bridge native DOM events into the pkg event bus so widgets don't need window listeners
+window.addEventListener('workspace-changed', () => {
+  const wsId = window.OdysseusShellWS?.getSelected?.() ?? null;
+  events.emit('workspace:selected', { wsId });
+});
+
+// ── Per-package storage ────────────────────────────────────────────────────
+
+/**
+ * Return a simple key-value storage interface scoped to pkgId.
+ * Backed by the server-side config store (GET/PUT /api/packages/{id}/config).
+ *
+ * @param {string} pkgId
+ * @returns {{ get, set, delete, getAll, clear }}
+ *
+ * @example
+ *   const store = OdysseusPkg.storage('my-package');
+ *   const val = await store.get('api_key', '');
+ *   await store.set('api_key', 'sk-...');
+ *   await store.delete('api_key');
+ */
+function storage(pkgId) {
+  const _url = () => `/api/packages/${encodeURIComponent(pkgId)}/config`;
+
+  async function _load() {
+    const r = await fetch(_url());
+    if (!r.ok) return {};
+    return (await r.json()).config || {};
+  }
+
+  async function _save(cfg) {
+    const r = await fetch(_url(), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: cfg }),
+    });
+    if (!r.ok) throw new Error(`storage save failed (${r.status})`);
+    return (await r.json()).config || cfg;
+  }
+
+  return {
+    async get(key, defaultValue = null) {
+      const cfg = await _load();
+      return key in cfg ? cfg[key] : defaultValue;
+    },
+    async set(key, value) {
+      const cfg = await _load();
+      return _save({ ...cfg, [key]: value });
+    },
+    async delete(key) {
+      const cfg = await _load();
+      const updated = { ...cfg };
+      delete updated[key];
+      return _save(updated);
+    },
+    async getAll() {
+      return _load();
+    },
+    async clear() {
+      return _save({});
+    },
+  };
+}
+
 /**
  * Fetch this package's stored config for the current user.
  * @param {string} pkgId  The package ID from manifest.json
@@ -220,7 +318,7 @@ function addSettingsTab(pkgId, label, initFn, iconSvg) {
   });
 }
 
-const OdysseusPkg = { addWidget, getChatInput, setChatInput, callLLM, openPanel, getConfig, setConfig, addSettingsTab };
+const OdysseusPkg = { addWidget, getChatInput, setChatInput, callLLM, openPanel, getConfig, setConfig, addSettingsTab, events, storage };
 
 // Expose globally so widget scripts that can't do ES6 imports can access it
 window.OdysseusPkg = OdysseusPkg;

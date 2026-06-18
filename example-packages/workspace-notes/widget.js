@@ -103,6 +103,15 @@
     }
   }
 
+  function _subscribeEvents() {
+    const pkg = window.OdysseusPkg;
+    if (pkg?.events) {
+      pkg.events.on('workspace:selected', ({ wsId }) => {
+        if (wsId !== _wsId) { _wsId = wsId; _load(); }
+      });
+    }
+  }
+
   // ── Register with the sidebar widget slot ─────────────────────────────────
   function _mount() {
     const pkg = window.OdysseusPkg;
@@ -124,9 +133,10 @@
 
     pkg.addWidget('sidebarWidget', container);
 
-    // Poll workspace selection every 2s (lightweight, no websocket needed)
+    // Sync immediately, then use event bus; fall back to polling if events not available
     _syncWorkspace();
-    setInterval(_syncWorkspace, 2000);
+    _subscribeEvents();
+    if (!window.OdysseusPkg?.events) setInterval(_syncWorkspace, 2000);
   }
 
   // ── Settings tab ──────────────────────────────────────────────────────────
