@@ -4,14 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
 <title>Hellaine's Jade Palace — Login</title>
-<link rel="icon" type="image/svg+xml" href="/static/hellaine-logo.svg">
-<link rel="shortcut icon" href="/static/hellaine-logo.svg">
+<link rel="icon" type="image/x-icon" href="/static/icons/favicon.ico">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
 <link rel="manifest" href="/static/manifest.json">
-<link rel="apple-touch-icon" href="/static/hellaine-logo.svg">
-<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
-<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-<link rel="shortcut icon" href="/static/favicon.ico">
 <script nonce="{{CSP_NONCE}}">
 (function(){
   // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
@@ -253,6 +250,45 @@
     vertical-align: -3px;
   }
   @keyframes login-spin { to { transform: rotate(360deg); } }
+
+  /* Hellaine logo layout override: logo centered above title, no glow haze */
+  .logo {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 12px !important;
+    text-align: center !important;
+    margin-bottom: 1.5rem !important;
+  }
+  .logo img.logo-boat {
+    display: block !important;
+    width: 104px !important;
+    height: 104px !important;
+    margin: 0 !important;
+    object-fit: contain !important;
+    vertical-align: middle !important;
+    color: var(--red) !important;
+    filter: none !important;
+  }
+  .logo span {
+    display: block !important;
+    font-family: 'Fira Code', monospace;
+    font-size: 2rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em !important;
+    line-height: 1 !important;
+    background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg))) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    filter: none !important;
+  }
+  @media (max-width: 768px) {
+    .logo img.logo-boat { width: 84px !important; height: 84px !important; }
+    .logo span { font-size: 1.75rem !important; }
+  }
+
 </style>
 </head>
 <body>

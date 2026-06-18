@@ -37767,3 +37767,68 @@ img.logo-boat {
   letter-spacing: 0.02em;
   text-shadow: 0 0 18px rgba(212,175,55,0.18);
 }
+
+/* ============================================ */
+/* Hellaine final branding/fav icon layout fixes */
+/* ============================================ */
+
+/* Welcome screen: big centered logo above text, no glow haze */
+#welcome-screen .welcome-name {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 12px !important;
+  margin: 0 0 14px 0 !important;
+  text-align: center !important;
+  background: none !important;
+  -webkit-text-fill-color: initial !important;
+  text-shadow: none !important;
+  transform-origin: center center !important;
+}
+
+#welcome-screen img.welcome-boat {
+  display: block !important;
+  width: 112px !important;
+  height: 112px !important;
+  margin: 0 !important;
+  object-fit: contain !important;
+  vertical-align: middle !important;
+  filter: none !important;
+}
+
+#welcome-screen .welcome-title {
+  display: block !important;
+  margin: 0 !important;
+  font-size: 2.35rem !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  letter-spacing: 0.03em !important;
+  text-align: center !important;
+  background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg))) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+  text-shadow: none !important;
+  filter: none !important;
+}
+
+/* General Hellaine image logos: keep them crisp, not smoky */
+img.welcome-boat,
+img.logo-boat,
+.sidebar-brand-logo-img {
+  object-fit: contain !important;
+  filter: none !important;
+}
+
+@media (max-width: 768px) {
+  #welcome-screen img.welcome-boat {
+    width: 88px !important;
+    height: 88px !important;
+  }
+
+  #welcome-screen .welcome-title {
+    font-size: 1.85rem !important;
+  }
+}
+

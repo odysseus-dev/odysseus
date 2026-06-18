@@ -3,12 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <title>Hellaine's Jade Palace</title>
-  <link rel="icon" type="image/svg+xml" href="/static/hellaine-logo.svg">
-  <link rel="shortcut icon" href="/static/hellaine-logo.svg">
-  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
-  <link rel="shortcut icon" href="/static/favicon.ico">
+  <link rel="icon" type="image/x-icon" href="/static/icons/favicon.ico">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
   <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#06120d">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -17,7 +15,6 @@
        in email bodies — was wrapping random digits in <a href="tel:..."> with
        browser-default styling that didn't match the Hellaine theme. -->
   <meta name="format-detection" content="telephone=no, date=no, address=no, email=no">
-  <link rel="apple-touch-icon" href="/static/hellaine-logo.svg">
   <script nonce="{{CSP_NONCE}}">
   window._odysseusLoadTime = Date.now();
   (function(){
@@ -42,9 +39,9 @@
         // there during load and the bar "switches" colour once the app boots.
         var mtc = document.querySelector('meta[name="theme-color"]');
         if (mtc && c.bg) mtc.setAttribute('content', c.bg);
-        // Keep the Hellaine insignia as the favicon regardless of accent color.
+        // Keep the Hellaine favicon stable regardless of accent color.
         var fav = document.querySelector("link[rel='icon']");
-        if (fav) fav.href = '/static/hellaine-logo.svg';
+        if (fav) fav.href = '/static/icons/favicon-32x32.png';
         // Derive syntax highlighting colors from theme
         function h2hsl(hex) {
           hex = hex.replace('#','');
