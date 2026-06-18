@@ -10,15 +10,20 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Source } from "@/types"
 
-// Load a thread file's content into the doc preview.
+// Load a thread file's content into the doc preview. Guards every store write
+// behind a docId check so a slow response from a previously-clicked file can't
+// stamp its content onto the file the user is now viewing, and surfaces a load
+// failure instead of leaving a blank/“Generating…” panel.
 async function openFile(f: PanelFile) {
   const p = usePanel.getState()
   p.showDoc(f.title || f.name || "Document", f.language)
   p.setDocId(f.id)
   try {
     const d = await apiJson<{ current_content?: string }>(`/api/document/${f.id}`)
-    p.setDocContent(d.current_content || "")
-  } catch { /* leave empty on failure */ }
+    if (usePanel.getState().doc?.docId === f.id) p.setDocContent(d.current_content || "")
+  } catch {
+    if (usePanel.getState().doc?.docId === f.id) p.setDocError("Couldn’t load this file.")
+  }
 }
 
 // On-demand right panel (Claude artifact-style). Hosts a per-thread file list,
@@ -86,6 +91,8 @@ export function ContextPanel() {
             {!hasFileList && <p className="px-1 py-6 text-center text-sm text-muted-foreground">No files in this thread.</p>}
           </div>
         </div>
+      ) : kind === "doc" && doc?.error ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-6 text-center text-sm text-destructive">{doc.error}</div>
       ) : showPreview ? (
         <HtmlPreview title={doc?.title} content={doc?.content} renderLang={renderLang} />
       ) : (

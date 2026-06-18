@@ -3,7 +3,7 @@ import { create } from "zustand"
 // Contextual right panel (Claude "artifact"-style). Opens on demand for deep
 // research progress / sources / streamed docs — NOT a persistent config rail.
 export type PanelKind = "research" | "sources" | "doc" | "files"
-export interface DocState { title: string; language?: string; content: string; docId?: string }
+export interface DocState { title: string; language?: string; content: string; docId?: string; error?: string }
 export interface PanelFile { id: string; title?: string; name?: string; language?: string }
 interface PanelState {
   open: boolean
@@ -18,6 +18,7 @@ interface PanelState {
   backToFiles: () => void
   setDocContent: (content: string) => void
   setDocId: (id: string) => void
+  setDocError: (error: string) => void
   close: () => void
 }
 export const usePanel = create<PanelState>((set, get) => ({
@@ -28,5 +29,6 @@ export const usePanel = create<PanelState>((set, get) => ({
   backToFiles: () => set({ kind: "files" }),
   setDocContent: (content) => { const d = get().doc; set({ doc: { title: d?.title || "Document", language: d?.language, content, docId: d?.docId } }) },
   setDocId: (id) => { const d = get().doc; if (d) set({ doc: { ...d, docId: id } }) },
+  setDocError: (error) => { const d = get().doc; if (d) set({ doc: { ...d, error } }) },
   close: () => set({ open: false }),
 }))

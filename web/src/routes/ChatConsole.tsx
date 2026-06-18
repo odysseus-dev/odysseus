@@ -50,13 +50,25 @@ export function ChatConsole() {
   const incognito = useComposer((s) => s.incognito)
   const { data: threadDocs } = useSessionDocuments(sessionId)
   const panelOpen = usePanel((s) => s.open)
+  const panelKind = usePanel((s) => s.kind)
+  const filesPanelOpen = panelOpen && panelKind === "files"
   const docCount = threadDocs?.length || 0
   const title = sessions?.find((s) => s.id === sessionId)?.name
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages])
 
-  // Auto-open the per-thread files panel once when entering a thread that has
-  // saved artifacts/files — but don't clobber a panel the live stream opened.
+  // The panel is global; reset it when switching threads so a doc/files panel
+  // from the previous thread doesn't linger over a different conversation.
+  const prevSessionRef = useRef(sessionId)
+  useEffect(() => {
+    if (prevSessionRef.current === sessionId) return
+    prevSessionRef.current = sessionId
+    const p = usePanel.getState()
+    if (p.open && (p.kind === "files" || p.kind === "doc")) p.close()
+  }, [sessionId])
+
+  // Auto-open the per-thread files panel once its files are known — but don't
+  // clobber a panel the live stream opened.
   const autoOpenedRef = useRef<string | null>(null)
   useEffect(() => {
     if (!sessionId || docCount === 0) return
@@ -66,7 +78,7 @@ export function ChatConsole() {
   }, [sessionId, docCount, threadDocs])
 
   const toggleFiles = () => {
-    if (panelOpen) usePanel.getState().close()
+    if (filesPanelOpen) usePanel.getState().close()
     else usePanel.getState().showFiles(threadDocs || [])
   }
 
@@ -86,9 +98,9 @@ export function ChatConsole() {
             {docCount > 0 && (
               <button
                 onClick={toggleFiles}
-                title={panelOpen ? "Hide files panel" : "Show files in this thread"}
+                title={filesPanelOpen ? "Hide files panel" : "Show files in this thread"}
                 className={cn("flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                  panelOpen ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+                  filesPanelOpen ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
               >
                 <FileText className="size-3.5" />{docCount} file{docCount === 1 ? "" : "s"}
               </button>
