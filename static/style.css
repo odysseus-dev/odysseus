@@ -878,6 +878,44 @@ body.bg-pattern-sparkles {
     #minimized-dock.dock-single-row::-webkit-scrollbar {
       display: none;
     }
+    #minimized-dock.dock-chatbar-row {
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-behavior: smooth;
+      overscroll-behavior-x: contain;
+      scrollbar-width: thin;
+      scrollbar-color:
+        color-mix(in srgb, var(--accent, var(--red)) 42%, transparent)
+        transparent;
+      pointer-events: auto;
+      touch-action: pan-x;
+      box-sizing: border-box;
+      min-height: 48px;
+      max-height: 54px;
+      background:
+        linear-gradient(90deg,
+          color-mix(in srgb, var(--bg) 82%, transparent),
+          transparent 16% 84%,
+          color-mix(in srgb, var(--bg) 82%, transparent));
+      mask-image: linear-gradient(90deg, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+    }
+    #minimized-dock.dock-chatbar-row::-webkit-scrollbar {
+      height: 5px;
+    }
+    #minimized-dock.dock-chatbar-row::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    #minimized-dock.dock-chatbar-row::-webkit-scrollbar-thumb {
+      background: color-mix(in srgb, var(--accent, var(--red)) 42%, transparent);
+      border-radius: 999px;
+    }
+    #minimized-dock.dock-chatbar-row .minimized-dock-chip {
+      flex: 0 0 auto;
+    }
     #minimized-dock.dock-paged-row {
       flex-wrap: nowrap;
       gap: 0;

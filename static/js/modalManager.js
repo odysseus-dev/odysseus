@@ -596,6 +596,17 @@ function _aboveComposerTop(height) {
   return Math.max(8, _composerTop() - height - 8);
 }
 
+function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds()) {
+  if (_isTouchInput() || _dockPos) return null;
+  const rect = _visibleRect(document.querySelector('.chat-input-bar'));
+  if (!rect) return null;
+  const left = Math.max(bounds.left + 8, rect.left);
+  const right = Math.min(bounds.right - 8, rect.right);
+  const width = Math.floor(right - left);
+  if (width < 120) return null;
+  return { left: Math.round(left), width };
+}
+
 function _defaultDockPosition(dock, width, height) {
   const bounds = _dockWorkspaceBounds();
   const dockWidth = Math.max(44, width || dock?.offsetWidth || 44);
@@ -713,6 +724,7 @@ function _syncDockRowMode(dock, bounds = _dockWorkspaceBounds()) {
   const menuOpen = _isTouchMenuOpen();
   const pagedTouchDock = touchPortrait || (touchLandscape && menuOpen);
   const stackedTouchPages = touchPortrait && menuOpen;
+  const desktopChatbarDock = !!_desktopChatbarDockRect(bounds);
   const previousPaged = dock.classList.contains('dock-paged-row');
   const previousStacked = dock.classList.contains('dock-stacked-pages');
   const previousPageSize = Math.max(44, (previousStacked ? dock.clientHeight : dock.clientWidth)
@@ -731,6 +743,7 @@ function _syncDockRowMode(dock, bounds = _dockWorkspaceBounds()) {
   dock.classList.toggle('dock-single-row', touchLandscape && !pagedTouchDock);
   dock.classList.toggle('dock-paged-row', pagedTouchDock);
   dock.classList.toggle('dock-stacked-pages', stackedTouchPages);
+  dock.classList.toggle('dock-chatbar-row', desktopChatbarDock);
   dock.classList.toggle('dock-compact-chips', compactTouchChips);
   if (previousPaged !== pagedTouchDock || previousStacked !== stackedTouchPages) {
     requestAnimationFrame(() => {
@@ -861,11 +874,20 @@ function _applyDockPos(dock) {
   const bounds = _dockWorkspaceBounds();
   _syncDockRowMode(dock, bounds);
   if (!_dockPos) {
-    dock.style.left = `${Math.round((bounds.left + bounds.right) / 2)}px`;
+    const chatbarDock = _desktopChatbarDockRect(bounds);
+    if (chatbarDock) {
+      dock.style.left = `${chatbarDock.left}px`;
+      dock.style.width = `${chatbarDock.width}px`;
+      dock.style.maxWidth = `${chatbarDock.width}px`;
+      dock.style.transform = 'none';
+    } else {
+      dock.style.left = `${Math.round((bounds.left + bounds.right) / 2)}px`;
+      dock.style.removeProperty('width');
+      dock.style.transform = 'translateX(-50%)';
+    }
     dock.style.right = 'auto';
     dock.style.removeProperty('top');
     dock.style.bottom = '';
-    dock.style.transform = 'translateX(-50%)';
     return;
   }
   const next = _clampDockPosition(dock, _dockPos.left, _dockPos.top);
@@ -874,6 +896,7 @@ function _applyDockPos(dock) {
   dock.style.top = `${next.top}px`;
   dock.style.right = 'auto';
   dock.style.bottom = 'auto';
+  dock.style.removeProperty('width');
   dock.style.transform = 'none';
 }
 
@@ -881,6 +904,14 @@ let _dockPlacementWired = false;
 function _wireDockPlacement(dock) {
   if (_dockPlacementWired || !dock) return;
   _dockPlacementWired = true;
+  dock.addEventListener('wheel', (e) => {
+    if (!dock.classList.contains('dock-chatbar-row')) return;
+    if (dock.scrollWidth <= dock.clientWidth + 1) return;
+    const delta = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (!delta) return;
+    dock.scrollLeft += delta;
+    e.preventDefault();
+  }, { passive: false });
   const schedule = () => {
     requestAnimationFrame(() => {
       const current = document.getElementById('minimized-dock');

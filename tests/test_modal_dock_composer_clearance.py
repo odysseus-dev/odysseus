@@ -66,6 +66,38 @@ def test_minimized_dock_can_reset_to_default_home_position():
     assert "delete _dockPosByLayout[_dockLayout];" in MODAL_MANAGER_JS
 
 
+def test_desktop_minimized_dock_uses_chatbar_width_and_side_scroll():
+    assert "function _desktopChatbarDockRect(bounds = _dockWorkspaceBounds())" in MODAL_MANAGER_JS
+    assert "if (_isTouchInput() || _dockPos) return null;" in MODAL_MANAGER_JS
+    assert "const rect = _visibleRect(document.querySelector('.chat-input-bar'));" in MODAL_MANAGER_JS
+    assert "return { left: Math.round(left), width };" in MODAL_MANAGER_JS
+    assert "const desktopChatbarDock = !!_desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
+    assert "dock.classList.toggle('dock-chatbar-row', desktopChatbarDock);" in MODAL_MANAGER_JS
+    assert "const chatbarDock = _desktopChatbarDockRect(bounds);" in MODAL_MANAGER_JS
+    assert "dock.style.left = `${chatbarDock.left}px`;" in MODAL_MANAGER_JS
+    assert "dock.style.width = `${chatbarDock.width}px`;" in MODAL_MANAGER_JS
+    assert "dock.style.maxWidth = `${chatbarDock.width}px`;" in MODAL_MANAGER_JS
+    assert "dock.style.removeProperty('width');" in MODAL_MANAGER_JS
+    assert "dock.addEventListener('wheel', (e) => {" in MODAL_MANAGER_JS
+    assert "if (!dock.classList.contains('dock-chatbar-row')) return;" in MODAL_MANAGER_JS
+    assert "if (dock.scrollWidth <= dock.clientWidth + 1) return;" in MODAL_MANAGER_JS
+    assert "dock.scrollLeft += delta;" in MODAL_MANAGER_JS
+    assert "}, { passive: false });" in MODAL_MANAGER_JS
+    marker = "#minimized-dock.dock-chatbar-row"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index(marker) + 1800]
+    assert "flex-wrap: nowrap;" in block
+    assert "justify-content: flex-start;" in block
+    assert "overflow-x: auto;" in block
+    assert "overflow-y: hidden;" in block
+    assert "scrollbar-width: thin;" in block
+    assert "touch-action: pan-x;" in block
+    assert "box-sizing: border-box;" in block
+    assert "mask-image: linear-gradient(90deg" in block
+    assert "#minimized-dock.dock-chatbar-row .minimized-dock-chip" in block
+    assert "flex: 0 0 auto;" in block
+
+
 def test_touch_landscape_does_not_get_mobile_overlay_sheet_rules():
     marker = "Mobile bottom sheet modals"
     assert marker in CSS
