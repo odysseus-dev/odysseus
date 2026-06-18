@@ -319,6 +319,16 @@ class SkillsManager:
         # Normalize name
         nm = slugify(name or title or description or "skill")
 
+        # Refuse junk/generic names from ANY caller (auto-extractor, the
+        # manage_skills tool, routes). Without a real name the skill lands as a
+        # nameless `general/skill` file that keeps reappearing as noise. This is
+        # the single chokepoint every creation path flows through.
+        if nm in {"skill", "skills", "new-skill", "untitled", "untitled-skill",
+                  "note", "notes", "general", "task", "misc"}:
+            raise ValueError(
+                f"refusing to create a skill with a junk/generic name {nm!r} - "
+                f"give it a descriptive name/title")
+
         # Free dedup-at-creation (always, no API): for LLM-authored skills,
         # skip if a near-identical skill already exists (Jaccard over
         # name+description+when_to_use+procedure). User-authored skills are

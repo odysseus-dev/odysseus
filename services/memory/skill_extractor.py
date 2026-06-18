@@ -240,6 +240,22 @@ async def maybe_extract_skill(
             logger.debug("[skill-extract] LLM returned object with no title, dropping")
             return None
 
+        # Reject titles that slugify to a junk/generic name. The slug becomes the
+        # on-disk folder AND the loader's `name`; a title like "Skill" or one that
+        # sanitizes to nothing yields a nameless `general/skill` file that keeps
+        # reappearing as noise. Drop these at the source instead of whack-a-mole.
+        try:
+            from services.memory.skill_format import slugify as _slugify
+            _slug = _slugify(title, fallback="")
+        except Exception:
+            _slug = title.strip().lower().replace(" ", "-")
+        if not _slug or _slug in {
+            "skill", "skills", "new-skill", "untitled", "untitled-skill",
+            "note", "notes", "general", "task", "misc",
+        }:
+            logger.info("[skill-extract] '%s' -> junk slug %r, dropping (no real name)", title, _slug)
+            return None
+
         # Honour the model's own reliability/reusability estimate — low-
         # confidence extractions are usually one-offs or shaky procedures.
         try:

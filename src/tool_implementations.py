@@ -229,9 +229,10 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
                 _status_arg = "published" if _prefs.get("auto_approve_skills", True) else "draft"
             except Exception:
                 _status_arg = "draft"
-        entry = sm.add_skill(
-            name=args.get("name"),
-            description=(args.get("description") or args.get("title") or "").strip(),
+        try:
+            entry = sm.add_skill(
+                name=args.get("name"),
+                description=(args.get("description") or args.get("title") or "").strip(),
             category=args.get("category") or "general",
             tags=args.get("tags") or [],
             platforms=args.get("platforms") or [],
@@ -252,7 +253,9 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             problem=args.get("problem", ""),
             solution=args.get("solution", ""),
             steps=args.get("steps") or [],
-        )
+            )
+        except ValueError as _e:
+            return {"error": str(_e), "exit_code": 1}
         if entry.get("_deduped"):
             return {"results": (
                 f"A near-identical skill already exists: `{entry['name']}` — not creating "
