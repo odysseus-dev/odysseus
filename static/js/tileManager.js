@@ -203,18 +203,8 @@ function _fullscreenRect() {
   return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
 }
 
-function _fullscreenOwnerRect(content) {
-  if (!_isTouchLandscape() || !content?.closest) return null;
-  const owner = content.closest('.modal, .research-overlay');
-  if (!owner || owner.classList?.contains('hidden')) return null;
-  const rect = owner.getBoundingClientRect?.();
-  if (!rect || rect.width <= 1 || rect.height <= 1) return null;
-  return {
-    left: Math.round(rect.left),
-    top: Math.round(rect.top),
-    width: Math.round(rect.width),
-    height: Math.round(rect.height),
-  };
+export function fullscreenWorkspaceRect() {
+  return _fullscreenRect();
 }
 
 function _zoneForPointer(x, y) {
@@ -308,7 +298,7 @@ function _applySnap(content, rect, zoneName) {
   const _modal = content.closest && content.closest('.modal, .research-overlay');
   const _fromRect = content.getBoundingClientRect();
   _clearEdgeDockResidue(_modal, content);
-  const snapRect = zoneName === 'fullscreen' ? (_fullscreenOwnerRect(content) || rect) : rect;
+  const snapRect = zoneName === 'fullscreen' ? _fullscreenRect() : rect;
 
   // Stash pre-snap geometry once; if we re-snap, keep the original. Capture a
   // CONCRETE fixed position (from the rendered rect when the inline value is
@@ -333,6 +323,7 @@ function _applySnap(content, rect, zoneName) {
   content.style.setProperty('left',   snapRect.left   + 'px', 'important');
   content.style.setProperty('top',    snapRect.top    + 'px', 'important');
   content.style.setProperty('width',  snapRect.width  + 'px', 'important');
+  content.style.setProperty('max-width', 'none', 'important');
   content.style.setProperty('height', snapRect.height + 'px', 'important');
   content.style.setProperty('max-height', snapRect.height + 'px', 'important');
   content.style.setProperty('margin', '0', 'important');
@@ -367,7 +358,7 @@ function _unsnap(content) {
     return;
   }
   // Clear the !important snap props first — Object.assign can't override them.
-  ['position', 'left', 'top', 'width', 'height', 'max-height', 'margin', 'transform']
+  ['position', 'left', 'top', 'width', 'max-width', 'height', 'max-height', 'margin', 'transform']
     .forEach(p => content.style.removeProperty(p));
   try {
     const r = JSON.parse(pre);
@@ -451,7 +442,7 @@ function _reclampAll(animate = false) {
     const W = safe.right - safe.left, H = safe.bottom - safe.top;
     let r;
     switch (name) {
-      case 'fullscreen':     r = _fullscreenOwnerRect(c) || _fullscreenRect(); break;
+      case 'fullscreen':     r = _fullscreenRect(); break;
       case 'maximize':       r = { left: safe.left, top: safe.top, width: W, height: H }; break;
       case 'left-half':      r = { left: safe.left, top: safe.top, width: W/2, height: H }; break;
       case 'right-half':     r = { left: safe.left + W/2, top: safe.top, width: W/2, height: H }; break;
@@ -469,6 +460,7 @@ function _reclampAll(animate = false) {
     c.style.setProperty('left', r.left + 'px', 'important');
     c.style.setProperty('top',  r.top  + 'px', 'important');
     c.style.setProperty('width', r.width + 'px', 'important');
+    c.style.setProperty('max-width', 'none', 'important');
     c.style.setProperty('height', r.height + 'px', 'important');
     c.style.setProperty('max-height', r.height + 'px', 'important');
   });
@@ -541,7 +533,7 @@ export function snapModalToZone(modal, zone) {
   const content = modal.querySelector ? (modal.querySelector('.modal-content, .research-pane') || modal) : modal;
   if (!content) return;
   if (modal.id === 'settings-modal' && zone.name !== 'right-half' && !zone.force) return;
-  const rect = zone.name === 'fullscreen' ? (_fullscreenOwnerRect(content) || _fullscreenRect()) : zone.rect;
+  const rect = zone.name === 'fullscreen' ? _fullscreenRect() : zone.rect;
   _applySnap(content, rect, zone.name);
 }
 

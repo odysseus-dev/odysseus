@@ -154,9 +154,10 @@ def test_full_expand_restores_previous_dock_or_window_state():
     assert "function _captureFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
     assert "function _restoreFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
     assert "function _fitFullExpandedContentToModalFrame(modal)" in MODAL_MANAGER_JS
-    assert "const rect = modal.getBoundingClientRect();" in MODAL_MANAGER_JS
+    assert "const rect = _isTouchLandscape() ? fullscreenWorkspaceRect() : modal.getBoundingClientRect();" in MODAL_MANAGER_JS
     assert "content.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');" in MODAL_MANAGER_JS
     assert "content.style.setProperty('width', `${Math.round(rect.width)}px`, 'important');" in MODAL_MANAGER_JS
+    assert "content.style.setProperty('max-width', 'none', 'important');" in MODAL_MANAGER_JS
     assert "content.dataset._tileZone = 'fullscreen';" in MODAL_MANAGER_JS
     assert "function _scheduleFullExpandGeometrySettle(modal)" in MODAL_MANAGER_JS
     assert "if (!modal) return;" in MODAL_MANAGER_JS
@@ -191,13 +192,13 @@ def test_fullscreen_safe_rect_ignores_hidden_or_offscreen_nav_geometry():
     assert "leftEdge = Math.max(leftEdge, sbSpan.right);" in TILE_MANAGER_JS
     assert "const railSpan = visibleSpan(rail);" in TILE_MANAGER_JS
     assert "rightEdge = Math.min(rightEdge, railSpan.left);" in TILE_MANAGER_JS
-    assert "function _fullscreenOwnerRect(content)" in TILE_MANAGER_JS
-    assert "if (!_isTouchLandscape() || !content?.closest) return null;" in TILE_MANAGER_JS
-    assert "const owner = content.closest('.modal, .research-overlay');" in TILE_MANAGER_JS
-    assert "return {" in TILE_MANAGER_JS
-    assert "const snapRect = zoneName === 'fullscreen' ? (_fullscreenOwnerRect(content) || rect) : rect;" in TILE_MANAGER_JS
+    assert "export function fullscreenWorkspaceRect()" in TILE_MANAGER_JS
+    assert "const snapRect = zoneName === 'fullscreen' ? _fullscreenRect() : rect;" in TILE_MANAGER_JS
     assert "content.style.setProperty('left',   snapRect.left   + 'px', 'important');" in TILE_MANAGER_JS
-    assert "case 'fullscreen':     r = _fullscreenOwnerRect(c) || _fullscreenRect(); break;" in TILE_MANAGER_JS
+    assert "content.style.setProperty('max-width', 'none', 'important');" in TILE_MANAGER_JS
+    assert "case 'fullscreen':     r = _fullscreenRect(); break;" in TILE_MANAGER_JS
+    assert "fullscreenWorkspaceRect," in MODAL_MANAGER_JS
+    assert "const rect = _isTouchLandscape() ? fullscreenWorkspaceRect() : modal.getBoundingClientRect();" in MODAL_MANAGER_JS
     assert "function _scheduleFullscreenSettle(content, zoneName)" in TILE_MANAGER_JS
     assert "if (zoneName !== 'fullscreen' || !_isTouchLandscape() || !content) return;" in TILE_MANAGER_JS
     assert "_reclampAllThrottled(false);" in TILE_MANAGER_JS
@@ -431,8 +432,9 @@ def test_android_touch_docking_is_landscape_only_without_enabling_resize():
     assert "function _viewportWorkspaceRect(inset = 4)" in TILE_MANAGER_JS
     assert "return _viewportWorkspaceRect(4);" in TILE_MANAGER_JS
     assert "const safe = _viewportWorkspaceRect(0);" in TILE_MANAGER_JS
-    assert "case 'fullscreen':     r = _fullscreenOwnerRect(c) || _fullscreenRect(); break;" in TILE_MANAGER_JS
-    assert "const rect = zone.name === 'fullscreen' ? (_fullscreenOwnerRect(content) || _fullscreenRect()) : zone.rect;" in TILE_MANAGER_JS
+    assert "case 'fullscreen':     r = _fullscreenRect(); break;" in TILE_MANAGER_JS
+    assert "const rect = zone.name === 'fullscreen' ? _fullscreenRect() : zone.rect;" in TILE_MANAGER_JS
+    assert "function _fullscreenOwnerRect(content)" not in TILE_MANAGER_JS
     assert "if (zone.name === 'fullscreen' && _isTouchLandscape()) return;" not in TILE_MANAGER_JS
     assert "function _isTouchPortrait()" in TILE_MANAGER_JS
     assert "if (_isTouchPortrait()) {" in TILE_MANAGER_JS

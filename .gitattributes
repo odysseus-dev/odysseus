@@ -25,6 +25,7 @@ android/gradlew text eol=lf
 *.webp binary
 *.pdf  binary
 *.ico  binary
+*.exe  binary
 *.jar  binary
 *.woff binary
 *.woff2 binary

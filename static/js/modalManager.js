@@ -25,7 +25,13 @@
  *   }
  */
 
-import { previewZoneAt, clearPreview, snapModalToZone, restoreModalSnap } from './tileManager.js';
+import {
+  previewZoneAt,
+  clearPreview,
+  snapModalToZone,
+  restoreModalSnap,
+  fullscreenWorkspaceRect,
+} from './tileManager.js';
 import {
   suspendDock,
   resumeDock,
@@ -249,12 +255,13 @@ function _syncAllExpandButtons() {
 function _fitFullExpandedContentToModalFrame(modal) {
   const content = _modalWindowContent(modal);
   if (!modal?.getBoundingClientRect || !content?.style) return;
-  const rect = modal.getBoundingClientRect();
+  const rect = _isTouchLandscape() ? fullscreenWorkspaceRect() : modal.getBoundingClientRect();
   if (!rect || rect.width <= 1 || rect.height <= 1) return;
   content.style.setProperty('position', 'fixed', 'important');
   content.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');
   content.style.setProperty('top', `${Math.round(rect.top)}px`, 'important');
   content.style.setProperty('width', `${Math.round(rect.width)}px`, 'important');
+  content.style.setProperty('max-width', 'none', 'important');
   content.style.setProperty('height', `${Math.round(rect.height)}px`, 'important');
   content.style.setProperty('max-height', `${Math.round(rect.height)}px`, 'important');
   content.style.setProperty('margin', '0', 'important');

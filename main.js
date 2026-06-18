@@ -6,6 +6,15 @@ const path = require('path');
 let mainWindow;
 let pythonProcess;
 
+// Prefer GPU-backed Chromium rendering where the platform supports it. This
+// affects the standalone Odysseus Electron shell; Simple Signal extension
+// rendering is controlled by the Simple Signal host process.
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('enable-accelerated-video-decode');
+app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecoder,CanvasOopRasterization,RawDraw');
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,

@@ -1489,6 +1489,28 @@ export function closePopup() {
 // Expose for app.js wiring + AI ui_control
 export function getCustomThemes() { return _loadCustomThemes(); }
 
+const BG_EFFECT_FRAME_MS = 1000 / 30;
+
+function _getBgCanvasContext(canvas) {
+  return canvas.getContext('2d', { alpha: true, desynchronized: true }) || canvas.getContext('2d');
+}
+
+function _scheduleBgEffectFrame(draw, state) {
+  requestAnimationFrame((ts) => {
+    if (document.hidden) {
+      state.last = ts;
+      setTimeout(() => _scheduleBgEffectFrame(draw, state), 250);
+      return;
+    }
+    if (!state.last || ts - state.last >= BG_EFFECT_FRAME_MS) {
+      state.last = ts;
+      draw(ts);
+      return;
+    }
+    _scheduleBgEffectFrame(draw, state);
+  });
+}
+
 // ── Synapse background effect ──
 // Uses the CSS grid pattern as base, overlays fast-moving small light pulses on grid lines
 function _initSynapse() {
@@ -1500,7 +1522,7 @@ function _initSynapse() {
   // don't announce an empty canvas and axe's "region" rule doesn't flag it.
   canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx = _getBgCanvasContext(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const GRID = 24; // matches CSS grid size
   const MAX_PULSES = 20;
@@ -1509,6 +1531,7 @@ function _initSynapse() {
   const TRAIL_LEN = 12; // pixels of trailing glow
 
   let W, H, cols, rows, pulses = [];
+  const frame = { last: 0 };
 
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
@@ -1544,7 +1567,7 @@ function _initSynapse() {
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
+    _scheduleBgEffectFrame(draw, frame);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
 
@@ -1583,7 +1606,7 @@ function _initSynapse() {
 
     ctx.globalAlpha = 1;
   }
-  draw();
+  _scheduleBgEffectFrame(draw, frame);
 }
 
 // ── Rain — thin vertical streaks falling ──
@@ -1596,11 +1619,12 @@ function _initRain() {
   // don't announce an empty canvas and axe's "region" rule doesn't flag it.
   canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx = _getBgCanvasContext(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   let W, H;
   const drops = [];
   const MAX_DROPS = 130;
+  const frame = { last: 0 };
 
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
@@ -1628,7 +1652,7 @@ function _initRain() {
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
+    _scheduleBgEffectFrame(draw, frame);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     // Intensity also controls rain speed + spawn rate (feels slower/lighter when dim)
@@ -1658,7 +1682,7 @@ function _initRain() {
     }
     ctx.globalAlpha = 1;
   }
-  draw();
+  _scheduleBgEffectFrame(draw, frame);
 }
 
 // ── Constellations — static dots that slowly form/dissolve connecting lines ──
@@ -1671,12 +1695,13 @@ function _initConstellations() {
   // don't announce an empty canvas and axe's "region" rule doesn't flag it.
   canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx = _getBgCanvasContext(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   let W, H;
   const STAR_COUNT = 50;
   const CONNECT_DIST = 120;
   let stars = [];
+  const frame = { last: 0 };
 
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
@@ -1714,7 +1739,7 @@ function _initConstellations() {
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
+    _scheduleBgEffectFrame(draw, frame);
     t += 0.01;
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
@@ -1755,7 +1780,7 @@ function _initConstellations() {
     }
     ctx.globalAlpha = 1;
   }
-  draw();
+  _scheduleBgEffectFrame(draw, frame);
 }
 
 // ── Noise helper for Perlin effects ──
@@ -1777,10 +1802,11 @@ function _initPerlinFlow() {
   // don't announce an empty canvas and axe's "region" rule doesn't flag it.
   canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx = _getBgCanvasContext(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   let W, H, t = 0;
   const particles = [];
+  const frame = { last: 0 };
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = W * dpr; canvas.height = H * dpr;
@@ -1805,7 +1831,7 @@ function _initPerlinFlow() {
   }
   function draw() {
     if (!document.body.classList.contains('bg-pattern-perlin-flow')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
+    _scheduleBgEffectFrame(draw, frame);
     ctx.fillStyle = getFade();
     ctx.fillRect(0, 0, W, H);
     const c = getColor();
@@ -1821,7 +1847,7 @@ function _initPerlinFlow() {
     ctx.globalAlpha = 1;
     t++;
   }
-  draw();
+  _scheduleBgEffectFrame(draw, frame);
 }
 
 // ── Petals — gentle falling flower petals ──
@@ -1834,10 +1860,11 @@ function _initPetals() {
   // don't announce an empty canvas and axe's "region" rule doesn't flag it.
   canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx = _getBgCanvasContext(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   let W, H;
   const petals = [];
+  const frame = { last: 0 };
   function makePetal() {
     return {
       x: Math.random() * W, y: -10 - Math.random() * 40,
@@ -1859,7 +1886,7 @@ function _initPetals() {
   function getColor() { const s = getComputedStyle(document.documentElement); return s.getPropertyValue('--bg-effect-color').trim() || s.getPropertyValue('--fg').trim() || '#9cdef2'; }
   function draw() {
     if (!document.body.classList.contains('bg-pattern-petals')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
+    _scheduleBgEffectFrame(draw, frame);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     const sz = _getEffectSize();
@@ -1878,7 +1905,7 @@ function _initPetals() {
     });
     ctx.globalAlpha = 1;
   }
-  draw();
+  _scheduleBgEffectFrame(draw, frame);
 }
 
 // ── Sparkles — twinkling star-shaped sparkles ──
@@ -1891,10 +1918,11 @@ function _initSparkles() {
   // don't announce an empty canvas and axe's "region" rule doesn't flag it.
   canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx = _getBgCanvasContext(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   let W, H;
   const sparkles = [];
+  const frame = { last: 0 };
   function makeSpark() {
     return { x: Math.random() * W, y: Math.random() * H, size: 2 + Math.random() * 5, phase: Math.random() * Math.PI * 2, speed: 0.015 + Math.random() * 0.03, life: 0.5 + Math.random() * 0.5 };
   }
@@ -1921,7 +1949,7 @@ function _initSparkles() {
   }
   function draw() {
     if (!document.body.classList.contains('bg-pattern-sparkles')) { window.removeEventListener('resize', _onResize); canvas.remove(); return; }
-    requestAnimationFrame(draw);
+    _scheduleBgEffectFrame(draw, frame);
     ctx.clearRect(0, 0, W, H);
     const c = getColor();
     const sizeMult = _getEffectSize();
@@ -1936,7 +1964,7 @@ function _initSparkles() {
     });
     ctx.globalAlpha = 1;
   }
-  draw();
+  _scheduleBgEffectFrame(draw, frame);
 }
 
 // ── Embers — warm particles rising with glow and occasional spark bursts ──
@@ -1949,10 +1977,11 @@ function _initEmbers() {
   // don't announce an empty canvas and axe's "region" rule doesn't flag it.
   canvas.setAttribute('aria-hidden', 'true');
   document.body.prepend(canvas);
-  const ctx = canvas.getContext('2d');
+  const ctx = _getBgCanvasContext(canvas);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   let W, H;
   const embers = [];
+  const frame = { last: 0 };
   function makeEmber() {
     return {
       x: Math.random() * W,
@@ -1991,7 +2020,7 @@ function _initEmbers() {
       canvas.remove();
       return;
     }
-    requestAnimationFrame(draw);
+    _scheduleBgEffectFrame(draw, frame);
     // Fade previous frame (destination-out keeps canvas transparent where no embers)
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
@@ -2039,7 +2068,7 @@ function _initEmbers() {
     }
     ctx.globalCompositeOperation = 'source-over';
   }
-  draw();
+  _scheduleBgEffectFrame(draw, frame);
 }
 
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,

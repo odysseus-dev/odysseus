@@ -30,6 +30,30 @@ function Fail($msg) {
     exit 1
 }
 
+function Test-OdysseusHealth($port) {
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri ("http://127.0.0.1:{0}/api/health" -f $port) -TimeoutSec 2
+        return ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500)
+    } catch {
+        return $false
+    }
+}
+
+function Get-FileSha256($path) {
+    $stream = [System.IO.File]::OpenRead($path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = $sha.ComputeHash($stream)
+            return -join ($bytes | ForEach-Object { $_.ToString("x2") })
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 function Test-WindowsBashStub($path) {
     if (-not $path) { return $false }
     $lowered = $path.ToLowerInvariant()
@@ -60,6 +84,18 @@ function Find-GitBash {
         }
     }
     return $null
+}
+
+if (Test-OdysseusHealth $Port) {
+    Write-Host ("Odysseus is already running at http://127.0.0.1:{0} - reusing it." -f $Port) -ForegroundColor Green
+    exit 0
+}
+
+$launchLock = Join-Path $PSScriptRoot ".odysseus-launch.lock"
+try {
+    Set-Content -Path $launchLock -Value ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) -Encoding ASCII
+} catch {
+    # Best effort only. The port health check above is still the source of truth.
 }
 
 # 1. Locate a Python interpreter (3.11+ required)
@@ -121,11 +157,20 @@ if (-not (Test-Path $venvPy)) {
     Write-Host "venv already exists - skipping creation."
 }
 
-# 3. Install / update dependencies
-Write-Step "Installing dependencies (first run can take a few minutes)"
-& $venvPy -m pip install --upgrade pip --quiet
-& $venvPy -m pip install -r requirements.txt
-if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+# 3. Install / update dependencies only when requirements changed.
+$requirementsPath = Join-Path $PSScriptRoot "requirements.txt"
+$requirementsMarker = Join-Path $PSScriptRoot "venv\.requirements.sha256"
+$requirementsHash = Get-FileSha256 $requirementsPath
+$existingHash = if (Test-Path $requirementsMarker) { (Get-Content $requirementsMarker -Raw).Trim() } else { "" }
+if ($existingHash -eq $requirementsHash) {
+    Write-Host "Dependencies already match requirements.txt - skipping pip install."
+} else {
+    Write-Step "Installing dependencies (first run can take a few minutes)"
+    & $venvPy -m pip install --upgrade pip --quiet
+    & $venvPy -m pip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { Fail "Dependency install failed. Scroll up for the pip error." }
+    Set-Content -Path $requirementsMarker -Value $requirementsHash -Encoding ASCII
+}
 
 # 4. First-time setup (creates data dirs, DB, .env, admin user)
 Write-Step "Running first-time setup"

@@ -173,36 +173,57 @@ def copy_extension_files(source_dir: Path, extension_dir: Path) -> None:
     a {
       color: #e06c75;
     }
+    .hint {
+      opacity: 0.72;
+      font-size: 0.92rem;
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>Opening Odysseus...</h1>
     <p id="status">Starting the local Odysseus server.</p>
-    <p><a href="__ODYSSEUS_TARGET_URL__">Open manually</a></p>
+    <p class="hint">This can take a few seconds after Simple Signal starts.</p>
+    <p><a id="open-now" href="__ODYSSEUS_TARGET_URL__">Open manually</a></p>
   </main>
   <script>
     (function () {
       var target = "__ODYSSEUS_TARGET_URL__";
+      var health = target + "api/health";
       var status = document.getElementById("status");
       var attempts = 0;
+      var navigated = false;
+
+      function setStatus(text) {
+        if (status) status.textContent = text;
+      }
+
+      function navigate() {
+        if (navigated) return;
+        navigated = true;
+        setStatus("Opening Odysseus now.");
+        window.location.replace(target);
+      }
 
       function retry() {
+        if (navigated) return;
         attempts += 1;
-        if (status) {
-          status.textContent = attempts > 30
-            ? "Still waiting for Odysseus. You can use the manual link once localhost is ready."
-            : "Starting the local Odysseus server.";
-        }
+        setStatus(attempts > 30
+          ? "Still waiting for Odysseus. You can use the manual link once localhost is ready."
+          : "Starting the local Odysseus server.");
         setTimeout(openWhenReady, 1000);
       }
 
       function openWhenReady() {
-        fetch(target, { cache: "no-store", mode: "no-cors" })
-          .then(function () { window.location.replace(target); })
+        if (navigated) return;
+        fetch(health, { cache: "no-store", mode: "no-cors" })
+          .then(navigate)
           .catch(retry);
       }
 
+      var manual = document.getElementById("open-now");
+      if (manual) manual.addEventListener("click", function () { navigated = true; });
+      setTimeout(navigate, 8000);
       openWhenReady();
     })();
   </script>
@@ -213,16 +234,37 @@ def copy_extension_files(source_dir: Path, extension_dir: Path) -> None:
 
     router_path = extension_dir / "router.py"
     router_content = """import os
+import socket
 import subprocess
+import time
 from fastapi import APIRouter
 
 router = APIRouter()
 
 install_dir = os.path.dirname(os.path.abspath(__file__))
 ps1_path = os.path.join(install_dir, "launch-windows.ps1")
+lock_path = os.path.join(install_dir, ".odysseus-launch.lock")
 port = "__ODYSSEUS_EXTENSION_PORT__"
 
-if os.path.exists(ps1_path):
+def _is_port_open(value):
+    try:
+        with socket.create_connection(("127.0.0.1", int(value)), timeout=0.35):
+            return True
+    except OSError:
+        return False
+
+def _launch_lock_recent(max_age=45):
+    try:
+        return time.time() - os.path.getmtime(lock_path) < max_age
+    except OSError:
+        return False
+
+if os.path.exists(ps1_path) and not _is_port_open(port) and not _launch_lock_recent():
+    try:
+        with open(lock_path, "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except OSError:
+        pass
     env = os.environ.copy()
     env["ODYSSEUS_ALLOW_EMBED"] = "1"
     env["APP_PORT"] = port
