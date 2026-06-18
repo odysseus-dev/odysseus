@@ -629,8 +629,10 @@ export function _buildServeCmd(f, modelName, backend) {
     // literal so the cookbook validator (which bans &&/||/;/$() ) is
     // happy: `docker exec ollama-test ollama-import <repo> <name> <ctx>
     // <file>`. The helper handles the find/Modelfile/preload dance.
-    if (modelName.includes('/') && (f.gguf_file || /-GGUF$/i.test(modelName))) {
-      // HF-GGUF repo → import + preload + tail
+    if (_envState.remoteHost && modelName.includes('/') && (f.gguf_file || /-GGUF$/i.test(modelName))) {
+      // HF-GGUF repo on remote → delegate to iGPU-bound ollama-test container
+      // via its /usr/local/bin/ollama-import helper. Only fires for remote hosts
+      // with Docker Ollama sidecars (e.g. kierkegaard); locally use ollama serve.
       const _name = (modelName.split('/').pop() || modelName)
         .replace(/-GGUF$/i, '')
         .toLowerCase()
@@ -639,11 +641,10 @@ export function _buildServeCmd(f, modelName, backend) {
       const _ctx = f.ctx || '8192';
       const _file = (f.gguf_file || '').split('/').pop() || '';
       // Trailing GGUF_FILE is optional; helper picks the first match if empty.
-      cmd = `docker exec ollama-test ollama-import ${modelName} ${_name} ${_ctx}${_file ? ' ' + _file : ''}`;
-    } else if (!modelName.includes('/') && modelName) {
-      // Already-pulled Ollama tag (e.g. `qwen2.5:7b`). On kierkegaard the
-      // runtime is the ROCm Ollama sidecar; this quick command verifies the
-      // tag exists, then the backend auto-registers http://host.docker.internal:11434/v1.
+      cmd = `docker exec ollama-test ollama-import ${modelName} ${_name} ${_ctx}${_file ? ` ${_file}` : ''}`;
+    } else if (_envState.remoteHost && !modelName.includes('/') && modelName) {
+      // Already-pulled Ollama tag on remote with ROCm sidecar (e.g. kierkegaard).
+      // Verifies tag exists; backend auto-registers http://host.docker.internal:11434/v1.
       cmd = `docker exec ollama-rocm ollama show ${modelName}`;
     } else {
       const bindHost = _envState.remoteHost ? '0.0.0.0' : '127.0.0.1';

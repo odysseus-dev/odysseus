@@ -1091,6 +1091,11 @@ def setup_cookbook_routes() -> APIRouter:
             host = remote.split("@")[-1] if "@" in remote else remote
         elif re.search(r"\bdocker\s+exec\s+(?:ollama-rocm|ollama-test)\b", req.cmd or ""):
             host = "host.docker.internal"
+        elif (not remote and os.path.exists("/.dockerenv")
+              and re.search(r"\bollama\s+serve\b", req.cmd or "")):
+            # Odysseus in Docker + local ollama serve → host's Ollama is the
+            # actual endpoint; register at host.docker.internal, not localhost.
+            host = "host.docker.internal"
         else:
             host = "localhost"
 
@@ -1459,22 +1464,40 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  fi')
                 runner_lines.append('  exec 3<&-; exec 3>&-')
                 runner_lines.append('done')
-                runner_lines.append('if ! command -v ollama &>/dev/null; then')
-                runner_lines.append('  echo "ERROR: Ollama not found on this server. Install it from https://ollama.com/download or `curl -fsSL https://ollama.com/install.sh | sh`."')
-                runner_lines.append('  echo')
-                runner_lines.append('  echo "=== Process exited with code 127 ==="')
-                runner_lines.append('  exec bash -i')
-                runner_lines.append('fi')
-                runner_lines.append('ODYSSEUS_OLLAMA_URL="http://${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}"')
-                if remote and _ollama_host in ("0.0.0.0", "::"):
-                    runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
-                    runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
-                runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
-                runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
-                runner_lines.append('_ody_exit=$?')
-                runner_lines.append('echo')
-                runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
-                runner_lines.append('exec bash -i')
+                _in_container = not remote and os.path.exists("/.dockerenv")
+                if _in_container:
+                    # Odysseus runs inside Docker; ollama binary is not in the
+                    # container. Probe the host's Ollama at host.docker.internal
+                    # and keep the task alive so the registered endpoint stays up.
+                    runner_lines.append('if ! (exec 3<>/dev/tcp/host.docker.internal/11434) 2>/dev/null; then')
+                    runner_lines.append('  exec 3<&-; exec 3>&-')
+                    runner_lines.append('  echo "ERROR: Ollama not reachable at host.docker.internal:11434."')
+                    runner_lines.append('  echo "Make sure Ollama is running on your host (not inside this container)."')
+                    runner_lines.append('  echo')
+                    runner_lines.append('  echo "=== Process exited with code 127 ==="')
+                    runner_lines.append('  exec bash -i')
+                    runner_lines.append('fi')
+                    runner_lines.append('exec 3<&-; exec 3>&-')
+                    runner_lines.append('echo "[odysseus] Ollama detected on host at host.docker.internal:11434 — using host Ollama."')
+                    runner_lines.append('echo "[odysseus] Keeping task alive; stop via the Stop button."')
+                    runner_lines.append('while true; do sleep 3600; done')
+                else:
+                    runner_lines.append('if ! command -v ollama &>/dev/null; then')
+                    runner_lines.append('  echo "ERROR: Ollama not found on this server. Install it from https://ollama.com/download or `curl -fsSL https://ollama.com/install.sh | sh`."')
+                    runner_lines.append('  echo')
+                    runner_lines.append('  echo "=== Process exited with code 127 ==="')
+                    runner_lines.append('  exec bash -i')
+                    runner_lines.append('fi')
+                    runner_lines.append('ODYSSEUS_OLLAMA_URL="http://${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}"')
+                    if remote and _ollama_host in ("0.0.0.0", "::"):
+                        runner_lines.append('echo "[odysseus] WARNING: remote Ollama will bind to ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT} so Odysseus can reach it from this host."')
+                        runner_lines.append('echo "[odysseus] Ollama has no built-in authentication; expose this only on a trusted LAN/VPN or provide an explicit OLLAMA_HOST with your own access controls."')
+                    runner_lines.append('echo "Starting ollama server on ${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}..."')
+                    runner_lines.append('OLLAMA_HOST="${ODYSSEUS_OLLAMA_HOST}:${ODYSSEUS_OLLAMA_PORT}" ollama serve')
+                    runner_lines.append('_ody_exit=$?')
+                    runner_lines.append('echo')
+                    runner_lines.append('echo "=== Process exited with code ${_ody_exit} ==="')
+                    runner_lines.append('exec bash -i')
             elif "vllm serve" in req.cmd:
                 # vLLM is CUDA/ROCm-only and does not run on macOS at all.
                 runner_lines.append('if [ "$(uname -s)" = "Darwin" ]; then')
