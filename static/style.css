@@ -798,6 +798,32 @@ body.bg-pattern-sparkles {
       }
       #tool-memory-btn.rail-minimized::after { right: 17px; }
     }
+
+/* Welcome screen branding: put logo above the title */
+.welcome-name {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 18px 0 8px 0;
+}
+.welcome-name .welcome-boat {
+  width: 96px;
+  height: auto;
+  display: block;
+}
+.welcome-title {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--brand-color, var(--red));
+  margin: 0;
+}
+@media (max-width: 768px) {
+  .welcome-name .welcome-boat { width: 72px; }
+  .welcome-title { font-size: 20px; }
+}
     @keyframes rail-min-pulse {
       0%,100% { opacity: 1; }
       50%     { opacity: 0.4; }
