@@ -1,0 +1,12 @@
+{
+  "id": "agent-studio",
+  "name": "Agent Studio",
+  "version": "1.0.0",
+  "author": "Odysseus",
+  "description": "Embeds Open WebUI in Docker for multi-agent management with real container isolation per agent.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": ["MANAGE_WORKSPACES"],
+  "frontend_hooks": {
+    "sidebarWidget": "widget.js"
+  }
+}
