@@ -79,9 +79,59 @@ _ERROR_DETAIL = {
     "error": "probe failed",
 }
 
+_SERVICE_RECOVERY = {
+    "chromadb": [
+        "Verify ChromaDB dependencies are installed and embedding models can initialize.",
+        "If running in Docker, ensure data volume permissions allow vector store writes.",
+    ],
+    "searxng": [
+        "Confirm the configured SearXNG URL is reachable from the Odysseus host/container.",
+        "If self-hosted, check the SearXNG service is running and listening on the expected port.",
+    ],
+    "ntfy": [
+        "Verify the ntfy base URL is correct and reachable from this deployment.",
+        "Check reminder channel settings and ntfy server health endpoint availability.",
+    ],
+    "email": [
+        "Recheck IMAP host/port credentials for failing accounts.",
+        "Confirm provider IMAP access is enabled and not blocked by network/firewall policy.",
+    ],
+    "providers": [
+        "Check each enabled endpoint URL/API key and confirm `/v1/models` responds.",
+        "Disable stale endpoints that are no longer reachable to reduce degraded state noise.",
+    ],
+}
+
+_ERROR_RECOVERY = {
+    "timeout": "Increase service timeout resilience or investigate network latency.",
+    "connection_refused": "Start the target service or fix host/port routing.",
+    "dns_error": "Fix hostname/DNS configuration for the target service.",
+    "tls_error": "Verify certificates and HTTPS/TLS settings.",
+    "auth_or_protocol_error": "Recheck credentials and protocol settings for this service.",
+    "no_models": "Ensure at least one model is exposed by the endpoint.",
+    "no_host": "Set a valid host in the service configuration.",
+}
+
 
 def _svc(name: str, status: str, detail: str, **meta: Any) -> Dict[str, Any]:
     return {"name": name, "status": status, "detail": detail, "meta": dict(meta)}
+
+
+def _attach_recovery(service: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach actionable, secret-free recovery hints to degraded/down services."""
+    status = service.get("status")
+    if status not in {DEGRADED, DOWN}:
+        return service
+    name = (service.get("name") or "").strip()
+    hints = list(_SERVICE_RECOVERY.get(name, []))
+    err = (service.get("meta") or {}).get("error")
+    if err in _ERROR_RECOVERY:
+        hints.append(_ERROR_RECOVERY[err])
+    if not hints:
+        hints = ["Check recent logs for this service and retry after fixing configuration."]
+    out = dict(service)
+    out["recovery"] = hints[:3]
+    return out
 
 
 def _safe_url(url: Optional[str]) -> str:
@@ -496,7 +546,7 @@ async def collect_service_health(rag_manager: Any = None,
         results = [_svc(n, DOWN, _detail_for("timeout"), error="timeout")
                    for n in names]
 
-    services = [chroma, *results]
+    services = [_attach_recovery(s) for s in [chroma, *results]]
     return {
         "overall": _rollup(services),
         "services": services,

@@ -7,6 +7,7 @@ def test_cuda_oom_returns_diagnosis():
     assert result is not None
     assert "memory" in result["message"].lower()
     assert any(s["op"] == "replace" for s in result["suggestions"])
+    assert result["recovery_steps"]
 
 
 def test_port_in_use_returns_diagnosis():
@@ -37,6 +38,7 @@ def test_traceback_fallback_fires_without_startup_success():
     result = _diagnose_serve_output(out)
     assert result is not None
     assert "traceback" in result["message"].lower()
+    assert result["recovery_steps"][0].lower().startswith("inspect traceback")
 
 
 def test_traceback_suppressed_when_server_started():
