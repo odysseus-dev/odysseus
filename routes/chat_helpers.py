@@ -23,6 +23,51 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 
+# ── Personalization ────────────────────────────────────────────────────── #
+
+# Tone presets surfaced in Settings → Personalization. The key is stored in the
+# user's prefs; the value is the instruction injected into the system prefix.
+_TONE_INSTRUCTIONS = {
+    "concise": "Keep responses concise and direct. Lead with the answer and skip preamble unless detail is requested.",
+    "friendly": "Use a warm, friendly, conversational tone.",
+    "formal": "Use a professional, formal tone.",
+    "technical": "Be precise and technical. Assume an expert audience and don't over-explain basics.",
+}
+
+
+def compose_personalization(uprefs: dict) -> Optional[str]:
+    """Assemble per-user personalization (Settings → Personalization) into a
+    single system-prompt block, or None when the user hasn't set anything.
+
+    Stored under the ``personalization`` pref key as
+    ``{nickname, about, instructions, tone}``. This is the authenticated user's
+    own guidance, so it is trusted and injected as a system message.
+    """
+    p = uprefs.get("personalization")
+    if not isinstance(p, dict):
+        return None
+    nickname = str(p.get("nickname") or "").strip()
+    about = str(p.get("about") or "").strip()
+    instructions = str(p.get("instructions") or "").strip()
+    tone = str(p.get("tone") or "").strip()
+
+    parts: list[str] = []
+    if nickname:
+        parts.append(f"The user prefers to be addressed as {nickname}.")
+    if about:
+        parts.append(f"About the user: {about}")
+    if instructions:
+        parts.append(
+            "The user has provided the following instructions for how you should "
+            f"respond:\n{instructions}"
+        )
+    if tone in _TONE_INSTRUCTIONS:
+        parts.append(_TONE_INSTRUCTIONS[tone])
+    if not parts:
+        return None
+    return "\n\n".join(parts)
+
+
 # ── Data containers ────────────────────────────────────────────────────── #
 
 @dataclass
@@ -625,6 +670,9 @@ async def build_chat_context(
         agent_mode=agent_mode,
         incognito=incognito,
         use_skills=skills_enabled,
+        # Per-user personalization is the user's own persona/instructions. Skip it
+        # in incognito so those turns stay clean (matching memory/skills above).
+        custom_instructions=None if incognito else compose_personalization(uprefs),
     )
     if use_rag is not None or is_research_spinoff:
         _preface_kwargs["use_rag"] = use_rag_val

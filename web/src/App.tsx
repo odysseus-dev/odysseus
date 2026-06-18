@@ -5,6 +5,7 @@ import { queryClient } from "@/lib/queryClient"
 import { AppShell } from "@/components/shell/AppShell"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { Toaster } from "@/components/ui/Toaster"
+import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { ChatConsole } from "@/routes/ChatConsole"
 import { MemoryRoute } from "@/routes/MemoryRoute"
 import { NotesRoute } from "@/routes/NotesRoute"
@@ -73,6 +74,7 @@ function ThemedApp() {
           <Route path="*" element={<Navigate to="/chat" replace />} />
         </Routes>
       </ErrorBoundary>
+      <OnboardingDialog />
     </AppShell>
   )
 }

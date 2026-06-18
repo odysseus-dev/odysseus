@@ -5,6 +5,9 @@ import { useChat } from "@/lib/useChat"
 import { useComposer } from "@/stores/composer"
 import { useSessions } from "@/api/sessions"
 import { useSessionDocuments } from "@/api/documents"
+import { useAuthStatus } from "@/api/auth"
+import { usePersonalization } from "@/api/prefs"
+import { greeting } from "@/lib/personalization"
 import { usePanel } from "@/stores/panel"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
@@ -48,6 +51,8 @@ export function ChatConsole() {
   const { sessionId } = useParams()
   const { messages, streaming, send, stop, regenerate } = useChat(sessionId)
   const { data: sessions } = useSessions()
+  const { data: auth } = useAuthStatus()
+  const { data: personalization } = usePersonalization()
   const incognito = useComposer((s) => s.incognito)
   const { data: threadDocs } = useSessionDocuments(sessionId)
   const panelOpen = usePanel((s) => s.open)
@@ -114,8 +119,10 @@ export function ChatConsole() {
             <div className="flex h-full items-center justify-center p-8">
               <div className="w-full max-w-[768px] text-center">
                 <Mascot size={20} className="mx-auto mb-6 animate-pop-in" title="Odysseus" />
-                <h1 className="text-2xl font-semibold tracking-tight">How can I help?</h1>
-                <p className="mt-2 text-sm text-muted-foreground">Start a conversation below.</p>
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  {greeting(personalization.nickname || auth?.username || auth?.user)}
+                </h1>
+                <p className="mt-2 text-sm text-muted-foreground">How can I help?</p>
                 <div className="mt-6 flex flex-wrap justify-center gap-2">
                   {SUGGESTIONS.map((s) => (
                     <button key={s} onClick={() => send(s)} disabled={streaming}

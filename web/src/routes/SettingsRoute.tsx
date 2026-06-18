@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Trash2, UserPlus, Plus, Pencil, SlidersHorizontal, UserCircle, Boxes, Plug, Users, Server, Webhook, Wrench } from "lucide-react"
+import { Trash2, UserPlus, Plus, Pencil, SlidersHorizontal, UserCircle, Boxes, Plug, Users, Server, Webhook, Wrench, Sparkles } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useAuthStatus, useUsers, useUserMutations, logout, changePassword, setup2FA, confirm2FA, disable2FA, useTwoFAStatus, setOpenSignup } from "@/api/auth"
 import { Switch } from "@/components/ui/switch"
@@ -10,6 +10,7 @@ import { AdminSections } from "@/components/settings/AdminSections"
 import { AppSettingsSections, SidebarItemsSettings } from "@/components/settings/AppSettings"
 import { IntegrationsExtraSections } from "@/components/settings/IntegrationsExtra"
 import { AdvancedSections } from "@/components/settings/AdvancedSettings"
+import { PersonalizationSection } from "@/components/settings/Personalization"
 import { UserPrivileges } from "@/components/settings/UserPrivileges"
 import { useSetUserAdmin, useProviders } from "@/api/advanced"
 import { Button } from "@/components/ui/button"
@@ -187,6 +188,7 @@ export function SettingsRoute() {
   const isAdmin = !!status?.is_admin
   const NAV = [
     { id: "general", label: "General", icon: SlidersHorizontal },
+    { id: "personalization", label: "Personalization", icon: Sparkles },
     { id: "account", label: "Account", icon: UserCircle },
     { id: "models", label: "Models", icon: Boxes },
     { id: "integrations", label: "Integrations", icon: Plug },
@@ -345,6 +347,7 @@ export function SettingsRoute() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-2xl space-y-6 p-4">
             {page === "general" && <>{appearanceSection}<SidebarItemsSettings /></>}
+            {page === "personalization" && <PersonalizationSection />}
             {page === "account" && <><AccountSecurity /><PresetSection />{accountSection}</>}
             {page === "models" && <>{aiDefaultsSection}{endpointsSection}</>}
             {page === "integrations" && <IntegrationsExtraSections />}

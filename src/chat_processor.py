@@ -170,6 +170,7 @@ class ChatProcessor:
         agent_mode: bool = False,
         incognito: bool = False,
         use_skills: bool = True,
+        custom_instructions: Optional[str] = None,
     ) -> Tuple[List[Dict[str, str]], List[Dict[str, Any]], List[Dict[str, str]]]:
         """Build the context preface for LLM calls.
 
@@ -197,6 +198,16 @@ class ChatProcessor:
             preface.append({
                 "role": "system",
                 "content": preset_system_prompt
+            })
+        # Per-user personalization (preferred name / about / custom instructions /
+        # tone) set in Settings. This is the authenticated user's own guidance for
+        # how the assistant should respond, so it belongs in the system prefix. It
+        # is stable per-user across turns, which keeps the prefix byte-identical
+        # and KV-cache friendly (see the docstring note above).
+        if custom_instructions:
+            preface.append({
+                "role": "system",
+                "content": custom_instructions,
             })
         preface.append({
             "role": "system",
