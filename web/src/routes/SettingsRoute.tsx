@@ -9,6 +9,8 @@ import { usePresets, useCreatePreset } from "@/api/presets"
 import { AdminSections } from "@/components/settings/AdminSections"
 import { AppSettingsSections, SidebarItemsSettings } from "@/components/settings/AppSettings"
 import { IntegrationsExtraSections } from "@/components/settings/IntegrationsExtra"
+import { AdvancedSections } from "@/components/settings/AdvancedSettings"
+import { useSetUserAdmin } from "@/api/advanced"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -157,6 +159,7 @@ export function SettingsRoute() {
   const del = useDeleteEndpoint()
   const allModels = (models?.items || []).flatMap((e) => [...(e.models || []), ...(e.models_extra || [])])
   const { create: createUser, remove: removeUser, rename: renameUser } = useUserMutations()
+  const setAdmin = useSetUserAdmin()
   const user = status?.username || status?.user || "—"
   const endpoints = (models?.items || []).filter((e) => e.endpoint_id)
   const userList = users || []
@@ -260,13 +263,15 @@ export function SettingsRoute() {
                 <div key={u.username} className="group flex items-center justify-between rounded-lg border bg-card p-3">
                   <span className="text-sm font-medium">{u.username}{u.username === user && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(you)</span>}</span>
                   <div className="flex items-center gap-2">
-                    {u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>}
-                    {u.username !== user && (
-                      <>
-                        <button onClick={() => { const n = prompt("Rename user", u.username); if (n && n.trim() && n.trim() !== u.username) renameUser.mutate({ username: u.username, new_username: n.trim() }) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100" title="Rename user"><Pencil className="size-4" /></button>
-                        <button onClick={() => { if (confirm(`Delete user "${u.username}"?`)) removeUser.mutate(u.username) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Delete user"><Trash2 className="size-4" /></button>
-                      </>
-                    )}
+                    {u.username === user
+                      ? (u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>)
+                      : (
+                        <>
+                          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title="Administrator">admin<Switch checked={!!u.is_admin} onCheckedChange={(v) => setAdmin.mutate({ username: u.username, is_admin: v })} /></label>
+                          <button onClick={() => { const n = prompt("Rename user", u.username); if (n && n.trim() && n.trim() !== u.username) renameUser.mutate({ username: u.username, new_username: n.trim() }) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100" title="Rename user"><Pencil className="size-4" /></button>
+                          <button onClick={() => { if (confirm(`Delete user "${u.username}"?`)) removeUser.mutate(u.username) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Delete user"><Trash2 className="size-4" /></button>
+                        </>
+                      )}
                   </div>
                 </div>
               ))}
@@ -294,6 +299,8 @@ export function SettingsRoute() {
         {status?.is_admin && <AppSettingsSections />}
 
         <IntegrationsExtraSections />
+
+        {status?.is_admin && <AdvancedSections />}
 
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</h2>
