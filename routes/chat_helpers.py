@@ -23,6 +23,22 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 
+# Strong references to in-flight fire-and-forget tasks scheduled from this
+# module. asyncio only keeps weak references to tasks created via
+# create_task, so without this the GC can collect a task mid-execution and
+# the background work (extraction, auto-naming) silently never runs.
+# Mirrors WebhookManager._spawn_tracked from src/webhook_manager.py.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    """Schedule a background task and hold a strong reference until it finishes."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
+
 # ── Data containers ────────────────────────────────────────────────────── #
 
 @dataclass
@@ -1105,7 +1121,7 @@ def run_post_response_tasks(
             )))
 
     if _extraction_jobs:
-        asyncio.create_task(_run_extraction_jobs_sequentially(session_id, _extraction_jobs))
+        _spawn_bg(_run_extraction_jobs_sequentially(session_id, _extraction_jobs))
 
     # Token accumulation
     if last_metrics:
@@ -1120,4 +1136,4 @@ def run_post_response_tasks(
 
     # Auto-name
     if needs_auto_name(sess.name):
-        asyncio.create_task(auto_name_session(session_manager, sess))
+        _spawn_bg(auto_name_session(session_manager, sess))

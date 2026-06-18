@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import { topToolWindowZ } from './toolWindowZOrder.js';
 
 import { api, apiFetch, apiPath } from './axios/api.js';
 
@@ -199,6 +200,23 @@ function _restoreNotesSidebarDock(pane) {
   _clearNotesSnapStyles(pane);
   if (!pane.isConnected) return;
   applyEdgeDock(pane, 'right');
+}
+
+// Notes is not a `.modal`; its backdrop is the top-level stacking surface.
+function _topToolWindowZ(exclude = null) {
+  return topToolWindowZ({ exclude });
+}
+
+function _bringNotesToFront(pane = document.getElementById('notes-pane')) {
+  if (!pane) return;
+  const backdrop = document.getElementById('notes-pane-backdrop') || pane.parentElement;
+  const z = _topToolWindowZ(backdrop) + 1;
+  if (backdrop) backdrop.style.setProperty('z-index', String(z), 'important');
+  try {
+    window.dispatchEvent(new CustomEvent('odysseus:modal-opened', {
+      detail: { id: 'notes-panel', modal: pane },
+    }));
+  } catch (_) {}
 }
 
 function _loadPendingHighlights() {
@@ -1079,7 +1097,10 @@ export async function refreshDueBadge(opts = {}) {
 // ---- Panel ----
 
 export function openPanel() {
-  if (_open) return;
+  if (_open) {
+    _bringNotesToFront();
+    return;
+  }
   _open = true;
   _editingId = null;
   // Reset the search filter — the rebuilt pane's search input renders empty, so a
@@ -1175,6 +1196,7 @@ export function openPanel() {
   document.body.appendChild(backdrop);
   _wireNotesWindow(pane);
   _restoreNotesSidebarDock(pane);
+  _bringNotesToFront(pane);
 
   // Events
   // (Close chevron removed — swipe down on mobile, tool-rail toggle on desktop.)
@@ -1184,6 +1206,9 @@ export function openPanel() {
   // dismiss, rubber-band on up-drag, spring snap-back.
   _wireNotesSwipeDismiss(pane.querySelector('.notes-mobile-grabber'), pane);
   _wireNotesSwipeDismiss(pane.querySelector('.notes-pane-header'), pane);
+
+  pane.addEventListener('pointerdown', () => _bringNotesToFront(pane), true);
+  pane.addEventListener('focusin', () => _bringNotesToFront(pane), true);
 
   const minBtn = document.getElementById('notes-minimize-btn');
   if (minBtn) minBtn.addEventListener('click', (e) => {

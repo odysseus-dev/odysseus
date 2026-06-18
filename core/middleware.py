@@ -67,10 +67,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         path = request.url.path
 
-        # Tool render endpoints are served inside iframes — allow framing by self
+        # Tool render endpoints
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
-        # PDF previews are embedded by the in-app document library. Keep the
-        # exception route-scoped so normal app pages remain unframeable.
+        # Document library PDF preview endpoint
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
@@ -97,9 +96,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'none'"
             )
         elif is_tool_render:
-            # Tool iframe content: skip all framing headers — the iframe's
-            # sandbox="allow-scripts" attribute provides isolation.
-            # Don't overwrite the route's own restrictive CSP either.
+            # Skip framing headers for tools.
             pass
         elif is_document_pdf_preview:
             response.headers["X-Frame-Options"] = "SAMEORIGIN"
