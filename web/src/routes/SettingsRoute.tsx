@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Trash2, UserPlus, Plus, Pencil } from "lucide-react"
+import { Trash2, UserPlus, Plus, Pencil, SlidersHorizontal, UserCircle, Boxes, Plug, Users, Server, Webhook, Wrench } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useAuthStatus, useUsers, useUserMutations, logout, changePassword, setup2FA, confirm2FA, disable2FA, useTwoFAStatus, setOpenSignup } from "@/api/auth"
 import { Switch } from "@/components/ui/switch"
@@ -184,142 +184,176 @@ export function SettingsRoute() {
     })
   }
 
-  return (
-    <div className="mx-auto flex h-full w-full max-w-2xl flex-col">
-      <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">Settings</header>
-      <div className="flex-1 space-y-6 overflow-y-auto p-4">
-        <section>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Appearance</h2>
-          <div className="space-y-3 rounded-lg border bg-card p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Theme</span>
-              <div className="flex rounded-lg bg-muted p-0.5">
-                {(["light", "dark"] as const).map((t) => (
-                  <button key={t} onClick={() => setTheme(t)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", theme === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{t}</button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Accent</span>
-              <div className="flex items-center gap-1.5">
-                {["", "#2563eb", "#7c3aed", "#db2777", "#059669", "#ea580c"].map((c) => (
-                  <button key={c || "default"} onClick={() => setAccent(c)} title={c || "Default (zinc)"}
-                    className={cn("size-6 rounded-full border", accent === c && "ring-2 ring-ring ring-offset-2 ring-offset-card")}
-                    style={{ background: c || "var(--muted-foreground)" }} />
-                ))}
-                <input type="color" value={accent || "#000000"} onChange={(e) => setAccent(e.target.value)} title="Custom" className="size-6 cursor-pointer rounded-full border bg-transparent p-0" />
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Font</span>
-              <div className="flex rounded-lg bg-muted p-0.5">
-                {(["sans", "serif", "mono"] as const).map((f) => (
-                  <button key={f} onClick={() => setFont(f)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", font === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{f}</button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Density</span>
-              <div className="flex rounded-lg bg-muted p-0.5">
-                {(["compact", "comfortable", "spacious"] as const).map((d) => (
-                  <button key={d} onClick={() => setDensity(d)} className={cn("rounded-md px-2.5 py-1 text-sm capitalize transition-colors", density === d ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{d}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
+  const isAdmin = !!status?.is_admin
+  const NAV = [
+    { id: "general", label: "General", icon: SlidersHorizontal },
+    { id: "account", label: "Account", icon: UserCircle },
+    { id: "models", label: "Models", icon: Boxes },
+    { id: "integrations", label: "Integrations", icon: Plug },
+    { id: "users", label: "Users", icon: Users, admin: true },
+    { id: "system", label: "System", icon: Server, admin: true },
+    { id: "tools", label: "Tools & webhooks", icon: Webhook, admin: true },
+    { id: "advanced", label: "Advanced", icon: Wrench, admin: true },
+  ].filter((n) => !n.admin || isAdmin)
+  const [page, setPage] = useState("general")
+  const current = NAV.find((n) => n.id === page) || NAV[0]
+  const navRow = (active: boolean) =>
+    cn("flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors",
+      active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")
 
-        <SidebarItemsSettings />
-
-        <section>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">AI defaults</h2>
-          <div className="flex items-center justify-between rounded-lg border bg-card p-3">
-            <span className="text-sm">Default chat model</span>
-            <select value={def?.model || ""} onChange={(e) => setDefault.mutate(e.target.value)} className="h-9 max-w-[60%] rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring">
-              {!def?.model && <option value="">—</option>}
-              {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-        </section>
-
-        <section>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Model endpoints</h2>
-          <div className="space-y-2">
-            {endpoints.map((e) => (
-              <div key={e.endpoint_id} className="group flex items-center gap-3 rounded-lg border bg-card p-3">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{e.endpoint_name || e.url}</div>
-                  <div className="truncate text-xs text-muted-foreground">{e.url} · {(e.models?.length || 0) + (e.models_extra?.length || 0)} models{e.category ? ` · ${e.category}` : ""}</div>
-                </div>
-                <button onClick={() => { if (confirm("Delete this endpoint?")) del.mutate(e.endpoint_id) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="size-4" /></button>
-              </div>
+  const appearanceSection = (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Appearance</h2>
+      <div className="space-y-3 rounded-lg border bg-card p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm">Theme</span>
+          <div className="flex rounded-lg bg-muted p-0.5">
+            {(["light", "dark"] as const).map((t) => (
+              <button key={t} onClick={() => setTheme(t)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", theme === t ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{t}</button>
             ))}
-            {endpoints.length === 0 && <p className="py-2 text-sm text-muted-foreground">No saved endpoints.</p>}
           </div>
-          <AddEndpointForm />
-        </section>
-
-        {userList.length > 0 && (
-          <section>
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Users <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
-            <div className="mb-2 flex items-center justify-between rounded-lg border bg-card p-3">
-              <span className="min-w-0"><span className="block text-sm">Open registration</span><span className="block text-xs text-muted-foreground">Allow new users to sign up</span></span>
-              <Switch checked={!!status?.signup_enabled} onCheckedChange={async (v) => { await setOpenSignup(v); qc.invalidateQueries({ queryKey: ["auth-status"] }) }} />
-            </div>
-            <div className="space-y-2">
-              {userList.map((u) => (
-                <div key={u.username} className="rounded-lg border bg-card p-3">
-                  <div className="group flex items-center justify-between">
-                  <span className="text-sm font-medium">{u.username}{u.username === user && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(you)</span>}</span>
-                  <div className="flex items-center gap-2">
-                    {u.username === user
-                      ? (u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>)
-                      : (
-                        <>
-                          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title="Administrator">admin<Switch checked={!!u.is_admin} onCheckedChange={(v) => setAdmin.mutate({ username: u.username, is_admin: v })} /></label>
-                          <button onClick={() => { const n = prompt("Rename user", u.username); if (n && n.trim() && n.trim() !== u.username) renameUser.mutate({ username: u.username, new_username: n.trim() }) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100" title="Rename user"><Pencil className="size-4" /></button>
-                          <button onClick={() => { if (confirm(`Delete user "${u.username}"?`)) removeUser.mutate(u.username) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Delete user"><Trash2 className="size-4" /></button>
-                        </>
-                      )}
-                  </div>
-                  </div>
-                  {u.username !== user && !u.is_admin && <UserPrivileges user={u} />}
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 space-y-2 rounded-lg border bg-card p-3">
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input value={nu} onChange={(e) => setNu(e.target.value)} placeholder="Username" autoComplete="off" className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
-                <input value={np} onChange={(e) => setNp(e.target.value)} type="password" placeholder="Password (8+ chars)" autoComplete="new-password" className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
-              </div>
-              <div className="flex items-center justify-between">
-                <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={nAdmin} onChange={(e) => setNAdmin(e.target.checked)} className="size-3.5 accent-foreground" />Administrator</label>
-                <Button size="sm" disabled={createUser.isPending} onClick={addUser}><UserPlus className="size-4" />{createUser.isPending ? "Adding…" : "Add user"}</Button>
-              </div>
-              {uErr && <p className="text-xs text-destructive">{uErr}</p>}
-            </div>
-          </section>
-        )}
-
-        <PresetSection />
-
-        <AccountSecurity />
-
-        <AdminSections />
-
-        {status?.is_admin && <AppSettingsSections />}
-
-        <IntegrationsExtraSections />
-
-        {status?.is_admin && <AdvancedSections />}
-
-        <section>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</h2>
-          <div className="flex items-center justify-between rounded-lg border bg-card p-3">
-            <div className="text-sm"><span className="text-muted-foreground">Signed in as </span><span className="font-medium">{user}</span></div>
-            <Button variant="outline" size="sm" onClick={logout}>Log out</Button>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm">Accent</span>
+          <div className="flex items-center gap-1.5">
+            {["", "#2563eb", "#7c3aed", "#db2777", "#059669", "#ea580c"].map((c) => (
+              <button key={c || "default"} onClick={() => setAccent(c)} title={c || "Default (zinc)"}
+                className={cn("size-6 rounded-full border", accent === c && "ring-2 ring-ring ring-offset-2 ring-offset-card")}
+                style={{ background: c || "var(--muted-foreground)" }} />
+            ))}
+            <input type="color" value={accent || "#000000"} onChange={(e) => setAccent(e.target.value)} title="Custom" className="size-6 cursor-pointer rounded-full border bg-transparent p-0" />
           </div>
-        </section>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm">Font</span>
+          <div className="flex rounded-lg bg-muted p-0.5">
+            {(["sans", "serif", "mono"] as const).map((f) => (
+              <button key={f} onClick={() => setFont(f)} className={cn("rounded-md px-3 py-1 text-sm capitalize transition-colors", font === f ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{f}</button>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm">Density</span>
+          <div className="flex rounded-lg bg-muted p-0.5">
+            {(["compact", "comfortable", "spacious"] as const).map((d) => (
+              <button key={d} onClick={() => setDensity(d)} className={cn("rounded-md px-2.5 py-1 text-sm capitalize transition-colors", density === d ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}>{d}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+
+  const aiDefaultsSection = (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">AI defaults</h2>
+      <div className="flex items-center justify-between rounded-lg border bg-card p-3">
+        <span className="text-sm">Default chat model</span>
+        <select value={def?.model || ""} onChange={(e) => setDefault.mutate(e.target.value)} className="h-9 max-w-[60%] rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring">
+          {!def?.model && <option value="">—</option>}
+          {allModels.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </div>
+    </section>
+  )
+
+  const endpointsSection = (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Model endpoints</h2>
+      <div className="space-y-2">
+        {endpoints.map((e) => (
+          <div key={e.endpoint_id} className="group flex items-center gap-3 rounded-lg border bg-card p-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{e.endpoint_name || e.url}</div>
+              <div className="truncate text-xs text-muted-foreground">{e.url} · {(e.models?.length || 0) + (e.models_extra?.length || 0)} models{e.category ? ` · ${e.category}` : ""}</div>
+            </div>
+            <button onClick={() => { if (confirm("Delete this endpoint?")) del.mutate(e.endpoint_id) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="size-4" /></button>
+          </div>
+        ))}
+        {endpoints.length === 0 && <p className="py-2 text-sm text-muted-foreground">No saved endpoints.</p>}
+      </div>
+      <AddEndpointForm />
+    </section>
+  )
+
+  const usersSection = userList.length > 0 && (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Users</h2>
+      <div className="mb-2 flex items-center justify-between rounded-lg border bg-card p-3">
+        <span className="min-w-0"><span className="block text-sm">Open registration</span><span className="block text-xs text-muted-foreground">Allow new users to sign up</span></span>
+        <Switch checked={!!status?.signup_enabled} onCheckedChange={async (v) => { await setOpenSignup(v); qc.invalidateQueries({ queryKey: ["auth-status"] }) }} />
+      </div>
+      <div className="space-y-2">
+        {userList.map((u) => (
+          <div key={u.username} className="rounded-lg border bg-card p-3">
+            <div className="group flex items-center justify-between">
+            <span className="text-sm font-medium">{u.username}{u.username === user && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(you)</span>}</span>
+            <div className="flex items-center gap-2">
+              {u.username === user
+                ? (u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>)
+                : (
+                  <>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title="Administrator">admin<Switch checked={!!u.is_admin} onCheckedChange={(v) => setAdmin.mutate({ username: u.username, is_admin: v })} /></label>
+                    <button onClick={() => { const n = prompt("Rename user", u.username); if (n && n.trim() && n.trim() !== u.username) renameUser.mutate({ username: u.username, new_username: n.trim() }) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100" title="Rename user"><Pencil className="size-4" /></button>
+                    <button onClick={() => { if (confirm(`Delete user "${u.username}"?`)) removeUser.mutate(u.username) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Delete user"><Trash2 className="size-4" /></button>
+                  </>
+                )}
+            </div>
+            </div>
+            {u.username !== user && !u.is_admin && <UserPrivileges user={u} />}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 space-y-2 rounded-lg border bg-card p-3">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input value={nu} onChange={(e) => setNu(e.target.value)} placeholder="Username" autoComplete="off" className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
+          <input value={np} onChange={(e) => setNp(e.target.value)} type="password" placeholder="Password (8+ chars)" autoComplete="new-password" className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring" />
+        </div>
+        <div className="flex items-center justify-between">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" checked={nAdmin} onChange={(e) => setNAdmin(e.target.checked)} className="size-3.5 accent-foreground" />Administrator</label>
+          <Button size="sm" disabled={createUser.isPending} onClick={addUser}><UserPlus className="size-4" />{createUser.isPending ? "Adding…" : "Add user"}</Button>
+        </div>
+        {uErr && <p className="text-xs text-destructive">{uErr}</p>}
+      </div>
+    </section>
+  )
+
+  const accountSection = (
+    <section>
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</h2>
+      <div className="flex items-center justify-between rounded-lg border bg-card p-3">
+        <div className="text-sm"><span className="text-muted-foreground">Signed in as </span><span className="font-medium">{user}</span></div>
+        <Button variant="outline" size="sm" onClick={logout}>Log out</Button>
+      </div>
+    </section>
+  )
+
+  return (
+    <div className="flex h-full w-full">
+      <aside className="flex w-[220px] shrink-0 flex-col border-r">
+        <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">Settings</header>
+        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
+          {NAV.map((n) => (
+            <button key={n.id} onClick={() => setPage(n.id)} className={navRow(page === n.id)}>
+              <n.icon className="size-4 shrink-0" />{n.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-13 shrink-0 items-center border-b px-4 text-sm font-semibold">{current?.label || "Settings"}</header>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-2xl space-y-6 p-4">
+            {page === "general" && <>{appearanceSection}<SidebarItemsSettings /></>}
+            {page === "account" && <><AccountSecurity /><PresetSection />{accountSection}</>}
+            {page === "models" && <>{aiDefaultsSection}{endpointsSection}</>}
+            {page === "integrations" && <IntegrationsExtraSections />}
+            {page === "users" && isAdmin && (usersSection || <p className="text-sm text-muted-foreground">No users to manage.</p>)}
+            {page === "system" && isAdmin && <AppSettingsSections />}
+            {page === "tools" && isAdmin && <AdminSections />}
+            {page === "advanced" && isAdmin && <AdvancedSections />}
+          </div>
+        </div>
       </div>
     </div>
   )
