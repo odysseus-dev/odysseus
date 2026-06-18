@@ -8,6 +8,7 @@ import { useModels, useDefaultChat, useDeleteEndpoint, useEndpointMutations, use
 import { usePresets, useCreatePreset } from "@/api/presets"
 import { AdminSections } from "@/components/settings/AdminSections"
 import { AppSettingsSections, SidebarItemsSettings } from "@/components/settings/AppSettings"
+import { IntegrationsExtraSections } from "@/components/settings/IntegrationsExtra"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -291,6 +292,8 @@ export function SettingsRoute() {
         <AdminSections />
 
         {status?.is_admin && <AppSettingsSections />}
+
+        <IntegrationsExtraSections />
 
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Account</h2>
