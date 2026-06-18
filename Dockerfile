@@ -35,6 +35,9 @@ COPY . .
 # Create data directory (mount a volume here for persistence)
 RUN mkdir -p data logs services/cache/search
 
+# Install obsidian-mcp for persistent Docker support
+RUN npm install obsidian-mcp
+
 # Entrypoint that drops to PUID/PGID (default 1000:1000) and repairs
 # ownership on the bind-mounted /app/data and /app/logs. Without this,
 # the container runs as root and writes root-owned files into host
