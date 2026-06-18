@@ -102,6 +102,65 @@ _MCP_READONLY_VERBS = (
 )
 
 
+def _http_auth_headers_from_env(env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Build static HTTP auth headers for Streamable HTTP MCP servers.
+
+    GitHub's hosted MCP (api.githubcopilot.com) expects a PAT Bearer token, not
+    the OAuth dynamic-registration flow used by other remote servers.
+    """
+    if not env:
+        return {}
+    headers: Dict[str, str] = {}
+    pat = env.get("GITHUB_PERSONAL_ACCESS_TOKEN") or env.get("GITHUB_TOKEN")
+    if pat:
+        headers["Authorization"] = f"Bearer {pat}"
+    auth = env.get("MCP_HTTP_AUTHORIZATION")
+    if auth:
+        headers["Authorization"] = auth if auth.lower().startswith("bearer ") else f"Bearer {auth}"
+    for key, value in env.items():
+        if key.startswith("MCP_HTTP_HEADER_") and value:
+            header_name = key[len("MCP_HTTP_HEADER_"):].replace("_", "-")
+            headers[header_name] = value
+    return headers
+
+
+async def _preflight_http_mcp_auth(url: str, headers: Dict[str, str]) -> Optional[str]:
+    """Fail fast when a Bearer token is rejected before opening a full MCP session."""
+    if not headers:
+        return None
+    import httpx
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "odysseus", "version": "1.0"},
+        },
+    }
+    req_headers = {
+        **headers,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            response = await client.post(url, headers=req_headers, json=payload)
+    except Exception as exc:
+        return f"Could not reach MCP server: {exc}"
+    if response.status_code == 401:
+        return (
+            "GitHub rejected the token (401 Unauthorized). "
+            "Use a valid PAT from https://github.com/settings/tokens with repo scope."
+        )
+    if response.status_code >= 400:
+        detail = (response.text or "").strip()[:200]
+        return f"MCP server returned HTTP {response.status_code}" + (f": {detail}" if detail else "")
+    return None
+
+
 def mcp_tool_is_readonly(tool: Dict) -> bool:
     """Classify an MCP tool as safe (non-mutating) for plan mode.
 
@@ -164,7 +223,13 @@ class McpManager:
             elif transport == "sse":
                 res = await self._connect_sse(server_id, name, url)
             elif transport == "http":
-                res = await self._start_http_connect(server_id, name, url)
+                # Static auth (PAT / custom headers) can be verified inline;
+                # OAuth flows may need a browser redirect, so keep those async.
+                if _http_auth_headers_from_env(env or {}):
+                    res = await self._connect_http(server_id, name, url, env or {})
+                else:
+                    self.schedule_http_connect(server_id, name, url, env or {})
+                    res = False
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -295,21 +360,42 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
+    def schedule_http_connect(
+        self,
+        server_id: str,
+        name: str,
+        url: str,
+        env: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Start an HTTP MCP connect in the background (safe inside request handlers)."""
+        import asyncio
+
+        self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
+        task = asyncio.create_task(self._connect_http(server_id, name, url, env or {}))
+        self._connect_tasks[server_id] = task
+
+    async def _start_http_connect(
+        self,
+        server_id: str,
+        name: str,
+        url: str,
+        env: Optional[Dict[str, str]] = None,
+        wait: float = 8.0,
+    ) -> bool:
         """Begin a Streamable HTTP connect in the background. Returns within
         `wait` seconds: True if it connected (cached-token path), otherwise the
         flow is awaiting browser authorization and status becomes 'needs_auth'."""
         import asyncio
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
-        task = asyncio.create_task(self._connect_http(server_id, name, url))
+        task = asyncio.create_task(self._connect_http(server_id, name, url, env or {}))
         self._connect_tasks[server_id] = task
         done, _ = await asyncio.wait({task}, timeout=wait)
         if task in done:
-            try:
-                return task.result()
-            except Exception as e:
-                self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+            exc = task.exception()
+            if exc is not None:
+                self._connections[server_id] = {"status": "error", "error": str(exc), "name": name}
                 return False
+            return bool(task.result())
         # Still running → either awaiting authorization, or discovery/DCR is
         # still in flight. If _on_redirect already published needs_auth+auth_url,
         # leave it; otherwise mark needs_auth (auth_url filled in once it fires).
@@ -322,25 +408,45 @@ class McpManager:
             }
         return False
 
-    async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
-        """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
+    async def _connect_http(self, server_id: str, name: str, url: str, env: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to a Streamable HTTP MCP server (Bearer token or OAuth)."""
+        stack = None
         try:
+            from datetime import timedelta
             from mcp import ClientSession
             from mcp.client.streamable_http import streamablehttp_client
             from contextlib import AsyncExitStack
-            from src.mcp_oauth import build_provider, clear_auth_url
 
-            def _on_redirect(auth_url):
-                # Publish needs_auth the moment the URL is known, independent of
-                # how long discovery/DCR took (may exceed the bounded start wait).
-                self._connections[server_id] = {
-                    "status": "needs_auth", "name": name, "transport": "http",
-                    "auth_url": auth_url,
-                }
+            static_headers = _http_auth_headers_from_env(env)
+            if static_headers:
+                preflight_error = await _preflight_http_mcp_auth(url, static_headers)
+                if preflight_error:
+                    self._connections[server_id] = {
+                        "status": "error", "error": preflight_error, "name": name, "transport": "http",
+                    }
+                    return False
 
-            provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+            http_timeout = timedelta(seconds=15)
+            if static_headers:
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url, headers=static_headers, timeout=http_timeout)
+                )
+            else:
+                from src.mcp_oauth import build_provider, clear_auth_url
+
+                def _on_redirect(auth_url):
+                    # Publish needs_auth the moment the URL is known, independent of
+                    # how long discovery/DCR took (may exceed the bounded start wait).
+                    self._connections[server_id] = {
+                        "status": "needs_auth", "name": name, "transport": "http",
+                        "auth_url": auth_url,
+                    }
+
+                provider = build_provider(server_id, url, on_redirect=_on_redirect)
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url, auth=provider, timeout=http_timeout)
+                )
             read_stream, write_stream, _get_session_id = transport
             session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
@@ -361,7 +467,9 @@ class McpManager:
                 "status": "connected", "name": name, "transport": "http",
                 "tool_count": len(tools),
             }
-            clear_auth_url(server_id)
+            if not static_headers:
+                from src.mcp_oauth import clear_auth_url
+                clear_auth_url(server_id)
             # Tools changed (this can complete after connect_server already
             # returned, via the background OAuth flow), so bump the generation
             # to invalidate the tool-prompt cache.
@@ -375,6 +483,11 @@ class McpManager:
         except Exception as e:
             logger.error(f"Failed to connect HTTP MCP server {name} ({server_id}): {e}")
             self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
+            if stack is not None and server_id not in self._stacks:
+                try:
+                    await stack.aclose()
+                except Exception:
+                    pass
             return False
 
     async def disconnect_server(self, server_id: str):
@@ -636,7 +749,12 @@ class McpManager:
         if not tools:
             return ""
 
-        lines = ["\n\nYou also have access to external MCP tool servers. These tools are called via native function calling:"]
+        lines = [
+            "\n\nYou also have access to external MCP tool servers.",
+            "Call them with native function calling using the qualified tool names listed below",
+            "(e.g. mcp__<server_id>__<tool_name>). manage_mcp only lists/reconnects servers —",
+            "use the server-specific tools below for GitHub, browser, email, etc.:",
+        ]
         by_server = {}
         for t in tools:
             # Skip builtin Python servers — they're already in the agent prompt

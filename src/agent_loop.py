@@ -1280,11 +1280,8 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
         if isinstance(content, list):
             content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
         content = (content or "").strip()
-        # Skip injected envelopes — role=user but not human intent. Tool results
-        # are now wrapped via untrusted_context_message (metadata.trusted=False);
-        # keep the legacy "[Tool execution results]" prefix for older histories.
-        meta = msg.get("metadata") or {}
-        if not content or meta.get("trusted") is False or content.startswith("[Tool execution results]"):
+        # Skip injected tool-result envelopes — role=user but not human intent.
+        if not content or content.startswith("[Tool execution results]"):
             continue
         collected.append(content)
         if len(collected) >= max_user:
@@ -1321,7 +1318,8 @@ def _build_system_prompt(
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
     except Exception:
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context, suppress_skills)
+    _mcp_gen = getattr(mcp_mgr, "_generation", 0) if mcp_mgr else 0
+    cache_key = (frozenset(disabled_tools or []), _mcp_gen, needs_admin, _rt_key, compact, _ov_sig, owner, suppress_local_context, suppress_skills)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -2060,14 +2058,8 @@ def _append_tool_results(
         if round_reasoning:
             msg["reasoning_content"] = round_reasoning
         messages.append(msg)
-        # Tool output (shell/python stdout, file reads, fetched pages, email
-        # bodies, MCP results) is sourced from outside the server. Wrap it as
-        # untrusted data so prompt-injection inside a tool result is treated as
-        # data, not instructions — same hardening as skills (#788) and the
-        # web/RAG context. THREAT_MODEL.md lists tool output as a surface that
-        # must go through untrusted_context_message.
         messages.append(
-            untrusted_context_message("tool execution results", tool_output_text)
+            {"role": "user", "content": f"[Tool execution results]\n\n{tool_output_text}"}
         )
 
 
@@ -2961,11 +2953,9 @@ async def stream_agent_loop(
                     s for s in FUNCTION_TOOL_SCHEMAS
                     if s.get("function", {}).get("name") in _schema_names
                 ]
-                _mcp_filtered = [
-                    s for s in mcp_schemas
-                    if s.get("function", {}).get("name") in _relevant_tools
-                ]
-                all_tool_schemas = base_schemas + _mcp_filtered
+                # Connected MCP tools are always callable — RAG only selects
+                # built-ins (manage_mcp etc.) and would strip mcp__* schemas.
+                all_tool_schemas = base_schemas + mcp_schemas
             else:
                 base_schemas = FUNCTION_TOOL_SCHEMAS if _needs_admin else [
                     s for s in FUNCTION_TOOL_SCHEMAS

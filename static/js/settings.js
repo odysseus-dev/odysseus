@@ -12,7 +12,6 @@ import { bindMenuDismiss } from './escMenuStack.js';
 
 let initialized = false;
 let modalEl = null;
-let _authPolicy = { password_min_length: 8 };
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
@@ -2145,16 +2144,6 @@ function initAccount() {
       }
     }).catch(() => {});
 
-  // Update password placeholder and policy from server
-  fetch('/api/auth/policy', { credentials: 'same-origin' })
-    .then(r => r.ok ? r.json() : null)
-    .then(policy => {
-      if (!policy) return;
-      _authPolicy = policy;
-      const pwNew = el('settings-pw-new');
-      if (pwNew) pwNew.placeholder = `New password (min ${policy.password_min_length})`;
-    }).catch(() => {});
-
   // Change password
   const saveBtn = el('settings-pw-save');
   const msgEl = el('settings-pw-msg');
@@ -2165,7 +2154,7 @@ function initAccount() {
       const conf = el('settings-pw-confirm').value;
       msgEl.style.color = '';
       if (!cur || !nw) { msgEl.textContent = 'Fill in all fields'; msgEl.style.color = 'var(--red)'; return; }
-      if (nw.length < _authPolicy.password_min_length) { msgEl.textContent = `Min ${_authPolicy.password_min_length} characters`; msgEl.style.color = 'var(--red)'; return; }
+      if (nw.length < 8) { msgEl.textContent = 'Min 8 characters'; msgEl.style.color = 'var(--red)'; return; }
       if (nw !== conf) { msgEl.textContent = 'Passwords don\'t match'; msgEl.style.color = 'var(--red)'; return; }
       saveBtn.disabled = true;
       try {
@@ -3555,6 +3544,7 @@ async function initUnifiedIntegrations() {
   const addBtn = el('unified-intg-add-btn');
   if (!listEl) return;
   let integrationNotice = '';
+  let _mcpStatusRefreshTimer = null;
 
   // Hide the "+ Add Integration" button whenever the per-type create form
   // is open so it doesn't compete visually with the in-progress form.
@@ -3650,17 +3640,31 @@ async function initUnifiedIntegrations() {
 
   function renderCard(item) {
     const t = INTG_TYPES[item.type] || INTG_TYPES.api;
-    // Static enabled/disabled indicator — same dot every integration
-    // type gets. (The clickable glow-on-test variant for email was
-    // removed earlier; this matches the API/CalDAV/MCP pattern.)
-    const statusDot = item.enabled
-      ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--color-success,#50fa7b);flex-shrink:0;--notif-glow:var(--color-success,#50fa7b);animation:cookbook-notif-pulse 2s ease-in-out infinite;" title="Active"></span>'
-      : '<span style="width:8px;height:8px;border-radius:50%;background:var(--fg);opacity:0.3;flex-shrink:0" title="Disabled"></span>';
+    // For MCP servers, the dot reflects connection state; for other
+    // integrations it reflects the enabled/disabled flag.
+    let statusDot;
+    if (item.type === 'mcp' && item.data) {
+      const s = item.data.status;
+      const needsAuth = item.data.needs_oauth;
+      if (s === 'connected') {
+        statusDot = '<span style="width:8px;height:8px;border-radius:50%;background:var(--color-success,#50fa7b);flex-shrink:0;--notif-glow:var(--color-success,#50fa7b);animation:cookbook-notif-pulse 2s ease-in-out infinite;" title="Connected"></span>';
+      } else if (s === 'error') {
+        statusDot = '<span style="width:8px;height:8px;border-radius:50%;background:var(--red);flex-shrink:0;" title="Error"></span>';
+      } else if (needsAuth) {
+        statusDot = '<span style="width:8px;height:8px;border-radius:50%;background:#e5a33a;flex-shrink:0;" title="Needs authorization"></span>';
+      } else {
+        statusDot = '<span style="width:8px;height:8px;border-radius:50%;background:var(--fg);opacity:0.3;flex-shrink:0" title="Disconnected"></span>';
+      }
+    } else {
+      statusDot = item.enabled
+        ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--color-success,#50fa7b);flex-shrink:0;--notif-glow:var(--color-success,#50fa7b);animation:cookbook-notif-pulse 2s ease-in-out infinite;" title="Active"></span>'
+        : '<span style="width:8px;height:8px;border-radius:50%;background:var(--fg);opacity:0.3;flex-shrink:0" title="Disabled"></span>';
+    }
     return `<div class="intg-card" data-intg-id="${item.id}" data-intg-type="${item.type}" style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:color-mix(in srgb, var(--fg) 3%, transparent);margin-bottom:6px;cursor:pointer;transition:all 0.15s;" title="Click to edit">
       <span style="color:var(--accent, var(--red));flex-shrink:0">${t.icon}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px">${item.name} <span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 50%, transparent);border-radius:3px;color:var(--accent, var(--red));background:color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);">${t.label}</span></div>
-        <div style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
+        <div class="intg-card-detail" style="font-size:11px;opacity:0.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.detail || ''}</div>
       </div>
       ${statusDot}
       <button class="admin-btn-sm intg-del-btn" data-intg-id="${item.id}" data-intg-type="${item.type}" data-intg-name="${(item.name || '').replace(/"/g, '&quot;')}" title="Remove" style="background:none;border:none;padding:4px;cursor:pointer;color:var(--red);opacity:0.55;display:inline-flex;align-items:center;justify-content:center;">
@@ -3681,6 +3685,18 @@ async function initUnifiedIntegrations() {
     } else {
       listEl.innerHTML = noticeHtml + items.map(renderCard).join('');
     }
+    // Poll MCP statuses while any enabled server is still connecting/disconnected
+    // so the card updates when a background HTTP connect finishes or fails.
+    clearTimeout(_mcpStatusRefreshTimer);
+    const needsRefresh = items.some(i =>
+      i.type === 'mcp' &&
+      i.enabled !== false &&
+      i.data &&
+      !['connected', 'error', 'needs_oauth'].includes(i.data.status)
+    );
+    if (needsRefresh) {
+      _mcpStatusRefreshTimer = setTimeout(() => renderList(), 2000);
+    }
     listEl.querySelector('.intg-open-email-settings')?.addEventListener('click', (e) => {
       e.stopPropagation();
       _openEmailSettings();
@@ -3691,12 +3707,13 @@ async function initUnifiedIntegrations() {
         if (e.target.closest('.intg-del-btn')) return;
         const type = card.dataset.intgType;
         const id = card.dataset.intgId;
+        const isAlreadyOpen = card.classList.contains('intg-card-active') && formEl.style.display !== 'none';
         // Toggle a class instead of mutating inline borderColor — the
         // inline border shorthand made the reset unreliable, leaving
         // stale accent borders on previously-clicked cards.
         listEl.querySelectorAll('.intg-card.intg-card-active').forEach(c => c.classList.remove('intg-card-active'));
         card.classList.add('intg-card-active');
-        showForm(type, id);
+        if (!isAlreadyOpen) showForm(type, id);
       });
     });
     // Wire delete
@@ -5053,6 +5070,16 @@ async function initUnifiedIntegrations() {
         const servers = await res.json();
         const srv = servers.find(s => (s.id || s.name) === editId);
         if (!srv) { formEl.innerHTML = '<div class="admin-card" style="margin-top:8px">Server not found</div>'; return; }
+        // Sync the card's detail text with the freshly fetched status so the
+        // list doesn't show stale 'disconnected' while the detail view shows
+        // 'Connected'.
+        const card = listEl.querySelector(`.intg-card[data-intg-id="${editId}"]`);
+        if (card) {
+          const detail = card.querySelector('.intg-card-detail');
+          if (detail) {
+            detail.textContent = srv.needs_oauth ? 'needs auth' : srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : srv.status === 'error' ? 'error' : 'disconnected';
+          }
+        }
         const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const statusColor = srv.needs_oauth ? '#e5a33a' : srv.status === 'connected' ? 'var(--green,#50fa7b)' : srv.status === 'error' ? 'var(--red)' : 'var(--fg)';
         const toolInfo = srv.status === 'connected' ? `${srv.enabled_tool_count}/${srv.tool_count} tools` : '';
@@ -5121,15 +5148,21 @@ async function initUnifiedIntegrations() {
         <div class="admin-card" style="margin-top:8px">
           <h2 style="font-size:13px">Add MCP Server</h2>
           <div class="settings-col">
-            <div class="settings-row"><label class="settings-label">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
-            <div class="settings-row"><label class="settings-label">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option><option value="http">Streamable HTTP</option></select></div>
+            <div class="settings-row"><label class="settings-label" style="width:70px;flex-shrink:0">Name</label><input id="uf-mcp-name" class="settings-input" placeholder="Server name"></div>
+            <div class="settings-row"><label class="settings-label" style="width:70px;flex-shrink:0">Transport</label><select id="uf-mcp-transport" class="settings-input"><option value="stdio">stdio</option><option value="sse">SSE</option><option value="http">Streamable HTTP</option></select></div>
             <div id="uf-mcp-stdio-fields" style="display:flex;flex-direction:column;gap:6px;">
-              <div class="settings-row"><label class="settings-label">Command</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
-              <div class="settings-row"><label class="settings-label">Args</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
-              <div class="settings-row"><label class="settings-label">Env</label><input id="uf-mcp-env" class="settings-input" placeholder='{"KEY": "value"}'></div>
+              <div class="settings-row"><label class="settings-label" style="width:70px;flex-shrink:0">Command</label><input id="uf-mcp-cmd" class="settings-input" placeholder="npx"></div>
+              <div class="settings-row"><label class="settings-label" style="width:70px;flex-shrink:0">Args</label><input id="uf-mcp-args" class="settings-input" placeholder='["-y", "@modelcontextprotocol/server-filesystem"]'></div>
             </div>
             <div id="uf-mcp-sse-fields" style="display:none;flex-direction:column;gap:6px;">
-              <div class="settings-row"><label class="settings-label">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+              <div class="settings-row"><label class="settings-label" style="width:70px;flex-shrink:0">URL</label><input id="uf-mcp-url" class="settings-input" placeholder="http://localhost:3001/sse"></div>
+            </div>
+            <div id="uf-mcp-env-fields" style="display:flex;flex-direction:column;gap:6px;">
+              <div class="settings-row"><label class="settings-label" style="width:70px;flex-shrink:0">Env <span id="uf-mcp-env-optional" style="display:none;font-size:10px;opacity:0.5;font-weight:normal">(optional)</span></label><input id="uf-mcp-env" class="settings-input" placeholder='{"KEY": "value"}'></div>
+              <p id="uf-mcp-env-hint" style="display:none;font-size:11px;opacity:0.55;margin:0;line-height:1.35"></p>
+              <div id="uf-mcp-env-formatter" style="display:none;animation:section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;">
+                <button type="button" class="admin-btn-sm" id="uf-mcp-format-pat" style="margin-top:2px">Format as GitHub PAT</button>
+              </div>
             </div>
             <div class="settings-row" style="margin-top:10px;align-items:center;justify-content:flex-end;gap:6px;">
               <span id="uf-mcp-msg" style="font-size:11px;flex:1;margin-right:8px"></span>
@@ -5138,14 +5171,65 @@ async function initUnifiedIntegrations() {
             </div>
           </div>
         </div>`;
-      el('uf-mcp-transport').addEventListener('change', () => {
+      const _syncMcpEnvFields = () => {
         const v = el('uf-mcp-transport').value;
         const isUrl = (v === 'sse' || v === 'http');
         el('uf-mcp-stdio-fields').style.display = isUrl ? 'none' : 'flex';
         el('uf-mcp-sse-fields').style.display = isUrl ? 'flex' : 'none';
+        el('uf-mcp-env-fields').style.display = (v === 'sse') ? 'none' : 'flex';
         const urlInput = el('uf-mcp-url');
-        if (urlInput) urlInput.placeholder = (v === 'http') ? 'https://mcp.example.com/mcp' : 'http://localhost:3001/sse';
-      });
+        if (urlInput) urlInput.placeholder = (v === 'http') ? 'https://api.example.com/mcp/' : 'http://localhost:3001/sse';
+        const envInput = el('uf-mcp-env');
+        const envOptional = el('uf-mcp-env-optional');
+        const envHint = el('uf-mcp-env-hint');
+        const envFormatter = el('uf-mcp-env-formatter');
+        if (envInput) {
+          envInput.placeholder = (v === 'http')
+            ? '{"API_KEY": "..."}'
+            : '{"KEY": "value"}';
+        }
+        if (v === 'http') {
+          if (envOptional) envOptional.style.display = 'inline';
+          if (envHint) {
+            envHint.style.display = 'block';
+            envHint.textContent = 'Leave empty for OAuth-based servers (Odysseus will open a browser sign-in).';
+          }
+          _showMcpEnvFormatterIfToken();
+        } else {
+          if (envOptional) envOptional.style.display = 'none';
+          if (envHint) envHint.style.display = 'none';
+          if (envFormatter) envFormatter.style.display = 'none';
+        }
+      };
+      const _showMcpEnvFormatterIfToken = () => {
+        const envInput = el('uf-mcp-env');
+        const envFormatter = el('uf-mcp-env-formatter');
+        const envHint = el('uf-mcp-env-hint');
+        if (!envInput || !envFormatter || el('uf-mcp-transport').value !== 'http') return;
+        const raw = envInput.value.trim();
+        const tokenMatch = raw.match(/^github_pat_[A-Za-z0-9_]+$/);
+        if (!tokenMatch) {
+          envFormatter.style.display = 'none';
+          if (envHint) envHint.style.display = 'block';
+          return;
+        }
+        if (envHint) envHint.style.display = 'none';
+        envFormatter.style.display = 'block';
+        const btn = el('uf-mcp-format-pat');
+        if (btn) {
+          const newBtn = btn.cloneNode(true);
+          btn.parentNode.replaceChild(newBtn, btn);
+          newBtn.addEventListener('click', () => {
+            envInput.value = JSON.stringify({ GITHUB_PERSONAL_ACCESS_TOKEN: raw });
+            envFormatter.style.display = 'none';
+            if (envHint) envHint.style.display = 'block';
+          });
+        }
+      };
+      el('uf-mcp-transport').addEventListener('change', _syncMcpEnvFields);
+      _syncMcpEnvFields();
+      el('uf-mcp-env')?.addEventListener('paste', () => { setTimeout(_showMcpEnvFormatterIfToken, 0); });
+      el('uf-mcp-env')?.addEventListener('input', _showMcpEnvFormatterIfToken);
       el('uf-mcp-cancel').addEventListener('click', () => { formEl.style.display = 'none'; });
       el('uf-mcp-save').addEventListener('click', async () => {
         const transport = el('uf-mcp-transport').value;
@@ -5156,11 +5240,13 @@ async function initUnifiedIntegrations() {
         if (transport === 'stdio') {
           fd.append('command', el('uf-mcp-cmd').value);
           let args = '[]'; try { args = JSON.stringify(JSON.parse(el('uf-mcp-args').value || '[]')); } catch (_) {}
-          let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
           fd.append('args', args);
-          fd.append('env', env);
         } else {
           fd.append('url', el('uf-mcp-url').value);
+        }
+        if (transport === 'stdio' || transport === 'http') {
+          let env  = '{}'; try { env  = JSON.stringify(JSON.parse(el('uf-mcp-env').value  || '{}')); } catch (_) {}
+          fd.append('env', env);
         }
         const saveBtn = el('uf-mcp-save'), cancelBtn = el('uf-mcp-cancel');
         const _origLabel = saveBtn.textContent;
@@ -5174,6 +5260,9 @@ async function initUnifiedIntegrations() {
           } else if (r.ok && (data.connected || data.status === 'connected')) {
             el('uf-mcp-msg').textContent = `Connected (${data.tool_count || 0} tools)`;
             formEl.style.display = 'none'; await renderList();
+          } else if (r.ok && data.status === 'error') {
+            el('uf-mcp-msg').textContent = data.error || 'Connection failed';
+            await renderList();
           } else if (r.ok) {
             el('uf-mcp-msg').textContent = 'Saved'; formEl.style.display = 'none'; await renderList();
           } else {

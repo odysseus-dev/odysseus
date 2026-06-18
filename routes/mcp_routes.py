@@ -260,15 +260,23 @@ def setup_mcp_routes(mcp_manager: McpManager):
 
         connected = False
         if not needs_oauth:
-            connected = await mcp_manager.connect_server(
-                server_id=server_id,
-                name=name,
-                transport=transport,
-                command=command,
-                args=parsed_args,
-                env=parsed_env,
-                url=url,
-            )
+            try:
+                connected = await mcp_manager.connect_server(
+                    server_id=server_id,
+                    name=name,
+                    transport=transport,
+                    command=command,
+                    args=parsed_args,
+                    env=parsed_env,
+                    url=url,
+                )
+            except Exception as e:
+                logger.error(f"MCP add_server connect failed for {name} ({server_id}): {e}")
+                mcp_manager._connections[server_id] = {
+                    "status": "error",
+                    "error": str(e),
+                    "name": name,
+                }
 
         status = mcp_manager.get_server_status(server_id)
         needs_auth = status.get("status") == "needs_auth"
