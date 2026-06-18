@@ -9,6 +9,7 @@ import { usePanel } from "@/stores/panel"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
 import { ContextPanel } from "@/components/chat/ContextPanel"
+import { Mascot } from "@/components/ui/Mascot"
 import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/types"
 
@@ -112,6 +113,7 @@ export function ChatConsole() {
           {messages.length === 0 ? (
             <div className="flex h-full items-center justify-center p-8">
               <div className="w-full max-w-[768px] text-center">
+                <Mascot size={20} className="mx-auto mb-6 animate-pop-in" title="Odysseus" />
                 <h1 className="text-2xl font-semibold tracking-tight">How can I help?</h1>
                 <p className="mt-2 text-sm text-muted-foreground">Start a conversation below.</p>
                 <div className="mt-6 flex flex-wrap justify-center gap-2">
