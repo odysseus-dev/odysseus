@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
-<title>Odysseus — Login</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<title>Hellaine's Jade Palace — Login</title>
+<link rel="icon" type="image/svg+xml" href="/static/hellaine-logo.svg">
+<link rel="shortcut icon" href="/static/hellaine-logo.svg">
 <link rel="manifest" href="/static/manifest.json">
-<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/hellaine-logo.svg">
 <script nonce="{{CSP_NONCE}}">
 (function(){
   // Per-theme bg-effect defaults — mirrors THEME_DEFAULT_* maps in
@@ -92,8 +93,8 @@
      localStorage — renders the login page in the same palette as the rest
      of the app instead of a different greys+offwhite scheme. */
   :root {
-    --bg: #282c34; --fg: #9cdef2; --panel: #111; --border: #355a66;
-    --red: #e06c75; --green: #50fa7b;
+    --bg: #06120d; --fg: #e8d9a6; --panel: #0b1d14; --border: #315c42;
+    --red: #d4af37; --green: #6fbf73;
     --bg-effect-intensity: 1;
   }
   /* Background patterns — mirrors static/style.css "Background Patterns"
@@ -137,7 +138,7 @@
     font-family: 'Fira Code', monospace;
     font-size: 2rem; font-weight: 600;
     letter-spacing: 0.04em;
-    /* Same gradient as the main app's welcome-screen "Odysseus" title
+    /* Same gradient as the main app's welcome-screen "Hellaine" title
        (static/style.css #welcome-screen .welcome-name) so the brand
        wordmark is consistent across login + first-launch screens. */
     background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
@@ -253,7 +254,7 @@
 <body>
 <main class="card">
   <h1 class="logo">
-    <svg class="logo-boat" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg><span>Odysseus</span>
+    <img src="/static/hellaine-logo.svg" class="logo-boat" alt="Hellaine logo"><span>Hellaine</span>
   </h1>
   <p class="setup-note" id="setupNote" style="display:none"></p>
 
@@ -287,7 +288,7 @@
       </div>
     </div>
 
-    <button type="submit" id="submitBtn">Sign In</button>
+    <button type="submit" id="submitBtn">Prove Your Authorization</button>
   </form>
 
   <div class="toggle" id="toggleArea" style="display:none">
@@ -339,7 +340,7 @@
       setupNote.textContent = 'First-time setup — create your admin account';
       setupNote.style.display = 'block';
       confirmGroup.style.display = 'block';
-      submitBtn.textContent = 'Create Admin Account';
+      submitBtn.textContent = 'Establish the First Key';
       toggleArea.style.display = 'none';
       rememberToggle.style.display = 'none';
     } else if (m === 'signup') {
@@ -353,7 +354,7 @@
     } else {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'none';
-      submitBtn.textContent = 'Sign In';
+      submitBtn.textContent = 'Prove Your Authorization';
       toggleArea.style.display = signupAllowed ? 'block' : 'none';
       toggleText.textContent = "Don't have an account? ";
       toggleLink.textContent = 'Sign up';
@@ -413,7 +414,7 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Invalid code');
-        if (!data.ok) throw new Error('Login failed');
+        if (!data.ok) throw new Error('Authorization failed');
         form._totpMode = false;
         finishLogin();
       } catch (err) {
@@ -496,7 +497,7 @@
         body: JSON.stringify(loginBody)
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Login failed');
+      if (!res.ok) throw new Error(data.detail || 'Authorization failed');
       return data;
     }
     try {
@@ -514,7 +515,7 @@
         formEl.insertBefore(totpWrap, submitBtn);
         const totpInput = document.getElementById('totp-input');
         totpInput.focus();
-        submitBtn.textContent = 'Verify';
+        submitBtn.textContent = 'Verify Access';
         return;
       }
       finishLogin();

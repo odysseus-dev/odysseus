@@ -1,5 +1,5 @@
 /* ============================================ */
-/* Odysseus UI — Consolidated Stylesheet        */
+/* Hellaine UI — Consolidated Stylesheet        */
 /* ============================================ */
 
 
@@ -17,29 +17,29 @@
 
 :root {
   /* Core palette */
-  --bg: #282c34;
-  --fg: #9cdef2;
-  --panel: #111;
-  --border: #355a66;
-  --red: #e06c75;
+  --bg: #06120d;
+  --fg: #e8d9a6;
+  --panel: #0b1d14;
+  --border: #315c42;
+  --red: #d4af37;
   /* Were `var(--green)` / `var(--warn)` — self-referential, so they
      resolved to invalid and every site fell back to its own literal
      (or, for sites with no fallback, painted as transparent/inherit).
      Anchor them to real hex so the token layer actually works. */
-  --green: #50fa7b;
-  --warn: #f0ad4e;
+  --green: #6fbf73;
+  --warn: #d4af37;
 
   /* Syntax highlighting */
-  --hl-bg: #1e2228;
-  --hl-fg: #9cdef2;
-  --hl-keyword: #c678dd;
-  --hl-string: #e5c07b;
-  --hl-comment: #828997;
-  --hl-function: #61afef;
-  --hl-number: #d19a66;
-  --hl-builtin: #56b6c2;
-  --hl-variable: #abb2bf;
-  --hl-params: #a8c0d4;
+  --hl-bg: #07160f;
+  --hl-fg: #e8d9a6;
+  --hl-keyword: #d4af37;
+  --hl-string: #a9d18e;
+  --hl-comment: #6f8a74;
+  --hl-function: #86c98f;
+  --hl-number: #d8b365;
+  --hl-builtin: #6fbf73;
+  --hl-variable: #e8d9a6;
+  --hl-params: #c7b36d;
 
   /* Semantic colors */
   --color-error: #ff4444;
@@ -51,13 +51,13 @@
   --color-recording-hover: #d63031;
   --color-muted: #888;
   --color-muted-alt: #6b7280;
-  --color-accent: #00aaff;
+  --color-accent: #d4af37;
   --color-agent-active: #00ff00;
   --color-brand-blue: #3b82f6;
   --color-blind-orange: #ff9800;
   --color-save-green: var(--color-success);
-  --color-link-hover: #66c7ff;
-  --color-subheader: #6b8a94;
+  --color-link-hover: #f1d37a;
+  --color-subheader: #9bbf91;
   --select-bg: var(--bg);
   --select-fg: var(--fg);
   --select-option-bg: color-mix(in srgb, var(--panel) 74%, var(--bg));
@@ -37672,4 +37672,72 @@ body.theme-frosted .modal {
 }
 .log-line-default {
   color: var(--fg, #9cdef2);
+}
+
+
+/* ── Hellaine Jade Palace branding overrides ── */
+:root {
+  --bg: #06120d;
+  --fg: #e8d9a6;
+  --panel: #0b1d14;
+  --border: #315c42;
+  --red: #d4af37;
+  --green: #6fbf73;
+  --accent: #d4af37;
+  --accent-primary: #d4af37;
+  --brand-color: #d4af37;
+  --sidebar-bg: #07160f;
+  --input-bg: #0b1d14;
+  --input-border: #315c42;
+  --send-btn-bg: #d4af37;
+  --send-btn-hover: #f1d37a;
+  --user-bubble-bg: #0d2418;
+  --ai-bubble-bg: #07160f;
+  --bubble-border: #315c42;
+  --toggle-active: #d4af37;
+  --hamburger-color: #d4af37;
+  --code-bg: #05100b;
+  --code-fg: #e8d9a6;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(212,175,55,0.10), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(52,114,75,0.16), transparent 42%),
+    var(--bg);
+}
+
+img.welcome-boat,
+img.logo-boat,
+.sidebar-brand-logo-img {
+  display: inline-block !important;
+  object-fit: contain !important;
+  vertical-align: middle;
+}
+
+img.welcome-boat {
+  width: 54px !important;
+  height: 54px !important;
+  margin-right: 14px !important;
+  filter: drop-shadow(0 0 14px rgba(212,175,55,0.26));
+}
+
+img.logo-boat {
+  width: 2.15rem !important;
+  height: 2.15rem !important;
+  margin-right: 0.55rem !important;
+  filter: drop-shadow(0 0 12px rgba(212,175,55,0.28));
+}
+
+.sidebar-brand-logo-img {
+  width: 26px !important;
+  height: 26px !important;
+  margin-right: 8px !important;
+}
+
+.sidebar-brand-title,
+.welcome-name,
+.logo span {
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 18px rgba(212,175,55,0.18);
 }
