@@ -38311,25 +38311,29 @@ body.theme-frosted .modal {
   border-color: var(--danger, #e55);
 }
 
-/* ── Toggle button in chat top-bar ── */
+/* ── Toggle button in chat top-bar (right side, absolute like chat-new-btn) ── */
 .bt-toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   background: none;
   border: none;
   cursor: pointer;
   color: var(--fg);
-  opacity: 0.45;
-  padding: 3px 5px;
-  border-radius: 5px;
-  display: inline-flex;
+  opacity: 0.55;
+  padding: 4px 5px;
+  border-radius: 6px;
+  display: flex;
   align-items: center;
-  margin-right: 2px;
+  justify-content: center;
+  z-index: 1;
   transition: opacity 0.1s, background 0.1s, color 0.1s;
-  flex-shrink: 0;
 }
 .bt-toggle-btn:hover, .bt-toggle-btn.active {
   opacity: 1;
   color: var(--accent, #63b3ed);
-  background: color-mix(in srgb, var(--accent,#63b3ed) 12%, transparent);
+  background: color-mix(in srgb, var(--accent,#63b3ed) 14%, transparent);
 }
 
 @media (max-width: 768px) {
