@@ -49,7 +49,7 @@ export function ModelPicker() {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 z-20 mb-1 max-h-80 w-64 overflow-y-auto rounded-xl border bg-popover p-1 shadow-lg">
+          <div className="absolute bottom-full right-0 z-20 mb-1 max-h-80 w-64 origin-bottom-right animate-pop-in overflow-y-auto rounded-xl border bg-popover p-1 shadow-lg">
             {(models?.items || []).map((ep) => (
               <div key={ep.endpoint_id} className="mb-1">
                 <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{ep.endpoint_name || ep.url}</div>
@@ -85,7 +85,7 @@ export function ToolsMenu() {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-20 mb-1 w-64 rounded-xl border bg-popover p-3 shadow-lg">
+          <div className="absolute bottom-full left-0 z-20 mb-1 w-64 origin-bottom-left animate-pop-in rounded-xl border bg-popover p-3 shadow-lg">
             <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Tools</div>
             <Row label="Web search"><Toggle on={c.useWeb} onClick={() => c.toggle("useWeb")} /></Row>
             <Row label="Deep research"><Toggle on={c.useResearch} onClick={() => c.toggle("useResearch")} /></Row>

@@ -44,7 +44,7 @@ function Account({ collapsed }: { collapsed: boolean }) {
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-2 right-2 z-20 mb-1 overflow-hidden rounded-xl border bg-popover p-1 shadow-lg">
+          <div className="absolute bottom-full left-2 right-2 z-20 mb-1 origin-bottom animate-pop-in overflow-hidden rounded-xl border bg-popover p-1 shadow-lg">
             <NavLink to="/settings" onClick={() => setOpen(false)} className={item}><Settings className="size-4" />Settings</NavLink>
             <button onClick={() => { toggleTheme() }} className={item}>{theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}{theme === "dark" ? "Light mode" : "Dark mode"}</button>
             <button onClick={() => { toggle("incognito"); navigate("/chat"); setOpen(false) }} className={cn(item, incognito && "text-foreground")}><EyeOff className="size-4" />Incognito {incognito ? "on" : "off"}</button>

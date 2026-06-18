@@ -92,7 +92,7 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
         className={cn("relative rounded-2xl border bg-card p-2 pl-3 shadow-sm focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/35", dragging && "border-ring ring-[3px] ring-ring/35")}>
         {dragging && <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-background/80 text-sm font-medium text-muted-foreground">Drop files to attach</div>}
         {slashOpen && (
-          <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border bg-popover shadow-lg">
+          <div className="absolute bottom-full left-0 right-0 mb-2 origin-bottom animate-pop-in overflow-hidden rounded-xl border bg-popover shadow-lg">
             <div className="border-b px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Skills</div>
             <div className="max-h-64 overflow-y-auto py-1">
               {slashMatches.map((c, i) => (

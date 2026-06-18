@@ -23,7 +23,7 @@ function ExportMenu({ sid, messages }: { sid: string; messages: ChatMessage[] })
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border bg-popover p-1 shadow-lg">
+          <div className="absolute right-0 z-20 mt-1 w-52 origin-top-right animate-pop-in rounded-xl border bg-popover p-1 shadow-lg">
             <button onClick={copy} className={item}><Copy className="size-4" />Copy transcript</button>
             <button onClick={() => exp("md")} className={item}><Download className="size-4" />Export Markdown</button>
             <button onClick={() => exp("txt")} className={item}><Download className="size-4" />Export Text</button>

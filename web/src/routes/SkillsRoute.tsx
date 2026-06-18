@@ -40,8 +40,8 @@ function RunPanel({ id, name, onClose }: { id: string; name: string; onClose: ()
     })
   }
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border bg-popover p-4 shadow-lg">
+    <div className="absolute inset-0 z-10 flex animate-fade-in items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col animate-pop-in rounded-xl border bg-popover p-4 shadow-lg">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><Play className="size-4" /> Run {name}</div>
         <textarea value={request} onChange={(e) => setRequest(e.target.value)} placeholder="Your request for this skill…" rows={3} className="w-full resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring" />
         {err && <p className="mt-2 text-xs text-destructive">{err}</p>}
@@ -70,8 +70,8 @@ function TestPanel({ id, name, onClose }: { id: string; name: string; onClose: (
   const verdict = data?.verdict
   const log = data?.log || []
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border bg-popover p-4 shadow-lg">
+    <div className="absolute inset-0 z-10 flex animate-fade-in items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col animate-pop-in rounded-xl border bg-popover p-4 shadow-lg">
         <div className="mb-3 flex items-center gap-2 text-sm font-semibold"><FlaskConical className="size-4" /> Test {name}</div>
         <div className="flex items-center gap-2">
           <Button size="sm" disabled={start.isPending || running} onClick={begin}>
@@ -121,8 +121,8 @@ function ImportForm({ onClose }: { onClose: () => void }) {
     })
   }
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-xl border bg-popover p-4 shadow-lg">
+    <div className="absolute inset-0 z-10 flex animate-fade-in items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg animate-pop-in rounded-xl border bg-popover p-4 shadow-lg">
         <div className="mb-1 flex items-center gap-2 text-sm font-semibold"><Link2 className="size-4" /> Import from URL</div>
         <p className="mb-3 text-xs text-muted-foreground">Install a SKILL.md bundle from a public GitHub or skills.sh URL.</p>
         <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/…/SKILL.md" className={inp} />
@@ -157,8 +157,8 @@ function BuiltinEditor({ name, onClose }: { name: string; onClose: () => void })
     })
   }
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border bg-popover p-4 shadow-lg">
+    <div className="absolute inset-0 z-10 flex animate-fade-in items-center justify-center bg-black/40 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col animate-pop-in rounded-xl border bg-popover p-4 shadow-lg">
         <div className="mb-1 flex items-center gap-2 text-sm font-semibold"><Wrench className="size-4" /> Override {name}</div>
         <p className="mb-3 text-xs text-amber-600 dark:text-amber-400">Editing changes how the assistant is told to use this built-in tool.</p>
         {err && <p className="mb-2 text-xs text-destructive">{err}</p>}
@@ -216,8 +216,8 @@ function CreateForm({ onClose }: { onClose: () => void }) {
     })
   }
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-xl border bg-popover p-4 shadow-lg">
+    <div className="absolute inset-0 z-10 flex animate-fade-in items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg animate-pop-in rounded-xl border bg-popover p-4 shadow-lg">
         <div className="mb-3 text-sm font-semibold">New skill</div>
         <div className="space-y-2">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (e.g. deploy-checklist)" className={inp} />

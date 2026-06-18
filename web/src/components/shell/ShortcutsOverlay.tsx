@@ -7,8 +7,8 @@ const GROUPS: { title: string; rows: [string, string][] }[] = [
 
 export function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-md rounded-xl border bg-popover p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-md animate-pop-in rounded-xl border bg-popover p-4 shadow-lg" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between">
           <div className="text-sm font-semibold">Keyboard shortcuts</div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-4" /></button>

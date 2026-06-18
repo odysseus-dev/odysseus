@@ -64,7 +64,7 @@ function MoveMenu({ folders, current, onMove }: { folders: string[]; current: st
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-20 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border bg-popover py-1 text-sm shadow-lg">
+          <div className="absolute right-0 top-full z-20 mt-1 max-h-64 w-56 origin-top-right animate-pop-in overflow-y-auto rounded-md border bg-popover py-1 text-sm shadow-lg">
             {targets.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">No other folders</div>}
             {targets.map((f) => (
               <button key={f} onClick={() => { onMove(f); setOpen(false) }} className="block w-full truncate px-3 py-1.5 text-left hover:bg-accent">{f}</button>
@@ -124,7 +124,7 @@ function ContactSuggest({ query, onPick }: { query: string; onPick: (c: EmailCon
   const contacts = data || []
   if (contacts.length === 0) return null
   return (
-    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-md border bg-popover py-1 text-sm shadow-lg">
+    <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 origin-top animate-pop-in overflow-y-auto rounded-md border bg-popover py-1 text-sm shadow-lg">
       {contacts.map((c) => (
         <button key={c.address} onMouseDown={(e) => { e.preventDefault(); onPick(c) }} className="block w-full px-3 py-1.5 text-left hover:bg-accent">
           <div className="truncate font-medium">{c.name}</div>
@@ -159,8 +159,8 @@ function Compose({ onClose, initial }: { onClose: () => void; initial?: Prefill 
   }
   const inp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-xl border bg-popover p-4 shadow-lg">
+    <div className="absolute inset-0 z-10 flex animate-fade-in items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-lg animate-pop-in rounded-xl border bg-popover p-4 shadow-lg">
         <div className="mb-3 flex items-center justify-between"><div className="text-sm font-semibold">New message</div><button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-4" /></button></div>
         <div className="relative mb-2">
           <input value={to} onChange={(e) => setTo(e.target.value)} onFocus={() => setToFocused(true)} onBlur={() => setToFocused(false)} placeholder="To" className={inp} />
@@ -191,7 +191,7 @@ function FolderMenu({ folders, current, onPick }: { folders: string[]; current: 
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full z-20 mt-1 max-h-72 w-56 overflow-y-auto rounded-md border bg-popover py-1 text-sm shadow-lg">
+          <div className="absolute left-0 top-full z-20 mt-1 max-h-72 w-56 origin-top-left animate-pop-in overflow-y-auto rounded-md border bg-popover py-1 text-sm shadow-lg">
             {list.map((f) => (
               <button key={f} onClick={() => { onPick(f); setOpen(false) }} className={cn("block w-full truncate px-3 py-1.5 text-left hover:bg-accent", f === current && "font-medium")}>{f}</button>
             ))}

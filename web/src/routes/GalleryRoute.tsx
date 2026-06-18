@@ -13,8 +13,8 @@ function Lightbox({ img, onClose }: { img: GalleryImage; onClose: () => void }) 
   useEffect(() => { setName(img.prompt || ""); setTagsLocal(img.tags || "") }, [img])
   const inp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-xl border bg-popover shadow-lg sm:flex-row" onClick={(e) => e.stopPropagation()}>
+    <div className="absolute inset-0 z-20 flex animate-fade-in items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="flex max-h-full w-full max-w-3xl flex-col animate-pop-in overflow-hidden rounded-xl border bg-popover shadow-lg sm:flex-row" onClick={(e) => e.stopPropagation()}>
         <div className="flex min-h-0 flex-1 items-center justify-center bg-black/30 p-2">
           <img src={img.url} alt={img.prompt || img.filename} className="max-h-[60vh] w-auto object-contain" />
         </div>
