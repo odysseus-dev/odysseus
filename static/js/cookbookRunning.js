@@ -26,7 +26,7 @@ function _statusLabel(status, type) {
 // every re-render. Returns { text, cls } where cls is appended after
 // "cookbook-task-status" ('' = the neutral loading style).
 function _taskBadge(task) {
-  if (task._unreachable && task.status === 'running') return { text: 'unreachable', cls: 'cookbook-task-error' };
+  if (task._unreachable && (task.status === 'running' || (task._serveReady && !_isTerminalStatus(task)))) return { text: 'unreachable', cls: 'cookbook-task-error' };
   if (task.type === 'serve' && task.status === 'running' && task.progress) {
     // Same green "running" pill — just with dynamic phase text, so it doesn't
     // read as a different status while the server is coming up.
@@ -50,15 +50,49 @@ function _downloadOutputLooksActive(task) {
       || /Downloading\s+'[^']+'\s+to\s+'[^']*\.incomplete'/i.test(out);
 }
 
+// Terminal (no-longer-running) task statuses. A serve keeps `_serveReady`
+// sticky after it stops, so liveness / uptime / clearable checks must treat
+// these as authoritative rather than trusting `_serveReady` alone.
+const _TERMINAL_STATUSES = ['done', 'stopped', 'error', 'crashed', 'failed'];
+function _isTerminalStatus(task) { return !!task && _TERMINAL_STATUSES.includes(task.status); }
+
 function _canClearTask(task) {
   if (!task || task.status === 'running') return false;
-  if (task.type === 'serve' && (task.status === 'ready' || task._serveReady)) return false;
+  // A live serve (ready, or sticky `_serveReady` while still running) is not
+  // clearable — but once it has terminated, `_serveReady` stays set, so fall
+  // through to the terminal-status check below instead of blocking the clear
+  // pill forever on a crashed/stopped serve.
+  if (task.type === 'serve' && (task.status === 'ready' || task._serveReady)
+      && !_isTerminalStatus(task)) return false;
   // If the tmux output still shows an in-flight download, the task isn't
   // actually finished — hide the clear/check pill so it doesn't show on a
   // task that's still doing work. (The next render will reflect this and
   // ideally the self-heal flips status back to running.)
   if (_downloadOutputLooksActive(task)) return false;
-  return ['done', 'stopped', 'error', 'crashed', 'failed'].includes(task.status);
+  return _isTerminalStatus(task);
+}
+
+// A still-"live" task: running/queued, or a serve that has reached
+// `ready`/`unreachable` (still a running process, just past startup). Used by
+// the active-count badge and port reservation. Without this, the #6
+// ready-marker made serves uncountable and allowed port reuse.
+function _isTaskLive(task) {
+  if (!task) return false;
+  // A serve that has terminated (exited / crashed / stopped) is NOT live, even
+  // though `_serveReady` stays sticky-true from when it was up. Without this an
+  // exited serve keeps counting in the active badge and reserves its port in
+  // `_nextAvailablePort`, blocking a relaunch on the same port after a
+  // crash/stop.
+  if (_isTerminalStatus(task)) return false;
+  if (task.status === 'running' || task.status === 'queued') return true;
+  if (task.type === 'serve' && (task.status === 'ready' || task._serveReady || task.status === 'unreachable')) return true;
+  return false;
+}
+
+// Live and actually started. Queued tasks still count as active/reserve ports,
+// but Stop and Stop all should not cancel downloads that have not started yet.
+function _isTaskStoppable(task) {
+  return _isTaskLive(task) && task.status !== 'queued';
 }
 
 function _clearPillLabel(task) {
@@ -280,12 +314,33 @@ const BG_MONITOR_INTERVAL_MS = 5000;      // background task status poll
 const STALE_PROGRESS_MS = 5 * 60 * 1000;  // download with no progress this long = stale
 const STARTUP_STALE_PROGRESS_MS = 45 * 1000; // 0%-forever startup stall: retry much sooner
 
-// ── Phase detection (mirrors Python _parse_serve_phase in cookbook_routes.py) ──
+// True when the serve process has exited and no ready marker appears after the
+// last exit marker — i.e. it is down, even though the scrollback still holds an
+// earlier "server is listening"/startup line. A crashed llama-server keeps BOTH
+// that line AND the runner's "=== Process exited with code N ===" marker (the
+// runner ends with `exec bash -i`, so the pane lingers). Odysseus never
+// relaunches inside an existing pane — restart kills the session and starts a
+// fresh one — so an exit marker that is the last activity is conclusive.
+// KEEP IN SYNC with the Python mirror (_parse_serve_phase in cookbook_helpers.py).
+function _serveExitedNotReady(flat) {
+  const exitRe = /=== Process exited with code -?\d+ ===/gi;
+  let lastExit = -1, m;
+  while ((m = exitRe.exec(flat))) lastExit = m.index;
+  if (lastExit < 0) return false;
+  const after = flat.slice(lastExit);
+  return !/server is listening on https?:\/\/|Application startup complete|Ollama API ready on port\s+\d+|generation throughput:\s*[\d.]+\s*tokens\/s|(?:GET|POST)\s+\/[^\s]*\s+HTTP\/[\d.]+"\s*2\d\d/i.test(after);
+}
+
+// ── Phase detection (mirrors Python _parse_serve_phase in cookbook_helpers.py) ──
 // Single source of truth for serve task status. KEEP IN SYNC with the Python version.
 export function _parseServePhase(snapshot) {
   if (!snapshot) return {};
   // Strip newlines so tmux line-wrapping doesn't break regex matching
   const flat = snapshot.replace(/\s+/g, ' ');
+  // A serve whose process has exited is never "ready", even though its
+  // scrollback still holds the earlier listening/startup line — don't let a
+  // dead serve register an endpoint or overwrite its stopped/error status.
+  if (_serveExitedNotReady(flat)) return {};
   const loadMatches = [...flat.matchAll(/Loading safetensors.*?(\d+)%/g)];
   // "Downloading (incomplete total...)" tracks real aggregate bytes; prefer it
   // over "Fetching N files" which only counts fully-closed files and lags badly
@@ -313,6 +368,13 @@ export function _parseServePhase(snapshot) {
     return { phase: 'ready', status: 'ready' };
   }
   if (/Ollama API ready on port\s+\d+/i.test(flat)) {
+    return { phase: 'ready', status: 'ready' };
+  }
+  // Native llama.cpp llama-server: ready once it logs its listening address.
+  // Must precede the build/loading running-markers below (all present in the
+  // scrollback once up). Mirrors the backend _parse_serve_phase fix (#6); this
+  // is what flips task._serveReady -> auto-proxy registers the endpoint.
+  if (/server is listening on https?:\/\//i.test(flat)) {
     return { phase: 'ready', status: 'ready' };
   }
   const llamaBuildMatches = [...flat.matchAll(/\[\s*(\d{1,3})%\]\s*(?:Building|Linking)/gi)];
@@ -356,14 +418,52 @@ export function _parseServePhase(snapshot) {
 
 // ── Port auto-increment ──
 
+// Robust port extraction from a serve command — handles `--port 8000`,
+// `--port=8000`, and `-p 8000`/`-p=8000`. Narrow `--port \d+`-only parsing
+// missed the other forms, causing port reuse and wrong probe/base URLs.
+// When the command carries no explicit port, fall back to the backend's
+// documented default (llama.cpp's llama-server binds 8080, Ollama 11434) so a
+// default-port serve isn't mistaken for 8000 — which would let `_nextAvailablePort`
+// hand 8080 to a second serve (collision) and make reachability probe the wrong
+// port. Mirrors the backend register path's port fallback.
+function _portFromCmd(cmd, opts = {}) {
+  const c = cmd || '';
+  const m = c.match(/--port[=\s]+(\d+)/)
+    || c.match(/(?:^|\s)-p[=\s]+(\d+)/)
+    || c.match(/(?:^|\s)OLLAMA_HOST=(?:https?:\/\/)?(?:\[[^\]]+\]|[^\s:]+):(\d+)/);
+  if (m) return m[1];
+  if (opts.explicitOnly) return null;
+  if (/ollama/i.test(c)) return '11434';
+  if (/llama[-_]?server|llama[._]?cpp/i.test(c)) return '8080';
+  return null;
+}
+
+function _serveEndpointForRegistration(cmd, snapshot, host, responsePort = null) {
+  const out = String(snapshot || '');
+  const explicitPort = _portFromCmd(cmd, { explicitOnly: true });
+  const snapshotPort = out.match(/(?:listening|running) on\s+https?:\/\/[^\s]*?:(\d+)/i)?.[1]
+    || out.match(/Uvicorn running on\D*?:(\d+)/i)?.[1]
+    || out.match(/running on\D*?:(\d+)/i)?.[1]
+    || out.match(/listening on\D*?:(\d+)/i)?.[1]
+    || out.match(/port[:=\s]+(\d+)/i)?.[1];
+  let port = explicitPort || snapshotPort || _portFromCmd(cmd) || (responsePort ? String(responsePort) : '') || '8000';
+  let baseUrl = `http://${host}:${port}/v1`;
+  const ollamaUrlMatch = String(snapshot || '').match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
+  if (ollamaUrlMatch) {
+    const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
+    if (endpoint) ({ host, port, baseUrl } = endpoint);
+  }
+  return { host, port, baseUrl };
+}
+
 function _nextAvailablePort() {
   const tasks = _loadTasks();
   const presets = _loadPresets();
   const usedPorts = new Set();
   tasks.forEach(t => {
-    if (t.type === 'serve' && (t.status === 'running' || t.status === 'queued')) {
-      const m = t.payload?._cmd?.match(/--port\s+(\d+)/);
-      if (m) usedPorts.add(parseInt(m[1]));
+    if (t.type === 'serve' && _isTaskLive(t)) {  // incl. 'ready' serves — else their port gets reused -> collision
+      const p = _portFromCmd(t.payload?._cmd);
+      if (p) usedPorts.add(parseInt(p));
     }
   });
   presets.forEach(p => {
@@ -545,6 +645,7 @@ function _serveOutputLooksReady(task) {
   return !!task?._serveReady
     || /Application startup complete/i.test(out)
     || /Ollama API ready on port\s+\d+/i.test(out)
+    || /server is listening on https?:\/\//i.test(out)
     || /(?:GET|POST)\s+\/[^\s]*\s+HTTP\/[\d.]+"\s*2\d\d/i.test(out);
 }
 
@@ -904,13 +1005,9 @@ function _ollamaUnloadCommand(task, outputText = '') {
 }
 
 function _endpointUrlForTask(task, outputText = '') {
-  if (_taskLooksOllama(task, outputText)) {
-    return _ollamaBaseUrlForTask(task, outputText) + '/v1';
-  }
+  if (task?._registeredBaseUrl) return task._registeredBaseUrl;
   const host = _connectHostFromRemote(task.remoteHost);
-  const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
-  const port = portMatch ? portMatch[1] : '8000';
-  return `http://${host}:${port}/v1`;
+  return _serveEndpointForRegistration(task.payload?._cmd || '', outputText, host).baseUrl;
 }
 
 // ── Wave animation ──
@@ -1671,8 +1768,7 @@ export function _renderRunningTab() {
   // 'crashed' (before auto-reconnect catches it) would read as "Running 0"
   // even when the model is actively downloading on the host.
   const activeCount = tasks.filter(t =>
-    t.status === 'running'
-    || t.status === 'queued'
+    _isTaskLive(t)
     || _downloadOutputLooksActive(t)
   ).length;
   const activeCountHtml = activeCount ? ` <span class="cookbook-tab-count">${activeCount}</span>` : '';
@@ -1814,7 +1910,7 @@ export function _renderRunningTab() {
       // every task on this server is still running (nothing finished to
       // clear yet) — the previous behavior looked like the button was dead.
       if (!toRemove.length) {
-        const stillRunning = allTasks.filter(t => (t.remoteHost || '') === host && t.status === 'running').length;
+        const stillRunning = allTasks.filter(t => (t.remoteHost || '') === host && _isTaskLive(t)).length;
         const _msg = stillRunning
           ? `No finished tasks on ${_serverName(host)} — ${stillRunning} still running. Stop them first to clear.`
           : `No finished tasks on ${_serverName(host)}.`;
@@ -1857,7 +1953,7 @@ export function _renderRunningTab() {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();  // don't toggle the section collapse
       const host = btn.dataset.stopServer;
-      const running = _loadTasks().filter(t => (t.remoteHost || '') === host && t.status === 'running');
+      const running = _loadTasks().filter(t => (t.remoteHost || '') === host && _isTaskStoppable(t));
       if (!running.length) { uiModule.showToast(`Nothing running on ${_serverName(host)}`); return; }
       if (!await window.styledConfirm(`Stop ${running.length} running task${running.length > 1 ? 's' : ''} on ${_serverName(host)}?`, { confirmText: 'Stop all' })) return;
       // Mark every task as user-stopped BEFORE firing the kills so that the
@@ -1953,13 +2049,13 @@ export function _renderRunningTab() {
     if (existingIds.has(task.sessionId)) continue;
 
     const el = document.createElement('div');
-    el.className = 'cookbook-task' + (task._unreachable && task.status === 'running' ? ' cookbook-task-unreachable' : '');
+    el.className = 'cookbook-task' + (task._unreachable && (task.status === 'running' || (task._serveReady && !_isTerminalStatus(task))) ? ' cookbook-task-unreachable' : '');
     el.dataset.taskId = task.sessionId;
     el.dataset.status = task.status;
     el.dataset.type = task.type || '';
 
     const _bdg = _taskBadge(task);
-    const _bdgTitle = (task._unreachable && task.status === 'running') ? ' title="Server not responding — it may have crashed"' : '';
+    const _bdgTitle = (task._unreachable && (task.status === 'running' || (task._serveReady && !_isTerminalStatus(task)))) ? ' title="Server not responding — it may have crashed"' : '';
     el.innerHTML = `
       <div class="cookbook-task-header">
         <span class="cookbook-task-type${(task.status === 'done' && task.type === 'download') ? ' cookbook-task-type-done' : ''}" data-type="${esc(task.type)}">${esc((task.status === 'done' && task.type === 'download') ? 'finished' : task.type)}</span>
@@ -1969,7 +2065,7 @@ export function _renderRunningTab() {
         <span class="cookbook-task-status ${_bdg.cls}"${_bdgTitle}>${esc(_bdg.text)}</span>
         <button class="cookbook-task-menu-btn" title="Actions">&#8942;</button>
       </div>
-      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && task.status === 'running') ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
+      <div class="cookbook-task-sub"><span class="cookbook-task-session">${esc(task.sessionId)}</span><span class="cookbook-task-uptime" style="display:${((task.type === 'serve' || task.type === 'download') && (task.status === 'running' || (task._serveReady && !_isTerminalStatus(task)))) ? '' : 'none'}"></span>${(task.type === 'download') ? `<span class="cookbook-task-dldir" title="Download destination" style="font-size:9px;color:var(--fg-muted);font-family:'Fira Code',monospace;opacity:0.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;">Dir: ${esc(task.payload?.local_dir || '~/.cache/huggingface/hub')}</span>` : ''}</div>
       <div class="cookbook-output-wrap cookbook-task-collapsible${_mobileCollapseDefault ? ' cookbook-task-collapsed' : ''}"><pre class="cookbook-output-pre">${esc(task.output || '')}</pre><button type="button" class="copy-code cookbook-output-copy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
     `;
 
@@ -1983,7 +2079,7 @@ export function _renderRunningTab() {
     }
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
-    if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && task.status === 'running') {
+    if (_uptimeEl && (task.type === 'serve' || task.type === 'download') && (task.status === 'running' || (task._serveReady && !_isTerminalStatus(task)))) {
       const _startedAt = task.ts || Date.now();
       const _prefix = task.type === 'download' ? 'downloading' : 'uptime';
       el._uptimeInterval = setInterval(() => {
@@ -2170,7 +2266,7 @@ export function _renderRunningTab() {
         if (task.status !== 'running' && task.status !== 'queued') {
           items.push({ group: 'run', label: 'Reconnect tmux', action: 'reconnect' });
         }
-        if (task.status === 'running') {
+        if (_isTaskStoppable(task)) {
           items.push({ group: 'run', label: 'Stop', action: 'stop', danger: true });
         }
         items.push({ group: 'run', label: 'Restart', action: 'retry' });
@@ -2653,7 +2749,13 @@ async function _reconnectTask(el, task) {
           const pipLooksSuccessful = _isPipTask
             && /Successfully installed|Requirement already (?:satisfied|up-to-date)/i.test(lastOutput)
             && !/error:|ERROR:/.test(lastOutput.slice(-1024));
-          const serveLooksReady = task.type === 'serve' && _serveOutputLooksReady({ ...task, output: lastOutput });
+          // A captured exit marker with no ready line after it means the serve
+          // crashed/stopped — don't let its earlier "server is listening"/startup
+          // line in the scrollback make it "look successful" and get marked done
+          // instead of crashed. Mirrors the _parseServePhase exit guard.
+          const serveLooksReady = task.type === 'serve'
+            && !_serveExitedNotReady(lastOutput.replace(/\s+/g, ' '))
+            && _serveOutputLooksReady({ ...task, output: lastOutput });
           // Dependency installs are tracked as download tasks but finish with a
           // pip exit-0 sentinel, not HF download markers — check that too.
           // Standalone pip-* serves finish with pip's own success line, not
@@ -3145,19 +3247,9 @@ async function _reconnectTask(el, task) {
         if (task.type === 'serve' && !task._endpointAdded && !task._endpointAddInFlight && task._serveReady) {
           task._endpointAddInFlight = true;
           let host = _connectHostFromRemote(task.remoteHost);
-          const portMatch = task.payload?._cmd?.match(/--port[=\s]+(\d+)/)
-            || task.payload?._cmd?.match(/(?:^|\s)-p[=\s]+(\d+)/)
-            || snapshot.match(/Uvicorn running on\D*?:(\d+)/i)
-            || snapshot.match(/running on\D*?:(\d+)/i)
-            || snapshot.match(/listening on\D*?:(\d+)/i)
-            || snapshot.match(/port[:=\s]+(\d+)/i);
-          let port = portMatch ? portMatch[1] : '8000';
-          let baseUrl = `http://${host}:${port}/v1`;
-          const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
-          if (ollamaUrlMatch) {
-            const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
-            if (endpoint) ({ host, port, baseUrl } = endpoint);
-          }
+          const _regCmd = task.payload?._cmd || '';
+          let port, baseUrl;
+          ({ host, port, baseUrl } = _serveEndpointForRegistration(_regCmd, snapshot, host, task.port));
           fetch('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
             .then(async (eps) => {
@@ -3170,7 +3262,8 @@ async function _reconnectTask(el, task) {
                 // refresh the picker (and probe until online) so the new model
                 // shows up without the user having to manually refresh.
                 task._endpointAdded = true;
-                _updateTask(task.sessionId, { _endpointAdded: true });
+                task._registeredBaseUrl = baseUrl;
+                _updateTask(task.sessionId, { _endpointAdded: true, _registeredBaseUrl: baseUrl });
                 _autoSaveWorkingConfig(task);   // endpoint live → remember these settings
                 if (window.modelsModule?.refreshModels) await window.modelsModule.refreshModels(true);
                 if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
@@ -3192,7 +3285,8 @@ async function _reconnectTask(el, task) {
               if (res && res.ok) {
                 // Flip the flag only on confirmed success
                 task._endpointAdded = true;
-                _updateTask(task.sessionId, { _endpointAdded: true });
+                task._registeredBaseUrl = baseUrl;
+                _updateTask(task.sessionId, { _endpointAdded: true, _registeredBaseUrl: baseUrl });
                 _autoSaveWorkingConfig(task);   // endpoint live → remember these settings
                 uiModule.showToast(`Model endpoint added: ${host}:${port}`);
                 // Retry-probe until the warming server answers, so it
@@ -3268,6 +3362,7 @@ async function _reconnectTask(el, task) {
 // ── Background monitor ──
 
 let _bgMonitorInterval = null;
+const _bgRegisterInFlight = new Set();  // session_ids with an in-flight bg endpoint POST (in-memory; not persisted)
 
 // Reachability check for running serve tasks. The tmux pane can stay alive
 // while the model server inside it has crashed (so no "Process exited" line
@@ -3277,7 +3372,7 @@ let _bgMonitorInterval = null;
 async function _checkServeReachability() {
   let serveTasks;
   try {
-    serveTasks = _loadTasks().filter(t => t.type === 'serve' && t.status === 'running');
+    serveTasks = _loadTasks().filter(t => t.type === 'serve' && t.status !== 'queued' && _isTaskLive(t));  // started serves (incl. ready); skip not-yet-started 'queued'
   } catch { return; }
   if (!serveTasks.length) return;
   let eps = [], probe = {};
@@ -3289,9 +3384,12 @@ async function _checkServeReachability() {
   } catch { return; }
   for (const task of serveTasks) {
     const host = _connectHostFromRemote(task.remoteHost);
-    const portMatch = task.payload?._cmd?.match(/--port\s+(\d+)/);
-    const port = portMatch ? portMatch[1] : '8000';
-    const baseUrl = `http://${host}:${port}/v1`;
+    // Prefer the URL the endpoint was actually registered with — registration
+    // can use a port discovered from the serve output/response (e.g. the Ollama
+    // runner bumping 11434 -> 11435 when 11434 is busy) that _portFromCmd alone
+    // wouldn't know about. Fall back to the same resolver registration uses.
+    const baseUrl = task._registeredBaseUrl
+      || _serveEndpointForRegistration(task.payload?._cmd || '', task.output || '', host).baseUrl;
     const ep = (eps || []).find(e => e.base_url === baseUrl);
     if (!ep) continue;                       // not registered yet — can't judge
     const pr = probe[ep.id];
@@ -3657,41 +3755,37 @@ async function _pollBackgroundStatus() {
       const localTasks = _loadTasks();
       const localTask = localTasks.find(lt => lt.sessionId === t.session_id);
       if (localTask && localTask._endpointAdded) continue;
+      if (_bgRegisterInFlight.has(t.session_id)) continue;
 
       let host = _connectHostFromRemote(localTask?.remoteHost || t.remote);
-      const portMatch = localTask?.payload?._cmd?.match(/--port\s+(\d+)/)
-        || localTask?.payload?._cmd?.match(/OLLAMA_HOST=[^\s:]+:(\d+)/);
-      let port = portMatch ? portMatch[1] : '8000';
-      let baseUrl = `http://${host}:${port}/v1`;
       const snapshot = t.output || localTask?.output || '';
-      const ollamaUrlMatch = snapshot.match(/Ollama API ready on port\s+\d+:\s*(http:\/\/[^\s]+)/i);
-      if (ollamaUrlMatch) {
-        const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
-        if (endpoint) ({ host, port, baseUrl } = endpoint);
-      }
-      const _isDiffusion = localTask?.payload?._cmd?.includes('diffusion_server');
+      const _cmd = localTask?.payload?._cmd || t.cmd || '';
+      let port, baseUrl;
+      ({ host, port, baseUrl } = _serveEndpointForRegistration(_cmd, snapshot, host, t.port));
+      const _isDiffusion = _cmd.includes('diffusion_server');
 
-      _updateTask(t.session_id, { _serveReady: true, _endpointAdded: true });
-      if (localTask) _autoSaveWorkingConfig(localTask);   // remember working settings (modal may be closed)
+      _bgRegisterInFlight.add(t.session_id);
+      _updateTask(t.session_id, { _serveReady: true });
 
       // Auto-detect function-calling support from the serve cmd.
       // vLLM emits OpenAI-style tool_calls only when launched with
       // `--enable-auto-tool-choice`; local-only models otherwise
       // hallucinate a fake [TOOL_CALL]...[/TOOL_CALL] text format
       // the backend can't parse.
-      const _cmd = localTask?.payload?._cmd || '';
       const _supportsTools = _cmd.includes('--enable-auto-tool-choice') || _isDiffusion === false && /(?:^|\s)(?:deepseek|gpt-[45o]|claude|gemini|qwen3|qwen2\.5|mixtral|llama-[34]|minimax|kimi|hermes|glm-4)/i.test(t.model);
 
       fetch('/api/model-endpoints', { credentials: 'same-origin' })
         .then(r => r.json())
         .then(eps => {
           const hostPort = `${host}:${port}`;
-          const existing = eps.find(e => e.base_url === baseUrl || e.base_url.includes(hostPort) || e.name === t.model);
+          const existing = eps.find(e => e.base_url === baseUrl || e.base_url.includes(hostPort));
           if (existing) {
             // Already registered — but it may be showing offline because
             // it was added while the server was still warming. Kick a
             // re-probe so it flips online without manual toggle.
             if (!(existing.models || []).length) _probeEndpointUntilOnline(existing.id, host, port);
+            _updateTask(t.session_id, { _endpointAdded: true, _registeredBaseUrl: baseUrl });
+            if (localTask) _autoSaveWorkingConfig(localTask);   // remember working settings (modal may be closed)
             return null;
           }
           const fd = new FormData();
@@ -3705,6 +3799,8 @@ async function _pollBackgroundStatus() {
         })
         .then(async (res) => {
           if (res && res.ok) {
+            _updateTask(t.session_id, { _endpointAdded: true, _registeredBaseUrl: baseUrl });
+            if (localTask) _autoSaveWorkingConfig(localTask);   // remember working settings (modal may be closed)
             uiModule.showToast(`Model endpoint added: ${host}:${port}`);
             const data = await res.json().catch(() => ({}));
             // A just-started server often can't answer the 1s add-time
@@ -3715,7 +3811,8 @@ async function _pollBackgroundStatus() {
             if (window.sessionModule?.updateModelPicker) window.sessionModule.updateModelPicker();
           }
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { _bgRegisterInFlight.delete(t.session_id); });
     }
 
     if (errorTasks.length > 0) {

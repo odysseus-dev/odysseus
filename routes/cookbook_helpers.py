@@ -892,6 +892,25 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
         return {}
     # Strip newlines so tmux line-wrapping doesn't break regex matching
     flat = re.sub(r'\s+', ' ', snapshot)
+    # A serve whose process has exited is never "ready", even though its
+    # scrollback still holds the earlier "server is listening"/startup line. A
+    # crashed llama-server keeps BOTH that line and the runner's "=== Process
+    # exited with code N ===" marker (the runner ends with `exec bash -i`, so the
+    # pane lingers), so a naive ready match would overwrite a stopped/error status
+    # with "ready". Odysseus never relaunches inside an existing pane — restart
+    # kills the session and starts a fresh one — so the LAST exit marker is
+    # terminal unless a ready marker appears after it. KEEP IN SYNC with the JS
+    # mirror (_serveExitedNotReady in cookbookRunning.js).
+    _exit_iter = list(re.finditer(r'=== Process exited with code -?\d+ ===', flat))
+    if _exit_iter:
+        _after = flat[_exit_iter[-1].start():]
+        if not re.search(
+            r'server is listening on https?://|Application startup complete|'
+            r'Ollama API ready on port\s+\d+|generation throughput:\s*[\d.]+\s*tokens/s|'
+            r'(?:GET|POST)\s+/[^\s]*\s+HTTP/[\d.]+"\s*2\d\d',
+            _after, re.I,
+        ):
+            return {}
 
     load_matches = re.findall(r'Loading safetensors.*?(\d+)%', flat)
     # Prefer "Downloading (incomplete total...)" (real aggregate bytes) over
@@ -924,6 +943,11 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
     # HTTP access logs (e.g. GET /v1/models 200 OK) mean the server is up and serving
     if re.search(r'(?:GET|POST)\s+/[^\s]*\s+HTTP/[\d.]+"\s*\d{3}', flat):
         return {"phase": "idle", "status": "ready"}
+    # Native llama.cpp `llama-server` is ready once it logs its listening address
+    # ("server is listening on http://..."). Check BEFORE the "Loading weights"
+    # running-marker below — both lines are present in the scrollback once it's up.
+    if re.search(r'server is listening on https?://', flat, re.I):
+        return {"phase": "ready", "status": "ready"}
     if "Loading weights took" in flat:
         return {"phase": "initializing", "status": "running"}
     # "GPU KV cache" alone (during allocation) — not "GPU KV cache usage" (runtime log)
