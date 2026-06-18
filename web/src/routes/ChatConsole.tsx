@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
-import { MoreHorizontal, Download, Copy } from "lucide-react"
+import { MoreHorizontal, Download, Copy, EyeOff } from "lucide-react"
 import { useChat } from "@/lib/useChat"
+import { useComposer } from "@/stores/composer"
 import { useSessions } from "@/api/sessions"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
@@ -43,6 +44,7 @@ export function ChatConsole() {
   const { sessionId } = useParams()
   const { messages, streaming, send, stop } = useChat(sessionId)
   const { data: sessions } = useSessions()
+  const incognito = useComposer((s) => s.incognito)
   const title = sessions?.find((s) => s.id === sessionId)?.name
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages])
@@ -51,7 +53,14 @@ export function ChatConsole() {
     <div className="flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-13 shrink-0 items-center justify-between border-b px-4 text-sm font-medium text-foreground">
-          <span className="truncate">{title || "New chat"}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate">{incognito ? "Incognito chat" : (title || "New chat")}</span>
+            {incognito && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <EyeOff className="size-3" /> Not saved
+              </span>
+            )}
+          </span>
           {sessionId && messages.length > 0 && <ExportMenu sid={sessionId} messages={messages} />}
         </header>
         <div ref={scrollRef} className="flex-1 overflow-y-auto">

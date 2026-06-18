@@ -34,6 +34,13 @@ function ThemedApp() {
   const font = useUi((s) => s.font)
   const density = useUi((s) => s.density)
   const { pathname } = useLocation()
+  // Key the error boundary by the top-level route segment, NOT the full path.
+  // `/chat/:sessionId?` matches both `/chat` and `/chat/{id}`, so React Router
+  // keeps ChatConsole mounted across a new-chat navigation — but keying by the
+  // full pathname would change the key and force-remount it, orphaning the
+  // in-flight stream (reply only reappears on manual refresh). Switching to a
+  // different feature still changes the segment and resets the boundary.
+  const routeKey = pathname.split("/")[1] || "home"
   useEffect(() => { document.documentElement.classList.toggle("dark", theme === "dark") }, [theme])
   useEffect(() => {
     const root = document.documentElement
@@ -44,7 +51,7 @@ function ThemedApp() {
   }, [accent, font, density])
   return (
     <AppShell>
-      <ErrorBoundary key={pathname}>
+      <ErrorBoundary key={routeKey}>
         <Routes>
           <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/chat/:sessionId?" element={<ChatConsole />} />

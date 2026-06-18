@@ -48,6 +48,7 @@ export function useChat(sessionId?: string) {
   const sidRef = useRef<string | undefined>(sessionId)
   const seededRef = useRef<string | null>(null)
   const resumeRef = useRef<string | null>(null)
+  const incognitoSidRef = useRef<string | null>(null) // ephemeral incognito session to delete on leave
   const rawRef = useRef<string>("")          // full assistant text this stream (for fence parsing)
   const artifactRef = useRef<string | null>(null) // title of the doc currently open in the panel
   const { data: history } = useHistory(sessionId)
@@ -138,15 +139,49 @@ export function useChat(sessionId?: string) {
     }
   }, [patchAi])
 
+  // Delete the ephemeral incognito session. Incognito messages are never
+  // persisted server-side, so the session is an empty shell — dropping it on
+  // leave keeps it out of recents (mirrors legacy _cleanupIncognitoSessions).
+  // We do NOT name it "Incognito" because the backend deletes such rows
+  // mid-flight (auto-sort + lazy purge) and 404s the stream.
+  const dropIncognito = useCallback(() => {
+    const inco = incognitoSidRef.current
+    incognitoSidRef.current = null
+    if (inco) {
+      fetch(`/api/session/${inco}`, { method: "DELETE", credentials: "same-origin", keepalive: true })
+        .then(() => qc.invalidateQueries({ queryKey: ["sessions"] }))
+        .catch(() => { /* best-effort cleanup */ })
+    }
+  }, [qc])
+
   const send = useCallback(async (text: string, attachmentIds?: string[], sendAs?: string) => {
     if (!text.trim() || streaming) return
+    // Resolve a model up-front. ModelPicker seeds composer.model from
+    // /api/default-chat on mount, but a send fired before that resolves (very
+    // first visit, empty persisted store) would create a model-less session,
+    // which chat_stream rejects with a 404. Fall back to the default so the
+    // first send never silently fails.
+    let model = composer.model, endpointId = composer.endpointId, endpointUrl = composer.endpointUrl
+    if (!model) {
+      try {
+        const def = await fetch("/api/default-chat", { credentials: "same-origin" }).then((r) => r.json())
+        if (def?.model) { model = def.model; endpointId = def.endpoint_id || endpointId; endpointUrl = def.endpoint_url || endpointUrl }
+      } catch { /* backend still surfaces a clear "pick a model" message if empty */ }
+    }
     let sid = sidRef.current
     if (!sid) {
+      // New chat: clean up any prior ephemeral incognito session first.
+      dropIncognito()
       const s = await createSession({
-        name: text.slice(0, 48) || "New chat",
-        model: composer.model, endpoint_id: composer.endpointId, endpoint_url: composer.endpointUrl,
+        // Name incognito chats generically so the topic never shows in the
+        // sidebar; incognito skips server-side auto-rename so this name sticks.
+        // It's a normal name (not "Incognito") so the stream isn't 404'd — we
+        // delete the session ourselves on leave instead.
+        name: composer.incognito ? "New chat" : (text.slice(0, 48) || "New chat"),
+        model, endpoint_id: endpointId, endpoint_url: endpointUrl,
       })
       sid = s.id; sidRef.current = sid; seededRef.current = sid
+      if (composer.incognito) incognitoSidRef.current = sid
       qc.invalidateQueries({ queryKey: ["sessions"] })
       navigate(`/chat/${sid}`, { replace: true })
     } else {
@@ -167,21 +202,39 @@ export function useChat(sessionId?: string) {
     if (composer.useResearch) fd.set("use_research", "true")
     if (!composer.useRag) fd.set("use_rag", "false")
     if (composer.incognito) fd.set("incognito", "true")
-    if (composer.model) fd.set("model", composer.model)
-    if (composer.endpointId) fd.set("endpoint_id", composer.endpointId)
+    if (model) fd.set("model", model)
+    if (endpointId) fd.set("endpoint_id", endpointId)
     if (composer.presetId) fd.set("preset_id", composer.presetId)
 
     const ctrl = new AbortController(); abortRef.current = ctrl
     try {
       await streamChat(fd, (e: SseEvent) => handleEvent(e, sid!), ctrl.signal)
-    } catch {
-      patchAi((m) => ({ ...m, content: m.content || "_(stream interrupted)_" }))
+    } catch (err) {
+      // Don't swallow real failures — a user Stop / unmount aborts the fetch
+      // (AbortError) and is expected; anything else is a genuine stream error.
+      if ((err as Error)?.name !== "AbortError") {
+        console.error("chat stream failed:", err)
+        patchAi((m) => ({ ...m, content: m.content || "_(stream interrupted)_" }))
+      }
     } finally {
       patchAi((m) => ({ ...m, streaming: false }))
       setStreaming(false); abortRef.current = null
       qc.invalidateQueries({ queryKey: ["sessions"] })
     }
-  }, [streaming, composer, navigate, qc, handleEvent, patchAi])
+  }, [streaming, composer, navigate, qc, handleEvent, patchAi, dropIncognito])
+
+  // Clean up the ephemeral incognito session when leaving: on SPA unmount
+  // (in-app route change) AND on pagehide (tab close / refresh / hard nav),
+  // where React effect cleanups don't run. keepalive lets the DELETE finish
+  // as the page unloads.
+  useEffect(() => {
+    const onHide = () => {
+      const inco = incognitoSidRef.current
+      if (inco) fetch(`/api/session/${inco}`, { method: "DELETE", credentials: "same-origin", keepalive: true }).catch(() => { /* best-effort */ })
+    }
+    window.addEventListener("pagehide", onHide)
+    return () => { window.removeEventListener("pagehide", onHide); dropIncognito() }
+  }, [dropIncognito])
 
   const stop = useCallback(async () => {
     abortRef.current?.abort()
