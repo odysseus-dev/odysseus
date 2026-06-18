@@ -22,10 +22,15 @@ const UNSNAP_PX = 80;
 const MIN_CHAT_WIDTH = 380;
 const EMAIL_DOC_SPLIT_WIDTH_KEY = 'odysseus-email-doc-split-width';
 const EDGE_DOCK_WIDTH_KEY_PREFIX = 'odysseus-edge-dock-width';
-// 360 CSS px is the common Android phone layout width. Keep docked panels
-// usable down to that point, then let the mobile/full-width rules take over.
+// 360 CSS px is a common Android phone layout width. Desktop/touch-landscape
+// docks keep the wider floor; compact widths leave a visible chat strip.
 const MIN_EDGE_DOCK_WIDTH = 360;
+const MIN_COMPACT_EDGE_DOCK_WIDTH = 280;
+const COMPACT_EDGE_DOCK_RATIO = 0.84;
 const MOBILE_DOCK_BREAKPOINT = 768;
+const TOUCH_LANDSCAPE_SPLIT_ADJUST_PX = 96;
+const TOUCH_LANDSCAPE_SPLIT_HIT_PX = 18;
+const EDGE_DOCK_RESIZE_HANDLE_PX = 10;
 
 let _edgeDockHandlePositioner = null;
 let _edgeDockHandlePositionRaf = 0;
@@ -76,6 +81,7 @@ export function clearDockSide(side, owner = null) {
   if (_hasOtherDockedWindow(side, owner)) return;
   document.body.classList.remove(side === 'left' ? 'left-dock-active' : 'right-dock-active');
   document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-w' : '--right-dock-w');
+  document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-reserve-w' : '--right-dock-reserve-w');
   if (side === 'left') {
     try { window._restoreSidebarIfRouteCollapsed?.(); } catch (_) {}
   }
@@ -84,6 +90,13 @@ export function clearDockSide(side, owner = null) {
 
 // Default dock width: ~38% of viewport, clamped to a reasonable band.
 function _defaultDockWidth() {
+  if (_isTouchLandscape()) return _touchLandscapeDockWidth();
+  if (_compactDockViewport()) {
+    return Math.max(
+      _minEdgeDockWidth(),
+      Math.round(window.innerWidth * COMPACT_EDGE_DOCK_RATIO),
+    );
+  }
   return Math.min(640, Math.max(420, Math.round(window.innerWidth * 0.38)));
 }
 
@@ -115,7 +128,8 @@ function _compactDockViewport() {
 
 function _minEdgeDockWidth(available = window.innerWidth) {
   const usable = Math.max(0, Math.round(available));
-  return usable > 0 ? Math.min(MIN_EDGE_DOCK_WIDTH, usable) : MIN_EDGE_DOCK_WIDTH;
+  const floor = _compactDockViewport() ? MIN_COMPACT_EDGE_DOCK_WIDTH : MIN_EDGE_DOCK_WIDTH;
+  return usable > 0 ? Math.min(floor, usable) : floor;
 }
 
 function _activeDockWidth(side) {
@@ -128,6 +142,111 @@ function _activeDockWidth(side) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+function _isElementVisible(el) {
+  if (!el) return false;
+  const cs = window.getComputedStyle(el);
+  return cs.display !== 'none' && cs.visibility !== 'hidden';
+}
+
+function _isTouchInput() {
+  return window.matchMedia('(pointer: coarse)').matches ||
+    window.matchMedia('(hover: none)').matches ||
+    navigator.maxTouchPoints > 0 ||
+    'ontouchstart' in window;
+}
+
+function _isTouchLandscape() {
+  return window.matchMedia('(orientation: landscape)').matches && _isTouchInput();
+}
+
+export function canUseEdgeDock() {
+  return !_isTouchInput() || _isTouchLandscape();
+}
+
+function _isLeftAnchoredRect(rect) {
+  return !!rect && rect.width > 0 && rect.left <= 1;
+}
+
+function _isRightAnchoredRect(rect) {
+  return !!rect && rect.width > 0 && rect.right >= window.innerWidth - 1;
+}
+
+function _rightNavWidth() {
+  const sidebar = document.getElementById('sidebar');
+  const rail = document.getElementById('icon-rail');
+  let w = 0;
+  if (sidebar && !sidebar.classList.contains('hidden') && _isElementVisible(sidebar)) {
+    const r = sidebar.getBoundingClientRect();
+    if (sidebar.classList.contains('right-side') || _isRightAnchoredRect(r)) w = Math.max(w, r.width);
+  }
+  if (rail && _isElementVisible(rail)) {
+    const r = rail.getBoundingClientRect();
+    if (rail.classList.contains('right-side') || _isRightAnchoredRect(r)) w = Math.max(w, r.width);
+  }
+  return Math.round(w);
+}
+
+function _dockWorkspaceEdges() {
+  const left = _leftNavRight();
+  const right = Math.max(left, window.innerWidth - _rightNavWidth());
+  return { left, right, width: Math.max(0, right - left) };
+}
+
+function _rightNavConsumesWorkspace() {
+  const sidebar = document.getElementById('sidebar');
+  if (!sidebar || sidebar.classList.contains('hidden') || !_isElementVisible(sidebar)) return false;
+  const r = sidebar.getBoundingClientRect();
+  return sidebar.classList.contains('right-side') || _isRightAnchoredRect(r);
+}
+
+function _touchLandscapeDockWidth() {
+  return _touchLandscapeDockBounds().base;
+}
+
+function _touchLandscapeDockBounds() {
+  const space = _dockWorkspaceEdges();
+  const base = Math.round(space.width / 2);
+  const minPane = Math.min(MIN_COMPACT_EDGE_DOCK_WIDTH, Math.floor(space.width / 2));
+  const maxDock = Math.max(minPane, space.width - minPane);
+  const limit = Math.max(0, Math.min(
+    TOUCH_LANDSCAPE_SPLIT_ADJUST_PX,
+    base - minPane,
+    maxDock - base,
+  ));
+  return {
+    base,
+    min: base - limit,
+    max: base + limit,
+  };
+}
+
+function _clampTouchLandscapeDockWidth(width) {
+  const bounds = _touchLandscapeDockBounds();
+  const requested = Number.isFinite(width) && width > 0 ? width : bounds.base;
+  return _clampDockWidthToSpace(requested, bounds.min, bounds.max);
+}
+
+function _rightDockReserveWidth(width) {
+  // The dock panel itself is offset away from the right nav. The chat only
+  // needs to reserve the panel width; adding the rail/sidebar again leaves a
+  // visible gap between chat and dock when the right menu is collapsed.
+  return width;
+}
+
+function _leftDockReserveWidth(width, left = _leftNavRight()) {
+  return _isTouchLandscape() ? left + width : width;
+}
+
+function _setRightDockVars(width) {
+  document.documentElement.style.setProperty('--right-dock-w', width + 'px');
+  document.documentElement.style.setProperty('--right-dock-reserve-w', _rightDockReserveWidth(width) + 'px');
+}
+
+function _setLeftDockVars(width, left = _leftNavRight()) {
+  document.documentElement.style.setProperty('--left-dock-w', width + 'px');
+  document.documentElement.style.setProperty('--left-dock-reserve-w', _leftDockReserveWidth(width, left) + 'px');
+}
+
 function _clampDockWidthToSpace(width, min, max) {
   const floor = Math.max(0, Math.round(min));
   const ceiling = Math.max(floor, Math.round(max));
@@ -135,19 +254,23 @@ function _clampDockWidthToSpace(width, min, max) {
 }
 
 function _clampRightDockWidth(width) {
+  if (_isTouchLandscape()) return _clampTouchLandscapeDockWidth(width);
+  const rightNav = _rightNavWidth();
+  const available = Math.max(0, window.innerWidth - rightNav);
   if (_compactDockViewport()) {
-    const max = window.innerWidth;
+    const max = available || window.innerWidth;
     return _clampDockWidthToSpace(width, _minEdgeDockWidth(max), max);
   }
   const min = _minEdgeDockWidth();
   const navRight = _leftNavRight();
   const leftDockW = _activeDockWidth('left');
-  const maxByChat = window.innerWidth - navRight - leftDockW - MIN_CHAT_WIDTH;
-  const max = Math.min(Math.round(window.innerWidth * 0.82), maxByChat);
+  const maxByChat = window.innerWidth - rightNav - navRight - leftDockW - MIN_CHAT_WIDTH;
+  const max = Math.min(Math.round(available * 0.82), maxByChat);
   return _clampDockWidthToSpace(width, min, max);
 }
 
 function _clampLeftDockWidth(width, left = _leftNavRight()) {
+  if (_isTouchLandscape()) return _clampTouchLandscapeDockWidth(width);
   const rightDockW = _activeDockWidth('right');
   const available = Math.max(0, window.innerWidth - left - rightDockW);
   const min = _minEdgeDockWidth(available);
@@ -157,6 +280,7 @@ function _clampLeftDockWidth(width, left = _leftNavRight()) {
 }
 
 function _preferredRightDockWidth(modal, content) {
+  if (_isTouchLandscape()) return content?._touchLandscapeDockWidth || _touchLandscapeDockWidth();
   return content?._userDockWidth || _storedDockWidth(modal, content, 'right') || _defaultDockWidth();
 }
 
@@ -165,7 +289,90 @@ function _resolveRightDockWidth(modal, content) {
 }
 
 function _resolveLeftDockWidth(content, left = _leftNavRight()) {
-  return _clampLeftDockWidth(content?._userDockWidth || _storedDockWidth(content?._dockOwner, content, 'left') || _resolveEmailDocSplitWidth(content, left), left);
+  const requested = _isTouchLandscape()
+    ? (content?._touchLandscapeDockWidth || _touchLandscapeDockWidth())
+    : (content?._userDockWidth || _storedDockWidth(content?._dockOwner, content, 'left') || _resolveEmailDocSplitWidth(content, left));
+  return _clampLeftDockWidth(requested, left);
+}
+
+function _forEachActiveDockedWindow(callback) {
+  const seen = new Set();
+  const selectors = [
+    '.modal-left-docked',
+    '.modal-right-docked',
+    '.email-snap-left',
+  ].join(', ');
+  document.querySelectorAll(selectors).forEach((owner) => {
+    if (!owner || seen.has(owner) || !_isActiveDockOwner(owner)) return;
+    seen.add(owner);
+    const content = _resolveDockNodes(owner)?.content;
+    if (!content) return;
+    const side = content._dockSide
+      || (owner.classList.contains('modal-right-docked') ? 'right' : 'left');
+    callback(owner, content, side);
+  });
+}
+
+function _anchorRightDock(content) {
+  if (!content || content._dockSide !== 'right') return;
+  const modal = content._dockOwner;
+  const requestedW = _preferredRightDockWidth(modal, content);
+  const w = _clampRightDockWidth(requestedW);
+  const rightOffset = _rightNavWidth();
+  content.style.left = 'auto';
+  content.style.right = rightOffset + 'px';
+  content.style.width = w + 'px';
+  content.style.maxWidth = w + 'px';
+  document.body.classList.add('right-dock-active');
+  _setRightDockVars(w, rightOffset);
+}
+
+function _reanchorActiveDocks() {
+  _forEachActiveDockedWindow((_owner, content, side) => {
+    if (side === 'right') _anchorRightDock(content);
+    else _anchorLeftDock(content);
+  });
+}
+
+const DOCKED_CONTENT_INLINE_PROPS = [
+  'position', 'inset', 'left', 'top', 'right', 'bottom',
+  'width', 'max-width', 'height', 'max-height',
+  'border-radius', 'transform', 'margin',
+];
+
+function _clearDockedContentGeometry(content) {
+  if (!content) return;
+  // removeProperty clears both the value and any inline !important priority.
+  for (const prop of DOCKED_CONTENT_INLINE_PROPS) {
+    content.style.removeProperty(prop);
+  }
+}
+
+function _clearTileSnapResidue(content) {
+  if (!content?.dataset) return;
+  delete content.dataset._tileZone;
+  delete content.dataset._tilePreSnap;
+}
+
+function _settleEdgeDockLayout() {
+  if (!canUseEdgeDock()) {
+    _clearDocksForDisabledViewport();
+    _settleEdgeDockResizeHandles();
+    return;
+  }
+  _reanchorActiveDocks();
+  _settleEdgeDockResizeHandles();
+}
+
+function _clearDocksForDisabledViewport() {
+  _forEachActiveDockedWindow((owner, content, side) => {
+    // This is a viewport-mode change, not a user drag-undock. Do not restore
+    // the pre-dock snapshot because it was captured in landscape and can leave
+    // stale inline width/left values when returning to portrait. Clear dock
+    // geometry so the mobile sheet CSS owns the modal again.
+    _clearTileSnapResidue(content);
+    _onDockedModalGone(owner, _dockClassForSide(side));
+  });
 }
 
 function _isEmailDockOwner(owner) {
@@ -184,7 +391,7 @@ function _showSnapHint(on, side = 'right') {
   hint = document.createElement('div');
   hint.className = 'modal-snap-hint ' + cls;
   const w = _defaultDockWidth();
-  const edge = side === 'left' ? 'left:0' : 'right:0';
+  const edge = side === 'left' ? `left:${_leftNavRight()}px` : `right:${_rightNavWidth()}px`;
   const borderSide = side === 'left' ? 'border-right' : 'border-left';
   hint.style.cssText = `position:fixed;${edge};top:0;bottom:0;width:${w}px;background:color-mix(in srgb, var(--accent-primary, #60a5fa) 12%, transparent);${borderSide}:2px dashed color-mix(in srgb, var(--accent-primary, #60a5fa) 60%, transparent);z-index:9998;pointer-events:none;transition:opacity 0.12s;`;
   document.body.appendChild(hint);
@@ -195,15 +402,10 @@ function _showSnapHint(on, side = 'right') {
 // true if the wide sidebar should be collapsed to the rail.
 function _shouldAutoCollapseSidebar(dockW) {
   const sidebar = document.getElementById('sidebar');
-  const rail = document.getElementById('icon-rail');
   if (!sidebar) return false;
   const sidebarHidden = sidebar.classList.contains('hidden');
   if (sidebarHidden) return false;
-  const sb = sidebar.getBoundingClientRect().width || 0;
-  const rl = (rail && window.getComputedStyle(rail).display !== 'none')
-    ? rail.getBoundingClientRect().width
-    : 0;
-  const remaining = window.innerWidth - sb - rl - _activeDockWidth('left') - dockW;
+  const remaining = window.innerWidth - _leftNavRight() - _rightNavWidth() - _activeDockWidth('left') - dockW;
   return remaining < MIN_CHAT_WIDTH;
 }
 
@@ -214,13 +416,13 @@ function _leftNavRight() {
   const sidebar = document.getElementById('sidebar');
   const rail = document.getElementById('icon-rail');
   let x = 0;
-  if (sidebar && !sidebar.classList.contains('hidden')) {
+  if (sidebar && !sidebar.classList.contains('hidden') && _isElementVisible(sidebar)) {
     const r = sidebar.getBoundingClientRect();
-    if (r.width) x = Math.max(x, r.right);
+    if (!sidebar.classList.contains('right-side') && _isLeftAnchoredRect(r)) x = Math.max(x, r.right);
   }
-  if (rail && window.getComputedStyle(rail).display !== 'none') {
+  if (rail && _isElementVisible(rail)) {
     const r = rail.getBoundingClientRect();
-    if (r.width) x = Math.max(x, r.right);
+    if (!rail.classList.contains('right-side') && _isLeftAnchoredRect(r)) x = Math.max(x, r.right);
   }
   return x;
 }
@@ -272,7 +474,7 @@ function _applyEmailDocSplitGeometry(left, emailWidth) {
   if (!docPane || window.innerWidth <= 768) return;
   docPane.style.setProperty('position', 'fixed', 'important');
   docPane.style.setProperty('left', `${x}px`, 'important');
-  docPane.style.setProperty('right', 'var(--right-dock-w, 0px)', 'important');
+  docPane.style.setProperty('right', 'var(--right-dock-reserve-w, var(--right-dock-w, 0px))', 'important');
   docPane.style.setProperty('top', '0px', 'important');
   docPane.style.setProperty('bottom', '0px', 'important');
   docPane.style.setProperty('width', 'auto', 'important');
@@ -331,11 +533,12 @@ function _anchorLeftDock(content) {
       document.body.classList.add('email-doc-split-active');
     }
     document.documentElement.style.setProperty('--left-dock-w', '0px');
+    document.documentElement.style.setProperty('--left-dock-reserve-w', '0px');
     _applyEmailDocSplitGeometry(left, w);
   } else if (document.body.classList.contains('email-doc-split-active')) {
     _clearEmailDocSplitGeometry();
   } else {
-    document.documentElement.style.setProperty('--left-dock-w', w + 'px');
+    _setLeftDockVars(w, left);
   }
 }
 
@@ -343,6 +546,9 @@ function _collapseSidebarToRail() {
   const sidebar = document.getElementById('sidebar');
   const rail = document.getElementById('icon-rail');
   if (!sidebar || !rail) return;
+  if (_isTouchLandscape()) {
+    try { window.syncRailSide && window.syncRailSide(); } catch (_) {}
+  }
   // Mark the collapse as route/dock-driven so the paired restore in
   // app.js (window._restoreSidebarIfRouteCollapsed) knows it owns the
   // un-collapse. Same marker the /email and /notes openers use — they
@@ -408,6 +614,29 @@ function _requestDockReplacement(side, owner) {
   }
 }
 
+function _clearOppositeDockedWindows(side, owner) {
+  const oppositeSide = side === 'left' ? 'right' : 'left';
+  _forEachActiveDockedWindow((existing, _content, existingSide) => {
+    if (existingSide !== oppositeSide) return;
+    if (!existing || existing === owner) return;
+    if (owner && existing.contains && existing.contains(owner)) return;
+    if (owner && owner.contains && owner.contains(existing)) return;
+
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus:edge-dock-replace', {
+        detail: { side: existingSide, modal: existing, replacement: owner },
+      }));
+    } catch (_) {}
+
+    const dockClass = _dockClassForSide(existingSide);
+    if (existing.classList.contains(dockClass)) {
+      clearRightDock(existing, undefined, undefined, dockClass);
+    } else if (existing.classList.contains('email-snap-left')) {
+      suspendDock(existing);
+    }
+  });
+}
+
 // Apply edge dock state to a modal/pane. `side` is 'right' (default) or 'left'.
 export function applyEdgeDock(modal, side = 'right', dockClass) {
   if (!dockClass) dockClass = side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
@@ -424,6 +653,10 @@ function _applyDockInternal(modal, side, dockClass) {
   if (!nodes) return 0;
   const content = nodes.content;
   if (!content) return 0;
+  if (!canUseEdgeDock()) {
+    _clearDocksForDisabledViewport();
+    return 0;
+  }
   // If the modal is currently docked on the OTHER side (e.g. the user
   // manually docked it right, then a reply re-docks it left), clear that
   // side's class + body push first. Otherwise both sides' state coexist —
@@ -442,6 +675,7 @@ function _applyDockInternal(modal, side, dockClass) {
     content.style.left = '';
     content.style.right = '';
   }
+  _clearOppositeDockedWindows(side, modal);
   _requestDockReplacement(side, modal);
   // Snapshot the actual rendered rect + inline styles so un-dock can
   // restore the exact same floating window the user had before. Without
@@ -492,10 +726,12 @@ function _applyDockInternal(modal, side, dockClass) {
     _anchorLeftDock(content);
     w = parseFloat(content.style.width) || 0;
     document.body.classList.add('left-dock-active');
-    document.documentElement.style.setProperty(
-      '--left-dock-w',
-      document.body.classList.contains('email-doc-split-active') ? '0px' : w + 'px',
-    );
+    if (document.body.classList.contains('email-doc-split-active')) {
+      document.documentElement.style.setProperty('--left-dock-w', '0px');
+      document.documentElement.style.setProperty('--left-dock-reserve-w', '0px');
+    } else {
+      _setLeftDockVars(w, _leftNavRight());
+    }
     // Re-anchor the email when the sidebar is toggled (expanded/collapsed) so
     // the nav slides the window over instead of growing on top of it. Also
     // re-anchor when the document editor pane appears/disappears (signaled by
@@ -504,6 +740,7 @@ function _applyDockInternal(modal, side, dockClass) {
     // sharing the row cleanly.
     if (!content._leftDockNavObs && typeof MutationObserver !== 'undefined') {
       const sidebar = document.getElementById('sidebar');
+      const rail = document.getElementById('icon-rail');
       const _doAnchor = () => {
         if (modal.classList.contains(dockClass)) _anchorLeftDock(content);
       };
@@ -521,6 +758,7 @@ function _applyDockInternal(modal, side, dockClass) {
       };
       const navObs = new MutationObserver(reanchor);
       if (sidebar) navObs.observe(sidebar, { attributes: true, attributeFilter: ['class', 'style'] });
+      if (rail) navObs.observe(rail, { attributes: true, attributeFilter: ['class', 'style'] });
       // Only react to doc-view toggling — NOT to every body attribute mutation.
       // Listening broadly caused thrashing last time and crashed the tab.
       let _lastDocView = document.body.classList.contains('doc-view');
@@ -574,26 +812,28 @@ function _applyDockInternal(modal, side, dockClass) {
     }
   } else {
     const requestedW = _preferredRightDockWidth(modal, content);
-    if (!_compactDockViewport() && _shouldAutoCollapseSidebar(Math.max(requestedW, MIN_EDGE_DOCK_WIDTH))) {
+    if (!_isTouchLandscape() && !_compactDockViewport() && _shouldAutoCollapseSidebar(Math.max(requestedW, MIN_EDGE_DOCK_WIDTH))) {
       _collapseSidebarToRail();
       content._preDockSnapshot.collapsedSidebar = true;
     }
     w = _clampRightDockWidth(requestedW);
+    const rightOffset = _rightNavWidth();
     content.style.left = 'auto';
-    content.style.right = '0';
+    content.style.right = rightOffset + 'px';
     content.style.width = w + 'px';
     content.style.maxWidth = w + 'px';
     document.body.classList.add('right-dock-active');
-    document.documentElement.style.setProperty('--right-dock-w', w + 'px');
-    if (!_compactDockViewport() && _shouldAutoCollapseSidebar(w)) {
+    _setRightDockVars(w, rightOffset);
+    if (!_isTouchLandscape() && !_compactDockViewport() && _shouldAutoCollapseSidebar(w)) {
       _collapseSidebarToRail();
       content._preDockSnapshot.collapsedSidebar = true;
       const recalculatedW = _clampRightDockWidth(requestedW);
       if (recalculatedW !== w) {
         w = recalculatedW;
+        content.style.right = _rightNavWidth() + 'px';
         content.style.width = w + 'px';
         content.style.maxWidth = w + 'px';
-        document.documentElement.style.setProperty('--right-dock-w', w + 'px');
+        _setRightDockVars(w);
       }
     }
   }
@@ -672,14 +912,12 @@ function _onDockedModalGone(modal, dockClass) {
   // at its CSS default (centered). Drag-to-undock still uses clearRightDock,
   // which DOES restore the snapshot for the peel-off feel.
   if (_c) {
-    for (const prop of ['position', 'inset', 'left', 'top', 'right', 'bottom',
-                        'width', 'maxWidth', 'height', 'maxHeight',
-                        'borderRadius', 'transform', 'margin']) {
-      _c.style[prop] = '';
-    }
+    _clearDockedContentGeometry(_c);
+    _clearTileSnapResidue(_c);
     delete _c._preDockSnapshot;
     delete _c._dockSide;
     delete _c._dockOwner;
+    delete _c._touchLandscapeDockWidth;
   }
   _positionEdgeDockResizeHandles();
 }
@@ -710,6 +948,7 @@ export function clearRightDock(modal, cx, cy, dockClass) {
   }
   delete content._dockSide;
   delete content._dockOwner;
+  delete content._touchLandscapeDockWidth;
   _disconnectLeftDockObservers(content);
   const snap = content._preDockSnapshot;
   // Re-expand the wide sidebar if we collapsed it — but only if the
@@ -755,6 +994,7 @@ export function clearRightDock(modal, cx, cy, dockClass) {
   content.style.top = (typeof targetTop === 'number') ? targetTop + 'px' : targetTop;
   delete content._preDockSnapshot;
   delete content._dockSuspended;
+  delete content._touchLandscapeDockWidth;
   _positionEdgeDockResizeHandles();
 }
 
@@ -814,9 +1054,13 @@ export function resumeDock(modal) {
   const content = nodes.content;
   const side = content._dockSuspended;
   if (!side) return false;
+  if (!canUseEdgeDock()) {
+    delete content._dockSuspended;
+    return false;
+  }
   delete content._dockSuspended;
-  try { applyEdgeDock(modal, side); } catch (_) {}
-  return true;
+  try { return !!applyEdgeDock(modal, side); } catch (_) {}
+  return false;
 }
 
 // Wire right-edge snap detection into a drag session. Call this once per
@@ -843,10 +1087,15 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
   let _hoveringSnap = false;
   const _distFromEdge = (cx) => {
     if (side === 'left') return cx - _leftNavWidth();
-    return window.innerWidth - cx;
+    return window.innerWidth - _rightNavWidth() - cx;
   };
   return {
     onMove(cx, cy) {
+      if (!canUseEdgeDock()) {
+        _showSnapHint(false, side);
+        _hoveringSnap = false;
+        return false;
+      }
       if (modal.classList.contains(dockClass)) {
         if (_distFromEdge(cx) > UNSNAP_PX) {
           clearRightDock(modal, cx, cy, dockClass);
@@ -866,7 +1115,8 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     commit() {
       _showSnapHint(false, side);
       _hoveringSnap = false;
-      _applyDockInternal(modal, side, dockClass);
+      if (!canUseEdgeDock()) return 0;
+      return _applyDockInternal(modal, side, dockClass);
     },
     release() {
       _showSnapHint(false, side);
@@ -912,7 +1162,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     handle.style.position = 'fixed';
     handle.style.top = '0';
     handle.style.bottom = '0';
-    handle.style.width = '10px';
+    handle.style.width = EDGE_DOCK_RESIZE_HANDLE_PX + 'px';
     handle.style.cursor = 'col-resize';
     handle.style.background = 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)';
     handle.style.pointerEvents = 'auto';
@@ -958,57 +1208,72 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     if (!content) return 0;
     let w = 0;
     if (side === 'right') {
-      const requestedW = window.innerWidth - clientX;
-      if (!_compactDockViewport() && _shouldAutoCollapseSidebar(Math.max(requestedW, MIN_EDGE_DOCK_WIDTH))) {
+      const requestedW = window.innerWidth - _rightNavWidth() - clientX;
+      if (!_isTouchLandscape() && !_compactDockViewport() && _shouldAutoCollapseSidebar(Math.max(requestedW, MIN_EDGE_DOCK_WIDTH))) {
         _collapseSidebarToRail();
         if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
       }
       w = _clampRightDockWidth(requestedW);
-      content._userDockWidth = w;
+      if (_isTouchLandscape()) content._touchLandscapeDockWidth = w;
+      else content._userDockWidth = w;
+      const rightOffset = _rightNavWidth();
       content.style.left = 'auto';
-      content.style.right = '0';
+      content.style.right = rightOffset + 'px';
       content.style.width = w + 'px';
       content.style.maxWidth = w + 'px';
       document.body.classList.add('right-dock-active');
-      document.documentElement.style.setProperty('--right-dock-w', w + 'px');
-      if (!_compactDockViewport() && _shouldAutoCollapseSidebar(w)) {
+      _setRightDockVars(w, rightOffset);
+      if (!_isTouchLandscape() && !_compactDockViewport() && _shouldAutoCollapseSidebar(w)) {
         _collapseSidebarToRail();
         if (content._preDockSnapshot) content._preDockSnapshot.collapsedSidebar = true;
         const recalculatedW = _clampRightDockWidth(requestedW);
         if (recalculatedW !== w) {
           w = recalculatedW;
           content._userDockWidth = w;
+          content.style.right = _rightNavWidth() + 'px';
           content.style.width = w + 'px';
           content.style.maxWidth = w + 'px';
-          document.documentElement.style.setProperty('--right-dock-w', w + 'px');
+          _setRightDockVars(w);
         }
       }
     } else {
       const left = _leftNavRight();
       w = _clampLeftDockWidth(clientX - left, left);
-      content._userDockWidth = w;
-      content._emailDocSplitUserW = w;
+      if (_isTouchLandscape()) content._touchLandscapeDockWidth = w;
+      else {
+        content._userDockWidth = w;
+        content._emailDocSplitUserW = w;
+      }
       content.style.left = left + 'px';
       content.style.right = 'auto';
       content.style.width = w + 'px';
       content.style.maxWidth = w + 'px';
       document.body.classList.add('left-dock-active');
-      document.documentElement.style.setProperty(
-        '--left-dock-w',
-        document.body.classList.contains('email-doc-split-active') ? '0px' : w + 'px',
-      );
+      if (document.body.classList.contains('email-doc-split-active')) {
+        document.documentElement.style.setProperty('--left-dock-w', '0px');
+        document.documentElement.style.setProperty('--left-dock-reserve-w', '0px');
+      } else {
+        _setLeftDockVars(w, left);
+      }
     }
     _positionEdgeDockResizeHandles();
     return w;
   };
 
   _edgeDockHandlePositioner = () => {
+    if (!canUseEdgeDock()) {
+      _hideHandle(handles.left);
+      _hideHandle(handles.right);
+      return;
+    }
+    const touchSplit = _isTouchLandscape();
     const splitOwnsLeftSeam = document.body.classList.contains('email-doc-split-active')
       && document.body.classList.contains('doc-view')
       && window.innerWidth > 768;
     for (const side of ['left', 'right']) {
       const handle = handles[side];
-      if (window.innerWidth <= 768 || (side === 'left' && splitOwnsLeftSeam)) {
+      if ((!touchSplit && window.innerWidth <= 768)
+          || (side === 'left' && splitOwnsLeftSeam)) {
         _hideHandle(handle);
         continue;
       }
@@ -1031,11 +1296,18 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         _hideHandle(handle);
         continue;
       }
+      const handleW = touchSplit ? TOUCH_LANDSCAPE_SPLIT_HIT_PX : EDGE_DOCK_RESIZE_HANDLE_PX;
+      const subtleLine = `linear-gradient(to right, transparent 0 ${Math.floor(handleW / 2)}px, color-mix(in srgb, var(--accent, var(--red)) 32%, transparent) ${Math.floor(handleW / 2)}px ${Math.floor(handleW / 2) + 1}px, transparent ${Math.floor(handleW / 2) + 1}px ${handleW}px)`;
       _setStyle(handle, 'display', 'block');
-      _setStyle(handle, 'left', (x - 5) + 'px');
+      _setStyle(handle, 'width', handleW + 'px');
+      _setStyle(handle, 'left', (x - (handleW / 2)) + 'px');
       _setStyle(handle, 'top', top + 'px');
       _setStyle(handle, 'bottom', 'auto');
       _setStyle(handle, 'height', height + 'px');
+      _setStyle(handle, 'background', touchSplit
+        ? subtleLine
+        : 'linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px)');
+      handle.title = touchSplit ? 'Drag to adjust split' : 'Drag to resize docked window; click to hide';
       _setStyle(handle, 'zIndex', String(_zIndexFor(owner) + 1));
     }
   };
@@ -1048,7 +1320,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
       if (!owner) return;
       e.preventDefault();
       e.stopPropagation();
-      handle.setPointerCapture?.(e.pointerId);
+      try { handle.setPointerCapture?.(e.pointerId); } catch (_) {}
       const nodes = _resolveDockNodes(owner);
       const content = nodes?.content;
       const startX = e.clientX;
@@ -1077,7 +1349,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         const isTap = ev.type === 'pointerup'
           && !moved
           && Math.hypot((ev.clientX || startX) - startX, (ev.clientY || startY) - startY) <= 6;
-        if (isTap && _requestDockMinimize(owner, side)) {
+        if (!_isTouchLandscape() && isTap && _requestDockMinimize(owner, side)) {
           ev.preventDefault();
           ev.stopPropagation?.();
           return;
@@ -1085,7 +1357,7 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
         const finalW = side === 'right'
           ? parseFloat(document.documentElement.style.getPropertyValue('--right-dock-w')) || content?.getBoundingClientRect?.().width || 0
           : content?.getBoundingClientRect?.().width || 0;
-        if (finalW) _saveDockWidth(owner, content, side, finalW);
+        if (finalW && !_isTouchLandscape()) _saveDockWidth(owner, content, side, finalW);
         ev.preventDefault();
       };
       document.addEventListener('pointermove', onMove, true);
@@ -1096,6 +1368,11 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
 
   new MutationObserver(_positionEdgeDockResizeHandles).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   new MutationObserver(_positionEdgeDockResizeHandles).observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+  const navObs = new MutationObserver(_settleEdgeDockLayout);
+  const sidebar = document.getElementById('sidebar');
+  const rail = document.getElementById('icon-rail');
+  if (sidebar) navObs.observe(sidebar, { attributes: true, attributeFilter: ['class', 'style'] });
+  if (rail) navObs.observe(rail, { attributes: true, attributeFilter: ['class', 'style'] });
   let raf = 0;
   const schedulePosition = () => {
     if (raf) return;
@@ -1105,9 +1382,19 @@ export function makeEdgeDockController(modal, side = 'right', dockClass) {
     });
   };
   new MutationObserver(schedulePosition).observe(document.body, { childList: true });
-  window.addEventListener('resize', _positionEdgeDockResizeHandles);
-  window.addEventListener('odysseus:modal-opened', _positionEdgeDockResizeHandles);
-  window.addEventListener('odysseus:edge-dock-replace', _settleEdgeDockResizeHandles);
+  window.addEventListener('resize', _settleEdgeDockLayout);
+  window.addEventListener('orientationchange', _settleEdgeDockLayout);
+  window.addEventListener('odysseus:cutoutchange', _settleEdgeDockLayout);
+  window.addEventListener('odysseus:modal-opened', _settleEdgeDockLayout);
+  window.addEventListener('odysseus:edge-dock-replace', _settleEdgeDockLayout);
+  window.addEventListener('odysseus:minimized-dock-rendered', _settleEdgeDockLayout);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', _settleEdgeDockLayout);
+    window.visualViewport.addEventListener('scroll', _settleEdgeDockLayout);
+  }
+  if (screen.orientation && screen.orientation.addEventListener) {
+    screen.orientation.addEventListener('change', _settleEdgeDockLayout);
+  }
   _positionEdgeDockResizeHandles();
 })();
 

@@ -31,7 +31,35 @@ let _ghost = null;
 let _activeZone = null;
 let _tracking = null; // { content, startRect }
 
-function _isDesktop() { return window.innerWidth > 768; }
+function _hasFinePointer() {
+  if (typeof window.matchMedia !== 'function') return true;
+  return window.matchMedia('(pointer: fine)').matches;
+}
+
+function _isTouchInput() {
+  if (typeof window.matchMedia !== 'function') {
+    return typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+  }
+  return window.matchMedia('(pointer: coarse)').matches
+    || window.matchMedia('(hover: none)').matches
+    || navigator.maxTouchPoints > 0;
+}
+
+function _isTouchLandscape() {
+  if (typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(orientation: landscape)').matches && _isTouchInput();
+}
+
+function _isTouchPortrait() {
+  if (typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(orientation: portrait)').matches && _isTouchInput();
+}
+
+function _isDesktop() {
+  // This is desktop tiling. Coarse-touch Android landscape uses edge docking
+  // only; otherwise the same swipe can also leave a right-half tile snap behind.
+  return window.innerWidth > 768 && _hasFinePointer();
+}
 
 function _dockClassForSide(side) {
   return side === 'left' ? 'modal-left-docked' : 'modal-right-docked';
@@ -52,9 +80,26 @@ function _clearDockSide(side, owner = null) {
   if (_hasOtherDockedWindow(side, owner)) return;
   document.body.classList.remove(side === 'left' ? 'left-dock-active' : 'right-dock-active');
   document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-w' : '--right-dock-w');
+  document.documentElement.style.removeProperty(side === 'left' ? '--left-dock-reserve-w' : '--right-dock-reserve-w');
   if (side === 'left') {
     try { window._restoreSidebarIfRouteCollapsed?.(); } catch (_) {}
   }
+}
+
+function _clearEmailSplitGeometry() {
+  document.body.classList.remove('email-doc-split-active', 'email-front');
+  document.documentElement.style.removeProperty('--email-doc-split-left-x');
+  document.documentElement.style.removeProperty('--email-doc-split-email-w');
+  document.documentElement.style.removeProperty('--email-doc-split-right-x');
+  const docPane = document.getElementById('doc-editor-pane');
+  if (docPane) {
+    [
+      'position', 'left', 'right', 'top', 'bottom', 'width', 'max-width',
+      'height', 'z-index', 'transform',
+    ].forEach((prop) => docPane.style.removeProperty(prop));
+  }
+  const divider = document.getElementById('doc-divider');
+  if (divider) divider.style.display = '';
 }
 
 function _ensureGhost() {
@@ -78,21 +123,51 @@ function _showGhost(rect) {
   g.classList.add('visible');
 }
 
-function _viewportSafeRect() {
-  // Account for the icon rail / sidebar on the left side of the viewport.
+function _viewportWorkspaceRect(inset = 4) {
+  // Account for visible nav rails on either side of the viewport. Android
+  // landscape chooses the rail side dynamically based on the camera cutout,
+  // so read the actual side instead of assuming a fixed edge.
   const sidebar = document.getElementById('sidebar');
   const rail = document.querySelector('.icon-rail') || document.querySelector('#icon-rail');
   let leftEdge = 0;
+  let rightEdge = window.innerWidth;
   const sb = sidebar?.getBoundingClientRect();
-  if (sb && sb.right > 0 && !sidebar.classList.contains('hidden')) leftEdge = Math.max(leftEdge, sb.right);
+  if (sb && sb.width > 0 && !sidebar.classList.contains('hidden')) {
+    if (sidebar.classList.contains('right-side') || sb.right >= window.innerWidth - 1) {
+      rightEdge = Math.min(rightEdge, sb.left);
+    } else if (sb.left <= 1) {
+      leftEdge = Math.max(leftEdge, sb.right);
+    }
+  }
   const rr = rail?.getBoundingClientRect();
-  if (rr && rr.right > 0) leftEdge = Math.max(leftEdge, rr.right);
+  if (rr && rr.width > 0) {
+    const visible = window.getComputedStyle(rail).display !== 'none';
+    if (visible && (rail.classList.contains('right-side') || rr.right >= window.innerWidth - 1)) {
+      rightEdge = Math.min(rightEdge, rr.left);
+    } else if (visible && rr.left <= 1) {
+      leftEdge = Math.max(leftEdge, rr.right);
+    }
+  }
   return {
-    left: leftEdge + 4,
-    top: 4,
-    right: window.innerWidth - 4,
-    bottom: window.innerHeight - 4,
+    left: leftEdge + inset,
+    top: inset,
+    right: rightEdge - inset,
+    bottom: window.innerHeight - inset,
   };
+}
+
+function _viewportSafeRect() {
+  return _viewportWorkspaceRect(4);
+}
+
+function _fullscreenRect() {
+  if (_isTouchLandscape()) {
+    const safe = _viewportWorkspaceRect(0);
+    const width = Math.max(0, safe.right - safe.left);
+    const height = Math.max(0, safe.bottom - safe.top);
+    return { left: safe.left, top: safe.top, width, height };
+  }
+  return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
 }
 
 function _zoneForPointer(x, y) {
@@ -100,10 +175,9 @@ function _zoneForPointer(x, y) {
   const W = safe.right - safe.left;
   const H = safe.bottom - safe.top;
 
-  // Dragged OVER the top edge (cursor at/past the very top) → TRUE fullscreen
-  // that covers everything, including the sidebar.
+  // Dragged OVER the top edge (cursor at/past the very top) -> desktop fullscreen.
   if (y <= 0) {
-    return { name: 'fullscreen', rect: { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight } };
+    return { name: 'fullscreen', rect: _fullscreenRect() };
   }
   // Near the top edge (but not over it) → "maximize": fill the safe area,
   // which sits NEXT TO the sidebar/rail rather than covering it.
@@ -145,9 +219,14 @@ function _clearEdgeDockResidue(modal, content) {
   if (modal) {
     const hadLeft = modal.classList.contains('modal-left-docked');
     const hadRight = modal.classList.contains('modal-right-docked');
-    modal.classList.remove('modal-left-docked', 'modal-right-docked');
+    const hadEmailSnapLeft = modal.classList.contains('email-snap-left');
+    modal.classList.remove('modal-left-docked', 'modal-right-docked', 'email-snap-left');
     if (hadLeft) _clearDockSide('left', modal);
     if (hadRight) _clearDockSide('right', modal);
+    if (hadEmailSnapLeft) {
+      _clearDockSide('left', modal);
+      _clearEmailSplitGeometry();
+    }
     if (modal._dockCloseWatcher) {
       try { modal._dockCloseWatcher.obs && modal._dockCloseWatcher.obs.disconnect(); } catch (_) {}
       try { modal._dockCloseWatcher.parentObs && modal._dockCloseWatcher.parentObs.disconnect(); } catch (_) {}
@@ -217,6 +296,15 @@ function _applySnap(content, rect, zoneName) {
 function _unsnap(content) {
   const pre = content.dataset._tilePreSnap;
   if (!pre) return;
+  if (_isTouchPortrait()) {
+    [
+      'position', 'left', 'top', 'right', 'bottom', 'width', 'height',
+      'max-width', 'max-height', 'margin', 'transform',
+    ].forEach(p => content.style.removeProperty(p));
+    delete content.dataset._tilePreSnap;
+    delete content.dataset._tileZone;
+    return;
+  }
   // Clear the !important snap props first — Object.assign can't override them.
   ['position', 'left', 'top', 'width', 'height', 'max-height', 'margin', 'transform']
     .forEach(p => content.style.removeProperty(p));
@@ -302,7 +390,7 @@ function _reclampAll(animate = false) {
     const W = safe.right - safe.left, H = safe.bottom - safe.top;
     let r;
     switch (name) {
-      case 'fullscreen':     r = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }; break;
+      case 'fullscreen':     r = _fullscreenRect(); break;
       case 'maximize':       r = { left: safe.left, top: safe.top, width: W, height: H }; break;
       case 'left-half':      r = { left: safe.left, top: safe.top, width: W/2, height: H }; break;
       case 'right-half':     r = { left: safe.left + W/2, top: safe.top, width: W/2, height: H }; break;
@@ -336,22 +424,34 @@ function _reclampAllThrottled(animate) {
 
 window.addEventListener('resize', () => _reclampAllThrottled(false));
 
-// Watch the sidebar's class attribute so toggling hidden/right-side re-tiles
-// any snapped modal that was anchored to the old safe-rect.
-function _watchSidebar() {
+// Watch nav edge changes so toggling hidden/right-side, or Android landscape
+// cutout handling moving the icon rail, re-tiles any snapped modal that was
+// anchored to the old safe-rect.
+function _watchNavEdges() {
   const sidebar = document.getElementById('sidebar');
-  if (!sidebar) {
+  const rail = document.getElementById('icon-rail');
+  if (!sidebar && !rail) {
     // Sidebar may not be in the DOM yet during early init.
-    requestAnimationFrame(_watchSidebar);
+    requestAnimationFrame(_watchNavEdges);
     return;
   }
   const mo = new MutationObserver(() => _reclampAllThrottled(true));
-  mo.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+  if (sidebar) mo.observe(sidebar, { attributes: true, attributeFilter: ['class', 'style'] });
+  if (rail) mo.observe(rail, { attributes: true, attributeFilter: ['class', 'style'] });
 }
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', _watchSidebar);
+  document.addEventListener('DOMContentLoaded', _watchNavEdges);
 } else {
-  _watchSidebar();
+  _watchNavEdges();
+}
+window.addEventListener('orientationchange', () => _reclampAllThrottled(true));
+window.addEventListener('odysseus:cutoutchange', () => _reclampAllThrottled(true));
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => _reclampAllThrottled(false));
+  window.visualViewport.addEventListener('scroll', () => _reclampAllThrottled(false));
+}
+if (screen.orientation && screen.orientation.addEventListener) {
+  screen.orientation.addEventListener('change', () => _reclampAllThrottled(true));
 }
 
 // ── Public API for other drag sources (e.g. dragging a minimized dock chip
@@ -379,8 +479,17 @@ export function snapModalToZone(modal, zone) {
   if (!modal || !zone) return;
   const content = modal.querySelector ? (modal.querySelector('.modal-content, .research-pane') || modal) : modal;
   if (!content) return;
-  if (modal.id === 'settings-modal' && zone.name !== 'right-half') return;
-  _applySnap(content, zone.rect, zone.name);
+  if (modal.id === 'settings-modal' && zone.name !== 'right-half' && !zone.force) return;
+  const rect = zone.name === 'fullscreen' ? _fullscreenRect() : zone.rect;
+  _applySnap(content, rect, zone.name);
+}
+
+export function restoreModalSnap(modal) {
+  if (!modal) return false;
+  const content = modal.querySelector ? (modal.querySelector('.modal-content, .research-pane') || modal) : modal;
+  if (!content || !content.dataset._tilePreSnap) return false;
+  _unsnap(content);
+  return true;
 }
 
 export {};

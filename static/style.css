@@ -806,7 +806,8 @@ body.bg-pattern-sparkles {
        button's bordered square so the two read as a paired control. The
        header's h4 carries margin-right:auto, which groups minimize + close
        on the right; this button just needs a small gap before close. */
-    .modal-minimize-btn {
+    .modal-minimize-btn,
+    .modal-expand-btn {
       background: var(--bg);
       color: var(--fg);
       border: 1px solid var(--fg);
@@ -824,7 +825,29 @@ body.bg-pattern-sparkles {
       flex-shrink: 0;
       transition: background 0.15s, color 0.15s;
     }
-    .modal-minimize-btn:hover { background: var(--fg); color: var(--bg); }
+    .modal-minimize-btn:hover,
+    .modal-expand-btn:hover,
+    .modal-expand-btn.active {
+      background: var(--fg);
+      color: var(--bg);
+    }
+    .modal.modal-full-expanded .modal-content,
+    .modal.modal-full-expanded .memory-modal-content,
+    .modal.modal-full-expanded .settings-modal-content,
+    .modal.modal-full-expanded #theme-popup {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .modal.modal-full-expanded .modal-body,
+    .modal.modal-full-expanded .memory-modal-body,
+    .modal.modal-full-expanded .cookbook-body,
+    .modal.modal-full-expanded .research-pane-body {
+      flex: 1 1 0;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
     .modal.modal-minimized { display: none !important; }
     /* Window tile snap ghost (desktop only) */
     #tile-ghost {
@@ -855,8 +878,19 @@ body.bg-pattern-sparkles {
       color: var(--fg); font-family: inherit; font-size: 12px;
       cursor: grab; touch-action: none; user-select: none;
       box-shadow: 0 4px 14px rgba(0,0,0,0.35);
-      transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s, border-color 0.15s;
+      transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s, border-color 0.15s, opacity 0.18s ease;
       animation: dock-chip-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+    }
+    body.chat-at-bottom #minimized-dock:not(.dock-dragging) .minimized-dock-chip:not(.dragging):not(.chip-long-press) {
+      opacity: 0.24;
+    }
+    body.chat-at-bottom #minimized-dock:not(.dock-dragging):hover .minimized-dock-chip,
+    body.chat-at-bottom #minimized-dock:not(.dock-dragging):focus-within .minimized-dock-chip,
+    body.chat-at-bottom #minimized-dock .minimized-dock-chip:hover,
+    body.chat-at-bottom #minimized-dock .minimized-dock-chip:active,
+    body.chat-at-bottom #minimized-dock .minimized-dock-chip.dragging,
+    body.chat-at-bottom #minimized-dock .minimized-dock-chip.chip-long-press {
+      opacity: 1;
     }
     .minimized-dock-chip:hover {
       background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--panel, var(--bg)));
@@ -1837,11 +1871,21 @@ body.bg-pattern-sparkles {
       overflow-x:hidden;
       overscroll-behavior-y: none;
       margin-bottom:8px;
+      padding-bottom: var(--collapsed-overlay-space, 0px);
+      scroll-padding-bottom: calc(var(--collapsed-overlay-space, 0px) + 2px);
       white-space:normal;
       min-height:0;
       --chat-max: 800px;
       padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
       padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
+    }
+    @media (orientation: landscape) and (hover: none),
+           (orientation: landscape) and (pointer: coarse) {
+      .chat-history {
+        --chat-max: 100%;
+        padding-left: 0;
+        padding-right: 12px;
+      }
     }
     /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
        a header was clickable (the Newest sort on the Model column was invisible).
@@ -4990,6 +5034,19 @@ body.bg-pattern-sparkles {
            centered window glides instead of jumping when the nav toggles. */
         transition: left 0.25s ease, width 0.25s ease;
       }
+      body.hamburger-right #calendar-modal,
+      body.hamburger-right #gallery-modal,
+      body.hamburger-right #tasks-modal,
+      body.hamburger-right #memory-modal,
+      body.hamburger-right #doclib-modal,
+      body.hamburger-right #compare-model-overlay,
+      body.hamburger-right #research-overlay,
+      body.hamburger-right #theme-modal,
+      body.hamburger-right #settings-modal,
+      body.hamburger-right #email-lib-modal {
+        left: 0;
+        width: calc(100% - (var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)));
+      }
     }
     .modal-content {
       background:var(--panel);
@@ -5121,7 +5178,6 @@ body.bg-pattern-sparkles {
       color:var(--bg);
     }
     @media (max-width: 768px) {
-      .minimize-btn { display: none !important; }
       #modal-dock { display: none !important; }
     }
     /* Minimized modals are hidden but stay in the DOM with their state intact */
@@ -6529,8 +6585,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-adv-clear-btn:hover { opacity: 1; }
 
 
-    /* Mobile: bottom sheet modals — slide up from bottom */
-    @media (max-width: 768px) {
+    /* Mobile bottom sheet modals — slide up from bottom. Landscape touch keeps
+       the normal window/dock behavior so it can split with chat. */
+@media (max-width: 768px) {
       .modal {
         align-items: flex-end;
         background: rgba(0,0,0,0.4);
@@ -6621,7 +6678,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #memory-modal .memory-modal-content,
       #settings-modal .settings-modal-content,
       #email-lib-modal .modal-content,
-      #doclib-modal .doclib-modal-content {
+      #doclib-modal .doclib-modal-content,
+      #research-overlay .modal-content,
+      #compare-model-overlay .modal-content {
         max-height: 100vh !important;
         max-height: 100dvh !important;
         height: 100vh !important;
@@ -6655,8 +6714,12 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       .memory-modal-content .close-btn,
       .memory-modal-content .modal-close,
       .settings-modal-content .close-btn,
-      .settings-modal-content .modal-close {
-        display: none !important;
+      .settings-modal-content .modal-close,
+      .memory-modal-content .modal-minimize-btn,
+      .settings-modal-content .modal-minimize-btn,
+      .memory-modal-content .modal-expand-btn,
+      .settings-modal-content .modal-expand-btn {
+        display: inline-flex !important;
       }
       .memory-modal-content,
       .settings-modal-content {
@@ -6671,7 +6734,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal .modal-content,
       #doclib-modal .modal-content,
       #gallery-modal .modal-content,
-      #tasks-modal .modal-content {
+      #tasks-modal .modal-content,
+      #research-overlay .modal-content,
+      #compare-model-overlay .modal-content {
         /* vh-first as fallback for very old browsers, then dvh wins so
            the modal shrinks/grows with the mobile URL bar. Wrong order
            previously made the expanded chat preview extend below the
@@ -6688,7 +6753,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       #email-lib-modal,
       #doclib-modal,
       #gallery-modal,
-      #tasks-modal {
+      #tasks-modal,
+      #research-overlay,
+      #compare-model-overlay {
         padding-top: 0 !important;
         align-items: stretch !important;
       }
@@ -6767,19 +6834,26 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
         border-bottom: 6px solid transparent;
         background-clip: padding-box;
       }
-      /* Hide close X on mobile — swipe down to dismiss */
+      /* Keep window controls available on Android sheets; swipe-down still works. */
       .modal-content .close-btn,
       .modal-content .modal-close,
-      #theme-popup .close-btn {
-        display: none !important;
-      }
-      /* Hide the auto-injected minimize (_) button on mobile — the dock
-         chip already represents the minimized state, and the swipe-down
-         gesture is the canonical minimize action. */
+      #theme-popup .close-btn,
       .modal-minimize-btn,
       .minimize-btn,
-      [data-minimize] {
-        display: none !important;
+      [data-minimize],
+      .modal-expand-btn,
+      [data-full-expand] {
+        display: inline-flex !important;
+      }
+      .modal-header .close-btn,
+      .modal-header .modal-close,
+      .modal-header .modal-minimize-btn,
+      .modal-header .minimize-btn,
+      .modal-header .modal-expand-btn {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
       }
       /* Lock modals to vertical touch only, prevent horizontal dragging */
       .modal-content {
@@ -7489,18 +7563,89 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       .compare-header-bar #compare-shuffle-btn > span {
         display: none;
       }
-      /* Override the desktop override: on mobile the model picker overlay
-         MUST cap its height to the viewport so the dropdown doesn't run
-         past the bottom of the screen. */
+      /* Keep the model picker on the same full-height mobile sheet as the
+         other tool overlays so it reaches the top edge like Cookbook. */
       #compare-model-overlay .modal-content {
-        max-height: 85dvh !important;
-        max-height: 85vh !important;
+        height: 100dvh !important;
+        height: 100vh !important;
+        max-height: 100dvh !important;
+        max-height: 100vh !important;
         overflow: hidden !important;
       }
       #compare-model-overlay .modal-body {
         overflow: auto !important;
         flex: 1 1 auto !important;
         min-height: 0 !important;
+      }
+    }
+    @media (max-width: 768px) {
+      .doclib-modal-content,
+      .gallery-modal-content {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        border-radius: 14px 14px 0 0 !important;
+        border: none !important;
+        border-top: 1px solid var(--border) !important;
+        box-shadow: none !important;
+        padding: 6px !important;
+        padding-bottom: env(safe-area-inset-bottom, 6px) !important;
+        margin: 0 !important;
+        -webkit-overflow-scrolling: touch;
+      }
+      #doclib-modal .doclib-modal-content,
+      #email-lib-modal .doclib-modal-content {
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+      }
+      #doclib-modal .modal-header,
+      #doclib-modal .lib-tabs,
+      #email-lib-modal .modal-header,
+      #email-lib-modal .lib-tabs {
+        flex: 0 0 auto !important;
+      }
+      #doclib-modal .modal-body,
+      #email-lib-modal .modal-body {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
+      }
+      #doclib-modal .admin-card,
+      #email-lib-modal .admin-card {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+      }
+      #doclib-modal .doclib-grid:not(:has(.doclib-card-expanded)),
+      #email-lib-modal .doclib-grid:not(:has(.doclib-card-expanded)) {
+        flex: 1 1 0 !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+      }
+      #email-lib-accounts,
+      .doclib-lang-chips {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      #email-lib-accounts::-webkit-scrollbar,
+      .doclib-lang-chips::-webkit-scrollbar {
+        display: none;
+        height: 0;
+      }
+      #email-lib-accounts > *,
+      .doclib-lang-chips > * {
+        flex-shrink: 0;
       }
     }
     /* Hide number input spinners */
@@ -13422,7 +13567,8 @@ body:has(.compare-active) .hamburger-btn { display: none !important; }
    free space, stranding Peek in the middle. Zero their left-autos here so
    the h4 alone pushes Peek + minimize + close together, flush right. */
 .modal-header .theme-opacity-wrap,
-.modal-header .modal-minimize-btn { margin-left: 0 !important; }
+.modal-header .modal-minimize-btn,
+.modal-header .modal-expand-btn { margin-left: 0 !important; }
 /* On = peeking through; highlight with the accent so the state is obvious. */
 .theme-opacity-wrap.active {
   opacity: 1;
@@ -13863,6 +14009,50 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
 }
 .mcp-tools-list label:hover {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mcp-tools-list .adm-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  border-radius: 3px;
+}
+.mcp-tools-list .adm-model-row:hover {
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.mcp-tools-list .adm-model-toggle {
+  flex: 1;
+  min-width: 0;
+}
+.adm-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adm-model-unload {
+  flex: 0 0 auto;
+  margin-right: 2px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  opacity: 0.45;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
+}
+.adm-model-unload:hover {
+  opacity: 1;
+  color: var(--red);
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+.adm-model-unload:disabled {
+  cursor: wait;
+  opacity: 0.45;
 }
 .mcp-tools-list input[type="checkbox"] {
   accent-color: var(--accent, var(--red));
@@ -14853,6 +15043,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
    falls back to its base max-height: 400px showing only ~8 items.
    The CSS variable :is() selector lets both states share one rule. */
 #doclib-modal.doclib-fullscreen .doclib-modal-content,
+#doclib-modal.modal-full-expanded .doclib-modal-content,
 #doclib-modal.modal-right-docked .doclib-modal-content,
 #doclib-modal.modal-left-docked .doclib-modal-content {
   display: flex;
@@ -14878,7 +15069,9 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   transform: none !important;
 }
 #doclib-modal.doclib-fullscreen .modal-header,
+#doclib-modal.modal-full-expanded .modal-header,
 #doclib-modal.doclib-fullscreen .lib-tabs,
+#doclib-modal.modal-full-expanded .lib-tabs,
 #doclib-modal.modal-right-docked .modal-header,
 #doclib-modal.modal-right-docked .lib-tabs,
 #doclib-modal.modal-left-docked .modal-header,
@@ -14886,6 +15079,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   flex: 0 0 auto;
 }
 #doclib-modal.doclib-fullscreen .modal-body,
+#doclib-modal.modal-full-expanded .modal-body,
 #doclib-modal.modal-right-docked .modal-body,
 #doclib-modal.modal-left-docked .modal-body {
   flex: 1 1 0;
@@ -14895,6 +15089,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   flex-direction: column;
 }
 #doclib-modal.doclib-fullscreen .admin-card,
+#doclib-modal.modal-full-expanded .admin-card,
 #doclib-modal.modal-right-docked .admin-card,
 #doclib-modal.modal-left-docked .admin-card {
   flex: 1 1 0;
@@ -14903,6 +15098,7 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   flex-direction: column;
 }
 #doclib-modal.doclib-fullscreen .doclib-grid:not(:has(.doclib-card-expanded)),
+#doclib-modal.modal-full-expanded .doclib-grid:not(:has(.doclib-card-expanded)),
 #doclib-modal.modal-right-docked .doclib-grid:not(:has(.doclib-card-expanded)),
 #doclib-modal.modal-left-docked .doclib-grid:not(:has(.doclib-card-expanded)) {
   max-height: none;
@@ -14963,10 +15159,10 @@ body:has(.doc-version-panel:not(.hidden)) .hamburger-btn {
   body.email-doc-split-active.doc-view .doc-divider {
     display: none !important;
   }
-  body.email-doc-split-active.doc-view .doc-editor-pane {
+body.email-doc-split-active.doc-view .doc-editor-pane {
     position: fixed !important;
     left: var(--email-doc-split-right-x, 420px) !important;
-    right: var(--right-dock-w, 0px) !important;
+    right: var(--right-dock-reserve-w, var(--right-dock-w, 0px)) !important;
     top: 0 !important;
     bottom: 0 !important;
     width: auto !important;
@@ -14997,11 +15193,11 @@ body.left-dock-active {
   padding-left: 0;
 }
 body.left-dock-active:not(.email-doc-split-active) .chat-container {
-  margin-left: var(--left-dock-w, 0px);
+  margin-left: var(--left-dock-reserve-w, var(--left-dock-w, 0px));
 }
 body.right-dock-active .chat-container,
 body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
-  margin-right: var(--right-dock-w, 0px);
+  margin-right: var(--right-dock-reserve-w, var(--right-dock-w, 0px));
 }
 .modal.modal-right-docked {
   align-items: stretch;
@@ -15030,7 +15226,8 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
 }
 .modal.modal-right-docked .modal-content,
 #email-lib-modal.email-lib-fullscreen .modal-content,
-#doclib-modal.doclib-fullscreen .doclib-modal-content {
+#doclib-modal.doclib-fullscreen .doclib-modal-content,
+#doclib-modal.modal-full-expanded .doclib-modal-content {
   transition: none !important;
 }
 @media (max-width: 768px) {
@@ -15041,18 +15238,37 @@ body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
     margin-right: 0;
   }
   .modal.modal-right-docked .modal-content,
+  .notes-pane.modal-right-docked {
+    width: min(var(--right-dock-w, 84vw), 100vw) !important;
+    max-width: min(var(--right-dock-w, 84vw), 100vw) !important;
+  }
   .modal.modal-left-docked .modal-content,
-  .notes-pane.modal-right-docked,
   .notes-pane.modal-left-docked {
-    left: 0 !important;
-    right: 0 !important;
-    width: 100vw !important;
-    max-width: 100vw !important;
+    width: min(var(--left-dock-w, 84vw), 100vw) !important;
+    max-width: min(var(--left-dock-w, 84vw), 100vw) !important;
   }
   .modal.modal-right-docked .modal-content,
   .modal.modal-left-docked .modal-content {
     height: 100dvh !important;
     max-height: 100dvh !important;
+  }
+}
+@media (orientation: landscape) and (hover: none),
+       (orientation: landscape) and (pointer: coarse) {
+  body.left-dock-active:not(.email-doc-split-active) .chat-container {
+    margin-left: var(--left-dock-reserve-w, var(--left-dock-w, 0px));
+  }
+  body.right-dock-active .chat-container,
+  body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+    margin-right: var(--right-dock-reserve-w, var(--right-dock-w, 0px));
+  }
+}
+@media (orientation: portrait) and (hover: none),
+       (orientation: portrait) and (pointer: coarse) {
+  .modal-content .modal-expand-btn,
+  .research-pane .modal-expand-btn,
+  [data-full-expand] {
+    display: none !important;
   }
 }
 .modal.modal-right-docked .email-reader-header,
@@ -15453,13 +15669,21 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 @media (max-width: 768px) {
   /* Mobile email modal sizing — keep in sync with the rule earlier in the
-     file. 75dvh tall always so flex children (the expanded email reader)
-     have a real height to grow into. */
-  #email-lib-modal .modal-content {
-    max-height: 90dvh !important;
-    max-height: 90vh !important;
-    height: 90dvh !important;
-    height: 90vh !important;
+     file. Portrait email should cover the page instead of leaving chat
+     visible above the inbox. */
+  #email-lib-modal .modal-content,
+  .email-reader-tab-modal .modal-content,
+  .email-window-modal .modal-content {
+    max-height: 100dvh !important;
+    max-height: 100vh !important;
+    height: 100dvh !important;
+    height: 100vh !important;
+  }
+  #email-lib-modal,
+  .email-reader-tab-modal,
+  .email-window-modal {
+    padding-top: 0 !important;
+    align-items: stretch !important;
   }
   /* Inner panes grow to fill the modal-content — without flex:1 on the
      body, the expanded email reader sits in a tiny box because there's
@@ -16899,6 +17123,29 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .gallery-images-container { position: relative; }
 .gallery-modal-content .modal-header h4 {
   font-size: 1rem;
+}
+@media (max-width: 768px) {
+  #gallery-modal .gallery-modal-content {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+  }
+  #gallery-modal .modal-header {
+    flex-shrink: 0;
+  }
+  #gallery-modal .modal-body {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+  #gallery-modal .modal-minimize-btn {
+    display: inline-flex !important;
+  }
 }
 .gallery-stats {
   font-size: 10px;
@@ -29921,8 +30168,62 @@ body.notes-view .chat-container { flex: 1; min-width: 0; }
     display: none !important;
   }
 }
+
+/* Android landscape can be wider than 768px, so pair the mobile Notes
+   JavaScript class with the same full-screen sheet rules used in portrait. */
+body.notes-view.notes-mobile-mode .notes-pane {
+  position: fixed;
+  inset: 0;
+  max-width: 100%;
+  width: 100% !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  z-index: 170;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  overflow: hidden;
+  animation: sheet-enter 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transform-origin: bottom center;
+}
+body.notes-view.notes-mobile-mode .notes-pane-body {
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+}
+body.notes-view.notes-mobile-mode #notes-divider {
+  display: none;
+}
+body.notes-view.notes-mobile-mode .notes-mobile-grabber {
+  display: block;
+  flex-shrink: 0;
+  height: 18px;
+  position: relative;
+  background: var(--bg);
+  touch-action: none;
+  cursor: grab;
+}
+body.notes-view.notes-mobile-mode .notes-mobile-grabber::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 4px;
+  background: var(--fg);
+  opacity: 0.25;
+  border-radius: 2px;
+}
+body.notes-view.notes-mobile-mode .chat-container {
+  display: none;
+}
+body.notes-view.notes-mobile-mode .mobile-new-chat-btn,
+body.notes-view.notes-mobile-mode .hamburger-btn {
+  display: none !important;
+}
+
 /* ── Mobile notes UX ────────────────────────────────────
-   Tiles become read-only previews on touch ≤768px wide.
+   Tiles become read-only previews on phone-sized touch layouts.
    Tap opens a fullscreen overlay where editing happens; long-press
    toggles drag-to-reorder. Wired up in static/js/notes.js. */
 body.notes-mobile-mode .note-card-corner,
@@ -33456,6 +33757,29 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
    --cal-detail-h) and shrinks the grid visually as it grows. */
 #cal-body { display:flex; flex-direction:column; gap:8px; overflow:hidden; padding:0; min-height:0; }
 #cal-body > .cal-grid { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overflow-x: hidden; }
+#calendar-modal.modal-left-docked .cal-modal-content,
+#calendar-modal.modal-right-docked .cal-modal-content,
+#calendar-modal.modal-full-expanded .cal-modal-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#calendar-modal.modal-left-docked .modal-header,
+#calendar-modal.modal-right-docked .modal-header,
+#calendar-modal.modal-full-expanded .modal-header {
+  flex: 0 0 auto;
+}
+#calendar-modal.modal-left-docked #cal-body,
+#calendar-modal.modal-right-docked #cal-body,
+#calendar-modal.modal-full-expanded #cal-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
 @media (max-width: 768px) {
   /* Let the calendar pane shrink to nothing on mobile so the day-detail
      splitter can be dragged all the way to the top, hiding the calendar
@@ -35181,17 +35505,24 @@ body.research-panel-view #research-divider { display:none; }
   border-radius: 6px;
 }
 .research-setting {
-  display:flex; flex-direction:column; flex:1; min-width:90px;
+  display:flex; flex-direction:column; flex:1 1 92px; min-width:90px;
 }
 .research-setting-label {
   font-size:9px; text-transform:uppercase; letter-spacing:0.5px;
   opacity:0.5; margin-bottom:2px;
 }
 .research-setting select {
+  width: 100%;
+  min-width: 0;
   font-size: 11px; padding: 4px 6px;
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border); border-radius: 4px;
+}
+@media (max-width: 600px) {
+  .research-setting {
+    flex-basis: calc(50% - 6px);
+  }
 }
 .research-controls-row {
   display:flex; align-items:center; gap:10px; margin-top:10px;
@@ -36203,13 +36534,13 @@ body.theme-frosted .modal {
    so its content overflowed with nowhere to scroll. Pin it to the full viewport
    (id selector + !important beats the inherited modal-content sizing). */
 @media (max-width: 768px) {
-  /* Bottom-sheet: 90dvh tall (a touch smaller than full-screen) anchored to the
-     bottom, so there's a small gap at the top and it reads as a sheet. The body
-     still scrolls within the bounded height. */
-  #research-overlay { align-items: flex-end !important; justify-content: stretch !important; }
+  /* Full-height mobile sheet, matching Cookbook and the other tool overlays. */
+  #research-overlay { align-items: stretch !important; justify-content: stretch !important; }
   #research-pane {
-    height: 90dvh !important;
-    max-height: 90dvh !important;
+    height: 100dvh !important;
+    height: 100vh !important;
+    max-height: 100dvh !important;
+    max-height: 100vh !important;
     width: 100vw !important;
     max-width: 100vw !important;
     border-radius: 14px 14px 0 0 !important;
