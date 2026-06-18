@@ -97,6 +97,10 @@ LLM_HOSTS = [h.strip() for h in os.getenv("LLM_HOSTS", "").split(",") if h.strip
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 SEARXNG_INSTANCE = os.getenv("SEARXNG_INSTANCE", "http://localhost:8080")
 
+# Telegram integration
+TELEGRAM_BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+
 
 # Cleanup configuration
 CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "True").lower() == "true"

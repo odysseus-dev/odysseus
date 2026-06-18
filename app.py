@@ -765,6 +765,15 @@ from routes.email_routes import setup_email_routes
 email_router = setup_email_routes()
 app.include_router(email_router)
 
+# Telegram
+from routes.telegram_routes import setup_telegram_routes
+telegram_router = setup_telegram_routes(
+    chat_handler=chat_handler,
+    session_manager=session_manager,
+    research_handler=research_handler,
+)
+app.include_router(telegram_router)
+
 # Codex integration — HTTP surface for the Codex plugin/MCP bridge. Reuses
 # api_token scopes (todos:read|write, email:read|draft|send) so external
 # Codex sessions can only touch the data the user explicitly allowed. Mounted
@@ -1146,6 +1155,16 @@ async def _startup_event():
     # removes the feature.
     from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
     _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
+
+    # Telegram poller startup needs a running event loop. Router setup tries
+    # eagerly as well for request-time retries, but the real startup path lives
+    # here so Telegram keeps polling after container restarts with no UI traffic.
+    try:
+        ensure_telegram_poller_started = getattr(telegram_router, "_ensure_poller_started", None)
+        if callable(ensure_telegram_poller_started):
+            ensure_telegram_poller_started()
+    except Exception as e:
+        logger.warning(f"Telegram poller startup skipped: {e}")
 
     logger.info("Application startup complete")
 

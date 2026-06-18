@@ -36829,6 +36829,206 @@ input.cp-swatch-input::selection { background: transparent; }
   background: var(--fg);
   border-color: var(--fg);
 }
+
+/* ── Telegram Integration Panel ── */
+
+#telegram-integration-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 12px 0;
+}
+
+.telegram-section-title {
+  font-size: 0.95em;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 8px 0 4px;
+}
+
+.telegram-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 500;
+  width: fit-content;
+}
+
+.telegram-status-badge.linked {
+  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+}
+
+.telegram-status-badge.linked::before {
+  content: "●";
+  display: inline-block;
+  font-size: 0.8em;
+}
+
+.telegram-status-badge.unlinked {
+  background: color-mix(in srgb, var(--color-muted) 20%, transparent);
+  color: var(--color-muted);
+}
+
+.telegram-status-badge.unlinked::before {
+  content: "○";
+  display: inline-block;
+  font-size: 0.8em;
+}
+
+.telegram-chat-id-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: var(--color-muted);
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.telegram-token-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.telegram-token-input-group label {
+  display: block;
+  font-size: 0.85em;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.telegram-token-input-group input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.85em;
+  font-family: monospace;
+  transition: border-color 0.15s;
+}
+
+.telegram-token-input-group input:focus {
+  outline: none;
+  border-color: var(--red);
+}
+
+.telegram-token-input-group input::placeholder {
+  color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+
+.telegram-button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.telegram-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 0.85em;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.telegram-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  border-color: var(--fg);
+}
+
+.telegram-btn:active:not(:disabled) {
+  opacity: 0.8;
+}
+
+.telegram-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.telegram-btn.primary {
+  background: var(--red);
+  border-color: var(--red);
+  color: var(--panel);
+}
+
+.telegram-btn.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 120%, white);
+  border-color: color-mix(in srgb, var(--red) 120%, white);
+}
+
+.telegram-btn.primary:disabled {
+  background: color-mix(in srgb, var(--red) 60%, transparent);
+  border-color: color-mix(in srgb, var(--red) 60%, transparent);
+}
+
+.telegram-success-message {
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-success) 15%, transparent);
+  border-left: 3px solid var(--color-success);
+  color: var(--color-success);
+  font-size: 0.85em;
+  animation: fadeInBounce 0.4s ease-out;
+}
+
+.telegram-error-message {
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  border-left: 3px solid var(--color-error);
+  color: var(--color-error);
+  font-size: 0.85em;
+  animation: fadeInBounce 0.4s ease-out;
+}
+
+.telegram-info-box {
+  padding: 10px 12px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, var(--red)) 10%, transparent);
+  border-left: 3px solid var(--accent, var(--red));
+  color: var(--color-muted);
+  font-size: 0.85em;
+  line-height: 1.4;
+}
+
+.telegram-loading-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--fg) 20%, transparent);
+  border-top-color: var(--fg);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeInBounce {
+  0% { opacity: 0; transform: translateY(-4px); }
+  70% { opacity: 1; transform: translateY(2px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
 /* PDF view overlays on a white page render — keep colors theme-independent
    so the dot is always visible against the rendered PDF. */
 #doc-pdf-view input[type="checkbox"] {
