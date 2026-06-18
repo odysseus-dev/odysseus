@@ -918,10 +918,14 @@
           </svg>
           <span class="grow">Theme</span>
         </div>
+        <!-- Package nav items injected by packages -->
+        <div id="pkg-slot-sidebar-nav"></div>
         <!-- Package extension sidebar widgets (installed packages inject here) -->
         <div id="package-widgets-sidebar" style="display:contents"></div>
       </div>
     </div>
+    <!-- Package sidebar views: takes over sidebar-inner when active -->
+    <div id="pkg-sidebar-view" style="display:none;flex:1;min-height:0;flex-direction:column;overflow:hidden"></div>
     <div class="sidebar-user-bar" id="sidebar-user-bar">
       <div class="user-bar-left" id="user-bar-profile">
         <div class="user-bar-avatar" id="user-bar-avatar"></div>

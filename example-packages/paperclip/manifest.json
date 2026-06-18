@@ -1,0 +1,12 @@
+{
+  "id": "paperclip",
+  "name": "Paperclip",
+  "version": "1.0.0",
+  "author": "Odysseus",
+  "description": "AI agent team management — create companies, hire agents with roles and system prompts, assign tasks, and run agents directly as Odysseus chat sessions.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": [],
+  "frontend_hooks": {
+    "sidebarWidget": "widget.js"
+  }
+}
