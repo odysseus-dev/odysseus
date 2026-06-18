@@ -551,6 +551,10 @@ def _list_emails(folder="INBOX", max_results=20, unresponded_only=False,
     conn = None
     try:
         conn = _imap_connect(account)
+        # Resolve provider-specific role folders (e.g. "Trash" -> "[Gmail]/Trash")
+        # so listing Trash/Junk/Archive works on Gmail etc. instead of erroring.
+        if _folder_role_from_name(folder):
+            folder = _resolve_folder(conn, folder, _folder_role_from_name(folder))
         select_status, _ = conn.select(_q(folder), readonly=True)
         if select_status != "OK":
             raise ValueError(f"IMAP folder not found: {folder}")
@@ -655,6 +659,34 @@ def _list_emails_across_accounts(folder="INBOX", max_results=20,
     return combined[:max_results], errors
 
 
+def _build_email_search_cmd(query):
+    """Build an IMAP SEARCH criteria string for a free-text query.
+
+    Each term is matched in FROM, SUBJECT, or body TEXT. The query may contain
+    boolean ``OR`` (case-insensitive, e.g. ``"unsubscribe OR sale OR deal"``) to
+    match ANY of the terms. A bare query with no ``OR`` is treated as a single
+    literal phrase, preserving the original behaviour. IMAP's SEARCH OR is
+    binary, so multiple terms are chained with prefix ``OR`` tokens:
+    ``OR OR g1 g2 g3`` parses as ``((g1 OR g2) OR g3)``."""
+    def _esc(s):
+        return str(s).replace("\\", "\\\\").replace('"', '\\"')
+
+    terms = [t.strip() for t in re.split(r"\s+OR\s+", str(query).strip(),
+                                         flags=re.IGNORECASE) if t.strip()]
+    if not terms:
+        terms = [str(query).strip()]
+    terms = terms[:20]  # guard against absurdly long OR chains
+
+    def _group(t):
+        e = _esc(t)
+        return f'(OR OR FROM "{e}" SUBJECT "{e}" TEXT "{e}")'
+
+    groups = [_group(t) for t in terms]
+    if len(groups) == 1:
+        return groups[0]
+    return ("OR " * (len(groups) - 1)) + " ".join(groups)
+
+
 def _search_emails(query, folders=None, max_results=20, account=None):
     """IMAP-search emails by free-text query. Matches FROM, SUBJECT, and
     body TEXT. Walks multiple folders so older threads outside INBOX
@@ -662,10 +694,7 @@ def _search_emails(query, folders=None, max_results=20, account=None):
     _list_emails plus an `_folder` tag."""
     if not query or not str(query).strip():
         return []
-    q = str(query).replace("\\", "\\\\").replace('"', '\\"')
-    # Mail clients commonly use OR FROM/SUBJECT/TEXT to match either field.
-    # IMAP SEARCH OR is binary, so we nest it.
-    search_cmd = f'(OR OR FROM "{q}" SUBJECT "{q}" TEXT "{q}")'
+    search_cmd = _build_email_search_cmd(query)
     if folders is None:
         folders = ["INBOX", "Sent", "Archive"]
     cache = _get_cached_summaries()
@@ -1573,9 +1602,30 @@ def _search_uids(folder="INBOX", criteria="UNSEEN", account=None):
         status, data = conn.uid("SEARCH", None, criteria)
         if status != "OK" or not data or not data[0]:
             return []
-        return data[0].split()
+        # data[0].split() yields bytes (b'123'); callers stringify with str(u),
+        # which would turn b'123' into "b'123'" and break the IMAP message set.
+        # Decode to plain str so selectors (all/all_unread) match like JSON uids.
+        return [u.decode() if isinstance(u, bytes) else u for u in data[0].split()]
     finally:
         conn.logout()
+
+
+def _resolve_folder_for(preferred, role: str = "", account=None) -> str:
+    """Open a short-lived connection just to resolve a provider-specific folder
+    name (e.g. "Trash" -> "[Gmail]/Trash"). Falls back to the preferred name."""
+    try:
+        conn = _imap_connect(account)
+    except Exception:
+        return preferred
+    try:
+        return _resolve_folder(conn, preferred, role or _folder_role_from_name(preferred))
+    except Exception:
+        return preferred
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
 
 
 def _move_message(uid, source_folder, dest_folder, account=None, role: str = ""):
@@ -1884,9 +1934,12 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Perform one action on MANY emails at once — the efficient way to "
                 "'mark all as read', 'archive these', 'delete all spam', etc. Select "
-                "messages either by an explicit `uids` list OR by `all_unread: true` "
-                "(operates on every unread message in the folder). Far better than "
-                "calling mark_email_read / archive_email once per message."
+                "messages by an explicit `uids` list, by `all_unread: true` "
+                "(every unread message in the folder), or by `all: true` (EVERY "
+                "message in the folder — use this with action=delete, permanent=true, "
+                "folder=Trash to empty the Trash). Role folder names like 'Trash' are "
+                "auto-resolved to the provider's real name (e.g. '[Gmail]/Trash'). "
+                "Far better than calling mark_email_read / archive_email once per message."
             ),
             inputSchema={
                 "type": "object",
@@ -1906,7 +1959,12 @@ async def list_tools() -> list[Tool]:
                         "description": "Operate on ALL unread messages in the folder (ignores uids).",
                         "default": False,
                     },
-                    "folder": {"type": "string", "description": "IMAP folder", "default": "INBOX"},
+                    "all": {
+                        "type": "boolean",
+                        "description": "Operate on EVERY message in the folder (used when no uids given). Use to empty Trash: action=delete, permanent=true, folder=Trash, all=true.",
+                        "default": False,
+                    },
+                    "folder": {"type": "string", "description": "IMAP folder (role names like 'Trash'/'Junk'/'Archive' are auto-resolved per provider)", "default": "INBOX"},
                     "permanent": {"type": "boolean", "description": "For delete: expunge instead of moving to Trash.", "default": False},
                     **ACCOUNT_PROP,
                 },
@@ -2312,11 +2370,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             action = arguments.get("action", "")
             folder = arguments.get("folder", "INBOX")
             all_unread = bool(arguments.get("all_unread", False))
+            all_in_folder = bool(arguments.get("all", False))
             uids = arguments.get("uids") or []
+            # Resolve provider-specific role folders (e.g. "Trash" -> "[Gmail]/Trash")
+            # so selecting/operating on Trash/Junk/Archive works on Gmail etc.
+            if _folder_role_from_name(folder):
+                folder = _resolve_folder_for(folder, account=acct)
             if all_unread:
                 uids = _search_uids(folder, "UNSEEN", account=acct)
+            elif all_in_folder and not uids:
+                # Folder-wide selector: every message in the folder. This is what
+                # "empty the Trash" needs — no fragile UID enumeration in the reply.
+                uids = _search_uids(folder, "ALL", account=acct)
             if not uids:
-                return [TextContent(type="text", text="No messages selected (pass uids or all_unread=true).")]
+                return [TextContent(type="text", text="No messages selected (pass uids, all_unread=true, or all=true).")]
             requested_n = len(uids)
             changed_n = 0
             try:
