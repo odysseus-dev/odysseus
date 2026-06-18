@@ -2600,6 +2600,15 @@ async def stream_agent_loop(
             from src.tool_index import ALWAYS_AVAILABLE
             _relevant_tools = set(ALWAYS_AVAILABLE)
         _relevant_tools.update(t for t in forced_tools if t not in disabled_tools)
+    # Surface git/forge when the workspace is a git repo (.git dir or file).
+    # Admin/plan-mode gating still applies downstream.
+    if _relevant_tools is not None and workspace:
+        try:
+            import os as _os
+            if _os.path.exists(_os.path.join(_os.path.realpath(workspace), ".git")):
+                _relevant_tools.update({"git", "forge"})
+        except OSError:
+            pass
 
     # The skill index injected by _build_system_prompt tells the model to
     # call `manage_skills action=view`, and Jaccard-matched skills are pasted

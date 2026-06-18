@@ -1,6 +1,6 @@
 """Workspace API - browse server directories to pick a tool workspace folder."""
 import os
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, Request, HTTPException, Query, Form
 
 from src.auth_helpers import get_current_user
 from src.tool_security import owner_is_admin_or_single_user
@@ -81,5 +81,32 @@ def setup_workspace_routes():
         from src.tool_execution import vet_workspace
         resolved = vet_workspace(path)
         return {"ok": resolved is not None, "path": resolved}
+
+    @router.post("/git")
+    async def git_exec(request: Request, command: str = Form(...), path: str = Form("")):
+        """`/git` no-LLM client: reuses the agent git tool (run_git) - same
+        allowlist/confinement/push policy. Admin-only; requires a git worktree."""
+        import shutil
+        import subprocess
+        owner = get_current_user(request)
+        if not owner_is_admin_or_single_user(owner):
+            raise HTTPException(status_code=403, detail="git is admin-only")
+        ws = os.path.realpath(os.path.expanduser((path or "").strip()))
+        if not (path or "").strip() or not os.path.isdir(ws):
+            raise HTTPException(status_code=400, detail="A valid workspace folder is required")
+        git_bin = shutil.which("git")
+        if not git_bin:
+            raise HTTPException(status_code=500, detail="git is not installed on the server")
+        try:
+            probe = subprocess.run(
+                [git_bin, "-C", ws, "rev-parse", "--is-inside-work-tree"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except Exception:
+            probe = None
+        if not probe or probe.returncode != 0:
+            raise HTTPException(status_code=400, detail="Not a git repository")
+        from src.agent_tools.git_tools import run_git
+        return await run_git(command, ws)
 
     return router

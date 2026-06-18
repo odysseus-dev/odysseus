@@ -747,6 +747,12 @@ async def _execute_tool_block_impl(
         desc = f"manage_bg_jobs: {content.split(chr(10))[0][:80]}"
         result = await _direct_fallback(tool, content, session_id=session_id, owner=owner) \
             or {"error": "manage_bg_jobs: execution failed", "exit_code": 1}
+    elif tool in ("git", "forge"):
+        # Workspace-confined VCS tools (agent_tools.git_tools), registry-dispatched.
+        first_line = content.split(chr(10))[0][:80]
+        desc = f"{tool}: {first_line}"
+        result = await _direct_fallback(tool, content, progress_cb=progress_cb) \
+            or {"error": f"{tool}: execution failed", "exit_code": 1}
     elif tool in ("create_document", "update_document", "edit_document",
                   "suggest_document", "manage_documents"):
         desc = f"{tool}: {content.split(chr(10))[0][:80]}"

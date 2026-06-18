@@ -1247,6 +1247,24 @@ async function _cmdToggleDoc(args, ctx) {
 
 // Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
 // show / set <path> / clear / pick (open the directory browser).
+// Quick no-LLM git client scoped to the workspace. Reuses the agent `git` tool
+// server-side (same allowlist/confinement/strict push policy) via /api/workspace/git.
+async function _cmdGit(args, ctx) {
+  const ws = workspaceModule.getWorkspace();
+  if (!ws) { slashReply('Set a workspace (the repo) first - <code>/workspace pick</code>.'); return true; }
+  const cmd = args.join(' ').trim();
+  if (!cmd) { slashReply('Usage: <code>/git status</code> · <code>diff</code> · <code>log --oneline</code> · <code>commit -m "msg"</code>'); return true; }
+  try {
+    const fd = new FormData(); fd.append('command', cmd); fd.append('path', ws);
+    const r = await fetch(`${API_BASE}/api/workspace/git`, { method: 'POST', body: fd, credentials: 'same-origin' });
+    const d = await r.json();
+    if (!r.ok) { slashReply(d.detail || 'git failed'); return true; }
+    const out = d.error ? d.error : (d.output || '(no output)');
+    slashReply(`<pre>${uiModule.esc(out)}</pre>`);
+  } catch (e) { slashReply('git request failed'); }
+  return true;
+}
+
 async function _cmdWorkspace(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
   const rest = args.slice(1).join(' ').trim();
@@ -5788,6 +5806,14 @@ const COMMANDS = {
     handler: _cmdWorkspace,
     noUserBubble: true,
     usage: '/workspace [set <path> | clear | pick]',
+  },
+  git: {
+    alias: [],
+    category: 'Agent',
+    help: 'Run git in the workspace (no AI)',
+    handler: _cmdGit,
+    noUserBubble: true,
+    usage: '/git status · diff · log --oneline · commit -m "msg"',
   },
   memory: {
     alias: ['m'],
