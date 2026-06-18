@@ -23,6 +23,7 @@ from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
+from .bg_job_tools import ManageBgJobsTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -44,6 +45,7 @@ TOOL_HANDLERS = {
     "chat_with_model": ChatWithModelTool().execute,
     "ask_teacher": AskTeacherTool().execute,
     "list_models": ListModelsTool().execute,
+    "manage_bg_jobs": ManageBgJobsTool().execute,
 }
 
 # ---------------------------------------------------------------------------
@@ -56,7 +58,7 @@ PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
-             "grep", "glob", "ls", "get_workspace",
+             "grep", "glob", "ls", "get_workspace", "manage_bg_jobs",
              "create_document", "update_document", "edit_document",
              "search_chats",
              "chat_with_model", "create_session", "list_sessions",
