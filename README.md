@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/odysseus-wordmark.png" alt="Odysseus" width="280">
+  <img src="docs/hellaine-logo.svg" alt="Odysseus" width="280">
 </p>
 
 <p align="center">
