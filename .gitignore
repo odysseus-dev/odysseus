@@ -37,6 +37,7 @@ logs/
 # Node
 node_modules/
 services/node_modules/
+
 services/data/
 
 # IDE / Editor
@@ -102,3 +103,12 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+id_ed25519
+id_ed25519.pub
+lucrezia
+lucrezia.pub
+*.pem
+*.key
+.env
+data/
+logs/
