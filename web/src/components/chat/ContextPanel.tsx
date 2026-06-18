@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom"
 import { usePanel, type PanelFile } from "@/stores/panel"
 import { HtmlPreview } from "@/components/ui/HtmlPreview"
 import { detectRenderLang } from "@/lib/artifact"
+import { useExitTransition } from "@/lib/useExitTransition"
 import { apiJson } from "@/lib/api"
 import { Markdown } from "./Markdown"
 import { Button } from "@/components/ui/button"
@@ -32,6 +33,7 @@ async function openFile(f: PanelFile) {
 // Markdown; other code renders as a code block.
 export function ContextPanel() {
   const { open, kind, title, payload, doc, files, close, backToFiles } = usePanel()
+  const { render, closing } = useExitTransition(open, 150)
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
   const lang = doc?.language?.toLowerCase()
@@ -44,7 +46,7 @@ export function ContextPanel() {
   const lastTitle = useRef(doc?.title)
   if (doc?.title !== lastTitle.current) { lastTitle.current = doc?.title; setView("preview") }
 
-  if (!open) return null
+  if (!render) return null
   const sources = (payload as Source[]) || []
   const hasFileList = !!files && files.length > 0
   const copy = async () => { try { await navigator.clipboard.writeText(doc?.content || ""); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ } }
@@ -54,7 +56,7 @@ export function ContextPanel() {
     : title || "Details"
 
   return (
-    <aside className="hidden w-[44%] max-w-[560px] shrink-0 animate-panel-in flex-col border-l bg-card lg:flex">
+    <aside className={cn("hidden w-[44%] max-w-[560px] shrink-0 flex-col border-l bg-card lg:flex", closing ? "animate-panel-out" : "animate-panel-in")}>
       <header className="flex h-13 shrink-0 items-center justify-between gap-2 border-b px-4">
         <span className="flex min-w-0 items-center gap-2 text-sm font-semibold">
           {kind === "doc" && hasFileList && (

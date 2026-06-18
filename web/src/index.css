@@ -23,6 +23,15 @@
   --input: #e4e4e7;
   --ring: #9f9fa9;
   --sidebar: #fafafa;
+
+  /* Motion tokens (theme-independent). Durations stay short for UI; enters use
+     a decelerate ease-out, exits a faster accelerate ease-in. */
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-slow: 280ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dark {
@@ -115,9 +124,12 @@
    Small, fast, eased animations applied via utility classes. Kept subtle and
    disabled under prefers-reduced-motion. */
 @keyframes odys-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes odys-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes odys-msg-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes odys-panel-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@keyframes odys-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(14px); } }
 @keyframes odys-pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes odys-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(0.96); } }
 @keyframes odys-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 /* Odysseus mascot ripple — a cell fills its colour then fades, with a gentle
    pop in scale, so the 3×3 grid pulses along a diagonal wave. */
@@ -127,12 +139,21 @@
   60%  { background-color: color-mix(in srgb, var(--cell-color), transparent 86%); transform: scale(0.72); }
   100% { background-color: color-mix(in srgb, var(--cell-color), transparent 86%); transform: scale(0.72); }
 }
+/* Reduced-motion mascot: same diagonal wave, opacity-only (no scale). */
+@keyframes odys-ripple-rm {
+  0%, 100% { background-color: color-mix(in srgb, var(--cell-color), transparent 86%); }
+  28%      { background-color: var(--cell-color); }
+  60%      { background-color: color-mix(in srgb, var(--cell-color), transparent 86%); }
+}
 
 @layer utilities {
-  .animate-msg-in { animation: odys-msg-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .animate-fade-in { animation: odys-fade-in 0.2s ease-out both; }
-  .animate-panel-in { animation: odys-panel-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .animate-pop-in { animation: odys-pop-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both; }
+  .animate-msg-in { animation: odys-msg-in var(--motion-slow) var(--ease-out) both; }
+  .animate-fade-in { animation: odys-fade-in var(--motion-base) var(--ease-out) both; }
+  .animate-fade-out { animation: odys-fade-out var(--motion-fast) var(--ease-in) both; }
+  .animate-panel-in { animation: odys-panel-in var(--motion-slow) var(--ease-out) both; }
+  .animate-panel-out { animation: odys-panel-out var(--motion-fast) var(--ease-in) both; }
+  .animate-pop-in { animation: odys-pop-in var(--motion-base) var(--ease-out) both; }
+  .animate-pop-out { animation: odys-pop-out var(--motion-fast) var(--ease-in) both; }
   .animate-pulse-soft { animation: odys-pulse-soft 1.6s ease-in-out infinite; }
 }
 
@@ -170,10 +191,13 @@
   .mascot .cell:nth-child(9) { animation-delay: 360ms; --cell-color: color-mix(in srgb, var(--primary), transparent 32%); }
 }
 
+/* Reduced motion: opacity is vestibular-safe, movement is not. Swap the
+   slide/scale enters & exits for plain fades, keep the mascot alive as a
+   working indicator (opacity-only ripple), and snap hover/transform transitions
+   instead of freezing functional loaders. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-  }
+  .animate-msg-in, .animate-panel-in, .animate-pop-in { animation: odys-fade-in var(--motion-base) var(--ease-out) both !important; }
+  .animate-panel-out, .animate-pop-out { animation: odys-fade-out var(--motion-fast) var(--ease-in) both !important; }
+  .mascot .cell { animation-name: odys-ripple-rm !important; }
+  * { transition-duration: 0.01ms !important; }
 }

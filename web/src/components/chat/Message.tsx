@@ -96,13 +96,22 @@ export function Message({ m, onRegenerate, onEdit }: { m: ChatMessage; onRegener
           <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-muted-foreground" />
         </div>
       )}
-      {display ? <Markdown>{display}</Markdown> : (m.streaming && !m.reasoning && !m.research && !doc && (!m.tools || m.tools.length === 0)) ? <div className="flex items-center gap-2.5 text-sm text-muted-foreground"><Mascot size={9} title="Thinking" /><span className="animate-pulse-soft">Thinking…</span></div> : null}
+      {display && <Markdown>{display}</Markdown>}
       {doc && <ArtifactCard artifact={doc} />}
       {m.sources && m.sources.length > 0 && (
         <button onClick={() => usePanel.getState().show("sources", { title: `Sources · ${m.sources!.length}`, payload: m.sources })}
           className="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
           <BookOpen className="size-3.5" /> {m.sources.length} source{m.sources.length === 1 ? "" : "s"}
         </button>
+      )}
+      {/* Persistent "still working" heartbeat — the mascot sits UNDER the
+         streaming content (and is the sole placeholder before any content),
+         so it's always clear the assistant is still going. */}
+      {m.streaming && (
+        <div className="flex items-center gap-2.5 pt-0.5 text-sm text-muted-foreground">
+          <Mascot size={9} title="Working" />
+          {!display && !doc && !m.reasoning && !m.research && (!m.tools || m.tools.length === 0) && <span className="animate-pulse-soft">Thinking…</span>}
+        </div>
       )}
       {!m.streaming && (m.model || mt || m.content) && (
         <div className="flex flex-wrap items-center gap-2 pt-0.5 text-[11px] text-muted-foreground">
