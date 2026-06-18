@@ -61,9 +61,21 @@ function _initGroupTab() {
     return _modelsCache;
   }
 
-  function _render() {
-    // Clean up any orphaned search dropdowns from body
+  // Tears down all document/window listeners and body-appended dropdown
+  // attached to any in-flight picker row.  Must be called before clearing
+  // participantsEl.innerHTML so the custom picker.remove() path is not the
+  // only way listeners get unregistered.
+  function _destroyPickerRow() {
+    const existing = participantsEl.querySelector('.group-add-picker-row');
+    if (existing && typeof existing._cleanup === 'function') {
+      existing._cleanup();
+    }
+    // Belt-and-suspenders: also sweep any orphaned body-level dropdowns.
     document.querySelectorAll('.group-model-search-dropdown').forEach(el => el.remove());
+  }
+
+  function _render() {
+    _destroyPickerRow();
     participantsEl.innerHTML = '';
     _groupParticipants.forEach((p, idx) => {
       const row = document.createElement('div');
@@ -136,8 +148,8 @@ function _initGroupTab() {
     modelInput.style.cssText = 'font-size:11px;width:100%;padding-left:8px;padding-right:22px;box-sizing:border-box;transition:border-color 0.15s,box-shadow 0.15s;';
 
     const chevron = document.createElement('span');
-    chevron.innerHTML = '&#9662;'; // downward triangle
-    chevron.style.cssText = 'position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:9px;opacity:0.5;pointer-events:none;color:var(--fg);';
+    chevron.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+    chevron.style.cssText = 'position:absolute;right:7px;top:50%;transform:translateY(-50%);display:flex;align-items:center;opacity:0.5;pointer-events:none;color:var(--fg);';
 
     modelSelWrapper.appendChild(modelInput);
     modelSelWrapper.appendChild(chevron);
@@ -264,12 +276,20 @@ function _initGroupTab() {
     };
     document.addEventListener('click', clickOutsideHandler);
 
-    const originalRemove = picker.remove;
-    picker.remove = function() {
+    // Explicit cleanup function — called by _destroyPickerRow() (via _render())
+    // before participantsEl.innerHTML is cleared, and also by the overridden
+    // picker.remove() so direct DOM removal still unregisters listeners.
+    function _cleanup() {
       dropdown.remove();
       document.removeEventListener('click', clickOutsideHandler);
       window.removeEventListener('scroll', scrollResizeHandler);
       window.removeEventListener('resize', scrollResizeHandler);
+    }
+    picker._cleanup = _cleanup;
+
+    const originalRemove = picker.remove;
+    picker.remove = function() {
+      _cleanup();
       originalRemove.call(picker);
     };
 
