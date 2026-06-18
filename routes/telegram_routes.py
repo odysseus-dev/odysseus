@@ -30,6 +30,8 @@ from routes.telegram_helpers import (
     _get_telegram_user_config,
     _save_telegram_user_config,
     _clear_telegram_user_config,
+    _clear_all_telegram_user_configs,
+    clear_all_linking_states,
     create_linking_state,
     verify_linking_token,
     validate_telegram_bot_token,
@@ -109,6 +111,16 @@ class CompleteLinkingResponse(BaseModel):
 class TelegramUnlinkResponse(BaseModel):
     """Response confirming account unlink."""
     status: str
+    message: str
+
+
+class TelegramResetResponse(BaseModel):
+    """Response confirming a full Telegram integration reset."""
+    ok: bool
+    bot_token_cleared: bool
+    user_links_cleared: int
+    linking_codes_cleared: int
+    managed_by_env: bool = False
     message: str
 
 
@@ -416,6 +428,49 @@ def setup_telegram_routes(chat_handler=None, session_manager=None, research_hand
         except Exception as e:
             logger.error("Error unlinking Telegram account for user %s: %s", user, e, exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to unlink Telegram account")
+
+    @router.post("/reset", response_model=TelegramResetResponse)
+    async def reset_telegram_integration(request: Request):
+        """Reset Telegram integration: clear token, all user links, and pending link codes."""
+        _ensure_poller_started()
+        require_admin(request)
+
+        try:
+            existing = _load_telegram_config()
+            managed_by_env = bool(existing.get("managed_by_env"))
+
+            bot_token_cleared = False
+            if managed_by_env:
+                logger.info("Telegram reset requested while bot token is environment-managed")
+            else:
+                if not _save_telegram_system_config(""):
+                    raise HTTPException(status_code=500, detail="Failed to clear Telegram bot token")
+                bot_token_cleared = True
+
+            user_links_cleared = _clear_all_telegram_user_configs()
+            linking_codes_cleared = clear_all_linking_states()
+
+            if managed_by_env:
+                message = (
+                    "Telegram account links and pending linking codes were cleared. "
+                    "Bot token is managed by TELEGRAM_BOT_TOKEN and was not removed here."
+                )
+            else:
+                message = "Telegram integration removed. Bot token, account links, and pending linking codes were cleared."
+
+            return TelegramResetResponse(
+                ok=True,
+                bot_token_cleared=bot_token_cleared,
+                user_links_cleared=user_links_cleared,
+                linking_codes_cleared=linking_codes_cleared,
+                managed_by_env=managed_by_env,
+                message=message,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Error resetting Telegram integration: %s", e, exc_info=True)
+            raise HTTPException(status_code=500, detail="Failed to reset Telegram integration")
 
     @router.post("/mode", response_model=TelegramModeUpdateResponse)
     async def update_telegram_mode(request: Request, data: TelegramModeUpdateRequest):

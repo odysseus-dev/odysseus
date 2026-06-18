@@ -156,7 +156,7 @@ const TelegramIntegration = (() => {
             <div class="telegram-button-group">
               <button id="telegram-save-config-btn" class="telegram-btn primary" ${configSaveInProgress ? 'disabled' : ''}>Save Bot Token</button>
               ${currentConfig.bot_token_configured ? '<button id="telegram-clear-config-btn" class="telegram-btn">Clear Saved Token</button>' : ''}
-              ${currentConfig.bot_token_configured ? '<button id="telegram-remove-integration-btn" class="telegram-btn">Remove Integration</button>' : ''}
+              <button id="telegram-remove-integration-btn" class="telegram-btn">Remove Integration</button>
             </div>
           ` : ''}
         </div>
@@ -290,31 +290,6 @@ const TelegramIntegration = (() => {
       return;
     }
 
-    async function handleSyncTopics() {
-      try {
-        const response = await fetch(`${API_BASE}/sync-topics`, {
-          method: 'POST',
-          credentials: 'same-origin',
-        });
-
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.detail || 'Failed to sync Telegram topics');
-        }
-
-        const created = Number(data.created_count || 0);
-        const updated = Number(data.updated_count || 0);
-        const skipped = Number(data.skipped_count || 0);
-        showMessage(`Telegram topics synced: ${created} created, ${updated} updated, ${skipped} unchanged.`, 'success');
-        await loadConfig();
-        renderUI();
-        try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
-      } catch (error) {
-        console.error('Syncing Telegram topics failed:', error);
-        showMessage(error.message, 'error');
-      }
-    }
-
     try {
       const response = await fetch(`${API_BASE}/config`, {
         method: 'POST',
@@ -339,30 +314,19 @@ const TelegramIntegration = (() => {
   }
 
   async function handleRemoveIntegration() {
-    if (!confirm('Remove the Telegram integration? This will clear the bot token and disable Telegram chat until a new token is added.')) {
+    if (!confirm('Remove the Telegram integration completely? This clears the bot token, unlinks all Telegram accounts, and invalidates pending linking codes.')) {
       return;
     }
 
     try {
-      const response = await fetch(`${API_BASE}/config`, {
+      const response = await fetch(`${API_BASE}/reset`, {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bot_token: '' }),
       });
 
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to remove Telegram integration');
-      }
-
-      if (currentConfig.user_linked) {
-        try {
-          await fetch(`${API_BASE}/unlink`, {
-            method: 'POST',
-            credentials: 'same-origin',
-          });
-        } catch (_) {}
       }
 
       showMessage(data.message || 'Telegram integration removed.', 'success');
@@ -440,6 +404,31 @@ const TelegramIntegration = (() => {
     } catch (error) {
       console.error('Unlinking failed:', error);
       showMessage(`Unlinking failed: ${error.message}`, 'error');
+    }
+  }
+
+  async function handleSyncTopics() {
+    try {
+      const response = await fetch(`${API_BASE}/sync-topics`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to sync Telegram topics');
+      }
+
+      const created = Number(data.created_count || 0);
+      const updated = Number(data.updated_count || 0);
+      const skipped = Number(data.skipped_count || 0);
+      showMessage(`Telegram topics synced: ${created} created, ${updated} updated, ${skipped} unchanged.`, 'success');
+      await loadConfig();
+      renderUI();
+      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+    } catch (error) {
+      console.error('Syncing Telegram topics failed:', error);
+      showMessage(error.message, 'error');
     }
   }
 

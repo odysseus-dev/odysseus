@@ -446,6 +446,44 @@ def _clear_telegram_user_config(owner: str) -> bool:
         return False
 
 
+def _clear_all_telegram_user_configs() -> int:
+    """Remove Telegram linking data for all users.
+
+    Returns the number of user records that had Telegram config removed.
+    """
+    try:
+        from src.constants import USER_PREFS_FILE
+        from core.atomic_io import atomic_write_json
+
+        prefs = _read_json_file(USER_PREFS_FILE, {})
+        if not isinstance(prefs, dict) or not prefs:
+            return 0
+
+        removed_count = 0
+        for owner, owner_prefs in prefs.items():
+            if not isinstance(owner_prefs, dict):
+                continue
+            if "telegram" in owner_prefs:
+                owner_prefs.pop("telegram", None)
+                removed_count += 1
+
+        atomic_write_json(str(USER_PREFS_FILE), prefs)
+        return removed_count
+    except Exception as e:
+        logger.error("Error clearing Telegram config for all users: %s", e, exc_info=True)
+        return 0
+
+
+def clear_all_linking_states() -> int:
+    """Clear all pending one-time Telegram linking tokens.
+
+    Returns the number of tokens cleared.
+    """
+    count = len(_LINKING_STATES)
+    _LINKING_STATES.clear()
+    return count
+
+
 async def _telegram_api_call(method: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Make a call to the Telegram Bot API.
     
