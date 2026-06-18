@@ -70,30 +70,6 @@ const TelegramIntegration = (() => {
     const html = `
       <div class="telegram-info-box" id="telegram-message-box" style="display:none"></div>
 
-      ${currentConfig.can_manage_bot ? `
-        <div>
-          <div class="telegram-section-title">Bot Configuration</div>
-          <div class="telegram-status-badge ${currentConfig.bot_token_configured ? 'linked' : 'unlinked'}">
-            ${currentConfig.bot_token_configured ? 'Configured' : 'Not configured'}
-          </div>
-          <div class="telegram-info-box" style="margin-top:10px;">
-            <strong>Bot:</strong> ${botLabel}<br>
-            <strong>Source:</strong> ${escapeHtml(currentConfig.config_source || 'none')}
-            ${currentConfig.managed_by_env ? '<br><strong>Note:</strong> This token is managed by the TELEGRAM_BOT_TOKEN environment variable and cannot be edited here.' : ''}
-          </div>
-          ${!currentConfig.managed_by_env ? `
-            <div class="telegram-token-input-group" style="margin-top:12px;">
-              <label for="telegram-bot-token-input">Telegram bot token</label>
-              <input id="telegram-bot-token-input" type="password" placeholder="${currentConfig.bot_token_configured ? 'Paste a new token to replace the current one' : '123456789:AA...'}" autocomplete="off">
-            </div>
-            <div class="telegram-button-group">
-              <button id="telegram-save-config-btn" class="telegram-btn primary" ${configSaveInProgress ? 'disabled' : ''}>Save Bot Token</button>
-              ${currentConfig.bot_token_configured ? '<button id="telegram-clear-config-btn" class="telegram-btn">Clear Saved Token</button>' : ''}
-            </div>
-          ` : ''}
-        </div>
-      ` : ''}
-
       <div>
         <div class="telegram-section-title">Account Linking</div>
         <div class="telegram-status-badge ${currentConfig.user_linked ? 'linked' : 'unlinked'}">
@@ -155,11 +131,36 @@ const TelegramIntegration = (() => {
         ` : `
           <div class="telegram-info-box" style="margin-top:10px;">
             ${currentConfig.can_manage_bot
-              ? 'Configure a Telegram bot token above, then users can link their Telegram accounts here.'
+              ? 'Configure a Telegram bot token first, then users can link their Telegram accounts here.'
               : 'Ask an administrator to configure the Telegram bot token first. Once that is done, you can link your account here.'}
           </div>
         `}
       </div>
+
+      ${currentConfig.can_manage_bot ? `
+        <div>
+          <div class="telegram-section-title">Bot Configuration</div>
+          <div class="telegram-status-badge ${currentConfig.bot_token_configured ? 'linked' : 'unlinked'}">
+            ${currentConfig.bot_token_configured ? 'Configured' : 'Not configured'}
+          </div>
+          <div class="telegram-info-box" style="margin-top:10px;">
+            <strong>Bot:</strong> ${botLabel}<br>
+            <strong>Source:</strong> ${escapeHtml(currentConfig.config_source || 'none')}
+            ${currentConfig.managed_by_env ? '<br><strong>Note:</strong> This token is managed by the TELEGRAM_BOT_TOKEN environment variable and cannot be edited here.' : ''}
+          </div>
+          ${!currentConfig.managed_by_env ? `
+            <div class="telegram-token-input-group" style="margin-top:12px;">
+              <label for="telegram-bot-token-input">Telegram bot token</label>
+              <input id="telegram-bot-token-input" type="password" placeholder="${currentConfig.bot_token_configured ? 'Paste a new token to replace the current one' : '123456789:AA...'}" autocomplete="off">
+            </div>
+            <div class="telegram-button-group">
+              <button id="telegram-save-config-btn" class="telegram-btn primary" ${configSaveInProgress ? 'disabled' : ''}>Save Bot Token</button>
+              ${currentConfig.bot_token_configured ? '<button id="telegram-clear-config-btn" class="telegram-btn">Clear Saved Token</button>' : ''}
+              ${currentConfig.bot_token_configured ? '<button id="telegram-remove-integration-btn" class="telegram-btn">Remove Integration</button>' : ''}
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
     `;
 
     container.innerHTML = html;
@@ -211,6 +212,11 @@ const TelegramIntegration = (() => {
     const clearConfigBtn = document.getElementById('telegram-clear-config-btn');
     if (clearConfigBtn) {
       clearConfigBtn.addEventListener('click', handleClearConfig);
+    }
+
+    const removeIntegrationBtn = document.getElementById('telegram-remove-integration-btn');
+    if (removeIntegrationBtn) {
+      removeIntegrationBtn.addEventListener('click', handleRemoveIntegration);
     }
 
     const startBtn = document.getElementById('telegram-start-link-btn');
@@ -328,6 +334,43 @@ const TelegramIntegration = (() => {
       try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
     } catch (error) {
       console.error('Clearing Telegram config failed:', error);
+      showMessage(error.message, 'error');
+    }
+  }
+
+  async function handleRemoveIntegration() {
+    if (!confirm('Remove the Telegram integration? This will clear the bot token and disable Telegram chat until a new token is added.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/config`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot_token: '' }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to remove Telegram integration');
+      }
+
+      if (currentConfig.user_linked) {
+        try {
+          await fetch(`${API_BASE}/unlink`, {
+            method: 'POST',
+            credentials: 'same-origin',
+          });
+        } catch (_) {}
+      }
+
+      showMessage(data.message || 'Telegram integration removed.', 'success');
+      await loadConfig();
+      renderUI();
+      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+    } catch (error) {
+      console.error('Removing Telegram integration failed:', error);
       showMessage(error.message, 'error');
     }
   }

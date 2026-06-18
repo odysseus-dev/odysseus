@@ -293,7 +293,7 @@ async def _process_telegram_message(parsed_msg: Dict[str, Any]) -> bool:
                     chat_id,
                     format_for_telegram(
                         "Use one of the synced forum topics for chat messages. "
-                        "If you just added me here, open Odysseus Settings → Telegram and run Sync Topics."
+                        "If you just added me here, open Odysseus Settings → Integrations → Telegram and run Sync Topics."
                     ),
                     message_thread_id=message_thread_id,
                 )
@@ -313,7 +313,7 @@ async def _process_telegram_message(parsed_msg: Dict[str, Any]) -> bool:
                         chat_id,
                         format_for_telegram(
                             "This topic is not linked to an Odysseus chat yet. "
-                            "Run Sync Topics from Odysseus Settings → Telegram."
+                            "Run Sync Topics from Odysseus Settings → Integrations → Telegram."
                         ),
                         message_thread_id=message_thread_id,
                     )

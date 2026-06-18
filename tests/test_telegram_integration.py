@@ -269,9 +269,9 @@ class TestTelegramLinking:
         token = "abcdefghijklmnopqrstuvwxyz123456"
         instructions = (
             f"To link your Telegram account:\n\n"
-            f"1. Go to Odysseus Settings → Telegram\n"
-            f"2. Paste this code into the linking field\n"
-            f"3. Paste this code: {token}\n\n"
+            f"1. Go to Odysseus Settings → Integrations → Telegram\n"
+            f"2. Paste this code into the Linking token field: {token}\n"
+            f"3. Click Link Account\n\n"
             f"This code expires in 5 minutes."
         )
 
