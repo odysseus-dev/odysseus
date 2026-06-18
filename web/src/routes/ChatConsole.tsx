@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
-import { MoreHorizontal, Download, Copy, EyeOff } from "lucide-react"
+import { MoreHorizontal, Download, Copy, EyeOff, FileText } from "lucide-react"
 import { useChat } from "@/lib/useChat"
 import { useComposer } from "@/stores/composer"
 import { useSessions } from "@/api/sessions"
+import { useSessionDocuments } from "@/api/documents"
+import { usePanel } from "@/stores/panel"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
 import { ContextPanel } from "@/components/chat/ContextPanel"
+import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/types"
 
 function ExportMenu({ sid, messages }: { sid: string; messages: ChatMessage[] }) {
@@ -45,9 +48,27 @@ export function ChatConsole() {
   const { messages, streaming, send, stop } = useChat(sessionId)
   const { data: sessions } = useSessions()
   const incognito = useComposer((s) => s.incognito)
+  const { data: threadDocs } = useSessionDocuments(sessionId)
+  const panelOpen = usePanel((s) => s.open)
+  const docCount = threadDocs?.length || 0
   const title = sessions?.find((s) => s.id === sessionId)?.name
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }) }, [messages])
+
+  // Auto-open the per-thread files panel once when entering a thread that has
+  // saved artifacts/files — but don't clobber a panel the live stream opened.
+  const autoOpenedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!sessionId || docCount === 0) return
+    if (autoOpenedRef.current === sessionId) return
+    autoOpenedRef.current = sessionId
+    if (!usePanel.getState().open) usePanel.getState().showFiles(threadDocs || [])
+  }, [sessionId, docCount, threadDocs])
+
+  const toggleFiles = () => {
+    if (panelOpen) usePanel.getState().close()
+    else usePanel.getState().showFiles(threadDocs || [])
+  }
 
   return (
     <div className="flex h-full min-w-0 flex-1">
@@ -61,7 +82,19 @@ export function ChatConsole() {
               </span>
             )}
           </span>
-          {sessionId && messages.length > 0 && <ExportMenu sid={sessionId} messages={messages} />}
+          <div className="flex items-center gap-1">
+            {docCount > 0 && (
+              <button
+                onClick={toggleFiles}
+                title={panelOpen ? "Hide files panel" : "Show files in this thread"}
+                className={cn("flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                  panelOpen ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+              >
+                <FileText className="size-3.5" />{docCount} file{docCount === 1 ? "" : "s"}
+              </button>
+            )}
+            {sessionId && messages.length > 0 && <ExportMenu sid={sessionId} messages={messages} />}
+          </div>
         </header>
         <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {messages.length === 0 ? (

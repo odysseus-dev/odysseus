@@ -11,6 +11,18 @@ export function useDocuments() {
   })
 }
 
+// Documents/artifacts/files belonging to a specific chat thread.
+export function useSessionDocuments(sid?: string) {
+  return useQuery({
+    queryKey: ["session-documents", sid],
+    enabled: !!sid,
+    queryFn: async () => {
+      const r = await apiJson<DocItem[] | { documents?: DocItem[]; items?: DocItem[] }>(`/api/documents/${sid}`)
+      return Array.isArray(r) ? r : (r.documents || r.items || [])
+    },
+  })
+}
+
 export interface DocFull { id: string; title?: string; language?: string; current_content?: string; version_count?: number }
 export function useDocument(id: string | null) {
   return useQuery({
