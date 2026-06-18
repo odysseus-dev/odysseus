@@ -67,14 +67,6 @@ def _gallery_image_path(filename: str) -> Path:
         raise HTTPException(400, "Unsafe gallery filename")
     if safe_name != original:
         raise HTTPException(400, "Unsafe gallery filename")
-    if not path.exists():
-        cwd_root = (Path.cwd() / "data" / "generated_images").resolve()
-        cwd_path = (cwd_root / safe_name).resolve()
-        try:
-            if os.path.commonpath([str(cwd_root), str(cwd_path)]) == str(cwd_root) and cwd_path.exists():
-                return cwd_path
-        except Exception:
-            pass
     return path
 
 

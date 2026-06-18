@@ -130,6 +130,43 @@ def _lookup_bandwidth(system):
     return None
 
 
+def _canonical_cpu_backend(system):
+    """Return the canonical CPU backend for cpu_only speed estimation.
+
+    Normalizes CPU-architecture aliases separately from the GPU backend, and
+    overrides GPU-only backends (CUDA/ROCm/Metal) so they do not inherit a
+    discrete-GPU fallback constant when the model is actually running on CPU.
+    """
+    backend = (system.get("backend") or "").lower().strip()
+    cpu_arch = (system.get("cpu_arch") or "").lower().strip()
+    cpu_name = (system.get("cpu_name") or "").lower()
+    gpu_name = (system.get("gpu_name") or "").lower()
+
+    # Already-canonical CPU backends
+    if backend in ("cpu_x86", "cpu_arm"):
+        return backend
+
+    # Raw CPU-architecture aliases
+    if backend in ("x86_64", "amd64", "i386", "i686"):
+        return "cpu_x86"
+    if backend in ("arm64", "aarch64", "arm"):
+        return "cpu_arm"
+
+    # Prefer an explicit CPU architecture field when present
+    if cpu_arch:
+        if cpu_arch in ("x86_64", "amd64", "x86", "i386", "i686"):
+            return "cpu_x86"
+        if cpu_arch in ("arm64", "aarch64", "arm"):
+            return "cpu_arm"
+
+    # Apple Silicon enters ranking as backend="metal"; its CPU path is ARM.
+    if backend in ("metal", "mps", "apple") or "apple" in cpu_name or "apple" in gpu_name:
+        return "cpu_arm"
+
+    # Conservative default for CUDA/ROCm/discrete GPU backends and unknowns.
+    return "cpu_x86"
+
+
 def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     """Estimate tok/s. Uses active params for MoE (only active experts run per token).
 
@@ -146,6 +183,11 @@ def _estimate_speed(model, quant, run_mode, system, offload_frac=0.0):
     is_moe = model.get("is_moe", False)
     bw = _lookup_bandwidth(system)
     backend = system.get("backend", "cpu_x86")
+
+    # CPU-only inference must never inherit a GPU backend's fallback constant,
+    # even if the detected system happens to report a CUDA/Metal/ROCm backend.
+    if run_mode == "cpu_only":
+        backend = _canonical_cpu_backend(system)
 
     if bw and run_mode in ("gpu", "cpu_offload"):
         bpp = QUANT_BYTES_PER_PARAM.get(quant, 0.5)
