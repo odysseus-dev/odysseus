@@ -16,6 +16,10 @@ services:
       # land under /app/.local for the odysseus user. Persist them so a
       # container recreate does not silently remove installed serve engines.
       - ${APP_DATA_DIR:-./data}/local:/app/.local:z
+      # Optional, but highly recommended: Mount your Obsidian vault for
+      # obsidian-mcp MCP server support.
+      # Set OBSIDIAN_VAULT_PATH in your .env file to enable.
+      - ${OBSIDIAN_VAULT_PATH:-}:/vault
     extra_hosts:
       # Lets the container reach local services on the Docker host, including
       # Ollama at http://host.docker.internal:11434.
