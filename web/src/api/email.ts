@@ -92,8 +92,10 @@ async function post(path: string, p: ComposePayload): Promise<{ success?: boolea
 export const sendEmail = (p: ComposePayload) => post("/api/email/send", p)
 export const saveDraft = (p: ComposePayload) => post("/api/email/draft", p)
 
-export async function aiReply(uid: string): Promise<{ reply?: string; body?: string; error?: string }> {
-  const r = await apiFetch(`/api/email/ai-reply/${uid}?folder=INBOX`, { method: "POST" })
+// POST /api/email/ai-reply expects the email fields in a JSON body (original_body
+// is required) and returns { success, reply, error, ... }.
+export async function aiReply(email: { uid?: string; folder?: string; original_body: string; to?: string; subject?: string; model?: string }): Promise<{ success?: boolean; reply?: string; error?: string }> {
+  const r = await apiFetch("/api/email/ai-reply", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(email) })
   return r.json().catch(() => ({ error: `HTTP ${r.status}` }))
 }
 
@@ -105,19 +107,19 @@ export function useEmailActions(folder = "INBOX") {
     qc.invalidateQueries({ queryKey: ["email-search"] })
   }
   return {
-    markUnread: useMutation({ mutationFn: async (uid: string) => { await apiFetch(`/api/email/mark-unread/${uid}?folder=${f}`, { method: "POST" }) }, onSuccess: inv }),
-    archive: useMutation({ mutationFn: async (uid: string) => { await apiFetch(`/api/email/archive/${uid}?folder=${f}`, { method: "POST" }) }, onSuccess: inv }),
-    remove: useMutation({ mutationFn: async (uid: string) => { await apiFetch(`/api/email/delete/${uid}?folder=${f}`, { method: "DELETE" }) }, onSuccess: inv }),
+    markUnread: useMutation({ mutationFn: async (uid: string) => { const r = await apiFetch(`/api/email/mark-unread/${uid}?folder=${f}`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't mark the email unread") }, onSuccess: inv }),
+    archive: useMutation({ mutationFn: async (uid: string) => { const r = await apiFetch(`/api/email/archive/${uid}?folder=${f}`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't archive the email") }, onSuccess: inv }),
+    remove: useMutation({ mutationFn: async (uid: string) => { const r = await apiFetch(`/api/email/delete/${uid}?folder=${f}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't delete the email") }, onSuccess: inv }),
     flag: useMutation({
-      mutationFn: async (v: { uid: string; on: boolean }) => { await apiFetch(`/api/email/flag/${v.uid}?folder=${f}&on=${v.on}`, { method: "POST" }) },
+      mutationFn: async (v: { uid: string; on: boolean }) => { const r = await apiFetch(`/api/email/flag/${v.uid}?folder=${f}&on=${v.on}`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't flag the email") },
       onSuccess: (_d, v) => { inv(); qc.invalidateQueries({ queryKey: ["email-read", v.uid] }) },
     }),
     move: useMutation({
-      mutationFn: async (v: { uid: string; dest: string }) => { await apiFetch(`/api/email/move/${v.uid}?folder=${f}&dest=${encodeURIComponent(v.dest)}`, { method: "POST" }) },
+      mutationFn: async (v: { uid: string; dest: string }) => { const r = await apiFetch(`/api/email/move/${v.uid}?folder=${f}&dest=${encodeURIComponent(v.dest)}`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't move the email") },
       onSuccess: inv,
     }),
     markAnswered: useMutation({
-      mutationFn: async (uid: string) => { await apiFetch(`/api/email/mark-answered/${uid}?folder=${f}`, { method: "POST" }) },
+      mutationFn: async (uid: string) => { const r = await apiFetch(`/api/email/mark-answered/${uid}?folder=${f}`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't update the email") },
       onSuccess: (_d, uid) => { inv(); qc.invalidateQueries({ queryKey: ["email-read", uid] }) },
     }),
   }

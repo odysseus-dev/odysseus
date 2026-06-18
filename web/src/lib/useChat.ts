@@ -114,8 +114,15 @@ export function useChat(sessionId?: string) {
       case "web_sources": case "sources": case "research_sources":
         patchAi((m) => ({ ...m, sources: [...(m.sources || []), ...((ev.data as []) || [])] })); break
       case "metrics": {
+        // Backend emits input_tokens/output_tokens/tokens_per_second (nested under
+        // `data`); keep the old names as fallbacks for safety.
         const dm = (ev.data as Record<string, unknown>) || ev
-        patchAi((m) => ({ ...m, metrics: { tokens_in: dm.tokens_in as number, tokens_out: dm.tokens_out as number, cost: dm.cost as number, tok_per_sec: (dm.tok_per_sec ?? dm.tokens_per_sec) as number } })); break
+        patchAi((m) => ({ ...m, metrics: {
+          tokens_in: (dm.input_tokens ?? dm.tokens_in) as number,
+          tokens_out: (dm.output_tokens ?? dm.tokens_out) as number,
+          cost: dm.cost as number,
+          tok_per_sec: (dm.tokens_per_second ?? dm.tok_per_sec ?? dm.tokens_per_sec) as number,
+        } })); break
       }
       case "error": patchAi((m) => ({ ...m, content: m.content + (m.content ? "\n\n" : "") + `⚠️ ${(ev.text as string) || (ev.error as string) || "Stream error"}` })); break
       case "research_progress":
@@ -154,6 +161,47 @@ export function useChat(sessionId?: string) {
     }
   }, [qc])
 
+  // Shared streaming path: appends nothing to the message list (the caller has
+  // already placed the streaming assistant message), builds the request, and
+  // streams the reply. Used by both send() and regenerate().
+  const streamReply = useCallback(async (
+    text: string, sid: string,
+    opts: { model?: string; endpointId?: string; attachmentIds?: string[]; sendAs?: string } = {},
+  ) => {
+    setStreaming(true)
+    rawRef.current = ""; artifactRef.current = null
+    const fd = new FormData()
+    fd.set("message", opts.sendAs || text)
+    fd.set("session", sid)
+    if (opts.attachmentIds && opts.attachmentIds.length) fd.set("attachments", JSON.stringify(opts.attachmentIds))
+    fd.set("mode", composer.mode)
+    fd.set("allow_bash", String(composer.allowBash))
+    if (composer.mode === "chat" && composer.useWeb) fd.set("use_web", "true")
+    if (composer.mode === "agent") fd.set("allow_web_search", String(composer.useWeb))
+    if (composer.useResearch) fd.set("use_research", "true")
+    if (!composer.useRag) fd.set("use_rag", "false")
+    if (composer.incognito) fd.set("incognito", "true")
+    if (opts.model) fd.set("model", opts.model)
+    if (opts.endpointId) fd.set("endpoint_id", opts.endpointId)
+    if (composer.presetId) fd.set("preset_id", composer.presetId)
+
+    const ctrl = new AbortController(); abortRef.current = ctrl
+    try {
+      await streamChat(fd, (e: SseEvent) => handleEvent(e, sid), ctrl.signal)
+    } catch (err) {
+      // A user Stop / unmount aborts the fetch (AbortError) and is expected;
+      // anything else is a genuine stream error worth logging + showing.
+      if ((err as Error)?.name !== "AbortError") {
+        console.error("chat stream failed:", err)
+        patchAi((m) => ({ ...m, content: m.content || "_(stream interrupted)_" }))
+      }
+    } finally {
+      patchAi((m) => ({ ...m, streaming: false }))
+      setStreaming(false); abortRef.current = null
+      qc.invalidateQueries({ queryKey: ["sessions"] })
+    }
+  }, [composer, handleEvent, patchAi, qc])
+
   const send = useCallback(async (text: string, attachmentIds?: string[], sendAs?: string) => {
     if (!text.trim() || streaming) return
     // Resolve a model up-front. ModelPicker seeds composer.model from
@@ -188,40 +236,19 @@ export function useChat(sessionId?: string) {
       seededRef.current = sid
     }
     setMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
-    setStreaming(true)
-    rawRef.current = ""; artifactRef.current = null
+    await streamReply(text, sid, { model, endpointId, attachmentIds, sendAs })
+  }, [streaming, composer, navigate, qc, dropIncognito, streamReply])
 
-    const fd = new FormData()
-    fd.set("message", sendAs || text)
-    fd.set("session", sid)
-    if (attachmentIds && attachmentIds.length) fd.set("attachments", JSON.stringify(attachmentIds))
-    fd.set("mode", composer.mode)
-    fd.set("allow_bash", String(composer.allowBash))
-    if (composer.mode === "chat" && composer.useWeb) fd.set("use_web", "true")
-    if (composer.mode === "agent") fd.set("allow_web_search", String(composer.useWeb))
-    if (composer.useResearch) fd.set("use_research", "true")
-    if (!composer.useRag) fd.set("use_rag", "false")
-    if (composer.incognito) fd.set("incognito", "true")
-    if (model) fd.set("model", model)
-    if (endpointId) fd.set("endpoint_id", endpointId)
-    if (composer.presetId) fd.set("preset_id", composer.presetId)
-
-    const ctrl = new AbortController(); abortRef.current = ctrl
-    try {
-      await streamChat(fd, (e: SseEvent) => handleEvent(e, sid!), ctrl.signal)
-    } catch (err) {
-      // Don't swallow real failures — a user Stop / unmount aborts the fetch
-      // (AbortError) and is expected; anything else is a genuine stream error.
-      if ((err as Error)?.name !== "AbortError") {
-        console.error("chat stream failed:", err)
-        patchAi((m) => ({ ...m, content: m.content || "_(stream interrupted)_" }))
-      }
-    } finally {
-      patchAi((m) => ({ ...m, streaming: false }))
-      setStreaming(false); abortRef.current = null
-      qc.invalidateQueries({ queryKey: ["sessions"] })
-    }
-  }, [streaming, composer, navigate, qc, handleEvent, patchAi, dropIncognito])
+  // Regenerate the assistant reply to the user message at `userIndex`: drop that
+  // reply (and anything after) and stream a fresh one — without re-appending a
+  // duplicate user turn.
+  const regenerate = useCallback(async (text: string, userIndex: number) => {
+    if (streaming || !text.trim()) return
+    const sid = sidRef.current
+    if (!sid) return
+    setMessages((prev) => [...prev.slice(0, userIndex + 1), { role: "assistant", content: "", reasoning: "", tools: [], sources: [], streaming: true }])
+    await streamReply(text, sid, { model: composer.model || undefined, endpointId: composer.endpointId || undefined })
+  }, [streaming, composer.model, composer.endpointId, streamReply])
 
   // Clean up the ephemeral incognito session when leaving: on SPA unmount
   // (in-app route change) AND on pagehide (tab close / refresh / hard nav),
@@ -274,5 +301,5 @@ export function useChat(sessionId?: string) {
     return () => { cancelled = true; ctrl.abort() }
   }, [sessionId, streaming, handleEvent, patchAi, qc])
 
-  return { messages, streaming, send, stop }
+  return { messages, streaming, send, stop, regenerate }
 }

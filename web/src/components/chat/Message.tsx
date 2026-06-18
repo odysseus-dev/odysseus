@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ChevronRight, Brain, Telescope, Loader2, Volume2, Square, BookOpen, Copy, Check, RotateCcw, Pencil, ArrowRight, FileCode2 } from "lucide-react"
 import { usePanel } from "@/stores/panel"
 import { Mascot } from "@/components/ui/Mascot"
@@ -36,6 +36,9 @@ function SpeakButton({ text }: { text: string }) {
   const [busy, setBusy] = useState(false)
   const [playing, setPlaying] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  // Stop playback if the message unmounts (e.g. switching threads) — otherwise
+  // a detached, playing HTMLAudioElement keeps speaking with no way to stop it.
+  useEffect(() => () => { audioRef.current?.pause(); audioRef.current = null }, [])
   if (!caps?.tts) return null
   const toggle = async () => {
     if (playing) { audioRef.current?.pause(); audioRef.current = null; setPlaying(false); return }
@@ -59,7 +62,7 @@ function Reasoning({ text, live }: { text: string; live: boolean }) {
     <div className="rounded-lg border bg-card text-xs">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-3 py-2 text-muted-foreground hover:text-foreground">
         <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-        {live ? <Mascot size={5} title="Thinking" /> : <Brain className="size-3.5" />}
+        <Brain className="size-3.5" />
         {live ? "Thinking…" : "Reasoning"}
       </button>
       {open && <div className="whitespace-pre-wrap border-t px-3 py-2 text-muted-foreground">{text}</div>}

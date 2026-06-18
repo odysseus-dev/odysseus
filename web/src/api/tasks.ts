@@ -22,9 +22,9 @@ export function useTaskMutations() {
       },
       onSuccess: inv,
     }),
-    run: useMutation({ mutationFn: (id: string) => post(id, "run"), onSuccess: inv }),
-    pause: useMutation({ mutationFn: (id: string) => post(id, "pause"), onSuccess: inv }),
-    resume: useMutation({ mutationFn: (id: string) => post(id, "resume"), onSuccess: inv }),
-    remove: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/tasks/${id}`, { method: "DELETE" }) }, onSuccess: inv }),
+    run: useMutation({ mutationFn: async (id: string) => { const r = await post(id, "run"); if (!r.ok) throw new Error("Couldn't run the task") }, onSuccess: inv }),
+    pause: useMutation({ mutationFn: async (id: string) => { const r = await post(id, "pause"); if (!r.ok) throw new Error("Couldn't pause the task") }, onSuccess: inv }),
+    resume: useMutation({ mutationFn: async (id: string) => { const r = await post(id, "resume"); if (!r.ok) throw new Error("Couldn't resume the task") }, onSuccess: inv }),
+    remove: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/tasks/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't delete the task") }, onSuccess: inv }),
   }
 }

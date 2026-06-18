@@ -9,8 +9,11 @@ function Lightbox({ img, onClose }: { img: GalleryImage; onClose: () => void }) 
   const { favorite, remove, rename, rotate, setTags } = useGalleryMutations()
   const [name, setName] = useState(img.prompt || "")
   const [tags, setTagsLocal] = useState(img.tags || "")
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- sync editable fields when the selected image changes
-  useEffect(() => { setName(img.prompt || ""); setTagsLocal(img.tags || "") }, [img])
+  // Re-seed only when a DIFFERENT image opens — keyed on img.id, not the img
+  // object (which the parent recreates on every gallery refetch), so a refetch
+  // triggered by favorite/rotate/etc. doesn't wipe unsaved Name/Tags edits.
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps -- re-seed only when a different image (id) opens, not on every refetch of the same image
+  useEffect(() => { setName(img.prompt || ""); setTagsLocal(img.tags || "") }, [img.id])
   const inp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
   return (
     <div className="absolute inset-0 z-20 flex animate-fade-in items-center justify-center bg-black/60 p-4" onClick={onClose}>
@@ -79,9 +82,12 @@ export function GalleryRoute() {
       <div className="flex-1 overflow-y-auto p-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {list.map((img) => (
-            <div key={img.id} className="group relative cursor-pointer overflow-hidden rounded-lg border bg-card" onClick={() => setOpen(img)}>
+            <div key={img.id} role="button" tabIndex={0} aria-label={img.prompt || img.filename || "Open image"}
+              className="group relative cursor-pointer overflow-hidden rounded-lg border bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setOpen(img)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(img) } }}>
               <img src={img.url} alt={img.prompt || img.filename} loading="lazy" className="aspect-square w-full object-cover" />
-              <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+              <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 <button onClick={(e) => { e.stopPropagation(); favorite.mutate(img.id) }} title="Favorite" className="rounded-md bg-black/50 p-1.5 text-white hover:bg-black/70">
                   <Star className={cn("size-3.5", img.favorite && "fill-current")} />
                 </button>

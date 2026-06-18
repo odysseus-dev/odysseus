@@ -55,8 +55,8 @@ export function useAdminMutations() {
         return r.json()
       }, onSuccess: invMcp,
     }),
-    reconnectServer: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/mcp/servers/${id}/reconnect`, { method: "POST" }) }, onSuccess: invMcp }),
-    removeServer: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/mcp/servers/${id}`, { method: "DELETE" }) }, onSuccess: invMcp }),
+    reconnectServer: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/mcp/servers/${id}/reconnect`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't reconnect the server") }, onSuccess: invMcp }),
+    removeServer: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/mcp/servers/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't remove the server") }, onSuccess: invMcp }),
     addWebhook: useMutation({
       mutationFn: async (v: { name: string; url: string; events: string }) => {
         const r = await form("/api/webhooks", { name: v.name, url: v.url, events: v.events })
@@ -67,9 +67,10 @@ export function useAdminMutations() {
     testWebhook: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/webhooks/${id}/test`, { method: "POST" }); return r.json().catch(() => ({})) } }),
     toggleWebhook: useMutation({
       mutationFn: async (v: { id: string; is_active: boolean }) => {
-        await apiFetch(`/api/webhooks/${v.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: v.is_active }) })
+        const r = await apiFetch(`/api/webhooks/${v.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_active: v.is_active }) })
+        if (!r.ok) throw new Error("Couldn't update the webhook")
       }, onSuccess: invHook,
     }),
-    removeWebhook: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/webhooks/${id}`, { method: "DELETE" }) }, onSuccess: invHook }),
+    removeWebhook: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/webhooks/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't remove the webhook") }, onSuccess: invHook }),
   }
 }

@@ -5,6 +5,7 @@ import { uploadFiles } from "@/api/upload"
 import { useVoiceCaps, transcribe } from "@/api/voice"
 import { useSlashCatalog, invokeSkill } from "@/api/skills"
 import { ModePicker, ModelPicker, ToolsMenu } from "./ComposerControls"
+import { toast } from "@/stores/toast"
 import { cn } from "@/lib/utils"
 
 export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, ids?: string[], sendAs?: string) => void; onStop: () => void; streaming: boolean }) {
@@ -20,12 +21,13 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
   const chunksRef = useRef<Blob[]>([])
   const { data: slashAll } = useSlashCatalog()
   const [slashSel, setSlashSel] = useState(0)
+  const [slashDismissed, setSlashDismissed] = useState(false)
   // Slash autocomplete only while typing the leading command token (no space yet).
   const slashTok = /^\/([\w-]*)$/.exec(text)
   const slashMatches = slashTok && !streaming
     ? (slashAll || []).filter((c) => c.name.toLowerCase().startsWith(slashTok[1].toLowerCase())).slice(0, 8)
     : []
-  const slashOpen = slashMatches.length > 0
+  const slashOpen = slashMatches.length > 0 && !slashDismissed
   const sel = Math.min(slashSel, slashMatches.length - 1)
   const grow = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px" }
   const pickSlash = (name: string) => { setText(`/${name} `); setSlashSel(0); requestAnimationFrame(() => { ref.current?.focus(); grow() }) }
@@ -69,8 +71,13 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
     // /skill <request> → expand to the skill-pinned prompt (display the command, send the expansion)
     const cmd = /^\/([\w-]+)\s*([\s\S]*)$/.exec(display.trim())
     if (cmd && (slashAll || []).some((c) => c.name === cmd[1])) {
-      const expanded = await invokeSkill(cmd[1], cmd[2] || "")
-      onSend(display, ids, expanded || undefined)
+      try {
+        const expanded = await invokeSkill(cmd[1], cmd[2] || "")
+        onSend(display, ids, expanded || undefined)
+      } catch {
+        // Don't lose the message if skill expansion fails — send the raw command.
+        onSend(display, ids)
+      }
       return
     }
     onSend(display, ids)
@@ -79,7 +86,7 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
     if (!files || !files.length) return
     setUploading(true)
     try { const up = await uploadFiles(Array.from(files)); setAtts((p) => [...p, ...up.map((f) => ({ id: f.id, name: f.name }))]) }
-    catch { /* ignore */ }
+    catch { toast("Couldn't upload the file. Please try again.") }
     finally { setUploading(false); if (fileRef.current) fileRef.current.value = "" }
   }
   const [dragging, setDragging] = useState(false)
@@ -124,13 +131,13 @@ export function Composer({ onSend, onStop, streaming }: { onSend: (t: string, id
         )}
         <textarea
           ref={ref} value={text} rows={1} placeholder={uploading ? "Uploading…" : "Message Odysseus…  (/ for skills)"}
-          onChange={(e) => { setText(e.target.value); setSlashSel(0); grow() }}
+          onChange={(e) => { setText(e.target.value); setSlashSel(0); setSlashDismissed(false); grow() }}
           onKeyDown={(e) => {
             if (slashOpen) {
               if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((s) => Math.min(s + 1, slashMatches.length - 1)); return }
               if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel((s) => Math.max(s - 1, 0)); return }
               if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pickSlash(slashMatches[sel].name); return }
-              if (e.key === "Escape") { e.preventDefault(); setText(""); return }
+              if (e.key === "Escape") { e.preventDefault(); setSlashDismissed(true); return } // dismiss the menu, keep the text
             }
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit() }
           }}

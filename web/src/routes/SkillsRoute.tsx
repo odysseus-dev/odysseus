@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Trash2, Sparkles, Wrench, Pencil, ArrowLeft, Save, Plus, Play, FlaskConical, Link2, RotateCcw, CheckCircle2, XCircle, AlertTriangle, HelpCircle, Loader2 } from "lucide-react"
 import { useSkills, useBuiltinSkills, useSkillMarkdown, useSkillMutations, useRunSkill, useStartSkillTest, useSkillTestStatus, useBuiltinSkill } from "@/api/skills"
 import type { SkillVerdict } from "@/api/skills"
@@ -62,11 +62,23 @@ function RunPanel({ id, name, onClose }: { id: string; name: string; onClose: ()
 function TestPanel({ id, name, onClose }: { id: string; name: string; onClose: () => void }) {
   const start = useStartSkillTest()
   const [polling, setPolling] = useState(true)
+  const sawRunningRef = useRef(false)
+  const pendingRef = useRef(false)
   const { data } = useSkillTestStatus(id, polling)
   const running = data?.status === "running"
-  // Stop polling once the run completes.
-  useEffect(() => { if (data && data.status !== "running") setPolling(false) }, [data]) // eslint-disable-line react-hooks/set-state-in-effect -- stop polling when the background test job finishes
-  const begin = () => { setPolling(true); start.mutate(id) }
+  // Stop polling once the run completes — but if we just kicked off a run, keep
+  // polling until the backend flips to "running" first, so a stale terminal
+  // status from a previous run can't disable polling before this run starts.
+  useEffect(() => {
+    if (!data) return
+    if (data.status === "running") { sawRunningRef.current = true; pendingRef.current = false; return }
+    if (pendingRef.current && !sawRunningRef.current) return
+    setPolling(false)
+  }, [data])
+  // A failed start means there's no run to poll for.
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- stop polling when the start fails
+  useEffect(() => { if (start.isError) { pendingRef.current = false; setPolling(false) } }, [start.isError])
+  const begin = () => { pendingRef.current = true; sawRunningRef.current = false; setPolling(true); start.mutate(id) }
   const verdict = data?.verdict
   const log = data?.log || []
   return (

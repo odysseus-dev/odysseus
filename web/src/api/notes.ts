@@ -34,7 +34,7 @@ export function useNoteMutations() {
       },
       onSuccess: inv,
     }),
-    remove: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/notes/${id}`, { method: "DELETE" }) }, onSuccess: inv }),
-    pin: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/notes/${id}/pin`, { method: "POST" }) }, onSuccess: inv }),
+    remove: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/notes/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't delete the note") }, onSuccess: inv }),
+    pin: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/notes/${id}/pin`, { method: "POST" }); if (!r.ok) throw new Error("Couldn't update the note") }, onSuccess: inv }),
   }
 }

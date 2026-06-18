@@ -11,7 +11,7 @@ export function useDefaultChat() {
 export function useDeleteEndpoint() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (id: string) => { await apiFetch(`/api/model-endpoints/${id}`, { method: "DELETE" }) },
+    mutationFn: async (id: string) => { const r = await apiFetch(`/api/model-endpoints/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't remove the endpoint") },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["models"] }),
   })
 }

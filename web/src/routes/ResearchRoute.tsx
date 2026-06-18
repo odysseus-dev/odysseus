@@ -51,9 +51,10 @@ function ActiveRow({ item, onCancel, cancelling }: { item: ResearchActiveItem; o
 
 function LibraryRow({ item, active, onClick }: { item: ResearchLibraryItem; active: boolean; onClick: () => void }) {
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className={cn("cursor-pointer rounded-md px-3 py-2 text-sm",
+      className={cn("w-full cursor-pointer rounded-md px-3 py-2 text-left text-sm",
         active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}
     >
       <div className="truncate font-medium text-foreground">{item.query || "Untitled research"}</div>
@@ -63,7 +64,7 @@ function LibraryRow({ item, active, onClick }: { item: ResearchLibraryItem; acti
         {item.duration && <span>{item.duration}</span>}
         {item.completed_at ? <span>{new Date(item.completed_at * 1000).toLocaleDateString()}</span> : null}
       </div>
-    </div>
+    </button>
   )
 }
 

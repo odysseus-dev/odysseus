@@ -46,7 +46,7 @@ const SUGGESTIONS = [
 
 export function ChatConsole() {
   const { sessionId } = useParams()
-  const { messages, streaming, send, stop } = useChat(sessionId)
+  const { messages, streaming, send, stop, regenerate } = useChat(sessionId)
   const { data: sessions } = useSessions()
   const incognito = useComposer((s) => s.incognito)
   const { data: threadDocs } = useSessionDocuments(sessionId)
@@ -130,7 +130,7 @@ export function ChatConsole() {
             <div className="mx-auto w-full max-w-[768px] space-y-6 px-4 py-6">{messages.map((m, i) => (
               <Message key={i} m={m}
                 onRegenerate={m.role === "assistant" && !streaming ? () => {
-                  for (let j = i - 1; j >= 0; j--) { if (messages[j].role === "user") { send(messages[j].content); break } }
+                  for (let j = i - 1; j >= 0; j--) { if (messages[j].role === "user") { regenerate(messages[j].content, j); break } }
                 } : undefined}
                 onEdit={m.role === "user" && !streaming ? () => window.dispatchEvent(new CustomEvent("odysseus:set-composer", { detail: m.content })) : undefined}
               />

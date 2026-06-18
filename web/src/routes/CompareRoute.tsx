@@ -5,6 +5,7 @@ import { startCompare, voteCompare, type CompareStart } from "@/api/compare"
 import { streamChat } from "@/lib/sse"
 import { Markdown } from "@/components/chat/Markdown"
 import { Button } from "@/components/ui/button"
+import { toast } from "@/stores/toast"
 import { cn } from "@/lib/utils"
 
 interface Sel { model: string; endpointId: string; endpointUrl: string }
@@ -35,7 +36,7 @@ function ModelSelect({ value, onChange, label }: { value: Sel; onChange: (s: Sel
 }
 
 interface PaneMetrics { tokens_out?: number; tok_per_sec?: number; cost?: number }
-function streamPane(sessionId: string, prompt: string, sel: Sel, onDelta: (d: string) => void, onMetrics: (m: PaneMetrics) => void, signal: AbortSignal) {
+function streamPane(sessionId: string, prompt: string, sel: Sel, onDelta: (d: string) => void, onMetrics: (m: PaneMetrics) => void, onError: (msg: string) => void, signal: AbortSignal) {
   const fd = new FormData()
   fd.set("message", prompt)
   fd.set("session", sessionId)
@@ -46,12 +47,18 @@ function streamPane(sessionId: string, prompt: string, sel: Sel, onDelta: (d: st
   return streamChat(fd, (e) => {
     const ev = e as Record<string, unknown>
     if (typeof ev.delta === "string" && !ev.thinking) onDelta(ev.delta as string)
-    else if (e.type === "metrics") onMetrics({ tokens_out: ev.tokens_out as number, tok_per_sec: ev.tok_per_sec as number, cost: ev.cost as number })
+    else if (e.type === "metrics") {
+      // Metrics are nested under `data` and named output_tokens/tokens_per_second.
+      const dm = (ev.data as Record<string, unknown>) || ev
+      onMetrics({ tokens_out: (dm.output_tokens ?? dm.tokens_out) as number, tok_per_sec: (dm.tokens_per_second ?? dm.tok_per_sec) as number, cost: dm.cost as number })
+    } else if (e.type === "error") {
+      onError((ev.text as string) || (ev.error as string) || "Model error")
+    }
   }, signal)
 }
 
 // Module-scope so it isn't recreated each render (which would reset its state).
-function Pane({ side, model, body, win, met, running }: { side: string; model: string; body: string; win: boolean; met: PaneMetrics | null; running: boolean }) {
+function Pane({ side, model, body, win, met, running, err }: { side: string; model: string; body: string; win: boolean; met: PaneMetrics | null; running: boolean; err?: string }) {
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col rounded-lg border bg-card", win && "ring-2 ring-primary")}>
       <div className="flex items-center justify-between border-b px-3 py-2">
@@ -59,7 +66,7 @@ function Pane({ side, model, body, win, met, running }: { side: string; model: s
         <span className="truncate text-xs text-muted-foreground">{model}</span>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {body ? <Markdown>{body}</Markdown> : running ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Generating…</div> : <span className="text-sm text-muted-foreground">No output yet.</span>}
+        {body ? <Markdown>{body}</Markdown> : err ? <span className="text-sm text-destructive">⚠️ {err}</span> : running ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-3.5 animate-spin" />Generating…</div> : <span className="text-sm text-muted-foreground">No output yet.</span>}
       </div>
       {met && (
         <div className="flex flex-wrap gap-3 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
@@ -84,10 +91,12 @@ export function CompareRoute() {
   const [comp, setComp] = useState<CompareStart | null>(null)
   const [voted, setVoted] = useState<string | null>(null)
   const [err, setErr] = useState("")
+  const [lErr, setLErr] = useState("")
+  const [rErr, setRErr] = useState("")
 
   const run = async () => {
     if (!prompt.trim() || !a.model || !b.model || running) return
-    setRunning(true); setErr(""); setLeft(""); setRight(""); setLm(null); setRm(null); setComp(null); setVoted(null)
+    setRunning(true); setErr(""); setLErr(""); setRErr(""); setLeft(""); setRight(""); setLm(null); setRm(null); setComp(null); setVoted(null)
     try {
       const c = await startCompare({
         prompt,
@@ -97,11 +106,15 @@ export function CompareRoute() {
       })
       setComp(c)
       const ctrl = new AbortController()
-      // session_left maps to whichever slot; in non-blind mode left=a, right=b
-      await Promise.allSettled([
-        streamPane(c.session_left, prompt, a, (d) => setLeft((p) => p + d), setLm, ctrl.signal),
-        streamPane(c.session_right, prompt, b, (d) => setRight((p) => p + d), setRm, ctrl.signal),
+      // session_left maps to whichever slot; in non-blind mode left=a, right=b.
+      // allSettled never rejects, so surface each pane's failure individually
+      // (both a pre-stream HTTP error and an in-stream `error` event).
+      const [resL, resR] = await Promise.allSettled([
+        streamPane(c.session_left, prompt, a, (d) => setLeft((p) => p + d), setLm, setLErr, ctrl.signal),
+        streamPane(c.session_right, prompt, b, (d) => setRight((p) => p + d), setRm, setRErr, ctrl.signal),
       ])
+      if (resL.status === "rejected") setLErr((p) => p || (resL.reason instanceof Error ? resL.reason.message : "Model A failed"))
+      if (resR.status === "rejected") setRErr((p) => p || (resR.reason instanceof Error ? resR.reason.message : "Model B failed"))
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Comparison failed")
     } finally {
@@ -111,7 +124,7 @@ export function CompareRoute() {
 
   const vote = async (w: "left" | "right" | "tie") => {
     if (!comp || voted) return
-    try { await voteCompare(comp.id, w); setVoted(w) } catch { /* ignore */ }
+    try { await voteCompare(comp.id, w); setVoted(w) } catch { toast("Couldn't record your vote") }
   }
 
   return (
@@ -128,8 +141,8 @@ export function CompareRoute() {
         </div>
         {err && <p className="text-xs text-destructive">{err}</p>}
         <div className="flex min-h-0 flex-1 gap-3">
-          <Pane side="Model A" model={a.model} body={left} win={voted === "left"} met={lm} running={running} />
-          <Pane side="Model B" model={b.model} body={right} win={voted === "right"} met={rm} running={running} />
+          <Pane side="Model A" model={a.model} body={left} win={voted === "left"} met={lm} running={running} err={lErr} />
+          <Pane side="Model B" model={b.model} body={right} win={voted === "right"} met={rm} running={running} err={rErr} />
         </div>
         {comp && !running && (left || right) && (
           <div className="flex items-center justify-center gap-2 pt-1">

@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query"
 import { queryClient } from "@/lib/queryClient"
 import { AppShell } from "@/components/shell/AppShell"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { Toaster } from "@/components/ui/Toaster"
 import { ChatConsole } from "@/routes/ChatConsole"
 import { MemoryRoute } from "@/routes/MemoryRoute"
 import { NotesRoute } from "@/routes/NotesRoute"
@@ -82,6 +83,7 @@ export default function App() {
       <BrowserRouter basename="/v2">
         <ThemedApp />
       </BrowserRouter>
+      <Toaster />
     </QueryClientProvider>
   )
 }

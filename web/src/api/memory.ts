@@ -28,6 +28,6 @@ export function useMemoryMutations() {
       },
       onSuccess: inv,
     }),
-    remove: useMutation({ mutationFn: async (id: string) => { await apiFetch(`/api/memory/${id}`, { method: "DELETE" }) }, onSuccess: inv }),
+    remove: useMutation({ mutationFn: async (id: string) => { const r = await apiFetch(`/api/memory/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("Couldn't delete the memory") }, onSuccess: inv }),
   }
 }

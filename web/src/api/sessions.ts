@@ -25,7 +25,8 @@ export async function createSession(opts: {
   return res.json() as Promise<Session>
 }
 export async function deleteSession(id: string): Promise<void> {
-  await apiFetch(`/api/session/${id}`, { method: "DELETE" })
+  const r = await apiFetch(`/api/session/${id}`, { method: "DELETE" })
+  if (!r.ok) throw new Error("Couldn't delete the chat")
 }
 export function useSessionMutations() {
   const qc = useQueryClient()
@@ -45,11 +46,17 @@ export function useSessionMutations() {
       onSuccess: inv,
     }),
     setImportant: useMutation({
-      mutationFn: async (v: { id: string; important: boolean }) => { await form(`/api/session/${v.id}/important`, { important: String(v.important) }) },
+      mutationFn: async (v: { id: string; important: boolean }) => {
+        const r = await form(`/api/session/${v.id}/important`, { important: String(v.important) })
+        if (!r.ok) throw new Error("Couldn't update the chat")
+      },
       onSuccess: inv,
     }),
     archive: useMutation({
-      mutationFn: async (id: string) => { await apiFetch(`/api/session/${id}/archive`, { method: "POST" }) },
+      mutationFn: async (id: string) => {
+        const r = await apiFetch(`/api/session/${id}/archive`, { method: "POST" })
+        if (!r.ok) throw new Error("Couldn't archive the chat")
+      },
       onSuccess: inv,
     }),
   }

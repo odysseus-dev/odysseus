@@ -3,10 +3,12 @@ import { useNavigate } from "react-router-dom"
 import { useUi } from "@/stores/ui"
 import { useSettings } from "@/api/settings"
 
-// g-leader navigation map (press "g" then the key)
+// g-leader navigation map (press "g" then the key). Keep in sync with the
+// "Go to" group in ShortcutsOverlay.
 const GOTO: Record<string, string> = {
-  c: "/chat", k: "/compare", m: "/memory", i: "/gallery", e: "/email",
-  n: "/notes", t: "/tasks", b: "/cookbook", s: "/skills", l: "/library", ",": "/settings",
+  c: "/chat", k: "/compare", r: "/research", i: "/gallery", m: "/memory",
+  a: "/calendar", e: "/email", n: "/notes", t: "/tasks", l: "/library",
+  p: "/personal", d: "/knowledge", b: "/cookbook", s: "/skills", ",": "/settings",
 }
 
 // Configurable keybinds (src/settings.py `keybinds`). v2 honors the actions

@@ -211,7 +211,7 @@ function EmailList({ emails, error, folder, emptyLabel, onOpen }: { emails: Emai
           const from = m.from_name || m.from_address || m.from || m.from_addr || m.sender || "Unknown"
           const unread = m.is_read != null ? !m.is_read : (m.unread ?? m.seen === false)
           return (
-            <div key={m.uid} onClick={() => onOpen(m.uid, m.folder || folder)} className="flex cursor-pointer items-baseline gap-3 px-4 py-3 hover:bg-accent/50">
+            <button type="button" key={m.uid} onClick={() => onOpen(m.uid, m.folder || folder)} className="flex w-full cursor-pointer items-baseline gap-3 px-4 py-3 text-left hover:bg-accent/50">
               <div className={cn("w-44 shrink-0 truncate text-sm", unread ? "font-semibold text-foreground" : "text-muted-foreground")}>{from}</div>
               <div className="min-w-0 flex-1">
                 <span className={cn("text-sm", unread ? "font-medium text-foreground" : "text-muted-foreground")}>{m.subject || "(no subject)"}</span>
@@ -220,7 +220,7 @@ function EmailList({ emails, error, folder, emptyLabel, onOpen }: { emails: Emai
               {m.is_flagged && <Star className="size-3.5 shrink-0 fill-current text-foreground" />}
               {m.has_attachments && <Paperclip className="size-3.5 shrink-0 text-muted-foreground" />}
               {m.date && <div className="shrink-0 text-xs text-muted-foreground">{new Date(m.date).toLocaleDateString()}</div>}
-            </div>
+            </button>
           )
         })}
       </div>

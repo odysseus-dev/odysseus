@@ -64,7 +64,20 @@ export function useMcpServerTools(serverId: string | null) {
 }
 export function useSetMcpDisabledTools() {
   const qc = useQueryClient()
-  return useMutation({ mutationFn: async (v: { serverId: string; disabled: string[] }) => { const r = await jx("PATCH", `/api/mcp/servers/${v.serverId}/tools`, { disabled: v.disabled }); if (!r.ok) throw new Error("Failed"); return r.json() }, onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["mcp-tools", v.serverId] }) })
+  return useMutation({
+    mutationFn: async (v: { serverId: string; disabled: string[] }) => { const r = await jx("PATCH", `/api/mcp/servers/${v.serverId}/tools`, { disabled: v.disabled }); if (!r.ok) throw new Error("Couldn't update tool settings"); return r.json() },
+    // Optimistically reflect the new disabled set so rapid consecutive toggles
+    // build on the latest state instead of a stale query snapshot (which would
+    // silently revert a just-toggled tool).
+    onMutate: async (v) => {
+      await qc.cancelQueries({ queryKey: ["mcp-tools", v.serverId] })
+      const prev = qc.getQueryData<McpTool[]>(["mcp-tools", v.serverId])
+      qc.setQueryData<McpTool[]>(["mcp-tools", v.serverId], (old) => (old || []).map((t) => ({ ...t, is_disabled: v.disabled.includes(t.name) })))
+      return { prev }
+    },
+    onError: (_e, v, ctx) => { if (ctx?.prev) qc.setQueryData(["mcp-tools", v.serverId], ctx.prev) },
+    onSettled: (_d, _e, v) => qc.invalidateQueries({ queryKey: ["mcp-tools", v.serverId] }),
+  })
 }
 
 // ───────────────────────── Contacts ─────────────────────────
