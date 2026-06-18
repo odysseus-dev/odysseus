@@ -136,7 +136,8 @@ async def _tick() -> None:
         return
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        logger.warning("cookbook_serve_lifecycle: state file unreadable (%s), skipping tick", e)
         return
     tasks = state.get("tasks") or []
     now_ms = int(time.time() * 1000)
@@ -160,11 +161,13 @@ async def _tick() -> None:
     # Re-read state once before writing so we capture any updates from
     # concurrent UI syncs.
     stopped_any = False
+    successfully_stopped_sids = set()
     for sid, host, port in to_stop:
         ok = await _stop_serve(sid, host, port)
         logger.info(f"cookbook_serve_lifecycle: stop {sid} (host={host or 'local'}): {'ok' if ok else 'failed'}")
         if ok:
             stopped_any = True
+            successfully_stopped_sids.add(sid)
             # Drop the auto-registered endpoint so the model picker and
             # the chat router don't keep pointing at a dead server.
             for t in tasks:
@@ -178,8 +181,25 @@ async def _tick() -> None:
     if stopped_any:
         try:
             from core.atomic_io import atomic_write_json
-            state["tasks"] = tasks
-            atomic_write_json(state_path, state)
+            # Re-read the state file so concurrent UI writes (task adds,
+            # status flips, config edits) are not silently overwritten.
+            # Apply only our stop mutations to the fresh snapshot.
+            try:
+                fresh = json.loads(state_path.read_text(encoding="utf-8"))
+                fresh_tasks = fresh.get("tasks") or []
+            except Exception:
+                fresh = state
+                fresh_tasks = tasks
+            for ft in fresh_tasks:
+                if not isinstance(ft, dict):
+                    continue
+                ft_sid = ft.get("sessionId") or ft.get("id")
+                if ft_sid in successfully_stopped_sids:
+                    ft["status"] = "stopped"
+                    ft["_scheduledStopAtMs"] = None
+                    ft["_lastStatusFlipAt"] = now_ms
+            fresh["tasks"] = fresh_tasks
+            atomic_write_json(state_path, fresh)
         except Exception as e:
             logger.warning(f"cookbook_serve_lifecycle: state write failed: {e}")
 

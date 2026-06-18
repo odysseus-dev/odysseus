@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request, File, UploadFile, HTTPException
 from typing import List
 import logging
 from core.middleware import require_admin
-from src.auth_helpers import get_current_user
+from src.auth_helpers import effective_user
 from src.upload_handler import count_recent_uploads
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def setup_upload_routes(upload_handler):
         
         for u in files:
             try:
-                meta = upload_handler.save_upload(u, client_ip, owner=get_current_user(request))
+                meta = upload_handler.save_upload(u, client_ip, owner=effective_user(request))
                 out.append({
                     "id": meta["id"],
                     "name": meta["name"],
@@ -138,7 +138,7 @@ def setup_upload_routes(upload_handler):
                 original_name = info.get("name", file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
@@ -204,7 +204,7 @@ def setup_upload_routes(upload_handler):
         info = _load_upload_info(file_id)
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner") if info else None
         if auth_configured:
             if not current_user:
@@ -247,7 +247,7 @@ def setup_upload_routes(upload_handler):
             raise HTTPException(404, "File not found")
         auth_mgr = getattr(request.app.state, "auth_manager", None)
         auth_configured = bool(auth_mgr and auth_mgr.is_configured)
-        current_user = get_current_user(request)
+        current_user = effective_user(request)
         file_owner = info.get("owner")
         if auth_configured:
             if not current_user:

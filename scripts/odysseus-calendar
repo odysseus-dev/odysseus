@@ -103,9 +103,13 @@ def cmd_list(args) -> None:
     end = _parse_dt(args.end) if args.end else (start + timedelta(days=30))
     db = SessionLocal()
     try:
+        # Overlap semantics, matching the web route (routes/calendar_routes.py)
+        # and the recurring-expansion contract: an event is in the window when
+        # it starts before the window end AND ends after the window start. This
+        # includes multi-day / in-progress events that began before `start`.
         q = db.query(CalendarEvent).filter(
-            CalendarEvent.dtstart >= start,
             CalendarEvent.dtstart < end,
+            CalendarEvent.dtend > start,
         )
         if args.calendar:
             cal = db.query(CalendarCal).filter(CalendarCal.name == args.calendar).first()

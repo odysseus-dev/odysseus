@@ -81,6 +81,18 @@ def test_context_capped_at_model_limit():
         assert p["ctx"] <= 32768, p
 
 
+def test_small_context_model_still_gets_profiles():
+    """A model whose trained context is below the 8192 shrink floor must still
+    produce serve profiles, capped at its own limit — the loop floor must not
+    exclude it entirely (125 of the catalog models have context_length < 8192)."""
+    small_ctx_model = dict(_DENSE_8B, name="SmolLM-135M", context_length=2048)
+    profs = compute_serve_profiles(_sys(24.0), small_ctx_model)
+    assert profs, "sub-8192-context model produced no profiles"
+    for p in profs:
+        assert p["ctx"] <= 2048, p          # never exceeds the model's trained limit
+        assert p["ctx"] > 0
+
+
 def test_no_gpu_returns_empty():
     """No VRAM detected → no GPU profiles (caller falls back to manual flags)."""
     assert compute_serve_profiles({"backend": "cpu_x86", "gpu_vram_gb": 0}, _QWEN_35B_MOE) == []
