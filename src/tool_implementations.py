@@ -324,7 +324,12 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": f"Skill {name!r} not found", "exit_code": 1}
         updates = {"status": "published"}
         if args.get("confidence") is not None:
-            updates["confidence"] = max(0.0, min(1.0, float(args["confidence"])))
+            try:
+                updates["confidence"] = max(0.0, min(1.0, float(args["confidence"])))
+            except (TypeError, ValueError):
+                # confidence is LLM-emitted JSON; a non-numeric value (e.g. "high"
+                # or a list) must not crash the agent turn with an uncaught error.
+                return {"error": "confidence must be a number between 0.0 and 1.0", "exit_code": 1}
         sm.update_skill(name, updates, owner=owner)
         return {"results": f"✅ Published `{name}`. It now appears in the skills index for future turns."}
 
