@@ -273,65 +273,30 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     async def api_audit_memories(request: Request, session: str = Form(None)):
         """Deduplicate and consolidate memories via LLM.
 
-        Uses the default model from settings, or falls back to a session's model.
+        Uses task/utility/default settings through the shared resolver, with
+        the active session as fallback when no task or utility model is set.
         Returns before and after memory counts.
         """
-        from routes.model_routes import _load_settings, _normalize_base, build_chat_url
-        from core.database import ModelEndpoint
-        import json as _json
-
-        endpoint_url = model = None
-        headers = {}
-
-        # Try utility model from settings first — memory audit is a background
-        # task and should prefer the lighter utility model over the main chat model.
-        from src.task_endpoint import resolve_task_endpoint
         user = _owner(request)
-        t_url, t_model, t_headers = resolve_task_endpoint(owner=user)
-        if t_url and t_model:
-            endpoint_url, model, headers = t_url, t_model, t_headers
-        else:
-            # Fall back to default model if no task/utility model configured
-            settings = _load_settings()
-            ep_id = settings.get("default_endpoint_id", "")
-            default_model = settings.get("default_model", "")
-            if ep_id:
-                db = SessionLocal()
-                try:
-                    ep = db.query(ModelEndpoint).filter(
-                        ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
-                    ).first()
-                    if ep:
-                        base = _normalize_base(ep.base_url)
-                        endpoint_url = build_chat_url(base)
-                        model = default_model
-                        if not model and ep.models:
-                            try:
-                                models = _json.loads(ep.models) if isinstance(ep.models, str) else ep.models
-                                if models:
-                                    model = models[0]
-                            except Exception:
-                                pass
-                        if ep.api_key:
-                            headers = {"Authorization": f"Bearer {ep.api_key}"}
-                finally:
-                    db.close()
+        fallback_url = fallback_model = None
+        fallback_headers = None
+        if session:
+            try:
+                sess = session_manager.get_session(session)
+                _assert_session_owner(sess, user)
+                fallback_url = sess.endpoint_url
+                fallback_model = sess.model
+                fallback_headers = sess.headers
+            except KeyError:
+                pass
 
-            # Fall back to session model if no default configured
-            if not endpoint_url and session:
-                try:
-                    sess = session_manager.get_session(session)
-                    _assert_session_owner(sess, _owner(request))
-                    endpoint_url = sess.endpoint_url
-                    model = sess.model
-                    headers = sess.headers
-                except KeyError:
-                    pass
+        endpoint_url, model, headers = resolve_task_endpoint(
+            fallback_url, fallback_model, fallback_headers, owner=user
+        )
 
         if not endpoint_url or not model:
             raise HTTPException(400, "No default model configured — set one in Settings")
 
-        user = _owner(request)
         result = await audit_memories(
             memory_manager,
             memory_vector,
@@ -369,18 +334,28 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         model = None
         headers = {}
 
+        user = _owner(request)
+
         if session:
             try:
                 sess = session_manager.get_session(session)
-                _assert_session_owner(sess, _owner(request))
-                endpoint_url, model, headers = resolve_task_endpoint(
-                    sess.endpoint_url, sess.model, sess.headers, owner=_owner(request)
-                )
+                _assert_session_owner(sess, user)
             except KeyError:
-                logger.warning("Session %s not found, falling back to utility endpoint", session)
-                endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
+                sess = None
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                sess = None
+
+            if sess is None:
+                logger.warning("Session %s not found or inaccessible, falling back to utility endpoint", session)
+                endpoint_url, model, headers = resolve_endpoint("utility", owner=user)
+            else:
+                endpoint_url, model, headers = resolve_task_endpoint(
+                    sess.endpoint_url, sess.model, sess.headers, owner=user
+                )
         else:
-            endpoint_url, model, headers = resolve_task_endpoint(owner=_owner(request))
+            endpoint_url, model, headers = resolve_task_endpoint(owner=user)
     
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")

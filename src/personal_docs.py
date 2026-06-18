@@ -322,6 +322,47 @@ class PersonalDocsManager:
         else:
             logger.info(f"Directory not in index: {directory}")
 
+    def rename_directory(self, old_directory: str, new_directory: str, *, path_map: Dict[str, str] = None):
+        """Rewrite tracked directory and excluded-file paths after an owner rename."""
+        old_directory = os.path.abspath(old_directory)
+        new_directory = os.path.abspath(new_directory)
+        path_map = {os.path.abspath(k): os.path.abspath(v) for k, v in (path_map or {}).items()}
+
+        def rewrite(path: str) -> str:
+            abs_path = os.path.abspath(path)
+            mapped = path_map.get(abs_path)
+            if mapped:
+                return mapped
+            if abs_path == old_directory:
+                return new_directory
+            if abs_path.startswith(old_directory + os.sep):
+                return new_directory + abs_path[len(old_directory):]
+            return abs_path
+
+        changed_dirs = False
+        rewritten_dirs = []
+        for directory in self.indexed_directories:
+            rewritten = rewrite(directory)
+            changed_dirs = changed_dirs or rewritten != os.path.abspath(directory)
+            if rewritten not in rewritten_dirs:
+                rewritten_dirs.append(rewritten)
+        if changed_dirs:
+            self.indexed_directories = rewritten_dirs
+            self.save_directories()
+
+        changed_excluded = False
+        rewritten_excluded = set()
+        for path in self.excluded_files:
+            rewritten = rewrite(path)
+            changed_excluded = changed_excluded or rewritten != os.path.abspath(path)
+            rewritten_excluded.add(rewritten)
+        if changed_excluded:
+            self.excluded_files = rewritten_excluded
+            self._save_excluded()
+
+        if changed_dirs or changed_excluded:
+            self.refresh_index()
+
     def get_indexed_directories(self):
         """Get the list of all indexed directories."""
         return self.indexed_directories.copy()
