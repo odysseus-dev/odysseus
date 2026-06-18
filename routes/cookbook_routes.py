@@ -1279,7 +1279,12 @@ def setup_cookbook_routes() -> APIRouter:
         # `docker exec ollama-test ollama-import …` get wrapped as if they
         # were native `ollama serve`, prepending OLLAMA_HOST=… and then
         # running the ollama-not-found preflight which exits 127.
-        if re.search(r"\bollama\s+serve\b", req.cmd) and "OLLAMA_HOST=" not in req.cmd:
+        _serve_in_container = not remote and os.path.exists("/.dockerenv")
+        if (re.search(r"\bollama\s+serve\b", req.cmd) and "OLLAMA_HOST=" not in req.cmd
+                and not _serve_in_container):
+            # Skip port-scan rewrite in container mode: the scan probes
+            # 127.0.0.1 (container loopback), not the host — always finds
+            # ports "free" and the result is ignored by the container path.
             _ollama_bind_host = "0.0.0.0" if remote else "127.0.0.1"
             _ollama_chosen_port = _pick_free_port_for_ollama(
                 remote, req.ssh_port, start_port=11434, max_offset=10,
@@ -1469,21 +1474,25 @@ def setup_cookbook_routes() -> APIRouter:
                 runner_lines.append('  fi')
                 runner_lines.append('  exec 3<&-; exec 3>&-')
                 runner_lines.append('done')
-                _in_container = not remote and os.path.exists("/.dockerenv")
+                _in_container = _serve_in_container
                 if _in_container:
                     # Odysseus runs inside Docker; ollama binary is not in the
                     # container. Probe the host's Ollama at host.docker.internal
                     # and keep the task alive so the registered endpoint stays up.
-                    runner_lines.append('if ! (exec 3<>/dev/tcp/host.docker.internal/11434) 2>/dev/null; then')
+                    # Use the same port _ollama_bind_from_cmd extracted so a
+                    # user-pinned port (OLLAMA_HOST=...:11435 in req.cmd) is honoured.
+                    runner_lines.append(f'if ! (exec 3<>/dev/tcp/host.docker.internal/{_ollama_port}) 2>/dev/null; then')
                     runner_lines.append('  exec 3<&-; exec 3>&-')
-                    runner_lines.append('  echo "ERROR: Ollama not reachable at host.docker.internal:11434."')
-                    runner_lines.append('  echo "Make sure Ollama is running on your host (not inside this container)."')
+                    runner_lines.append(f'  echo "ERROR: Ollama not reachable at host.docker.internal:{_ollama_port}."')
+                    runner_lines.append('  echo "Make sure Ollama is running on your host machine (not inside this container)."')
+                    runner_lines.append(f'  echo "If Ollama is running but on a different port, update the port in serve settings (current: {_ollama_port})."')
+                    runner_lines.append('  echo "On Linux, also check that host.docker.internal resolves (requires extra_hosts: host-gateway in docker-compose)."')
                     runner_lines.append('  echo')
                     runner_lines.append('  echo "=== Process exited with code 127 ==="')
                     runner_lines.append('  exec bash -i')
                     runner_lines.append('fi')
                     runner_lines.append('exec 3<&-; exec 3>&-')
-                    runner_lines.append('echo "[odysseus] Ollama detected on host at host.docker.internal:11434 — using host Ollama."')
+                    runner_lines.append(f'echo "[odysseus] Ollama detected on host at host.docker.internal:{_ollama_port} — using host Ollama."')
                     runner_lines.append('echo "[odysseus] Keeping task alive; stop via the Stop button."')
                     runner_lines.append('while true; do sleep 3600; done')
                 else:
