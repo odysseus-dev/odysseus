@@ -596,7 +596,12 @@ class ManageDocumentTool:
                 if not doc:
                     return {"error": f"Document '{doc_id}' not found", "exit_code": 1}
                 body = doc.current_content or ""
-                preview_limit = int(args.get("limit", MAX_READ_CHARS))
+                try:
+                    # limit is LLM-emitted JSON; fall back to the default rather
+                    # than crash the agent turn on a non-numeric value.
+                    preview_limit = int(args.get("limit", MAX_READ_CHARS))
+                except (TypeError, ValueError):
+                    preview_limit = MAX_READ_CHARS
                 truncated = len(body) > preview_limit
                 preview = body[:preview_limit] + (f"\n... (truncated, {len(body)} chars total)" if truncated else "")
                 anchor = f"[{doc.title}](#document-{doc.id})"
