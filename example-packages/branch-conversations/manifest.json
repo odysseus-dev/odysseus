@@ -1,0 +1,12 @@
+{
+  "id": "branch-conversations",
+  "name": "Branch Conversations",
+  "version": "1.0.0",
+  "author": "Odysseus",
+  "description": "Visual branch tree for conversations — create child branches, track parent lineage, and navigate the conversation tree from a pannable canvas panel.",
+  "entryPoint": "backend.py",
+  "requiredPermissions": [],
+  "frontend_hooks": {
+    "sidebarWidget": "widget.js"
+  }
+}

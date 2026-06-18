@@ -150,10 +150,6 @@ class Session(TimestampMixin, Base):
     mode = Column(String, nullable=True)  # 'agent', 'chat', or 'research'
     crew_member_id = Column(String, nullable=True)  # links to crew_members.id
 
-    # Branch / fork lineage
-    parent_session_id = Column(String, nullable=True)  # session this was forked from
-    fork_message_index = Column(Integer, nullable=True)  # parent message count at fork time
-
     # Relationship to chat messages
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan")
     
@@ -1849,7 +1845,6 @@ def init_db():
     _migrate_add_docker_workspaces_table()
     _migrate_add_workspace_skills_columns()
     _migrate_add_package_configs_table()
-    _migrate_add_branch_columns()
 
 
 def _migrate_backfill_task_folders():
@@ -2435,22 +2430,6 @@ def _migrate_add_package_configs_table():
                 logging.getLogger(__name__).info("package_configs table created")
     except Exception as e:
         logging.getLogger(__name__).warning(f"package_configs table migration: {e}")
-
-
-def _migrate_add_branch_columns():
-    """Add parent_session_id / fork_message_index to sessions (idempotent)."""
-    try:
-        with engine.connect() as conn:
-            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))]
-            if "parent_session_id" not in cols:
-                conn.execute(text("ALTER TABLE sessions ADD COLUMN parent_session_id VARCHAR"))
-                logging.getLogger(__name__).info("sessions: added parent_session_id column")
-            if "fork_message_index" not in cols:
-                conn.execute(text("ALTER TABLE sessions ADD COLUMN fork_message_index INTEGER"))
-                logging.getLogger(__name__).info("sessions: added fork_message_index column")
-            conn.commit()
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"branch columns migration: {e}")
 
 
 def get_session_by_id(session_id: str):

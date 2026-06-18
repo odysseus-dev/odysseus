@@ -49,7 +49,6 @@ import { initSectionCollapse, initSectionDrag } from './js/section-management.js
 // window.OdysseusPkg is available when widget modules execute.
 import './js/pkg-api.js';
 import PackageManager from './js/packages.js';
-import branchTreeModule from './js/branchTree.js';
 
 const API_BASE = window.location.origin;
 window.themeModule = themeModule;
@@ -3959,7 +3958,6 @@ function startOdysseusApp() {
   // Ensure proper initial state
   voiceRecorderModule.init();
   if (censorModule) censorModule.init();
-  branchTreeModule.init();
 
   // Auto-focus message input on load
   const msgEl = document.getElementById('message');

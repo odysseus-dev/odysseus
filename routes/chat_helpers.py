@@ -497,56 +497,6 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
     return None
 
 
-def _build_parent_branch_context(sess) -> Optional[dict]:
-    """Return a context message with parent branch updates if this session is a fork.
-
-    Reads parent_session_id / fork_message_index from the DB row, then fetches
-    any messages the parent has added since the fork point. Returns a system
-    message containing that new dialogue so the child AI is aware of what
-    happened in the parent branch. Returns None if no updates or not a fork.
-    """
-    try:
-        from core.database import SessionLocal, Session as DbSession, ChatMessage as DbChatMessage
-        db = SessionLocal()
-        try:
-            child_row = db.query(DbSession).filter(DbSession.id == sess.id).first()
-            if not child_row:
-                return None
-            parent_id = getattr(child_row, "parent_session_id", None)
-            fork_index = getattr(child_row, "fork_message_index", None)
-            if not parent_id or fork_index is None:
-                return None
-
-            parent_msgs = (
-                db.query(DbChatMessage)
-                .filter(DbChatMessage.session_id == parent_id)
-                .order_by(DbChatMessage.timestamp)
-                .all()
-            )
-            new_msgs = parent_msgs[fork_index:]
-            if not new_msgs:
-                return None
-
-            lines = []
-            for m in new_msgs:
-                role_label = "User" if m.role == "user" else "Assistant"
-                content = m.content or ""
-                if len(content) > 500:
-                    content = content[:500] + "…"
-                lines.append(f"[{role_label}]: {content}")
-
-            text = (
-                f"[Branch context — {len(new_msgs)} new message(s) in the parent branch since this fork]\n\n"
-                + "\n\n".join(lines)
-            )
-            return {"role": "system", "content": text}
-        finally:
-            db.close()
-    except Exception as exc:
-        logger.debug("Failed to build parent branch context: %s", exc)
-        return None
-
-
 def _session_is_research_spinoff(sess) -> bool:
     """True if this session was created via research "Discuss" spin-off.
 
@@ -693,11 +643,6 @@ async def build_chat_context(
     )
     if norm:
         sess.model = norm
-
-    # Inject parent branch updates for forked sessions
-    _parent_context = _build_parent_branch_context(sess)
-    if _parent_context:
-        preface.append(_parent_context)
 
     # Build messages
     messages = preface + sess.get_context_messages()
