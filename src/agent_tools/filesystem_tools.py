@@ -259,23 +259,54 @@ class GlobTool:
             return {"error": f"glob: {e}", "exit_code": 1}
 
         def _glob():
-            from pathlib import Path
-            base = Path(root)
-            if not base.is_dir():
+            base = os.path.abspath(root)
+            if not os.path.isdir(base):
                 return None, f"glob: {root}: not a directory"
+            norm_pat = pattern.replace("\\", "/")
+            # Fast path: literal pattern (no wildcards) → direct path lookup.
+            if not any(c in norm_pat for c in "*?["):
+                cand = os.path.normpath(os.path.join(base, norm_pat))
+                if os.path.exists(cand):
+                    return [cand], None
+                return [], None
+            has_double_star = "**" in norm_pat
+            # Pre-compute the suffix after **/ for fallback matching
+            # (e.g. "**/*.py" → "*.py" so root-level files match too).
+            ds_suffix = None
+            if has_double_star:
+                idx = norm_pat.find("**/")
+                if idx >= 0:
+                    ds_suffix = norm_pat[idx + 3:]
+                elif norm_pat.endswith("**"):
+                    ds_suffix = "*"
             matched = []
+            cap = _CODENAV_MAX_HITS * 5
             try:
-                for p in base.rglob(pattern):
-                    if set(p.relative_to(base).parts) & _CODENAV_SKIP_DIRS:
-                        continue
-                    try:
-                        mtime = p.stat().st_mtime
-                    except OSError:
-                        mtime = 0
-                    matched.append((mtime, str(p)))
-                    if len(matched) > _CODENAV_MAX_HITS * 5:
+                for dp, dns, fns in os.walk(base):
+                    # Prune skipped dirs before descending (unlike rglob which
+                    # descends first then filters — fatal on large node_modules).
+                    dns[:] = [d for d in dns if d not in _CODENAV_SKIP_DIRS]
+                    for name in fns + dns:
+                        full = os.path.join(dp, name)
+                        rel = os.path.relpath(full, base).replace(os.sep, "/")
+                        if has_double_star:
+                            hit = fnmatch.fnmatch(rel, norm_pat)
+                            # **/ prefix means zero-or-more dirs — also match
+                            # the suffix pattern directly against the basename.
+                            if not hit and ds_suffix:
+                                hit = fnmatch.fnmatch(name, ds_suffix)
+                        else:
+                            hit = fnmatch.fnmatch(name, norm_pat) or fnmatch.fnmatch(rel, norm_pat)
+                        if not hit:
+                            continue
+                        try:
+                            mtime = os.stat(full).st_mtime
+                        except OSError:
+                            mtime = 0
+                        matched.append((mtime, full))
+                    if len(matched) > cap:
                         break
-            except (OSError, ValueError) as _e:
+            except OSError as _e:
                 return None, f"glob: {_e}"
             matched.sort(key=lambda t: t[0], reverse=True)
             return [pth for _, pth in matched[:_CODENAV_MAX_HITS]], None
