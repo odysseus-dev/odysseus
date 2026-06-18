@@ -113,7 +113,12 @@ def _normalize_platform_label(platform_hint: str | None) -> str:
 def _extract_cuda_release(text: str) -> str | None:
     if not text:
         return None
+    # nvcc --version: "Cuda compilation tools, release X.Y, ..."
     m = re.search(r"release\s+([0-9]+\.[0-9]+)", text, flags=re.I)
+    if m:
+        return m.group(1)
+    # nvidia-smi header: "CUDA Version: X.Y"
+    m = re.search(r"CUDA\s+Version[:\s]+([0-9]+\.[0-9]+)", text, flags=re.I)
     return m.group(1) if m else None
 
 

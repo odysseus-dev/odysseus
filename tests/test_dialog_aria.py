@@ -37,7 +37,9 @@ def test_styled_confirm_and_prompt_are_modal_dialogs():
     # role="dialog" + aria-modal="true" and are labelled by their title.
     assert 'class="modal-content styled-confirm-box" role="dialog" aria-modal="true"' in _UI
     assert 'aria-labelledby="styled-confirm-title"' in _UI
-    assert '<h4 id="styled-confirm-title">Confirm</h4>' in _UI
+    assert '<h4 id="styled-confirm-title">' in _UI
+    assert "title = 'Confirm'" in _UI
+    assert "titleEl.textContent = title" in _UI
 
     assert 'styled-prompt-box" role="dialog" aria-modal="true"' in _UI
     assert 'aria-labelledby="styled-prompt-title"' in _UI
