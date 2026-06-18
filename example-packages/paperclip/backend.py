@@ -26,6 +26,7 @@ def register_db(engine, SessionLocal, Base):
     global _SessionLocal, _engine
     _engine = engine
     _SessionLocal = SessionLocal
+    _run_migrations(engine)
 
 
 def _add_col(conn, table, col, col_def):
@@ -34,8 +35,8 @@ def _add_col(conn, table, col, col_def):
         conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}"))
 
 
-def on_startup():
-    if _engine is None:
+def _run_migrations(engine):
+    if engine is None:
         return
     ddl = [
         """CREATE TABLE IF NOT EXISTS pc_companies (
@@ -69,10 +70,9 @@ def on_startup():
         )""",
     ]
     try:
-        with _engine.connect() as conn:
+        with engine.connect() as conn:
             for stmt in ddl:
                 conn.execute(sa.text(stmt))
-            # Idempotent column additions for new features
             _add_col(conn, 'pc_agents', 'skills',            "TEXT DEFAULT '[]'")
             _add_col(conn, 'pc_agents', 'mcps',              "TEXT DEFAULT '[]'")
             _add_col(conn, 'pc_agents', 'memory',            "TEXT DEFAULT ''")
@@ -81,7 +81,11 @@ def on_startup():
             conn.commit()
         logger.info("[paperclip] tables ready")
     except Exception as exc:
-        logger.error(f"[paperclip] on_startup failed: {exc}")
+        logger.error(f"[paperclip] migration failed: {exc}")
+
+
+def on_startup():
+    _run_migrations(_engine)
 
 
 # ── Routes hook ────────────────────────────────────────────────────────────────
