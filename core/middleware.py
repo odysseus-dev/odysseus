@@ -72,6 +72,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
+        # Public share pages are self-contained read-only HTML: inline styles for
+        # the page chrome, a sandboxed srcdoc iframe for HTML artifacts, and
+        # external images so shared content renders fully.
+        is_share = path.startswith("/share/")
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -91,6 +95,19 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "style-src 'self' 'unsafe-inline'; "
                 "font-src 'self'; "
                 "img-src 'self' data: blob: https:; "
+                "connect-src 'self'; "
+                "frame-ancestors 'none'"
+            )
+        elif is_share:
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; "
+                "font-src 'self' data:; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob: https:; "
+                "frame-src 'self'; "
                 "connect-src 'self'; "
                 "frame-ancestors 'none'"
             )

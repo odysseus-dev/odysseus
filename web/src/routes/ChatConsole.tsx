@@ -12,6 +12,7 @@ import { usePanel } from "@/stores/panel"
 import { Message } from "@/components/chat/Message"
 import { Composer } from "@/components/chat/Composer"
 import { ContextPanel } from "@/components/chat/ContextPanel"
+import { ShareMenu } from "@/components/chat/ShareMenu"
 import { Mascot } from "@/components/ui/Mascot"
 import { cn } from "@/lib/utils"
 import type { ChatMessage } from "@/types"
@@ -111,6 +112,7 @@ export function ChatConsole() {
                 <FileText className="size-3.5" />{docCount} file{docCount === 1 ? "" : "s"}
               </button>
             )}
+            {sessionId && messages.length > 0 && !incognito && <ShareMenu resourceType="session" resourceId={sessionId} />}
             {sessionId && messages.length > 0 && <ExportMenu sid={sessionId} messages={messages} />}
           </div>
         </header>

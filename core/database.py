@@ -256,6 +256,27 @@ class DocumentVersion(Base):
     document = relationship("Document", back_populates="versions")
 
 
+class ShareToken(TimestampMixin, Base):
+    """A public, read-only share link for a session or document.
+
+    The random ``token`` embedded in the URL is the credential: anyone with the
+    link views the resource without authenticating (see the ``/share/{token}``
+    route, which is auth-exempt). Creation and revocation are owner-scoped, and
+    one row per (owner, resource_type, resource_id) is reused so re-sharing the
+    same chat yields a stable link.
+    """
+    __tablename__ = "share_tokens"
+
+    id            = Column(String, primary_key=True, index=True)
+    token         = Column(String, nullable=False, unique=True, index=True)
+    owner         = Column(String, nullable=False, index=True)
+    resource_type = Column(String, nullable=False)   # "session" | "document"
+    resource_id   = Column(String, nullable=False, index=True)
+    # created_at / updated_at provided by TimestampMixin
+
+    __table_args__ = (Index("ix_share_owner_resource", "owner", "resource_type", "resource_id"),)
+
+
 class GalleryAlbum(TimestampMixin, Base):
     """A photo album/folder."""
     __tablename__ = "gallery_albums"

@@ -223,6 +223,10 @@ if AUTH_ENABLED:
     import re as _re
     AUTH_EXEMPT_PATTERNS = [
         _re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$"),
+        # Public read-only share render. The path-embedded token is the
+        # credential (validated in routes/share_routes.py, which 404s on
+        # mismatch). The management API (/api/share*) stays auth-gated.
+        _re.compile(r"^/share/[^/]+/?$"),
     ]
 
     def _is_auth_exempt(path: str) -> bool:
@@ -590,6 +594,10 @@ app.include_router(setup_emoji_routes())
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
 app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
+
+# Public read-only share links (/api/share* owner-scoped; /share/{token} public)
+from routes.share_routes import setup_share_routes
+app.include_router(setup_share_routes(session_manager))
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
