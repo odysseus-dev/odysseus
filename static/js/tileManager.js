@@ -55,6 +55,14 @@ function _isTouchPortrait() {
   return window.matchMedia('(orientation: portrait)').matches && _isTouchInput();
 }
 
+function _isElementVisible(el) {
+  if (!el) return false;
+  const cs = window.getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  const opacity = parseFloat(cs.opacity || '1');
+  return !Number.isFinite(opacity) || opacity > 0.05;
+}
+
 function _isDesktop() {
   // This is desktop tiling. Coarse-touch Android landscape uses edge docking
   // only; otherwise the same swipe can also leave a right-half tile snap behind.
@@ -131,21 +139,46 @@ function _viewportWorkspaceRect(inset = 4) {
   const rail = document.querySelector('.icon-rail') || document.querySelector('#icon-rail');
   let leftEdge = 0;
   let rightEdge = window.innerWidth;
-  const sb = sidebar?.getBoundingClientRect();
-  if (sb && sb.width > 0 && !sidebar.classList.contains('hidden')) {
-    if (sidebar.classList.contains('right-side') || sb.right >= window.innerWidth - 1) {
-      rightEdge = Math.min(rightEdge, sb.left);
-    } else if (sb.left <= 1) {
-      leftEdge = Math.max(leftEdge, sb.right);
+  const prefersRightNav = document.body.classList.contains('hamburger-right');
+  const isRightNav = (el, span) => !!(el?.classList?.contains('right-side')
+    || prefersRightNav
+    || span?.right >= window.innerWidth - 1
+    || span?.left >= window.innerWidth / 2);
+  const visibleSpan = (el) => {
+    if (!el || !_isElementVisible(el)) return null;
+    const r = el.getBoundingClientRect();
+    if (!r || r.width <= 1 || r.height <= 1) return null;
+    const left = Math.max(0, r.left);
+    const right = Math.min(window.innerWidth, r.right);
+    if (right - left <= 1) return null;
+    return { rect: r, left, right };
+  };
+  const sbSpan = !sidebar?.classList?.contains('hidden') ? visibleSpan(sidebar) : null;
+  if (sbSpan) {
+    const sb = sbSpan.rect;
+    if (isRightNav(sidebar, sbSpan)) {
+      if (sbSpan.left <= 1 && sbSpan.right < window.innerWidth / 2) {
+        // Right-side nav can briefly report its old left-edge rect while the
+        // Android dock/sidebar transition is settling. Ignore that stale span
+        // so fullscreen content is not offset by a phantom left menu.
+      } else {
+        rightEdge = Math.min(rightEdge, sbSpan.left);
+      }
+    } else if (sbSpan.left <= 1 || sb.left <= 1) {
+      leftEdge = Math.max(leftEdge, sbSpan.right);
     }
   }
-  const rr = rail?.getBoundingClientRect();
-  if (rr && rr.width > 0) {
-    const visible = window.getComputedStyle(rail).display !== 'none';
-    if (visible && (rail.classList.contains('right-side') || rr.right >= window.innerWidth - 1)) {
-      rightEdge = Math.min(rightEdge, rr.left);
-    } else if (visible && rr.left <= 1) {
-      leftEdge = Math.max(leftEdge, rr.right);
+  const railSpan = visibleSpan(rail);
+  if (railSpan) {
+    const rr = railSpan.rect;
+    if (isRightNav(rail, railSpan)) {
+      if (railSpan.left <= 1 && railSpan.right < window.innerWidth / 2) {
+        // Same transitional guard as the sidebar above.
+      } else {
+        rightEdge = Math.min(rightEdge, railSpan.left);
+      }
+    } else if (railSpan.left <= 1 || rr.left <= 1) {
+      leftEdge = Math.max(leftEdge, railSpan.right);
     }
   }
   return {
@@ -168,6 +201,20 @@ function _fullscreenRect() {
     return { left: safe.left, top: safe.top, width, height };
   }
   return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+}
+
+function _fullscreenOwnerRect(content) {
+  if (!_isTouchLandscape() || !content?.closest) return null;
+  const owner = content.closest('.modal, .research-overlay');
+  if (!owner || owner.classList?.contains('hidden')) return null;
+  const rect = owner.getBoundingClientRect?.();
+  if (!rect || rect.width <= 1 || rect.height <= 1) return null;
+  return {
+    left: Math.round(rect.left),
+    top: Math.round(rect.top),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
 }
 
 function _zoneForPointer(x, y) {
@@ -261,6 +308,7 @@ function _applySnap(content, rect, zoneName) {
   const _modal = content.closest && content.closest('.modal, .research-overlay');
   const _fromRect = content.getBoundingClientRect();
   _clearEdgeDockResidue(_modal, content);
+  const snapRect = zoneName === 'fullscreen' ? (_fullscreenOwnerRect(content) || rect) : rect;
 
   // Stash pre-snap geometry once; if we re-snap, keep the original. Capture a
   // CONCRETE fixed position (from the rendered rect when the inline value is
@@ -282,15 +330,28 @@ function _applySnap(content, rect, zoneName) {
   // and CSS that otherwise re-center the .modal-content, which made the snap
   // "jump back to the middle" on release.
   content.style.setProperty('position', 'fixed', 'important');
-  content.style.setProperty('left',   rect.left   + 'px', 'important');
-  content.style.setProperty('top',    rect.top    + 'px', 'important');
-  content.style.setProperty('width',  rect.width  + 'px', 'important');
-  content.style.setProperty('height', rect.height + 'px', 'important');
-  content.style.setProperty('max-height', rect.height + 'px', 'important');
+  content.style.setProperty('left',   snapRect.left   + 'px', 'important');
+  content.style.setProperty('top',    snapRect.top    + 'px', 'important');
+  content.style.setProperty('width',  snapRect.width  + 'px', 'important');
+  content.style.setProperty('height', snapRect.height + 'px', 'important');
+  content.style.setProperty('max-height', snapRect.height + 'px', 'important');
   content.style.setProperty('margin', '0', 'important');
   content.style.setProperty('transform', 'none', 'important');
   content.dataset._tileZone = zoneName;
   setTimeout(() => { content.style.transition = ''; }, 250);
+  _scheduleFullscreenSettle(content, zoneName);
+}
+
+function _scheduleFullscreenSettle(content, zoneName) {
+  if (zoneName !== 'fullscreen' || !_isTouchLandscape() || !content) return;
+  const run = () => {
+    if (!content.isConnected || content.dataset._tileZone !== 'fullscreen') return;
+    _reclampAllThrottled(false);
+  };
+  requestAnimationFrame(run);
+  setTimeout(run, 80);
+  setTimeout(run, 220);
+  setTimeout(run, 520);
 }
 
 function _unsnap(content) {
@@ -390,7 +451,7 @@ function _reclampAll(animate = false) {
     const W = safe.right - safe.left, H = safe.bottom - safe.top;
     let r;
     switch (name) {
-      case 'fullscreen':     r = _fullscreenRect(); break;
+      case 'fullscreen':     r = _fullscreenOwnerRect(c) || _fullscreenRect(); break;
       case 'maximize':       r = { left: safe.left, top: safe.top, width: W, height: H }; break;
       case 'left-half':      r = { left: safe.left, top: safe.top, width: W/2, height: H }; break;
       case 'right-half':     r = { left: safe.left + W/2, top: safe.top, width: W/2, height: H }; break;
@@ -480,7 +541,7 @@ export function snapModalToZone(modal, zone) {
   const content = modal.querySelector ? (modal.querySelector('.modal-content, .research-pane') || modal) : modal;
   if (!content) return;
   if (modal.id === 'settings-modal' && zone.name !== 'right-half' && !zone.force) return;
-  const rect = zone.name === 'fullscreen' ? _fullscreenRect() : zone.rect;
+  const rect = zone.name === 'fullscreen' ? (_fullscreenOwnerRect(content) || _fullscreenRect()) : zone.rect;
   _applySnap(content, rect, zone.name);
 }
 

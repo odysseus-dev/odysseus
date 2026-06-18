@@ -687,6 +687,25 @@ public class MainActivity extends Activity {
         return value == null ? fallback : value;
     }
 
+    private boolean isGoogleMapsUrl(Uri uri) {
+        if (uri == null) return false;
+        String host = uri.getHost();
+        String path = uri.getPath();
+        if (host == null) return false;
+        host = host.toLowerCase();
+        path = path == null ? "" : path.toLowerCase();
+        return "maps.google.com".equals(host)
+                || (("www.google.com".equals(host) || "google.com".equals(host)) && path.startsWith("/maps"));
+    }
+
+    private void openExternalUri(Uri uri) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
+        } catch (ActivityNotFoundException ignored) {
+            Toast.makeText(MainActivity.this, "No app can open this link", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     private class OdysseusAndroidBridge {
         @JavascriptInterface
         public void printReport(String title) {
@@ -715,13 +734,13 @@ public class MainActivity extends Activity {
             Uri uri = request.getUrl();
             String scheme = uri == null ? "" : uri.getScheme();
             if ("http".equals(scheme) || "https".equals(scheme)) {
+                if (request.isForMainFrame() && isGoogleMapsUrl(uri)) {
+                    openExternalUri(uri);
+                    return true;
+                }
                 return false;
             }
-            try {
-                startActivity(new Intent(Intent.ACTION_VIEW, uri));
-            } catch (ActivityNotFoundException ignored) {
-                Toast.makeText(MainActivity.this, "No app can open this link", Toast.LENGTH_SHORT).show();
-            }
+            openExternalUri(uri);
             return true;
         }
 

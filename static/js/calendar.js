@@ -2877,9 +2877,9 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
       </div>
       <div class="cal-loc-row">
         <input type="text" id="cal-f-loc" placeholder="Location" value="${_e(existing?.location || '')}" class="cal-input" />
-        <a id="cal-f-loc-map" class="cal-loc-map" href="#" target="_blank" rel="noopener noreferrer" title="Open in Maps" aria-label="Open in Apple Maps" tabindex="-1">
+        <button type="button" id="cal-f-loc-map" class="cal-loc-map" title="Preview in Maps" aria-label="Preview location in Google Maps" tabindex="-1">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 1 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-        </a>
+        </button>
       </div>
       <select id="cal-f-rrule" class="cal-input">
         <option value="" ${!existing?.rrule ? 'selected' : ''}>Does not repeat</option>
@@ -3200,10 +3200,8 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
   // mode opens already expanded when there's any detail content to see.
   titleInput?.addEventListener('focus', () => setExpanded(true), { once: true });
 
-  // Location → Apple Maps. The pin button next to the input is enabled
-  // only when there's a non-empty location, and its href tracks the live
-  // input value. Apple's universal URL opens the native Maps app on
-  // iOS/macOS and falls back to a web view on everything else.
+  // Location → Odysseus map sheet backed by Google Maps. The pin button next
+  // to the input is enabled only when there's a non-empty location.
   const locInput = document.getElementById('cal-f-loc');
   const locMap = document.getElementById('cal-f-loc-map');
   const _syncLocMap = () => {
@@ -3211,16 +3209,21 @@ function _showEventForm(existing, defaultDate, defaultEndDate) {
     const v = (locInput?.value || '').trim();
     if (!v) {
       locMap.classList.add('is-disabled');
-      locMap.removeAttribute('href');
+      locMap.disabled = true;
       locMap.setAttribute('tabindex', '-1');
       locMap.setAttribute('aria-disabled', 'true');
     } else {
       locMap.classList.remove('is-disabled');
-      locMap.setAttribute('href', 'https://maps.apple.com/?q=' + encodeURIComponent(v));
+      locMap.disabled = false;
       locMap.setAttribute('tabindex', '0');
       locMap.removeAttribute('aria-disabled');
     }
   };
+  locMap?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const v = (locInput?.value || '').trim();
+    if (v) _openLocationMapSheet(v);
+  });
   locInput?.addEventListener('input', _syncLocMap);
   _syncLocMap();
 
@@ -3356,7 +3359,308 @@ function _fmtTime(s) {
 }
 function _e(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-// Linkify a location string: URLs become clickable, plain addresses get a Maps link.
+const CAL_MAP_RECENT_KEY = 'odysseus.cal.map.recent';
+const CAL_MAP_TRAVEL_MODES = [
+  ['driving', 'Drive'],
+  ['walking', 'Walk'],
+  ['transit', 'Transit'],
+  ['bicycling', 'Bike'],
+];
+const CAL_MAP_NEARBY = [
+  ['parking', 'Parking'],
+  ['restaurants', 'Food'],
+  ['coffee', 'Coffee'],
+  ['gas stations', 'Gas'],
+  ['hotels', 'Hotels'],
+  ['pharmacies', 'Pharmacy'],
+  ['grocery stores', 'Grocery'],
+  ['attractions', 'Things to do'],
+];
+
+function _normalizeMapQuery(loc) {
+  return String(loc || '').replace(/\s+/g, ' ').trim();
+}
+
+function _clampMapZoom(zoom) {
+  const z = parseInt(zoom, 10);
+  if (!Number.isFinite(z)) return 15;
+  return Math.max(3, Math.min(20, z));
+}
+
+function _googleMapsSearchUrl(loc) {
+  const params = new URLSearchParams({ api: '1', query: _normalizeMapQuery(loc) });
+  return 'https://www.google.com/maps/search/?' + params.toString();
+}
+
+function _googleMapsDirectionsUrl(loc, travelMode = 'driving') {
+  const params = new URLSearchParams({ api: '1', destination: _normalizeMapQuery(loc) });
+  if (travelMode) params.set('travelmode', travelMode);
+  return 'https://www.google.com/maps/dir/?' + params.toString();
+}
+
+function _googleMapsEmbedUrl(loc, opts = {}) {
+  const params = new URLSearchParams({
+    q: _normalizeMapQuery(loc),
+    output: 'embed',
+    z: String(_clampMapZoom(opts.zoom)),
+  });
+  params.set('t', opts.mapType === 'satellite' ? 'k' : 'm');
+  return 'https://www.google.com/maps?' + params.toString();
+}
+
+function _openExternalMapUrl(url) {
+  const opened = window.open(url, '_blank', 'noopener,noreferrer');
+  if (!opened) window.location.href = url;
+}
+
+function _readRecentMapQueries() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(CAL_MAP_RECENT_KEY) || '[]');
+    return Array.isArray(arr) ? arr.filter(Boolean).slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+
+function _rememberMapQuery(loc) {
+  const q = _normalizeMapQuery(loc);
+  if (!q) return;
+  const lower = q.toLowerCase();
+  const next = [q, ..._readRecentMapQueries().filter(x => String(x).toLowerCase() !== lower)].slice(0, 8);
+  try { localStorage.setItem(CAL_MAP_RECENT_KEY, JSON.stringify(next)); } catch {}
+}
+
+async function _copyMapText(text, okLabel) {
+  const value = String(text || '');
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    uiModule.showToast?.(okLabel || 'Copied');
+    return;
+  } catch {}
+  const ta = document.createElement('textarea');
+  ta.value = value;
+  ta.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  ta.remove();
+  uiModule.showToast?.(ok ? (okLabel || 'Copied') : 'Copy failed');
+}
+
+function _closeLocationMapSheet() {
+  document.getElementById('cal-map-sheet')?.remove();
+  if (window._calMapSheetEsc) {
+    document.removeEventListener('keydown', window._calMapSheetEsc);
+    window._calMapSheetEsc = null;
+  }
+}
+
+function _openLocationMapSheet(loc) {
+  const initialQuery = _normalizeMapQuery(loc);
+  if (!initialQuery) return;
+  _closeLocationMapSheet();
+
+  const state = {
+    query: initialQuery,
+    anchor: initialQuery,
+    zoom: 15,
+    mapType: 'map',
+    travelMode: 'driving',
+  };
+  _rememberMapQuery(initialQuery);
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cal-map-sheet';
+  overlay.className = 'cal-map-sheet-overlay';
+  overlay.innerHTML = `
+    <div class="cal-map-sheet" role="dialog" aria-modal="true" aria-label="Map tools">
+      <div class="cal-map-grabber" aria-hidden="true"></div>
+      <div class="cal-map-head">
+        <div class="cal-map-title">
+          <span class="cal-map-kicker">Odysseus Maps</span>
+          <strong data-map-title>${_e(initialQuery)}</strong>
+        </div>
+        <button type="button" class="cal-map-close" aria-label="Close map tools">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="cal-map-body">
+        <form class="cal-map-search" data-map-search>
+          <input class="cal-map-query" data-map-query type="search" value="${_e(initialQuery)}" autocomplete="off" spellcheck="false" aria-label="Map search" />
+          <button type="submit" class="cal-map-icon-btn" title="Preview" aria-label="Preview map">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+          </button>
+        </form>
+        <div class="cal-map-control-row">
+          <div class="cal-map-segment" aria-label="Preview type">
+            <button type="button" data-map-type="map" class="is-active">Map</button>
+            <button type="button" data-map-type="satellite">Satellite</button>
+          </div>
+          <div class="cal-map-zoom" aria-label="Preview zoom">
+            <button type="button" data-map-zoom="-1" aria-label="Zoom out">-</button>
+            <span data-map-zoom-label>15</span>
+            <button type="button" data-map-zoom="1" aria-label="Zoom in">+</button>
+          </div>
+        </div>
+        <div class="cal-map-frame-wrap">
+          <iframe class="cal-map-frame" src="${_googleMapsEmbedUrl(initialQuery, state)}" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Google Maps preview for ${_e(initialQuery)}"></iframe>
+        </div>
+        <div class="cal-map-section">
+          <div class="cal-map-section-title">Directions</div>
+          <div class="cal-map-segment cal-map-mode-segment" aria-label="Travel mode">
+            ${CAL_MAP_TRAVEL_MODES.map(([value, label]) => `<button type="button" data-map-mode="${value}" class="${value === state.travelMode ? 'is-active' : ''}">${label}</button>`).join('')}
+          </div>
+        </div>
+        <div class="cal-map-section">
+          <div class="cal-map-section-head">
+            <div class="cal-map-section-title">Nearby</div>
+            <button type="button" class="cal-map-link-btn" data-map-action="reset-target">Reset</button>
+          </div>
+          <div class="cal-map-chip-row">
+            ${CAL_MAP_NEARBY.map(([value, label]) => `<button type="button" class="cal-map-chip" data-map-nearby="${value}">${label}</button>`).join('')}
+          </div>
+        </div>
+        <div class="cal-map-section cal-map-recent-section" data-map-recent-section>
+          <div class="cal-map-section-title">Recent</div>
+          <div class="cal-map-chip-row" data-map-recent></div>
+        </div>
+      </div>
+      <div class="cal-map-actions">
+        <button type="button" class="cal-map-btn cal-map-btn-primary" data-map-action="open">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/></svg>
+          <span>Open</span>
+        </button>
+        <button type="button" class="cal-map-btn" data-map-action="directions">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
+          <span>Route</span>
+        </button>
+        <button type="button" class="cal-map-btn" data-map-action="use">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>Use</span>
+        </button>
+        <button type="button" class="cal-map-btn" data-map-action="share">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.7 15.4 6.3"/><path d="M8.6 13.3l6.8 4.4"/></svg>
+          <span>Share</span>
+        </button>
+        <button type="button" class="cal-map-btn" data-map-action="copy-link">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.1-1.1"/></svg>
+          <span>Link</span>
+        </button>
+        <button type="button" class="cal-map-btn" data-map-action="copy-text">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>Text</span>
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const frame = overlay.querySelector('.cal-map-frame');
+  const queryInput = overlay.querySelector('[data-map-query]');
+  const title = overlay.querySelector('[data-map-title]');
+  const zoomLabel = overlay.querySelector('[data-map-zoom-label]');
+  const recentSection = overlay.querySelector('[data-map-recent-section]');
+  const recentRow = overlay.querySelector('[data-map-recent]');
+
+  const renderRecent = () => {
+    const recent = _readRecentMapQueries().filter(q => q.toLowerCase() !== state.query.toLowerCase()).slice(0, 6);
+    if (!recent.length) {
+      if (recentSection) recentSection.hidden = true;
+      return;
+    }
+    if (recentSection) recentSection.hidden = false;
+    if (!recentRow) return;
+    recentRow.innerHTML = recent.map(q => `<button type="button" class="cal-map-chip" data-map-recent-query="${_e(q)}">${_e(q)}</button>`).join('');
+    recentRow.querySelectorAll('[data-map-recent-query]').forEach(btn => {
+      btn.addEventListener('click', () => setQuery(btn.dataset.mapRecentQuery, { updateAnchor: true }));
+    });
+  };
+
+  const refresh = () => {
+    if (title) title.textContent = state.query;
+    if (zoomLabel) zoomLabel.textContent = String(state.zoom);
+    if (frame) {
+      frame.src = _googleMapsEmbedUrl(state.query, { zoom: state.zoom, mapType: state.mapType });
+      frame.title = 'Google Maps preview for ' + state.query;
+    }
+    overlay.querySelectorAll('[data-map-type]').forEach(btn => btn.classList.toggle('is-active', btn.dataset.mapType === state.mapType));
+    overlay.querySelectorAll('[data-map-mode]').forEach(btn => btn.classList.toggle('is-active', btn.dataset.mapMode === state.travelMode));
+    renderRecent();
+  };
+
+  const setQuery = (next, { updateAnchor = true, remember = true } = {}) => {
+    const q = _normalizeMapQuery(next);
+    if (!q) return;
+    state.query = q;
+    if (updateAnchor) state.anchor = q;
+    if (queryInput) queryInput.value = q;
+    if (remember) _rememberMapQuery(q);
+    refresh();
+  };
+
+  const close = () => _closeLocationMapSheet();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('.cal-map-close')?.addEventListener('click', close);
+  overlay.querySelector('[data-map-search]')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    setQuery(queryInput?.value, { updateAnchor: true });
+  });
+  overlay.querySelectorAll('[data-map-type]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.mapType = btn.dataset.mapType === 'satellite' ? 'satellite' : 'map';
+      refresh();
+    });
+  });
+  overlay.querySelectorAll('[data-map-zoom]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.zoom = _clampMapZoom(state.zoom + parseInt(btn.dataset.mapZoom || '0', 10));
+      refresh();
+    });
+  });
+  overlay.querySelectorAll('[data-map-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.travelMode = btn.dataset.mapMode || 'driving';
+      refresh();
+    });
+  });
+  overlay.querySelectorAll('[data-map-nearby]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const nearby = btn.dataset.mapNearby || '';
+      setQuery(`${nearby} near ${state.anchor}`, { updateAnchor: false });
+    });
+  });
+  overlay.querySelector('[data-map-action="reset-target"]')?.addEventListener('click', () => setQuery(state.anchor, { updateAnchor: true, remember: false }));
+  overlay.querySelector('[data-map-action="open"]')?.addEventListener('click', () => _openExternalMapUrl(_googleMapsSearchUrl(state.query)));
+  overlay.querySelector('[data-map-action="directions"]')?.addEventListener('click', () => _openExternalMapUrl(_googleMapsDirectionsUrl(state.query, state.travelMode)));
+  overlay.querySelector('[data-map-action="use"]')?.addEventListener('click', () => {
+    const locInput = document.getElementById('cal-f-loc');
+    if (locInput) {
+      locInput.value = state.query;
+      locInput.dispatchEvent(new Event('input', { bubbles: true }));
+      uiModule.showToast?.('Location updated');
+    }
+    close();
+  });
+  overlay.querySelector('[data-map-action="share"]')?.addEventListener('click', async () => {
+    const url = _googleMapsSearchUrl(state.query);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: state.query, text: state.query, url });
+        return;
+      } catch {}
+    }
+    _copyMapText(url, 'Map link copied');
+  });
+  overlay.querySelector('[data-map-action="copy-link"]')?.addEventListener('click', () => _copyMapText(_googleMapsSearchUrl(state.query), 'Map link copied'));
+  overlay.querySelector('[data-map-action="copy-text"]')?.addEventListener('click', () => _copyMapText(state.query, 'Location copied'));
+  window._calMapSheetEsc = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', window._calMapSheetEsc);
+  refresh();
+}
+
+// Linkify a location string: URLs become clickable, plain addresses get a Google Maps link.
 function _locHTML(loc) {
   if (!loc) return '';
   const urlRe = /(https?:\/\/[^\s]+)/gi;
@@ -3366,9 +3670,9 @@ function _locHTML(loc) {
       return `<a href="${safe}" target="_blank" rel="noopener" onclick="event.stopPropagation();">${safe}</a>`;
     }).replace(/\n/g, '<br>');
   }
-  // No URL — link the whole thing to OpenStreetMap.
-  const mapUrl = 'https://www.openstreetmap.org/search?query=' + encodeURIComponent(loc);
-  return `<a href="${mapUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation();" title="Open in OpenStreetMap">${_e(loc)}</a>`;
+  // No URL — link the whole thing to Google Maps.
+  const mapUrl = _googleMapsSearchUrl(loc);
+  return `<a href="${mapUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation();" title="Open in Google Maps">${_e(loc)}</a>`;
 }
 
 // ── Open / Close ──

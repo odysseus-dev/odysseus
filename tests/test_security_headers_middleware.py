@@ -65,3 +65,12 @@ def test_permissions_policy_locks_camera_and_geolocation_but_allows_self_microph
     # would also block the app's own same-origin voice/STT button.
     assert "microphone=()" not in policy
     assert "microphone=(self)" in policy
+
+
+def test_default_csp_allows_google_maps_preview_only_as_a_frame_source():
+    response = _client().get("/")
+
+    csp = response.headers["content-security-policy"]
+    assert "frame-src 'self' https://www.google.com https://maps.google.com" in csp
+    assert "img-src 'self' data: blob:" in csp
+    assert "connect-src 'self'" in csp

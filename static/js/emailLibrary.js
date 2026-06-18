@@ -41,6 +41,11 @@ function _isCompactEmailViewport() {
   }
 }
 
+function _isOdysseusAndroidApp() {
+  const ua = navigator.userAgent || '';
+  return /\bOdysseusAndroid\b/i.test(ua) || !!window.OdysseusAndroid;
+}
+
 function _clampEmailLimit(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return fallback;
@@ -326,7 +331,10 @@ function _toggleUnreadEmails() {
 function _syncUnreadTabBadge(count) {
   const label = count > 999 ? '999+ unread' : `${count} unread`;
   document.querySelectorAll('.minimized-dock-chip[data-modal-id="email-lib-modal"]').forEach(chip => {
-    if (count > 0) {
+    if (_isOdysseusAndroidApp()) {
+      delete chip.dataset.emailUnreadLabel;
+      chip.title = 'Restore Email';
+    } else if (count > 0) {
       chip.dataset.emailUnreadLabel = label;
       chip.title = `Open ${label}`;
     } else {
@@ -525,6 +533,7 @@ function _prepareEmailWindowForDocument(modal) {
 
 function _wireUnreadTabClick() {
   if (_emailUnreadChipClickWired) return;
+  if (_isOdysseusAndroidApp()) return;
   _emailUnreadChipClickWired = true;
   document.addEventListener('click', (e) => {
     const chip = e.target?.closest?.('.minimized-dock-chip[data-modal-id="email-lib-modal"][data-email-unread-label]');

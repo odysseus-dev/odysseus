@@ -145,17 +145,68 @@ def test_shared_modal_controls_include_full_expand_button():
 def test_full_expand_restores_previous_dock_or_window_state():
     assert "applyEdgeDock," in MODAL_MANAGER_JS
     assert "clearDockSide," in MODAL_MANAGER_JS
+    assert "const _FULL_EXPAND_TOGGLE_LOCK_MS = 280;" in MODAL_MANAGER_JS
+    assert "function _isFullExpandToggleLocked(modal)" in MODAL_MANAGER_JS
+    assert "function _lockFullExpandToggle(modal)" in MODAL_MANAGER_JS
+    assert "if (_isFullExpandToggleLocked(modal)) return true;" in MODAL_MANAGER_JS
+    assert "_lockFullExpandToggle(modal);" in MODAL_MANAGER_JS
     assert "function _releaseWindowDockState(modal, content)" in MODAL_MANAGER_JS
     assert "function _captureFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
     assert "function _restoreFullExpandReturnState(modal, content)" in MODAL_MANAGER_JS
+    assert "function _fitFullExpandedContentToModalFrame(modal)" in MODAL_MANAGER_JS
+    assert "const rect = modal.getBoundingClientRect();" in MODAL_MANAGER_JS
+    assert "content.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');" in MODAL_MANAGER_JS
+    assert "content.style.setProperty('width', `${Math.round(rect.width)}px`, 'important');" in MODAL_MANAGER_JS
+    assert "content.dataset._tileZone = 'fullscreen';" in MODAL_MANAGER_JS
+    assert "function _scheduleFullExpandGeometrySettle(modal)" in MODAL_MANAGER_JS
+    assert "if (!modal) return;" in MODAL_MANAGER_JS
+    assert "if (!modal.isConnected || modal.classList.contains('hidden') || !_isFullExpanded(modal)) return;" in MODAL_MANAGER_JS
+    assert "_fitFullExpandedContentToModalFrame(modal);" in MODAL_MANAGER_JS
+    assert "setTimeout(run, 560);" in MODAL_MANAGER_JS
+    assert "setTimeout(run, 900);" in MODAL_MANAGER_JS
     assert "content._fullExpandReturnState = returnState;" in MODAL_MANAGER_JS
     assert "const restoredDock = _restoreFullExpandReturnState(modal, content);" in MODAL_MANAGER_JS
-    assert "try { applyEdgeDock(modal, state.side); }" in MODAL_MANAGER_JS
+    assert "const dockWidth = applyEdgeDock(modal, state.side);" in MODAL_MANAGER_JS
+    assert "return dockWidth > 0;" in MODAL_MANAGER_JS
     assert "clearRightDock(modal)" in MODAL_MANAGER_JS
     assert "modal.classList.remove('email-snap-left');" in MODAL_MANAGER_JS
     assert "_clearEmailSplitGeometry();" in MODAL_MANAGER_JS
     assert "_releaseWindowDockState(modal, content);" in MODAL_MANAGER_JS
+    assert "_scheduleFullExpandGeometrySettle(modal);" in MODAL_MANAGER_JS
     assert "modal.classList.remove('modal-left-docked', 'modal-right-docked', 'email-snap-left');" in TILE_MANAGER_JS
+
+
+def test_fullscreen_safe_rect_ignores_hidden_or_offscreen_nav_geometry():
+    assert "function _isElementVisible(el)" in TILE_MANAGER_JS
+    assert "parseFloat(cs.opacity || '1')" in TILE_MANAGER_JS
+    assert "const visibleSpan = (el) => {" in TILE_MANAGER_JS
+    assert "const prefersRightNav = document.body.classList.contains('hamburger-right');" in TILE_MANAGER_JS
+    assert "const isRightNav = (el, span) =>" in TILE_MANAGER_JS
+    assert "const left = Math.max(0, r.left);" in TILE_MANAGER_JS
+    assert "const right = Math.min(window.innerWidth, r.right);" in TILE_MANAGER_JS
+    assert "if (right - left <= 1) return null;" in TILE_MANAGER_JS
+    assert "const sbSpan = !sidebar?.classList?.contains('hidden') ? visibleSpan(sidebar) : null;" in TILE_MANAGER_JS
+    assert "Right-side nav can briefly report its old left-edge rect" in TILE_MANAGER_JS
+    assert "rightEdge = Math.min(rightEdge, sbSpan.left);" in TILE_MANAGER_JS
+    assert "leftEdge = Math.max(leftEdge, sbSpan.right);" in TILE_MANAGER_JS
+    assert "const railSpan = visibleSpan(rail);" in TILE_MANAGER_JS
+    assert "rightEdge = Math.min(rightEdge, railSpan.left);" in TILE_MANAGER_JS
+    assert "function _fullscreenOwnerRect(content)" in TILE_MANAGER_JS
+    assert "if (!_isTouchLandscape() || !content?.closest) return null;" in TILE_MANAGER_JS
+    assert "const owner = content.closest('.modal, .research-overlay');" in TILE_MANAGER_JS
+    assert "return {" in TILE_MANAGER_JS
+    assert "const snapRect = zoneName === 'fullscreen' ? (_fullscreenOwnerRect(content) || rect) : rect;" in TILE_MANAGER_JS
+    assert "content.style.setProperty('left',   snapRect.left   + 'px', 'important');" in TILE_MANAGER_JS
+    assert "case 'fullscreen':     r = _fullscreenOwnerRect(c) || _fullscreenRect(); break;" in TILE_MANAGER_JS
+    assert "function _scheduleFullscreenSettle(content, zoneName)" in TILE_MANAGER_JS
+    assert "if (zoneName !== 'fullscreen' || !_isTouchLandscape() || !content) return;" in TILE_MANAGER_JS
+    assert "_reclampAllThrottled(false);" in TILE_MANAGER_JS
+    assert "setTimeout(run, 520);" in TILE_MANAGER_JS
+    marker = "body.hamburger-right:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.modal-right-docked) .modal-content"
+    assert marker in CSS
+    block = CSS[CSS.index(marker): CSS.index(marker) + 260]
+    assert "left: 0 !important;" in block
+    assert "right: calc(var(--icon-rail-w, 48px) + var(--sidebar-w, 0px)) !important;" in block
 
 
 def test_edge_docking_clears_the_opposite_side_first():
@@ -268,7 +319,7 @@ def test_touch_portrait_minimized_dock_pages_in_four_icon_blocks():
     assert "pagedSwipeHandled = _pageTouchDock(dock, direction, { wrap: stackedDock });" in MODAL_MANAGER_JS
     marker = "#minimized-dock.dock-paged-row"
     assert marker in CSS
-    block = CSS[CSS.index(marker): CSS.index(marker) + 2600]
+    block = CSS[CSS.index(marker): CSS.index(marker) + 3000]
     assert "flex-wrap: nowrap;" in block
     assert "overflow-x: auto;" in block
     assert "scroll-snap-type: x mandatory;" in block
@@ -301,6 +352,14 @@ def test_touch_portrait_minimized_dock_pages_in_four_icon_blocks():
     assert "width: 40px;" in block
     assert "height: 40px;" in block
     assert "#minimized-dock.dock-paged-row .minimized-dock-chip:nth-child(4n+1)" not in block
+
+
+def test_android_suppresses_email_unread_dock_badge_without_resizing_dock():
+    assert "#minimized-dock.dock-paged-row.dock-compact-chips:not(.dock-stacked-pages) .minimized-dock-page" not in CSS
+    assert '.minimized-dock-chip.chip-compact-touch[data-modal-id="email-lib-modal"][data-email-unread-label]::after' not in CSS
+    assert "function _isOdysseusAndroidApp()" in EMAIL_LIBRARY_JS
+    assert "delete chip.dataset.emailUnreadLabel;" in EMAIL_LIBRARY_JS
+    assert "if (_isOdysseusAndroidApp()) return;" in EMAIL_LIBRARY_JS
 
 
 def test_android_touch_docking_is_landscape_only_without_enabling_resize():
@@ -372,8 +431,8 @@ def test_android_touch_docking_is_landscape_only_without_enabling_resize():
     assert "function _viewportWorkspaceRect(inset = 4)" in TILE_MANAGER_JS
     assert "return _viewportWorkspaceRect(4);" in TILE_MANAGER_JS
     assert "const safe = _viewportWorkspaceRect(0);" in TILE_MANAGER_JS
-    assert "case 'fullscreen':     r = _fullscreenRect(); break;" in TILE_MANAGER_JS
-    assert "const rect = zone.name === 'fullscreen' ? _fullscreenRect() : zone.rect;" in TILE_MANAGER_JS
+    assert "case 'fullscreen':     r = _fullscreenOwnerRect(c) || _fullscreenRect(); break;" in TILE_MANAGER_JS
+    assert "const rect = zone.name === 'fullscreen' ? (_fullscreenOwnerRect(content) || _fullscreenRect()) : zone.rect;" in TILE_MANAGER_JS
     assert "if (zone.name === 'fullscreen' && _isTouchLandscape()) return;" not in TILE_MANAGER_JS
     assert "function _isTouchPortrait()" in TILE_MANAGER_JS
     assert "if (_isTouchPortrait()) {" in TILE_MANAGER_JS

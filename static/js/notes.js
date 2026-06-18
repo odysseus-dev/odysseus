@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide, preferredEdgeDockSide } from './modalSnap.js';
+import markdownModule from './markdown.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -490,6 +491,683 @@ function _linkify(s) {
 }
 function _uid() { return Math.random().toString(36).slice(2, 10); }
 
+function _renderNoteMarkdown(s) {
+  const text = String(s || '');
+  if (!text.trim()) return '';
+  let html = '';
+  try {
+    html = markdownModule?.mdToHtml ? markdownModule.mdToHtml(text) : _linkify(text);
+  } catch {
+    html = _linkify(text);
+  }
+  // Notes get a couple of lightweight editor-only marks that the shared
+  // markdown renderer does not support natively.
+  return String(html || '')
+    .replace(/\{\{font:(default|sans|serif|mono|hand|display)\}\}([\s\S]*?)\{\{\/font\}\}/g, (_m, font, inner) => {
+      return font === 'default' ? inner : `<span class="note-rich-font-${font}">${inner}</span>`;
+    })
+    .replace(/\{\{size:(xs|sm|md|lg|xl|xxl)\}\}([\s\S]*?)\{\{\/size\}\}/g, (_m, size, inner) => {
+      return size === 'md' ? inner : `<span class="note-rich-size-${size}">${inner}</span>`;
+    })
+    .replace(/\{\{color:(default|accent|red|orange|yellow|green|blue|purple|muted)\}\}([\s\S]*?)\{\{\/color\}\}/g, (_m, color, inner) => {
+      return color === 'default' ? inner : `<span class="note-rich-color-${color}">${inner}</span>`;
+    })
+    .replace(/\{\{align:(left|center|right|justify)\}\}([\s\S]*?)\{\{\/align\}\}/g, (_m, align, inner) => {
+      return align === 'left' ? inner : `<span class="note-rich-align-${align}">${inner}</span>`;
+    })
+    .replace(/\{\{sup\}\}([\s\S]*?)\{\{\/sup\}\}/g, '<sup>$1</sup>')
+    .replace(/\{\{sub\}\}([\s\S]*?)\{\{\/sub\}\}/g, '<sub>$1</sub>')
+    .replace(/==([^=\n<>][^=\n<>]*?)==/g, '<mark>$1</mark>')
+    .replace(/__([^_\n<>][^_\n<>]*?)__/g, '<u>$1</u>');
+}
+
+const NOTE_RICH_DEFAULT_FORMAT = Object.freeze({
+  font: 'default',
+  size: 'md',
+  color: 'default',
+  align: 'left',
+});
+
+function _noteRichStripVisualMarkers(text) {
+  return String(text || '')
+    .replace(/\{\{font:(?:default|sans|serif|mono|hand|display)\}\}/g, '')
+    .replace(/\{\{\/font\}\}/g, '')
+    .replace(/\{\{size:(?:xs|sm|md|lg|xl|xxl)\}\}/g, '')
+    .replace(/\{\{\/size\}\}/g, '')
+    .replace(/\{\{color:(?:default|accent|red|orange|yellow|green|blue|purple|muted)\}\}/g, '')
+    .replace(/\{\{\/color\}\}/g, '')
+    .replace(/\{\{align:(?:left|center|right|justify)\}\}/g, '')
+    .replace(/\{\{\/align\}\}/g, '');
+}
+
+function _noteRichExtractFormat(content = '') {
+  let text = String(content || '');
+  const format = { ...NOTE_RICH_DEFAULT_FORMAT };
+  const wrappers = [
+    ['font', /^\{\{font:(default|sans|serif|mono|hand|display)\}\}([\s\S]*)\{\{\/font\}\}$/],
+    ['size', /^\{\{size:(xs|sm|md|lg|xl|xxl)\}\}([\s\S]*)\{\{\/size\}\}$/],
+    ['color', /^\{\{color:(default|accent|red|orange|yellow|green|blue|purple|muted)\}\}([\s\S]*)\{\{\/color\}\}$/],
+    ['align', /^\{\{align:(left|center|right|justify)\}\}([\s\S]*)\{\{\/align\}\}$/],
+  ];
+  let changed = true;
+  for (let guard = 0; guard < 8 && changed; guard++) {
+    changed = false;
+    for (const [key, re] of wrappers) {
+      const match = re.exec(text);
+      if (!match) continue;
+      format[key] = match[1];
+      text = match[2];
+      changed = true;
+    }
+  }
+  // If an older draft has partial visual markers, keep the editor clean rather
+  // than showing implementation tokens in the writing surface.
+  text = _noteRichStripVisualMarkers(text);
+  return { text, format };
+}
+
+function _noteRichFormatAttrs(format = NOTE_RICH_DEFAULT_FORMAT) {
+  return `data-rich-font="${_attrEsc(format.font || 'default')}" data-rich-size="${_attrEsc(format.size || 'md')}" data-rich-color="${_attrEsc(format.color || 'default')}" data-rich-align="${_attrEsc(format.align || 'left')}"`;
+}
+
+function _noteRichGetFormat(editor) {
+  const ta = editor?.querySelector?.('.note-form-content');
+  return {
+    font: editor?.dataset.richFont || ta?.dataset.richFont || 'default',
+    size: editor?.dataset.richSize || ta?.dataset.richSize || 'md',
+    color: editor?.dataset.richColor || ta?.dataset.richColor || 'default',
+    align: editor?.dataset.richAlign || ta?.dataset.richAlign || 'left',
+  };
+}
+
+function _noteRichSerializeText(text, format = NOTE_RICH_DEFAULT_FORMAT) {
+  let out = String(text || '');
+  if (!out.trim()) return out;
+  if (format.align && format.align !== 'left') out = `{{align:${format.align}}}${out}{{/align}}`;
+  if (format.color && format.color !== 'default') out = `{{color:${format.color}}}${out}{{/color}}`;
+  if (format.size && format.size !== 'md') out = `{{size:${format.size}}}${out}{{/size}}`;
+  if (format.font && format.font !== 'default') out = `{{font:${format.font}}}${out}{{/font}}`;
+  return out;
+}
+
+function _noteRichPlainText(content = '') {
+  return _noteRichStripVisualMarkers(content)
+    .replace(/\{\{\/?(?:sup|sub)\}\}/g, '')
+    .replace(/==([^=\n]+)==/g, '$1')
+    .replace(/__([^_\n]+)__/g, '$1');
+}
+
+function _noteRichPreviewContent(content = '', maxChars = 600) {
+  const raw = String(content || '');
+  if (!raw.trim()) return '';
+  if (raw.length <= maxChars) return raw;
+  const { text, format } = _noteRichExtractFormat(raw);
+  const plainText = _noteRichPlainText(text);
+  const preview = plainText.length > maxChars ? plainText.slice(0, maxChars) + '…' : plainText;
+  return _noteRichSerializeText(preview, format);
+}
+
+function _renderNoteRichPreview(content = '', maxChars = 600) {
+  const preview = _noteRichPreviewContent(content, maxChars);
+  return preview.trim() ? _renderNoteMarkdown(preview) : '';
+}
+
+function _noteRichSerializeEditor(editor) {
+  const ta = editor?.querySelector('.note-form-content');
+  if (!ta) return '';
+  return _noteRichSerializeText(ta.value || '', _noteRichGetFormat(editor));
+}
+
+function _noteRichSetFormat(editor, key, value, opts = {}) {
+  if (!editor || !key) return;
+  const allowed = {
+    font: new Set(['default', 'sans', 'serif', 'mono', 'hand', 'display']),
+    size: new Set(['xs', 'sm', 'md', 'lg', 'xl', 'xxl']),
+    color: new Set(['default', 'accent', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'muted']),
+    align: new Set(['left', 'center', 'right', 'justify']),
+  }[key];
+  if (!allowed || !allowed.has(value)) return;
+  const dataKey = 'rich' + key.charAt(0).toUpperCase() + key.slice(1);
+  editor.dataset[dataKey] = value;
+  const select = editor.querySelector(`[data-rich-${key}]`);
+  if (select) select.value = value;
+  const ta = editor.querySelector('.note-form-content');
+  if (ta) ta.dataset[dataKey] = value;
+  if (ta && !opts.silent) ta.dispatchEvent(new Event('input', { bubbles: true }));
+  _noteRichRefreshPreview(editor);
+}
+
+function _noteRichResetVisualFormat(editor) {
+  if (!editor) return;
+  for (const [key, value] of Object.entries(NOTE_RICH_DEFAULT_FORMAT)) {
+    _noteRichSetFormat(editor, key, value, { silent: true });
+  }
+  const ta = editor.querySelector('.note-form-content');
+  if (ta) ta.dispatchEvent(new Event('input', { bubbles: true }));
+  _noteRichRefreshPreview(editor);
+}
+
+function _noteRichIcon(name) {
+  const common = 'width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+  const icons = {
+    undo: `<svg ${common}><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-1"/></svg>`,
+    redo: `<svg ${common}><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h1"/></svg>`,
+    link: `<svg ${common}><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20l1.1-1.1"/></svg>`,
+    bullet: `<svg ${common}><line x1="9" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="9" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>`,
+    numbered: `<svg ${common}><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M4 14h2l-2 4h2"/></svg>`,
+    checklist: `<svg ${common}><path d="m3 6 1.5 1.5L7.5 4"/><path d="m3 12 1.5 1.5 3-3.5"/><path d="m3 18 1.5 1.5 3-3.5"/><line x1="11" y1="6" x2="21" y2="6"/><line x1="11" y1="12" x2="21" y2="12"/><line x1="11" y1="18" x2="21" y2="18"/></svg>`,
+    quote: `<svg ${common}><path d="M7 17a4 4 0 0 1-4-4V7h6v6H5"/><path d="M19 17a4 4 0 0 1-4-4V7h6v6h-4"/></svg>`,
+    code: `<svg ${common}><path d="m8 9-4 3 4 3"/><path d="m16 9 4 3-4 3"/><path d="m14 5-4 14"/></svg>`,
+    divider: `<svg ${common}><line x1="4" y1="12" x2="20" y2="12"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="18" x2="16" y2="18"/></svg>`,
+    table: `<svg ${common}><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="15" y1="4" x2="15" y2="20"/></svg>`,
+    indent: `<svg ${common}><line x1="4" y1="6" x2="20" y2="6"/><line x1="12" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><path d="m4 10 4 2-4 2z"/></svg>`,
+    outdent: `<svg ${common}><line x1="4" y1="6" x2="20" y2="6"/><line x1="12" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/><path d="m8 10-4 2 4 2z"/></svg>`,
+    clear: `<svg ${common}><path d="m3 17 6-6"/><path d="m14 6 4 4"/><path d="m4 20 5.5-1 9-9a2.8 2.8 0 0 0-4-4l-9 9L4 20z"/></svg>`,
+    preview: `<svg ${common}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
+    date: `<svg ${common}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+    alignLeft: `<svg ${common}><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="16" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>`,
+    alignCenter: `<svg ${common}><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>`,
+    alignRight: `<svg ${common}><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>`,
+    alignJustify: `<svg ${common}><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>`,
+    sort: `<svg ${common}><path d="M7 4v16"/><path d="m4 17 3 3 3-3"/><path d="M11 6h9"/><path d="M11 12h7"/><path d="M11 18h4"/></svg>`,
+  };
+  return icons[name] || '';
+}
+
+function _noteRichTool(action, label, innerHtml, extraClass = '') {
+  const cls = `note-rich-tool${extraClass ? ' ' + extraClass : ''}`;
+  return `<button type="button" class="${cls}" data-rich-action="${_attrEsc(action)}" title="${_attrEsc(label)}" aria-label="${_attrEsc(label)}">${innerHtml}</button>`;
+}
+
+function _buildRichNoteToolbarHtml() {
+  return `
+    <div class="note-rich-ribbon" role="toolbar" aria-label="Note formatting">
+      <select class="note-rich-style" data-rich-style aria-label="Text style" title="Text style">
+        <option value="">Style</option>
+        <option value="normal">Normal</option>
+        <option value="h1">Heading 1</option>
+        <option value="h2">Heading 2</option>
+        <option value="h3">Heading 3</option>
+        <option value="quote">Quote</option>
+        <option value="codeblock">Code block</option>
+      </select>
+      <select class="note-rich-font" data-rich-font aria-label="Font" title="Font">
+        <option value="">Font</option>
+        <option value="default">Default</option>
+        <option value="sans">Sans</option>
+        <option value="serif">Serif</option>
+        <option value="mono">Mono</option>
+        <option value="hand">Hand</option>
+        <option value="display">Display</option>
+      </select>
+      <select class="note-rich-size" data-rich-size aria-label="Font size" title="Font size">
+        <option value="">Size</option>
+        <option value="xs">Tiny</option>
+        <option value="sm">Small</option>
+        <option value="md">Normal</option>
+        <option value="lg">Large</option>
+        <option value="xl">XL</option>
+        <option value="xxl">XXL</option>
+      </select>
+      <select class="note-rich-color note-rich-desktop-only" data-rich-color aria-label="Text color" title="Text color">
+        <option value="">Color</option>
+        <option value="default">Default</option>
+        <option value="accent">Theme</option>
+        <option value="muted">Muted</option>
+        <option value="red">Red</option>
+        <option value="orange">Orange</option>
+        <option value="yellow">Yellow</option>
+        <option value="green">Green</option>
+        <option value="blue">Blue</option>
+        <option value="purple">Purple</option>
+      </select>
+      <span class="note-rich-divider" aria-hidden="true"></span>
+      ${_noteRichTool('undo', 'Undo', _noteRichIcon('undo'))}
+      ${_noteRichTool('redo', 'Redo', _noteRichIcon('redo'))}
+      <span class="note-rich-divider" aria-hidden="true"></span>
+      ${_noteRichTool('bold', 'Bold', '<strong>B</strong>', 'note-rich-text-glyph')}
+      ${_noteRichTool('italic', 'Italic', '<em>I</em>', 'note-rich-text-glyph')}
+      ${_noteRichTool('underline', 'Underline', '<span class="note-rich-underline">U</span>', 'note-rich-text-glyph')}
+      ${_noteRichTool('strike', 'Strikethrough', '<span class="note-rich-strike">S</span>', 'note-rich-text-glyph')}
+      ${_noteRichTool('highlight', 'Highlight', '<span class="note-rich-highlight">A</span>', 'note-rich-text-glyph')}
+      ${_noteRichTool('code', 'Code', _noteRichIcon('code'))}
+      ${_noteRichTool('link', 'Link', _noteRichIcon('link'))}
+      <span class="note-rich-divider" aria-hidden="true"></span>
+      ${_noteRichTool('bullet', 'Bulleted list', _noteRichIcon('bullet'))}
+      ${_noteRichTool('numbered', 'Numbered list', _noteRichIcon('numbered'))}
+      ${_noteRichTool('checklist', 'Checklist', _noteRichIcon('checklist'))}
+      ${_noteRichTool('quote', 'Quote', _noteRichIcon('quote'))}
+      ${_noteRichTool('indent', 'Indent', _noteRichIcon('indent'))}
+      ${_noteRichTool('outdent', 'Outdent', _noteRichIcon('outdent'))}
+      <span class="note-rich-divider" aria-hidden="true"></span>
+      ${_noteRichTool('align-left', 'Align left', _noteRichIcon('alignLeft'), 'note-rich-desktop-only')}
+      ${_noteRichTool('align-center', 'Align center', _noteRichIcon('alignCenter'), 'note-rich-desktop-only')}
+      ${_noteRichTool('align-right', 'Align right', _noteRichIcon('alignRight'), 'note-rich-desktop-only')}
+      ${_noteRichTool('align-justify', 'Justify', _noteRichIcon('alignJustify'), 'note-rich-desktop-only')}
+      ${_noteRichTool('superscript', 'Superscript', '<span>x<sup>2</sup></span>', 'note-rich-text-glyph note-rich-desktop-only')}
+      ${_noteRichTool('subscript', 'Subscript', '<span>x<sub>2</sub></span>', 'note-rich-text-glyph note-rich-desktop-only')}
+      <span class="note-rich-divider note-rich-desktop-only" aria-hidden="true"></span>
+      ${_noteRichTool('table', 'Insert table', _noteRichIcon('table'))}
+      ${_noteRichTool('divider', 'Divider', _noteRichIcon('divider'))}
+      ${_noteRichTool('date', 'Insert date', _noteRichIcon('date'))}
+      ${_noteRichTool('upper', 'Uppercase', '<span>AA</span>', 'note-rich-text-glyph note-rich-desktop-only')}
+      ${_noteRichTool('lower', 'Lowercase', '<span>aa</span>', 'note-rich-text-glyph note-rich-desktop-only')}
+      ${_noteRichTool('titlecase', 'Title case', '<span>Aa</span>', 'note-rich-text-glyph note-rich-desktop-only')}
+      ${_noteRichTool('sort-lines', 'Sort lines', _noteRichIcon('sort'), 'note-rich-desktop-only')}
+      ${_noteRichTool('clear', 'Clear formatting', _noteRichIcon('clear'))}
+      ${_noteRichTool('preview', 'Preview', _noteRichIcon('preview'))}
+    </div>`;
+}
+
+function _buildRichNoteEditorHtml(content = '') {
+  const { text, format } = _noteRichExtractFormat(content);
+  return `<div class="note-rich-editor" data-note-rich-editor ${_noteRichFormatAttrs(format)}>
+    ${_buildRichNoteToolbarHtml()}
+    <textarea class="note-form-content note-rich-textarea" placeholder="Take a note..." rows="4">${_esc(text)}</textarea>
+    <div class="note-rich-preview" data-rich-preview hidden></div>
+  </div>`;
+}
+
+function _noteRichSelectedLines(ta) {
+  const value = ta.value || '';
+  const start = ta.selectionStart ?? 0;
+  const end = ta.selectionEnd ?? start;
+  const lineStart = value.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+  const nextBreak = value.indexOf('\n', end);
+  const lineEnd = nextBreak === -1 ? value.length : nextBreak;
+  return {
+    value,
+    start,
+    end,
+    lineStart,
+    lineEnd,
+    block: value.slice(lineStart, lineEnd),
+  };
+}
+
+function _noteRichState(editor) {
+  if (!editor) return null;
+  if (!editor._noteRichState) editor._noteRichState = { undo: [], redo: [], silent: false };
+  return editor._noteRichState;
+}
+
+function _noteRichReplace(ta, nextValue, nextStart, nextEnd = nextStart) {
+  const editor = ta.closest('.note-rich-editor');
+  const state = _noteRichState(editor);
+  if (state && state.undo[state.undo.length - 1] !== ta.value) {
+    state.undo.push(ta.value);
+  }
+  if (state) state.silent = true;
+  ta.value = nextValue;
+  ta.focus({ preventScroll: true });
+  try { ta.setSelectionRange(nextStart, nextEnd); } catch {}
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  if (state) {
+    state.silent = false;
+    if (state.undo[state.undo.length - 1] !== nextValue) state.undo.push(nextValue);
+    if (state.undo.length > 80) state.undo.splice(0, state.undo.length - 80);
+    state.redo = [];
+  }
+  _noteRichRefreshPreview(editor);
+}
+
+function _noteRichWrapSelection(ta, before, after = before, placeholder = 'text') {
+  const value = ta.value || '';
+  const start = ta.selectionStart ?? 0;
+  const end = ta.selectionEnd ?? start;
+  const selected = value.slice(start, end);
+  const inner = selected || placeholder;
+  const replacement = `${before}${inner}${after}`;
+  const next = value.slice(0, start) + replacement + value.slice(end);
+  const innerStart = start + before.length;
+  const innerEnd = innerStart + inner.length;
+  _noteRichReplace(ta, next, innerStart, innerEnd);
+}
+
+function _noteRichStripLinePrefix(line) {
+  return String(line || '')
+    .replace(/^\s*#{1,6}\s+/, '')
+    .replace(/^\s*>\s?/, '')
+    .replace(/^\s*(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, '');
+}
+
+function _noteRichTransformLines(ta, transform) {
+  const sel = _noteRichSelectedLines(ta);
+  const lines = sel.block.split('\n');
+  const replacement = transform(lines).join('\n');
+  const next = sel.value.slice(0, sel.lineStart) + replacement + sel.value.slice(sel.lineEnd);
+  _noteRichReplace(ta, next, sel.lineStart, sel.lineStart + replacement.length);
+}
+
+function _noteRichInsertBlock(ta, block) {
+  const value = ta.value || '';
+  const start = ta.selectionStart ?? 0;
+  const end = ta.selectionEnd ?? start;
+  const before = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
+  const after = value[end] && value[end] !== '\n' ? '\n' : '';
+  const replacement = before + block + after;
+  const next = value.slice(0, start) + replacement + value.slice(end);
+  const cursor = start + replacement.length;
+  _noteRichReplace(ta, next, cursor, cursor);
+}
+
+function _noteRichClearFormatting(line) {
+  return String(line || '')
+    .replace(/\{\{font:(?:default|sans|serif|mono|hand|display)\}\}/g, '')
+    .replace(/\{\{\/font\}\}/g, '')
+    .replace(/\{\{size:(?:xs|sm|md|lg|xl|xxl)\}\}/g, '')
+    .replace(/\{\{\/size\}\}/g, '')
+    .replace(/\{\{color:(?:default|accent|red|orange|yellow|green|blue|purple|muted)\}\}/g, '')
+    .replace(/\{\{\/color\}\}/g, '')
+    .replace(/\{\{align:(?:left|center|right|justify)\}\}/g, '')
+    .replace(/\{\{\/align\}\}/g, '')
+    .replace(/\{\{(?:sup|sub)\}\}/g, '')
+    .replace(/\{\{\/(?:sup|sub)\}\}/g, '')
+    .replace(/^\s*#{1,6}\s+/, '')
+    .replace(/^\s*>\s?/, '')
+    .replace(/^\s*(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, '')
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/__([^_\n]+)__/g, '$1')
+    .replace(/~~([^~\n]+)~~/g, '$1')
+    .replace(/==([^=\n]+)==/g, '$1')
+    .replace(/`([^`\n]+)`/g, '$1');
+}
+
+function _noteRichRefreshPreview(editor) {
+  if (!editor || !editor.classList.contains('is-previewing')) return;
+  const ta = editor.querySelector('.note-form-content');
+  const preview = editor.querySelector('[data-rich-preview]');
+  if (!ta || !preview) return;
+  preview.innerHTML = _renderNoteMarkdown(_noteRichSerializeEditor(editor)) || '<p class="note-rich-preview-empty">Empty note</p>';
+}
+
+function _noteRichSetPreview(editor, on) {
+  if (!editor) return;
+  const ta = editor.querySelector('.note-form-content');
+  const preview = editor.querySelector('[data-rich-preview]');
+  const btn = editor.querySelector('[data-rich-action="preview"]');
+  if (!ta || !preview) return;
+  editor.classList.toggle('is-previewing', !!on);
+  preview.hidden = !on;
+  ta.style.display = on ? 'none' : '';
+  if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  if (on) _noteRichRefreshPreview(editor);
+  else {
+    ta.focus({ preventScroll: true });
+    if (ta._noteGrow) requestAnimationFrame(ta._noteGrow);
+  }
+}
+
+function _noteRichUndoRedo(ta, dir) {
+  const editor = ta.closest('.note-rich-editor');
+  const state = _noteRichState(editor);
+  if (!state) return;
+  const from = dir === 'undo' ? state.undo : state.redo;
+  const to = dir === 'undo' ? state.redo : state.undo;
+  if (dir === 'undo' && state.undo.length <= 1) return;
+  if (dir === 'redo' && state.redo.length < 1) return;
+  const current = ta.value;
+  let next;
+  if (dir === 'undo') {
+    to.push(current);
+    from.pop();
+    next = from[from.length - 1] ?? '';
+  } else {
+    next = from.pop();
+    to.push(next);
+  }
+  state.silent = true;
+  ta.value = next;
+  const cursor = next.length;
+  try { ta.setSelectionRange(cursor, cursor); } catch {}
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  state.silent = false;
+  _noteRichRefreshPreview(editor);
+}
+
+function _noteRichApplyAction(ta, action) {
+  const editor = ta.closest('.note-rich-editor');
+  if (action !== 'preview' && editor?.classList.contains('is-previewing')) {
+    _noteRichSetPreview(editor, false);
+  }
+  if (action === 'undo' || action === 'redo') { _noteRichUndoRedo(ta, action); return; }
+  if (action === 'bold') { _noteRichWrapSelection(ta, '**', '**', 'bold text'); return; }
+  if (action === 'italic') { _noteRichWrapSelection(ta, '*', '*', 'italic text'); return; }
+  if (action === 'underline') { _noteRichWrapSelection(ta, '__', '__', 'underlined text'); return; }
+  if (action === 'strike') { _noteRichWrapSelection(ta, '~~', '~~', 'struck text'); return; }
+  if (action === 'highlight') { _noteRichWrapSelection(ta, '==', '==', 'highlighted text'); return; }
+  if (action === 'code') {
+    const value = ta.value || '';
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? start;
+    const selected = value.slice(start, end);
+    if (selected.includes('\n')) _noteRichInsertBlock(ta, `\`\`\`\n${selected || 'code'}\n\`\`\``);
+    else _noteRichWrapSelection(ta, '`', '`', 'code');
+    return;
+  }
+  if (action === 'link') {
+    const value = ta.value || '';
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? start;
+    const selected = value.slice(start, end) || 'link text';
+    const replacement = `[${selected}](https://)`;
+    const next = value.slice(0, start) + replacement + value.slice(end);
+    const urlStart = start + selected.length + 3;
+    _noteRichReplace(ta, next, urlStart, urlStart + 8);
+    return;
+  }
+  if (action === 'bullet') {
+    _noteRichTransformLines(ta, lines => lines.map(line => {
+      const text = _noteRichStripLinePrefix(line);
+      return text ? `- ${text}` : '- ';
+    }));
+    return;
+  }
+  if (action === 'numbered') {
+    _noteRichTransformLines(ta, lines => lines.map((line, idx) => {
+      const text = _noteRichStripLinePrefix(line);
+      return text ? `${idx + 1}. ${text}` : `${idx + 1}. `;
+    }));
+    return;
+  }
+  if (action === 'checklist') {
+    _noteRichTransformLines(ta, lines => lines.map(line => {
+      const text = _noteRichStripLinePrefix(line);
+      return text ? `- [ ] ${text}` : '- [ ] ';
+    }));
+    return;
+  }
+  if (action === 'quote') {
+    _noteRichTransformLines(ta, lines => lines.map(line => `> ${line.replace(/^\s*>\s?/, '')}`));
+    return;
+  }
+  if (action.startsWith('align-')) {
+    _noteRichApplyInlineToken(ta, 'align', action.replace('align-', ''), 'aligned text');
+    return;
+  }
+  if (action === 'superscript') { _noteRichWrapSelection(ta, '{{sup}}', '{{/sup}}', '2'); return; }
+  if (action === 'subscript') { _noteRichWrapSelection(ta, '{{sub}}', '{{/sub}}', '2'); return; }
+  if (action === 'upper') { _noteRichTransformText(ta, s => s.toUpperCase()); return; }
+  if (action === 'lower') { _noteRichTransformText(ta, s => s.toLowerCase()); return; }
+  if (action === 'titlecase') {
+    _noteRichTransformText(ta, s => s.toLowerCase().replace(/\b([a-z])/g, c => c.toUpperCase()));
+    return;
+  }
+  if (action === 'sort-lines') {
+    _noteRichTransformLines(ta, lines => lines.slice().sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })));
+    return;
+  }
+  if (action === 'indent') { _noteRichTransformLines(ta, lines => lines.map(line => `  ${line}`)); return; }
+  if (action === 'outdent') { _noteRichTransformLines(ta, lines => lines.map(line => line.replace(/^(?: {1,2}|\t)/, ''))); return; }
+  if (action === 'table') { _noteRichInsertBlock(ta, '| Column | Column |\n| --- | --- |\n| Item | Value |'); return; }
+  if (action === 'divider') { _noteRichInsertBlock(ta, '---'); return; }
+  if (action === 'date') {
+    const now = new Date();
+    _noteRichInsertBlock(ta, now.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }));
+    return;
+  }
+  if (action === 'clear') {
+    _noteRichTransformLines(ta, lines => lines.map(_noteRichClearFormatting));
+    _noteRichResetVisualFormat(editor);
+    return;
+  }
+  if (action === 'preview') { _noteRichSetPreview(editor, !editor.classList.contains('is-previewing')); }
+}
+
+function _noteRichApplyInlineToken(ta, kind, value, placeholder) {
+  const editor = ta?.closest('.note-rich-editor');
+  if (['font', 'size', 'color', 'align'].includes(kind)) {
+    _noteRichSetFormat(editor, kind, value);
+    return;
+  }
+  const allowedByKind = {
+    font: new Set(['default', 'sans', 'serif', 'mono', 'hand', 'display']),
+    size: new Set(['xs', 'sm', 'md', 'lg', 'xl', 'xxl']),
+    color: new Set(['default', 'accent', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'muted']),
+    align: new Set(['left', 'center', 'right', 'justify']),
+  };
+  const allowed = allowedByKind[kind];
+  if (!allowed.has(value)) return;
+  const valueClear =
+    (kind === 'font' && value === 'default') ||
+    (kind === 'size' && value === 'md') ||
+    (kind === 'color' && value === 'default') ||
+    (kind === 'align' && value === 'left');
+  const openReByKind = {
+    font: /\{\{font:(?:default|sans|serif|mono|hand|display)\}\}/g,
+    size: /\{\{size:(?:xs|sm|md|lg|xl|xxl)\}\}/g,
+    color: /\{\{color:(?:default|accent|red|orange|yellow|green|blue|purple|muted)\}\}/g,
+    align: /\{\{align:(?:left|center|right|justify)\}\}/g,
+  };
+  const openRe = openReByKind[kind];
+  const closeRe = new RegExp(`\\{\\{/${kind}\\}\\}`, 'g');
+  const markerPrefixRe = /^(\s*(?:(?:#{1,6}|>)\s+|(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?))(.*)$/;
+  const clearTokens = (text) => String(text || '').replace(openRe, '').replace(closeRe, '');
+  const wrapText = (text) => {
+    const cleaned = clearTokens(text);
+    if (valueClear) return cleaned;
+    return `{{${kind}:${value}}}${cleaned}{{/${kind}}}`;
+  };
+  const wrapLine = (line) => {
+    if (!line) return line;
+    const match = markerPrefixRe.exec(line);
+    if (match) return match[1] + wrapText(match[2] || placeholder);
+    return wrapText(line);
+  };
+  const valueText = ta.value || '';
+  const start = ta.selectionStart ?? 0;
+  const end = ta.selectionEnd ?? start;
+  const selected = valueText.slice(start, end);
+  if (!selected && valueClear) {
+    _noteRichTransformLines(ta, lines => lines.map(line => clearTokens(line)));
+    return;
+  }
+  const replacement = selected
+    ? selected.split('\n').map(wrapLine).join('\n')
+    : wrapText(placeholder);
+  const next = valueText.slice(0, start) + replacement + valueText.slice(end);
+  const innerOffset = valueClear ? 0 : (`{{${kind}:${value}}}`).length;
+  const selectionEnd = selected ? start + replacement.length : start + innerOffset + placeholder.length;
+  _noteRichReplace(ta, next, selected ? start : start + innerOffset, selectionEnd);
+}
+
+function _noteRichTransformText(ta, transform) {
+  const value = ta.value || '';
+  const start = ta.selectionStart ?? 0;
+  const end = ta.selectionEnd ?? start;
+  if (end > start) {
+    const selected = value.slice(start, end);
+    const replacement = transform(selected);
+    const next = value.slice(0, start) + replacement + value.slice(end);
+    _noteRichReplace(ta, next, start, start + replacement.length);
+    return;
+  }
+  _noteRichTransformLines(ta, lines => lines.map(line => transform(line)));
+}
+
+function _noteRichApplyStyle(ta, style) {
+  if (!style) return;
+  if (style === 'normal') {
+    _noteRichTransformLines(ta, lines => lines.map(_noteRichClearFormatting));
+  } else if (style === 'quote') {
+    _noteRichApplyAction(ta, 'quote');
+  } else if (style === 'codeblock') {
+    const value = ta.value || '';
+    const start = ta.selectionStart ?? 0;
+    const end = ta.selectionEnd ?? start;
+    const selected = value.slice(start, end) || 'code';
+    _noteRichInsertBlock(ta, `\`\`\`\n${selected}\n\`\`\``);
+  } else {
+    const prefix = style === 'h1' ? '# ' : style === 'h2' ? '## ' : '### ';
+    _noteRichTransformLines(ta, lines => lines.map(line => `${prefix}${line.replace(/^\s*#{1,6}\s+/, '')}`));
+  }
+}
+
+function _wireRichNoteEditor(form) {
+  const editor = form?.querySelector('.note-rich-editor');
+  if (!editor || editor._noteRichWired) return;
+  const ta = editor.querySelector('.note-form-content');
+  if (!ta) return;
+  editor._noteRichWired = true;
+  const state = _noteRichState(editor);
+  state.undo = [ta.value || ''];
+  state.redo = [];
+  const format = _noteRichGetFormat(editor);
+  for (const [key, value] of Object.entries(format)) {
+    _noteRichSetFormat(editor, key, value, { silent: true });
+  }
+  editor.querySelectorAll('[data-rich-action]').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      _noteRichApplyAction(ta, btn.dataset.richAction);
+    });
+  });
+  const styleSelect = editor.querySelector('[data-rich-style]');
+  styleSelect?.addEventListener('change', () => {
+    _noteRichApplyStyle(ta, styleSelect.value);
+    styleSelect.value = '';
+  });
+  const fontSelect = editor.querySelector('[data-rich-font]');
+  fontSelect?.addEventListener('change', () => {
+    _noteRichApplyInlineToken(ta, 'font', fontSelect.value, 'font text');
+  });
+  const sizeSelect = editor.querySelector('[data-rich-size]');
+  sizeSelect?.addEventListener('change', () => {
+    _noteRichApplyInlineToken(ta, 'size', sizeSelect.value, 'sized text');
+  });
+  const colorSelect = editor.querySelector('[data-rich-color]');
+  colorSelect?.addEventListener('change', () => {
+    _noteRichApplyInlineToken(ta, 'color', colorSelect.value, 'colored text');
+  });
+  ta.addEventListener('input', () => {
+    if (!state.silent && state.undo[state.undo.length - 1] !== ta.value) {
+      state.undo.push(ta.value);
+      if (state.undo.length > 80) state.undo.splice(0, state.undo.length - 80);
+      state.redo = [];
+    }
+    _noteRichRefreshPreview(editor);
+  });
+}
+
+function _wireNoteTextareaGrowth(form, ta = null) {
+  const textArea = ta || form?.querySelector('.note-form-content');
+  if (!textArea || textArea._noteGrowWired) return;
+  const grow = () => {
+    if (textArea.style.display === 'none') return;
+    textArea.style.height = 'auto';
+    const inFullscreen = !!textArea.closest('.note-fullscreen-overlay');
+    const max = Math.round(window.innerHeight * (inFullscreen ? 0.9 : 0.5));
+    textArea.style.height = Math.min(textArea.scrollHeight, max) + 'px';
+  };
+  textArea._noteGrow = grow;
+  textArea._noteGrowWired = true;
+  textArea.addEventListener('input', grow);
+  setTimeout(grow, 0);
+  setTimeout(grow, 360);
+}
+
 // Mobile swipe-to-dismiss for the notes sheet. Mirrors the document panel
 // gesture (finger-following, velocity-based dismiss, rubber-band, snap-back)
 // so both sheets feel identical; dismisses via the notes closePanel('down').
@@ -946,7 +1624,7 @@ function _fireReminder(note) {
       rawBody = `${(note.items || []).length} item${(note.items || []).length === 1 ? '' : 's'}`;
     }
   } else {
-    rawBody = (note.content || '').slice(0, 400);
+    rawBody = _noteRichPlainText(note.content || '').slice(0, 400);
   }
 
   // Ask the server to dispatch according to user settings. The server may
@@ -1719,7 +2397,7 @@ function _renderNotes() {
     filtered = filtered.filter(n => {
       const q = _searchQuery;
       if ((n.title || '').toLowerCase().includes(q)) return true;
-      if ((n.content || '').toLowerCase().includes(q)) return true;
+      if (_noteRichPlainText(n.content || '').toLowerCase().includes(q)) return true;
       if ((n.label || '').toLowerCase().includes(q)) return true;
       if (Array.isArray(n.items) && n.items.some(it => (it.text || '').toLowerCase().includes(q))) return true;
       return false;
@@ -1797,9 +2475,8 @@ function _renderNotes() {
       // Goal notes can carry a free-form description above the step list —
       // todos rarely do, but the same render works for both.
       if (note.note_type === 'goal' && (note.content || '').trim()) {
-        const fullText = note.content || '';
-        const preview = fullText.length > 300 ? fullText.slice(0, 300) + '…' : fullText;
-        contentHtml += `<div class="note-goal-desc">${_esc(preview)}</div>`;
+        const previewHtml = _renderNoteRichPreview(note.content || '', 300);
+        if (previewHtml) contentHtml += `<div class="note-goal-desc">${previewHtml}</div>`;
       }
       contentHtml += '<div class="note-checklist-preview">';
       // Show ALL items — the preview container is scrollable (CSS caps
@@ -1818,11 +2495,8 @@ function _renderNotes() {
       }
       contentHtml += '</div>';
     } else {
-      const fullText = note.content || '';
-      const preview = fullText.length > 600 ? fullText.slice(0, 600) + '…' : fullText;
-      // _linkify already calls _esc internally, so URLs become clickable
-      // anchors (used by e.g. the "remind me to reply" email deep-link).
-      contentHtml = preview ? `<div class="note-content-preview">${_linkify(preview)}</div>` : '';
+      const previewHtml = _renderNoteRichPreview(note.content || '', 600);
+      contentHtml = previewHtml ? `<div class="note-content-preview">${previewHtml}</div>` : '';
     }
 
     const isBg = _isBgImage(note.color);
@@ -2464,7 +3138,8 @@ function _bindCardEvents(body) {
       if (!note) return;
       const lines = [];
       if (note.title) lines.push(note.title);
-      if (note.content) lines.push(note.content);
+      const plainContent = _noteRichPlainText(note.content || '').trim();
+      if (plainContent) lines.push(plainContent);
       if (lines.length) lines.push('');
       for (const it of (note.items || [])) {
         if (!it || !(it.text || '').trim()) continue;
@@ -2758,7 +3433,7 @@ function _collectFormDraft(form) {
     due_date: form.querySelector('.note-form-due')?.value || null,
     repeat: form.querySelector('.note-form-repeat')?.value || 'none',
   };
-  if (type === 'note') d.content = form.querySelector('.note-form-content')?.value || '';
+  if (type === 'note') d.content = _noteRichSerializeEditor(form.querySelector('.note-rich-editor')) || form.querySelector('.note-form-content')?.value || '';
   else if (type === 'goal') { d.content = form.querySelector('.note-form-goal-desc')?.value || ''; d.items = _collectItems(form); }
   else d.items = _collectItems(form);
   return d;
@@ -2829,7 +3504,7 @@ function _buildForm(note = null) {
     ${currentImageUrl && type !== 'draw' ? `<div class="note-form-image-wrap"><img class="note-form-image" src="${_esc(currentImageUrl)}" draggable="false" /><button class="note-form-image-rm" title="Remove">&times;</button></div>` : ''}
     <div class="note-form-body">
       ${type === 'note'
-        ? `<textarea class="note-form-content" placeholder="Take a note..." rows="4">${_esc(note?.content || '')}</textarea>`
+        ? _buildRichNoteEditorHtml(note?.content || '')
         : type === 'draw'
         ? _buildDrawHtml()
         : type === 'goal'
@@ -2918,7 +3593,7 @@ function _buildForm(note = null) {
       // Stash whatever the user has in the current mode before swapping it
       // out, so a subsequent flip back restores their work.
       if (currentType === 'note') {
-        _stashedNoteText = form.querySelector('.note-form-content')?.value || '';
+        _stashedNoteText = _noteRichSerializeEditor(form.querySelector('.note-rich-editor')) || form.querySelector('.note-form-content')?.value || '';
       } else if (currentType === 'todo') {
         _stashedTodoItems = _collectItems(form);
       } else if (currentType === 'goal') {
@@ -2956,7 +3631,9 @@ function _buildForm(note = null) {
           ? _stashedNoteText
           : (_stashedGoalDesc && _stashedGoalDesc)
           || (_stashedTodoItems || _stashedGoalItems || []).map(i => i.text).join('\n');
-        bodyEl.innerHTML = `<textarea class="note-form-content" placeholder="Take a note..." rows="4">${_esc(text)}</textarea>`;
+        bodyEl.innerHTML = _buildRichNoteEditorHtml(text);
+        _wireRichNoteEditor(form);
+        _wireNoteTextareaGrowth(form, bodyEl.querySelector('.note-form-content'));
         _wireHashtag(bodyEl.querySelector('.note-form-content'));
       }
       const focusEl = newType === 'note'
@@ -3038,6 +3715,7 @@ function _buildForm(note = null) {
   });
 
   if (currentType === 'todo') _wireChecklist(form.querySelector('.note-form-body'));
+  if (currentType === 'note') _wireRichNoteEditor(form);
   if (currentType === 'goal') _wireGoalForm(form, form.querySelector('.note-form-body'));
   if (currentType === 'draw') {
     _wireCanvas(form.querySelector('.note-form-body'), _safeImgSrc(note?.image_url) || null);
@@ -3046,28 +3724,8 @@ function _buildForm(note = null) {
     const _cp = form.querySelector('.note-color-picker'); if (_cp) _cp.style.display = 'none';
   }
 
-  // Auto-grow the plain-note textarea so editing longer notes is
-  // comfortable — it expands with the content (up to a cap) instead of
-  // staying a cramped 4-row box. The user can still drag-resize too.
-  const _contentTa = form.querySelector('.note-form-content');
-  if (_contentTa) {
-    const _grow = () => {
-      _contentTa.style.height = 'auto';
-      // Inline form: cap at ~50vh so a huge note doesn't push the action
-      // buttons off-screen. Fullscreen mobile overlay: the body scrolls and
-      // there are no inline buttons crowding, so allow nearly the full height
-      // — capping at 50vh there clipped longer notes ("part disappears").
-      const inFullscreen = !!_contentTa.closest('.note-fullscreen-overlay');
-      const max = Math.round(window.innerHeight * (inFullscreen ? 0.9 : 0.5));
-      _contentTa.style.height = Math.min(_contentTa.scrollHeight, max) + 'px';
-    };
-    _contentTa.addEventListener('input', _grow);
-    // Grow on open so existing content is fully visible. Run again after the
-    // fullscreen overlay's open animation settles — measuring mid-animation
-    // (the overlay starts scaled/transitioning) can under-size the box.
-    setTimeout(_grow, 0);
-    setTimeout(_grow, 360);
-  }
+  // Auto-grow the plain-note textarea so editing longer notes is comfortable.
+  _wireNoteTextareaGrowth(form);
 
   // Reminder bell — opens dropdown menu
   const remindBtn = form.querySelector('.note-form-remind-btn');
@@ -3535,7 +4193,7 @@ function _buildForm(note = null) {
       image_url: currentImageUrl || null,
     };
     if (currentType === 'note') {
-      payload.content = form.querySelector('.note-form-content')?.value || '';
+      payload.content = _noteRichSerializeEditor(form.querySelector('.note-rich-editor')) || form.querySelector('.note-form-content')?.value || '';
     } else if (currentType === 'draw') {
       // Upload the canvas PNG before saving so image_url points to a
       // persistent file. We block the save until upload completes — drawings
@@ -4276,7 +4934,8 @@ function _createNote(type = 'todo') {
 function _serializeNoteForCopy(note) {
   const lines = [];
   if (note.title) lines.push(note.title);
-  if (note.content) lines.push(note.content);
+  const plainContent = _noteRichPlainText(note.content || '').trim();
+  if (plainContent) lines.push(plainContent);
   if (Array.isArray(note.items) && note.items.length) {
     if (lines.length) lines.push('');
     for (const it of note.items) {
@@ -4333,7 +4992,8 @@ function _openNoteCornerMenu(btn) {
 function _noteToAgentPrompt(note) {
   const parts = [];
   if ((note.title || '').trim()) parts.push(note.title.trim());
-  if ((note.content || '').trim()) parts.push(note.content.trim());
+  const plainContent = _noteRichPlainText(note.content || '').trim();
+  if (plainContent) parts.push(plainContent);
   if (Array.isArray(note.items)) {
     note.items.filter(it => !it.done && (it.text || '').trim())
       .forEach(it => parts.push('- ' + it.text.trim()));
@@ -4709,19 +5369,23 @@ function _openMobileFullscreenEdit(id, fromCard) {
   // textarea so the user can start editing. Tapping a link opens it.
   const ta = form.querySelector('.note-form-content');
   if (ta && (note.content || '').trim()) {
+    const richEditor = ta.closest('.note-rich-editor');
     const reader = document.createElement('div');
     reader.className = 'note-form-content-reader';
-    reader.innerHTML = _linkify(note.content || '');
+    reader.innerHTML = _renderNoteMarkdown(note.content || '');
+    richEditor?.classList.add('is-read-mode');
     ta.style.display = 'none';
     ta.insertAdjacentElement('beforebegin', reader);
     reader.addEventListener('click', (e) => {
       if (e.target.closest('a')) return;  // let links open normally
       reader.remove();
+      richEditor?.classList.remove('is-read-mode');
       ta.style.display = '';
       // Let the browser place the cursor naturally — forcing
       // setSelectionRange right after focus() raced with the underlying
       // tap event and produced inconsistent cursor positions on mobile.
       ta.focus({ preventScroll: true });
+      if (ta._noteGrow) requestAnimationFrame(ta._noteGrow);
     });
   }
 

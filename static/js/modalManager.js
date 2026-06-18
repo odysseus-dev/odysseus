@@ -72,6 +72,7 @@ const _FULL_EXPAND_CLASSES = [
   'email-window-fullscreen',
   'notes-window-fullscreen',
 ];
+const _FULL_EXPAND_TOGGLE_LOCK_MS = 280;
 
 function _modalWindowContent(modal) {
   if (!modal) return null;
@@ -96,6 +97,24 @@ function _isFullExpanded(modal) {
   const content = _modalWindowContent(modal);
   return !!(content?.dataset?._tileZone === 'fullscreen'
     || _FULL_EXPAND_CLASSES.some((cls) => modal?.classList?.contains(cls)));
+}
+
+function _isFullExpandToggleLocked(modal) {
+  const until = modal?._mmFullExpandToggleLockedUntil || 0;
+  const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  return until > now;
+}
+
+function _lockFullExpandToggle(modal) {
+  if (!modal) return;
+  const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  modal._mmFullExpandToggleLockedUntil = now + _FULL_EXPAND_TOGGLE_LOCK_MS;
+  setTimeout(() => {
+    const cur = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if ((modal._mmFullExpandToggleLockedUntil || 0) <= cur) {
+      delete modal._mmFullExpandToggleLockedUntil;
+    }
+  }, _FULL_EXPAND_TOGGLE_LOCK_MS + 40);
 }
 
 function _restoreFullscreenFallback(modal) {
@@ -193,8 +212,13 @@ function _restoreFullExpandReturnState(modal, content) {
   if (state.touchLandscapeDockWidth) content._touchLandscapeDockWidth = state.touchLandscapeDockWidth;
   if (state.userDockWidth) content._userDockWidth = state.userDockWidth;
   if (state.emailDocSplitUserW) content._emailDocSplitUserW = state.emailDocSplitUserW;
-  try { applyEdgeDock(modal, state.side); } catch (e) { console.warn('restore dock after full expand failed', e); }
-  return true;
+  try {
+    const dockWidth = applyEdgeDock(modal, state.side);
+    return dockWidth > 0;
+  } catch (e) {
+    console.warn('restore dock after full expand failed', e);
+  }
+  return false;
 }
 
 function _syncExpandButton(btn, modal) {
@@ -222,9 +246,40 @@ function _syncAllExpandButtons() {
   });
 }
 
+function _fitFullExpandedContentToModalFrame(modal) {
+  const content = _modalWindowContent(modal);
+  if (!modal?.getBoundingClientRect || !content?.style) return;
+  const rect = modal.getBoundingClientRect();
+  if (!rect || rect.width <= 1 || rect.height <= 1) return;
+  content.style.setProperty('position', 'fixed', 'important');
+  content.style.setProperty('left', `${Math.round(rect.left)}px`, 'important');
+  content.style.setProperty('top', `${Math.round(rect.top)}px`, 'important');
+  content.style.setProperty('width', `${Math.round(rect.width)}px`, 'important');
+  content.style.setProperty('height', `${Math.round(rect.height)}px`, 'important');
+  content.style.setProperty('max-height', `${Math.round(rect.height)}px`, 'important');
+  content.style.setProperty('margin', '0', 'important');
+  content.style.setProperty('transform', 'none', 'important');
+  content.dataset._tileZone = 'fullscreen';
+}
+
+function _scheduleFullExpandGeometrySettle(modal) {
+  if (!modal) return;
+  const run = () => {
+    if (!modal.isConnected || modal.classList.contains('hidden') || !_isFullExpanded(modal)) return;
+    _fitFullExpandedContentToModalFrame(modal);
+  };
+  requestAnimationFrame(run);
+  setTimeout(run, 80);
+  setTimeout(run, 240);
+  setTimeout(run, 560);
+  setTimeout(run, 900);
+}
+
 export function toggleFullExpand(id) {
   const modal = typeof id === 'string' ? document.getElementById(id) : id;
   if (!modal) return false;
+  if (_isFullExpandToggleLocked(modal)) return true;
+  _lockFullExpandToggle(modal);
   const content = _modalWindowContent(modal);
   if (!content) return false;
   const wasExpanded = _isFullExpanded(modal);
@@ -257,6 +312,7 @@ export function toggleFullExpand(id) {
         height: window.innerHeight || document.documentElement.clientHeight || 0,
       },
     });
+    _scheduleFullExpandGeometrySettle(modal);
   }
   _syncExpandButton(modal.querySelector?.('.modal-expand-btn'), modal);
   try { window.dispatchEvent(new Event('resize')); } catch (_) {}
