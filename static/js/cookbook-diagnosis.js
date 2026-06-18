@@ -672,7 +672,7 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   const taskEl = panel?.closest?.('.cookbook-task');
   const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
   const fixes = [...(diagnosis.fixes || [])];
-  if (task?.type === 'serve' && task.payload?._cmd && !fixes.some(f => f.label === 'Edit serve')) {
+  if (task?.type === 'serve' && task.payload?._cmd && !diagnosis.noServeEdit && !fixes.some(f => f.label === 'Edit serve')) {
     fixes.push({ label: 'Edit serve', action: (p) => _openServeEditFromDiagnosis(p) });
   }
   const suggestionText = diagnosis.suggestion || (fixes.length

@@ -138,8 +138,35 @@ async function _openDownloadForGgufTask(task) {
   }, 80);
 }
 
+// Diagnose pip's corrupted dist-info / no-RECORD failure. These pip tasks can
+// ride on both 'download' and 'serve' task types, so check this specific error
+// before the serve-only diagnosis below.
+function _terminalPipNoRecordDiagnosis(task, outputText) {
+  const out = String(outputText || task?.output || '');
+  if (!task || !['stopped', 'error', 'crashed', 'failed'].includes(task.status) || !out.trim()) return null;
+  // Corrupted dist-info: a prior interrupted/concurrent install wiped a
+  // package's RECORD file, so pip can no longer uninstall/replace it — every
+  // later install that touches it then fails with "uninstall-no-record-file".
+  if (/uninstall-no-record-file|no RECORD file was found/i.test(out)) {
+    const m = out.match(/no RECORD file was found for ([A-Za-z0-9][A-Za-z0-9._-]*)/i);
+    const pkg = m ? m[1].replace(/[.\s]+$/, '') : '';
+    const name = pkg || 'a package';
+    return {
+      message: `${pkg ? '"' + pkg + '"' : 'A package'}'s install metadata is corrupted (no RECORD file), so pip cannot replace it. Until it is repaired, every install that touches ${name} fails with "uninstall-no-record-file" — even one at a time. This is usually left behind by an interrupted or concurrent install.`,
+      suggestion: `Suggested action: in this environment's site-packages, delete the orphaned ${name}-*.dist-info folder, then reinstall ${name}. Avoid starting more than one install at the same time.`,
+      fixes: [],
+      noServeEdit: true,
+    };
+  }
+  return null;
+}
+
 function _terminalServeDiagnosis(task, outputText) {
   const out = String(outputText || task?.output || '');
+  // Pip / dependency-install tasks fail with pip's errors, not serve's —
+  // surface those before the serve-only guard below bails on them.
+  const installDiag = _terminalPipNoRecordDiagnosis(task, out);
+  if (installDiag) return installDiag;
   if (!task || task.type !== 'serve' || !['stopped', 'error', 'crashed', 'failed'].includes(task.status) || !out.trim()) return null;
   // Pip tasks (Reinstall vLLM, Upgrade torch, etc.) ride on the serve task
   // type so they get a tmux session + show up in Running tab — but they are
