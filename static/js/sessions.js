@@ -561,6 +561,34 @@ function createSessionItem(s) {
   dropdown.appendChild(copyItem);
   dropdown.appendChild(folderItem);
 
+  // Create Branch — child session that tracks updates from this parent
+  if (!isOpenClaw) {
+    const _branchIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>';
+    const branchItem = document.createElement('div');
+    branchItem.className = 'dropdown-item-compact';
+    branchItem.innerHTML = _icon(_branchIcon) + '<span>Create Branch</span>';
+    branchItem.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      dropdown.style.display = 'none';
+      try {
+        const res = await fetch(`${API_BASE}/api/session/${s.id}/branch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        await loadSessions();
+        await selectSession(data.id);
+        if (uiModule) uiModule.showToast(`Branch created: ${data.name}`);
+      } catch (err) {
+        console.error('Create branch failed:', err);
+        if (uiModule) uiModule.showError('Failed to create branch: ' + err.message);
+      }
+    });
+    dropdown.appendChild(branchItem);
+  }
+
   // Separator before destructive actions
   const _sep = document.createElement('div');
   _sep.style.cssText = 'height:1px;margin:3px 0;background:color-mix(in srgb,var(--border) 40%,transparent)';

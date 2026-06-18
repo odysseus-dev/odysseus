@@ -497,8 +497,61 @@ def setup_history_routes(session_manager) -> APIRouter:
                 # edit/delete-by-id on the original conversation.
                 meta = dict(msg.metadata) if isinstance(msg.metadata, dict) else None
                 new_session.add_message(ChatMessage(msg.role, msg.content, meta))
+            try:
+                from src.event_bus import fire_event
+                fire_event("session_created", getattr(source, 'owner', None))
+            except Exception:
+                logger.debug("session_created event dispatch failed", exc_info=True)
 
-            # Store branch lineage: which parent session was forked and at what index
+            return {
+                "status": "ok",
+                "id": new_id,
+                "name": fork_name,
+                "kept": len(msgs_to_copy),
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Fork error {session_id}: {e}")
+            raise HTTPException(500, str(e))
+
+    @router.post("/api/session/{session_id}/branch")
+    async def branch_session(request: Request, session_id: str):
+        """Create a child branch from this session, tracking the parent relationship.
+
+        Unlike fork (which copies up to a specific message), branch always copies
+        the full conversation and records the parent so the AI stays aware of
+        future updates in the parent branch.
+        """
+        _verify_session_owner(request, session_id)
+        try:
+            body = await request.json()
+            branch_name_override = body.get("name", "").strip()
+
+            source = session_manager.sessions.get(session_id)
+            if not source:
+                # Try hydrating from DB
+                source = session_manager.get_session(session_id)
+            if not source:
+                raise HTTPException(404, "Session not found")
+
+            new_id = str(uuid.uuid4())
+            branch_name = branch_name_override or f"\u2387 {source.name}"
+            new_session = session_manager.create_session(
+                session_id=new_id,
+                name=branch_name,
+                endpoint_url=source.endpoint_url,
+                model=source.model,
+                rag=False,
+                owner=getattr(source, 'owner', None),
+            )
+
+            # Copy all current messages
+            for msg in source.history:
+                meta = dict(msg.metadata) if isinstance(msg.metadata, dict) else None
+                new_session.add_message(ChatMessage(msg.role, msg.content, meta))
+
+            # Record parent lineage
             parent_msg_count = len(source.history)
             db = SessionLocal()
             try:
@@ -522,15 +575,15 @@ def setup_history_routes(session_manager) -> APIRouter:
             return {
                 "status": "ok",
                 "id": new_id,
-                "name": fork_name,
-                "kept": len(msgs_to_copy),
+                "name": branch_name,
+                "kept": parent_msg_count,
                 "parent_session_id": session_id,
                 "fork_message_index": parent_msg_count,
             }
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Fork error {session_id}: {e}")
+            logger.error(f"Branch error {session_id}: {e}")
             raise HTTPException(500, str(e))
 
     @router.get("/api/session/{session_id}/branch-status")
