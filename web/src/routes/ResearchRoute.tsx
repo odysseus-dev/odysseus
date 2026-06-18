@@ -1,11 +1,16 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { Telescope, Loader2, Archive, ArchiveRestore, Trash2, MessageSquarePlus, ExternalLink } from "lucide-react"
 import {
-  useResearchActive, useResearchLibrary, useResearchDetail, useResearchMutations,
+  Telescope, Loader2, Archive, ArchiveRestore, Trash2, MessageSquarePlus,
+  ExternalLink, Eye, FileText, BookOpen, Copy, Check, Play, Plus,
+} from "lucide-react"
+import {
+  useResearchActive, useResearchLibrary, useResearchDetail, useResearchReport, useResearchMutations, useResearchStart,
   type ResearchActiveItem, type ResearchLibraryItem,
 } from "@/api/research"
+import { useModels } from "@/api/models"
 import { Markdown } from "@/components/chat/Markdown"
+import { HtmlPreview } from "@/components/ui/HtmlPreview"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Source } from "@/types"
@@ -63,33 +68,113 @@ function LibraryRow({ item, active, onClick }: { item: ResearchLibraryItem; acti
 }
 
 function SourceList({ sources }: { sources: Source[] }) {
-  if (!sources.length) return null
+  if (!sources.length) return <p className="text-sm text-muted-foreground">No sources.</p>
   return (
-    <div className="mt-6 border-t pt-4">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-        Sources <span className="font-normal">({sources.length})</span>
-      </div>
-      <div className="space-y-1.5">
-        {sources.map((s, i) => (
-          <a
-            key={(s.url || "") + i}
-            href={s.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-          >
-            <span className="mt-0.5 w-5 shrink-0 text-right text-xs text-muted-foreground">{i + 1}.</span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium text-foreground">{s.title || s.url || "Untitled source"}</span>
-              {s.url && <span className="block truncate text-xs">{s.url}</span>}
-            </span>
-            <ExternalLink className="mt-0.5 size-3.5 shrink-0" />
-          </a>
-        ))}
-      </div>
+    <div className="space-y-1.5">
+      {sources.map((s, i) => (
+        <a
+          key={(s.url || "") + i}
+          href={s.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-start gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+        >
+          <span className="mt-0.5 w-5 shrink-0 text-right text-xs text-muted-foreground">{i + 1}.</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium text-foreground">{s.title || s.url || "Untitled source"}</span>
+            {s.url && <span className="block truncate text-xs">{s.url}</span>}
+          </span>
+          <ExternalLink className="mt-0.5 size-3.5 shrink-0" />
+        </a>
+      ))}
     </div>
   )
 }
+
+const CATEGORIES = [
+  { key: "", label: "Auto" },
+  { key: "product", label: "Product" },
+  { key: "compare", label: "Compare" },
+  { key: "how-to", label: "How-to" },
+  { key: "fact-check", label: "Fact-check" },
+]
+const ROUNDS = [
+  { v: 0, l: "Auto" }, { v: 3, l: "3" }, { v: 5, l: "5" }, { v: 8, l: "8" }, { v: 12, l: "12" },
+]
+
+// Dedicated research-start form (parity with the legacy Deep Research panel).
+// Kicks off a background job via POST /api/research/start; it then appears in
+// the Active list (polled) and lands in the library when done.
+function StartForm({ onStarted }: { onStarted: () => void }) {
+  const start = useResearchStart()
+  const { data: models } = useModels()
+  const [query, setQuery] = useState("")
+  const [category, setCategory] = useState("")
+  const [rounds, setRounds] = useState(0)
+  const [model, setModel] = useState("") // "endpointId::model" or "" for default
+  const flat = useMemo(
+    () => (models?.items || []).flatMap((ep) =>
+      [...(ep.models || []), ...(ep.models_extra || [])].map((m) => ({ id: `${ep.endpoint_id}::${m}`, model: m }))),
+    [models],
+  )
+  const submit = () => {
+    if (!query.trim() || start.isPending) return
+    const [endpointId, m] = model ? model.split("::") : ["", ""]
+    start.mutate(
+      { query: query.trim(), category: category || undefined, max_rounds: rounds, endpoint_id: endpointId || undefined, model: m || undefined },
+      { onSuccess: () => { setQuery(""); onStarted() } },
+    )
+  }
+  return (
+    <div className="mx-auto w-full max-w-2xl px-6 py-8">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold"><Telescope className="size-4" />Deep Research</div>
+      <p className="mb-4 text-sm text-muted-foreground">Multi-step web research with an LLM-in-the-loop agent. It runs in the background; the report lands in your library.</p>
+      <textarea
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit() }}
+        rows={4}
+        placeholder="e.g. Compare Rust and Go for building a high-throughput web API in 2026"
+        className="w-full resize-none rounded-xl border bg-card p-3 text-sm outline-none focus:border-ring focus:ring-[3px] focus:ring-ring/35"
+      />
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {CATEGORIES.map((c) => (
+          <button
+            key={c.key}
+            onClick={() => setCategory(c.key)}
+            className={cn("rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+              category === c.key ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-4 flex flex-wrap items-end gap-4">
+        <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+          Rounds
+          <select value={rounds} onChange={(e) => setRounds(Number(e.target.value))} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground outline-none focus:border-ring">
+            {ROUNDS.map((r) => <option key={r.v} value={r.v}>{r.l}</option>)}
+          </select>
+        </label>
+        <label className="flex min-w-[200px] flex-col gap-1 text-xs font-medium text-muted-foreground">
+          Model
+          <select value={model} onChange={(e) => setModel(e.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm text-foreground outline-none focus:border-ring">
+            <option value="">Default (research)</option>
+            {flat.map((f) => <option key={f.id} value={f.id}>{f.model}</option>)}
+          </select>
+        </label>
+        <Button className="ml-auto" disabled={!query.trim() || start.isPending} onClick={submit}>
+          {start.isPending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}Start research
+        </Button>
+      </div>
+      {start.isError && <p className="mt-2 text-xs text-destructive">Couldn't start research: {(start.error as Error)?.message}</p>}
+    </div>
+  )
+}
+
+const segBtn = (active: boolean) =>
+  cn("flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+    active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")
 
 function Detail({
   id, archived, onArchiveToggle, onDelete, onSpinoff, spinningOff,
@@ -102,7 +187,13 @@ function Detail({
   spinningOff: boolean
 }) {
   const { data, isLoading } = useResearchDetail(id)
+  const [view, setView] = useState<"visual" | "report" | "sources">("visual")
+  const [copied, setCopied] = useState(false)
   const sources = data?.sources || []
+  const reportUrl = `/api/research/report/${id}`
+  // Fetch the Visual Report HTML only while that tab is selected.
+  const { data: reportHtml, isLoading: reportLoading, isError: reportError } = useResearchReport(view === "visual" ? id : undefined)
+  const copy = async () => { try { await navigator.clipboard.writeText(data?.result || ""); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ } }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-13 shrink-0 items-center gap-2 border-b px-4">
@@ -110,10 +201,16 @@ function Detail({
           <div className="truncate text-sm font-semibold">{data?.query || "Research"}</div>
           {data?.category && <div className="truncate text-xs text-muted-foreground">{data.category}</div>}
         </div>
+        <div className="mr-1 flex shrink-0 rounded-lg bg-muted p-0.5">
+          <button onClick={() => setView("visual")} className={segBtn(view === "visual")}><Eye className="size-3.5" />Visual</button>
+          <button onClick={() => setView("report")} className={segBtn(view === "report")}><FileText className="size-3.5" />Report</button>
+          <button onClick={() => setView("sources")} className={segBtn(view === "sources")}><BookOpen className="size-3.5" />Sources{sources.length ? ` ${sources.length}` : ""}</button>
+        </div>
         <div className="flex shrink-0 items-center gap-1">
+          <a href={reportUrl} target="_blank" rel="noopener noreferrer" title="Open report in new tab" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"><ExternalLink className="size-4" /></a>
+          <button onClick={copy} title="Copy report markdown" className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">{copied ? <Check className="size-4" /> : <Copy className="size-4" />}</button>
           <Button variant="outline" size="sm" disabled={spinningOff} onClick={onSpinoff} title="Continue in chat">
-            {spinningOff ? <Loader2 className="size-3.5 animate-spin" /> : <MessageSquarePlus className="size-3.5" />}
-            Continue in chat
+            {spinningOff ? <Loader2 className="size-3.5 animate-spin" /> : <MessageSquarePlus className="size-3.5" />}Discuss
           </Button>
           <button onClick={onArchiveToggle} title={archived ? "Restore" : "Archive"} className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">
             {archived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
@@ -123,18 +220,26 @@ function Detail({
           </button>
         </div>
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        {isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading…</div>
-        ) : data?.result ? (
-          <>
-            <Markdown>{data.result}</Markdown>
-            <SourceList sources={sources} />
-          </>
+      {isLoading ? (
+        <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading…</div>
+      ) : view === "visual" ? (
+        reportLoading ? (
+          <div className="flex items-center gap-2 p-6 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Rendering visual report…</div>
+        ) : reportError || !reportHtml ? (
+          <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
+            <p>No visual report available for this research.</p>
+            <button onClick={() => setView("report")} className="text-foreground underline-offset-2 hover:underline">View the markdown report instead</button>
+          </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No report available for this research.</p>
-        )}
-      </div>
+          <HtmlPreview content={reportHtml} renderLang="html" title={data?.query || "Visual report"} />
+        )
+      ) : view === "sources" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5"><SourceList sources={sources} /></div>
+      ) : data?.result ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5"><Markdown>{data.result}</Markdown></div>
+      ) : (
+        <div className="min-h-0 flex-1 p-6"><p className="text-sm text-muted-foreground">No report text available for this research.</p></div>
+      )}
     </div>
   )
 }
@@ -171,12 +276,21 @@ export function ResearchRoute() {
       <aside className="flex w-[320px] shrink-0 flex-col border-r">
         <header className="flex h-13 shrink-0 items-center justify-between border-b px-4 text-sm font-semibold">
           <span className="flex items-center gap-2"><Telescope className="size-4" />Research</span>
-          <button
-            onClick={() => { setShowArchived((v) => !v); setSelected(null) }}
-            className={cn("rounded-md px-2 py-1 text-xs font-medium", showArchived ? "bg-accent text-foreground" : "font-normal text-muted-foreground hover:text-foreground")}
-          >
-            {showArchived ? "Archived" : "Library"}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setSelected(null)}
+              title="New research"
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Plus className="size-4" />
+            </button>
+            <button
+              onClick={() => { setShowArchived((v) => !v); setSelected(null) }}
+              className={cn("rounded-md px-2 py-1 text-xs font-medium", showArchived ? "bg-accent text-foreground" : "font-normal text-muted-foreground hover:text-foreground")}
+            >
+              {showArchived ? "Archived" : "Library"}
+            </button>
+          </div>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {!showArchived && activeItems.length > 0 && (
@@ -200,7 +314,7 @@ export function ResearchRoute() {
               <div className="flex items-center gap-2 px-2 py-4 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading…</div>
             ) : items.length === 0 ? (
               <p className="px-2 py-8 text-center text-sm text-muted-foreground">
-                {showArchived ? "No archived research." : "No research yet. Run a deep-research query from chat to get started."}
+                {showArchived ? "No archived research." : "No research yet. Start one on the right."}
               </p>
             ) : (
               items.map((it) => (
@@ -220,13 +334,8 @@ export function ResearchRoute() {
           spinningOff={spinoff.isPending}
         />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <header className="flex h-13 shrink-0 items-center gap-2 border-b px-4 text-sm font-semibold">
-            <Telescope className="size-4" />Research
-          </header>
-          <div className="flex flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
-            Select a research report to view it.
-          </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <StartForm onStarted={() => { /* job appears in Active (polled) */ }} />
         </div>
       )}
     </div>

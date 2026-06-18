@@ -2,7 +2,8 @@ import { useRef, useState } from "react"
 import { X, ExternalLink, Copy, Check, FileText, Eye, Code2 } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 import { usePanel } from "@/stores/panel"
-import { isRenderable } from "@/lib/artifact"
+import { HtmlPreview } from "@/components/ui/HtmlPreview"
+import { detectRenderLang } from "@/lib/artifact"
 import { Markdown } from "./Markdown"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -16,14 +17,7 @@ export function ContextPanel() {
   const navigate = useNavigate()
   const [copied, setCopied] = useState(false)
   const lang = doc?.language?.toLowerCase()
-  // Renderability isn't always carried in `language` (a doc titled "page.html"
-  // may have an empty language), so also infer from the title extension and a
-  // content sniff — otherwise the HTML/SVG preview never shows.
-  const docTitle = doc?.title || ""
-  const sniff = (doc?.content || "").trimStart().slice(0, 300).toLowerCase()
-  const looksMarkup = /^(<!doctype html|<html[\s>]|<svg[\s>]|<\?xml)/.test(sniff)
-  const titleExt = /\.svg$/i.test(docTitle) ? "svg" : /\.(html?|xml)$/i.test(docTitle) ? "html" : ""
-  const renderLang = isRenderable(lang) ? (lang as string) : (titleExt || (looksMarkup ? (sniff.startsWith("<svg") ? "svg" : "html") : ""))
+  const renderLang = detectRenderLang(doc?.content, doc?.language, doc?.title)
   const renderable = !!renderLang
   const isProse = !renderable && (!lang || ["markdown", "md", "text", "plain", "email"].includes(lang))
   const [view, setView] = useState<"preview" | "code">("preview")
@@ -58,12 +52,7 @@ export function ContextPanel() {
       </header>
 
       {showPreview ? (
-        <iframe
-          title={doc?.title || "Preview"}
-          sandbox="allow-scripts allow-modals allow-forms allow-popups"
-          srcDoc={renderLang === "svg" ? `<!doctype html><html><body style="margin:0;display:grid;place-items:center;min-height:100vh;background:#fff">${doc?.content || ""}</body></html>` : (doc?.content || "")}
-          className="min-h-0 w-full flex-1 border-0 bg-white"
-        />
+        <HtmlPreview title={doc?.title} content={doc?.content} renderLang={renderLang} />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {kind === "sources" && (

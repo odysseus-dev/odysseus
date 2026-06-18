@@ -1,15 +1,26 @@
 import { useEffect, useState } from "react"
-import { FileText, ArrowLeft, Save, Trash2, Plus } from "lucide-react"
+import { FileText, ArrowLeft, Save, Trash2, Plus, Eye, Code2 } from "lucide-react"
 import { useDocuments, useDocument, useDocMutations } from "@/api/documents"
+import { HtmlPreview } from "@/components/ui/HtmlPreview"
+import { detectRenderLang } from "@/lib/artifact"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
+
+const segBtn = (active: boolean) =>
+  cn("flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+    active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")
 
 function Editor({ id, onBack }: { id: string; onBack: () => void }) {
   const { data, isLoading } = useDocument(id)
   const { update, remove } = useDocMutations()
   const [content, setContent] = useState("")
   const [dirty, setDirty] = useState(false)
+  const [view, setView] = useState<"preview" | "code">("preview")
   // eslint-disable-next-line react-hooks/set-state-in-effect -- seed editable copy from async-loaded document
   useEffect(() => { if (data?.current_content != null) { setContent(data.current_content); setDirty(false) } }, [data])
+  const renderLang = detectRenderLang(content, data?.language, data?.title)
+  const renderable = !!renderLang
+  const showPreview = renderable && view === "preview"
   const save = () => update.mutate({ id, content }, { onSuccess: () => setDirty(false) })
   const del = () => { if (confirm("Delete this document?")) remove.mutate(id, { onSuccess: onBack }) }
   return (
@@ -17,10 +28,18 @@ function Editor({ id, onBack }: { id: string; onBack: () => void }) {
       <header className="flex h-13 shrink-0 items-center gap-2 border-b px-3">
         <Button variant="ghost" size="icon" onClick={onBack} title="Back"><ArrowLeft className="size-4" /></Button>
         <div className="min-w-0 flex-1 truncate text-sm font-semibold">{data?.title || "Untitled"}</div>
+        {renderable && (
+          <div className="mr-1 flex rounded-lg bg-muted p-0.5">
+            <button onClick={() => setView("preview")} className={segBtn(view === "preview")}><Eye className="size-3.5" />Preview</button>
+            <button onClick={() => setView("code")} className={segBtn(view === "code")}><Code2 className="size-3.5" />Code</button>
+          </div>
+        )}
         <button onClick={del} title="Delete" className="rounded-md p-1.5 text-muted-foreground hover:text-destructive"><Trash2 className="size-4" /></button>
         <Button size="sm" onClick={save} disabled={!dirty || update.isPending}><Save className="size-4" />{update.isPending ? "Saving…" : dirty ? "Save" : "Saved"}</Button>
       </header>
-      {isLoading ? <div className="p-6 text-sm text-muted-foreground">Loading…</div> : (
+      {isLoading ? <div className="p-6 text-sm text-muted-foreground">Loading…</div> : showPreview ? (
+        <HtmlPreview content={content} renderLang={renderLang} title={data?.title} />
+      ) : (
         <textarea
           value={content}
           onChange={(e) => { setContent(e.target.value); setDirty(true) }}

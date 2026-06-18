@@ -39,6 +39,27 @@ export interface ResearchSpinoff {
   source_count: number
 }
 
+export interface ResearchStartBody {
+  query: string
+  category?: string
+  max_rounds?: number
+  search_provider?: string
+  endpoint_id?: string
+  model?: string
+}
+export function useResearchStart() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: ResearchStartBody) =>
+      apiJson<{ session_id: string; status: string; query: string }>("/api/research/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["research"] }),
+  })
+}
+
 export function useResearchActive() {
   return useQuery({
     queryKey: ["research", "active"],
@@ -62,6 +83,22 @@ export function useResearchDetail(id?: string) {
     queryKey: ["research", "detail", id],
     enabled: !!id,
     queryFn: () => apiJson<ResearchDetail>(`/api/research/detail/${id}`),
+  })
+}
+
+// The backend-rendered HTML "Visual Report". Fetched as text and rendered via a
+// srcDoc iframe — the response sets `frame-ancestors 'none'`, so it can't be
+// embedded by URL.
+export function useResearchReport(id?: string) {
+  return useQuery({
+    queryKey: ["research", "report", id],
+    enabled: !!id,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const r = await apiFetch(`/api/research/report/${id}`)
+      if (!r.ok) throw new Error(`report ${r.status}`)
+      return r.text()
+    },
   })
 }
 

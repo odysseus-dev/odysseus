@@ -27,6 +27,22 @@ export function isRenderable(language?: string): boolean {
   return !!language && RENDERABLE.has(language.toLowerCase())
 }
 
+export type RenderLang = "html" | "svg" | ""
+// Decide whether a document should render as a live HTML/SVG preview. `language`
+// is often empty (a doc titled "page.html" may carry no language), so also infer
+// from the title extension and a content sniff.
+export function detectRenderLang(content?: string, language?: string, title?: string): RenderLang {
+  const lang = language?.toLowerCase()
+  if (isRenderable(lang)) return lang === "svg" ? "svg" : "html"
+  const t = title || ""
+  if (/\.svg$/i.test(t)) return "svg"
+  if (/\.(html?|xml)$/i.test(t)) return "html"
+  const sniff = (content || "").trimStart().slice(0, 300).toLowerCase()
+  if (/^(<!doctype html|<html[\s>]|<\?xml)/.test(sniff)) return "html"
+  if (sniff.startsWith("<svg")) return "svg"
+  return ""
+}
+
 export interface Artifact {
   title: string
   language?: string
