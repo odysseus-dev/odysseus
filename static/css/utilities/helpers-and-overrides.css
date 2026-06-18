@@ -3,794 +3,9 @@
 
 /* ---------- Color palette (dark / light) ---------- */
 
-    /* Drag and drop styling */
-    .section[dnd-active="true"] {
-      background: color-mix(in srgb, var(--red) 10%, transparent) !important;
-      border-color: var(--red) !important;
-    }
-    
-    .section[dnd-over="true"] {
-      background: color-mix(in srgb, var(--red) 20%, transparent) !important;
-      border-color: var(--red) !important;
-      transform: scale(1.02);
-    }
-    
-    .drag-handle {
-      cursor: grab;
-      opacity: 0.5;
-      padding: 0 6px;
-      user-select: none;
-    }
-    
-    .drag-handle:hover {
-      opacity: 0.8;
-    }
-    
-    .drag-handle:active {
-      cursor: grabbing;
-    }
-    
-/* ── UI Controls (Radio, Presets, Toolbar, Settings) ── */
+    /* Drag and drop styling moved to canonical order block in shell-and-windows.css */
 
-
-    /* Custom radio button styling */
-    .radio-option {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: color-mix(in srgb, var(--fg) 6%, transparent);
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-    
-    .radio-option:hover {
-      background: color-mix(in srgb, var(--fg) 9%, transparent);
-      border-color: var(--fg);
-    }
-    
-    .radio-option input[type="radio"] {
-      appearance: none;
-      -webkit-appearance: none;
-      width: 18px;
-      height: 18px;
-      border: 2px solid var(--border);
-      border-radius: 50%;
-      outline: none;
-      margin: 0;
-      background: var(--bg);
-      transition: all 0.2s ease;
-      position: relative;
-      flex-shrink: 0;
-    }
-    
-    .radio-option input[type="radio"]:checked {
-      border-color: var(--red);
-      background: var(--red);
-    }
-    
-    .radio-option input[type="radio"]:focus {
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
-    }
-    
-    .radio-label {
-      color: var(--fg);
-      font-size: 14px;
-      user-select: none;
-    }
-    
-    /* Preset buttons */
-    .preset-btn {
-      height: 27.2px; /* 15% smaller than 32px */
-      padding: 0 8.5px; /* 15% smaller than 10px */
-      margin-left: 4px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      background: var(--bg);
-      color: var(--fg);
-      font-family: 'Fira Code', monospace;
-      font-size: 10.2px; /* 15% smaller than 12px */
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-    
-    .preset-btn:hover {
-      background: var(--panel);
-      border-color: var(--fg);
-    }
-    
-    .preset-btn.active {
-      background: var(--panel);
-      border-color: var(--fg);
-      box-shadow: 0 0 0 1px var(--fg), 0 0 8px color-mix(in srgb, var(--fg) 16%, transparent);
-      font-weight: 600;
-    }
-    
-    /* All preset buttons use the same blue color */
-    .preset-btn {
-      border-color: var(--red); /* Blue color */
-    }
-    
-    .preset-btn.active {
-      border-color: var(--red); /* Blue color when active */
-      box-shadow: 0 0 0 1px var(--red), 0 0 8px color-mix(in srgb, var(--red) 30%, transparent);
-    }
-    
-    /* Custom preset modal: the base .preset-modal-content sets overflow:hidden
-       (for desktop rounded-corner clipping), which on the mobile sheet clipped
-       the footer (Start/Cancel) off the bottom with no way to reach it. Let the
-       whole sheet scroll — same as every other mobile modal (.modal-content is
-       overflow-y:auto on mobile) — so the footer is always reachable. No flex
-       changes, so the body can't collapse. */
-    #custom-preset-modal .preset-modal-content {
-      overflow-y: auto !important;
-    }
-    #custom-preset-modal .modal-body label {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--fg);
-      margin-top: 8px;
-      margin-bottom: 4px;
-      display: block;
-    }
-
-    #custom-preset-modal .modal-body input,
-    #custom-preset-modal .modal-body textarea {
-      width: 100%;
-      margin-bottom: 8px;
-      box-sizing: border-box;
-    }
-    #custom-preset-modal .modal-body textarea,
-    #custom-preset-modal .modal-body input[type="text"] {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--fg);
-      padding: 8px 10px;
-      font-size: 13px;
-      font-family: inherit;
-      transition: border-color 0.15s;
-    }
-    #custom-preset-modal .modal-body textarea {
-      resize: vertical;
-    }
-    #custom-preset-modal .modal-body textarea:focus,
-    #custom-preset-modal .modal-body input[type="text"]:focus {
-      outline: none;
-      border-color: var(--red);
-    }
-
-    #custom-preset-modal .modal-footer {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 12px;
-      padding-top: 10px;
-      border-top: 1px solid var(--border);
-    }
-
-    #custom-preset-modal .modal-footer button {
-      padding: 7px 14px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 500;
-      border: 1px solid var(--border);
-      background: none;
-      color: var(--fg);
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    #custom-preset-modal .modal-footer button:hover {
-      background: color-mix(in srgb, var(--fg) 8%, transparent);
-    }
-
-    #custom-preset-modal .modal-footer button#save-custom-preset {
-      /* The theme's accent is stored in --red (theme.js sets --red = accentHex)
-         and --accent is undefined, so the canonical accent expression is
-         var(--accent, var(--red)). The old bare var(--accent) resolved to nothing
-         which, with color:var(--bg), made the button invisible. */
-      background: var(--accent, var(--red));
-      color: var(--bg);
-      border-color: var(--accent, var(--red));
-    }
-    #custom-preset-modal .modal-footer button#save-custom-preset:hover {
-      opacity: 0.85;
-    }
-    /* Toolbar visibility tab */
-    .toolbar-hint {
-      font-size: 12px;
-      color: color-mix(in srgb, var(--fg) 55%, transparent);
-      margin-bottom: 12px;
-    }
-    /* ── Appearance visibility toggles ── */
-    .vis-toggles {
-      display: flex;
-      flex-direction: column;
-    }
-    .vis-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      padding: 5px 6px;
-      border-radius: 4px;
-      transition: background 0.12s;
-    }
-    .vis-row:hover {
-      background: color-mix(in srgb, var(--fg) 5%, transparent);
-    }
-    .vis-row input[type="checkbox"] {
-      display: none;
-    }
-    .vis-icon {
-      width: 20px;
-      height: 20px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      color: color-mix(in srgb, var(--fg) 40%, transparent);
-    }
-    .vis-icon-text {
-      font-size: 10px;
-      font-weight: 700;
-      font-family: inherit;
-      letter-spacing: -0.5px;
-    }
-    .vis-label {
-      flex: 1;
-      font-size: 12px;
-      color: var(--fg);
-      user-select: none;
-    }
-    .vis-switch {
-      position: relative;
-      width: 30px;
-      height: 16px;
-      background: color-mix(in srgb, var(--fg) 15%, transparent);
-      border-radius: 8px;
-      transition: background 0.2s;
-      flex-shrink: 0;
-    }
-    .vis-switch::after {
-      content: '';
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 12px;
-      height: 12px;
-      background: var(--panel);
-      border-radius: 50%;
-      transition: transform 0.2s;
-      box-shadow: 0 1px 2px rgba(0,0,0,0.25);
-    }
-    .vis-row input:checked + .vis-switch {
-      background: var(--red);
-    }
-    .vis-row input:checked + .vis-switch::after {
-      transform: translateX(14px);
-    }
-    .vis-row input:checked ~ .vis-icon,
-    .vis-row:has(input:checked) .vis-icon {
-      color: var(--fg);
-    }
-    /* Compare model selector — match the calendar modal's clean header
-       (no border underline). */
-    #compare-model-overlay .modal-header h4 {
-      pointer-events: none;
-    }
-    /* Compare model selector: keep manually-resized/tiny windows contained.
-       Picker dropdowns are appended to document.body, so the card itself can
-       clip and scroll without cropping the dropdown list. */
-    #compare-model-overlay .modal-content {
-      display: flex;
-      flex-direction: column;
-      max-height: min(720px, calc(100dvh - 48px));
-      overflow: hidden;
-      min-height: 180px;
-    }
-    #compare-model-overlay .modal-body {
-      overflow: auto;
-      flex: 1 1 auto;
-      min-height: 0;
-    }
-    .vis-hint {
-      font-size: 10px;
-      color: color-mix(in srgb, var(--fg) 30%, transparent);
-      font-weight: 400;
-      margin-left: 2px;
-    }
-    /* Settings toggle — admin-only lock indicator */
-    .ui-vis-lock {
-      display: none;
-    }
-    /* (legacy toolbar-toggle styles removed — now using .vis-* classes) */
-
-    /* Demo highlight pulse */
-    .odysseus-highlight {
-      outline: 2px solid var(--accent, var(--red)) !important;
-      outline-offset: 1px;
-      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
-      animation: ody-pulse 1.5s ease-in-out infinite;
-      z-index: 100;
-      position: relative;
-    }
-    @keyframes ody-pulse {
-      0%, 100% { outline-color: var(--accent, var(--red)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
-      50%       { outline-color: color-mix(in srgb, var(--accent, var(--red)) 40%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 8%, transparent); }
-    }
-    /* Floating breathing halo. Rendered as a body-level div positioned over
-       the target, so we don't fight the target's own outline / box-shadow /
-       overflow chain. JS keeps it in sync with the target's bounding rect. */
-    .tour-halo {
-      position: fixed;
-      pointer-events: none;
-      border: 3px solid var(--accent, var(--red));
-      border-radius: 10px;
-      z-index: 10000;
-      animation: ody-breathe 1.4s ease-in-out infinite;
-      opacity: 0;
-      transform: scale(0.94);
-      transition: opacity 0.35s ease-out, transform 0.35s ease-out;
-    }
-    .tour-halo.tour-fade-in {
-      opacity: 1;
-      transform: scale(1);
-    }
-    @keyframes ody-breathe {
-      0%, 100% {
-        box-shadow: 0 0 0 3px  color-mix(in srgb, var(--accent, var(--red)) 55%, transparent),
-                    0 0 22px 4px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
-        border-color: var(--accent, var(--red));
-      }
-      50% {
-        box-shadow: 0 0 0 6px  color-mix(in srgb, var(--accent, var(--red)) 30%, transparent),
-                    0 0 40px 14px color-mix(in srgb, var(--accent, var(--red)) 70%, transparent);
-        border-color: color-mix(in srgb, var(--accent, var(--red)) 80%, transparent);
-      }
-    }
-    /* While the tour is active, lift overflow:hidden on common clipping
-       ancestors so the halo around a highlighted child isn't cropped. */
-    body.tour-active .sidebar,
-    body.tour-active .sidebar-inner,
-    body.tour-active .chat-input-bar,
-    body.tour-active .chat-input-top,
-    body.tour-active .chat-input-wrap,
-    body.tour-active .chat-input-right,
-    body.tour-active .mode-toggle,
-    body.tour-active .model-picker-wrap {
-      overflow: visible !important;
-    }
-
-    /* ── Secret tour hint (drag-to-snap on first modal open) ── */
-    .tour-hint {
-      position: fixed;
-      z-index: 10002;
-      background: var(--bg);
-      color: var(--fg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 14px 10px;
-      width: 240px;
-      font-size: 0.78rem;
-      line-height: 1.5;
-      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32);
-      opacity: 0;
-      transform: translateY(-4px);
-      transition: opacity 0.28s ease-out, transform 0.28s ease-out;
-      pointer-events: auto;
-    }
-    .tour-hint.tour-hint-in  { opacity: 1; transform: translateY(0); }
-    .tour-hint.tour-hint-out { opacity: 0; transform: translateY(-4px); }
-    .tour-hint-visual {
-      display: flex;
-      justify-content: center;
-      margin-bottom: 8px;
-      color: var(--accent, var(--red));
-    }
-    .tour-hint-visual svg { display: block; }
-    .tour-hint-text { margin-bottom: 10px; opacity: 0.92; }
-    .tour-hint-text b { color: var(--accent, var(--red)); font-weight: 600; }
-    .tour-hint-dismiss {
-      display: block;
-      margin: 0 0 0 auto;
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--fg);
-      border-radius: 6px;
-      padding: 3px 12px;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 0.72rem;
-      opacity: 0.85;
-      transition: opacity 0.15s, background 0.15s;
-    }
-    .tour-hint-dismiss:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 8%, transparent); }
-
-    /* SVG dance: cursor approaches title bar, drags right, modal snaps to a
-       right-half zone, holds, returns. 3.2s loop. */
-    .th-cursor { animation: th-cursor 3.2s ease-in-out infinite; transform-origin: 0 0; }
-    .th-modal-group { animation: th-modal-slide 3.2s ease-in-out infinite; transform-origin: 39px 31px; }
-    .th-zone { animation: th-zone-flash 3.2s ease-in-out infinite; }
-    @keyframes th-cursor {
-      0%, 5%    { transform: translate(35px, 32px); }
-      18%       { transform: translate(35px, 22px); }
-      48%       { transform: translate(80px, 22px); }
-      72%       { transform: translate(80px, 22px); }
-      90%, 100% { transform: translate(35px, 32px); }
-    }
-    @keyframes th-modal-slide {
-      0%, 18%   { transform: translate(0, 0) scale(1, 1); }
-      48%       { transform: translate(45px, 0) scale(1, 1); }
-      58%       { transform: translate(30px, -19px) scale(1.4, 2.4); }
-      72%       { transform: translate(30px, -19px) scale(1.4, 2.4); }
-      90%, 100% { transform: translate(0, 0) scale(1, 1); }
-    }
-    @keyframes th-zone-flash {
-      0%, 38%   { opacity: 0; }
-      48%       { opacity: 0.22; }
-      58%, 72%  { opacity: 0; }
-      100%      { opacity: 0; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .th-cursor, .th-modal-group, .th-zone { animation: none !important; }
-    }
-    .odysseus-hl-label {
-      position: absolute;
-      top: -22px;
-      left: 8px;
-      background: var(--red);
-      color: var(--bg);
-      font-size: 0.7rem;
-      padding: 2px 8px;
-      border-radius: 4px;
-      white-space: nowrap;
-      z-index: 101;
-      pointer-events: none;
-    }
-
-    /* Generated images inside chat bubbles */
-    .msg.generated-image-wrap .body { text-align: center; }
-    .generated-image {
-      max-width: 100%;
-      max-height: 512px;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: transform 0.2s;
-      display: inline-block;
-      margin: 0 auto;
-    }
-    .generated-image:hover { transform: scale(1.02); }
-    .generated-image-caption {
-      font-size: 0.8rem;
-      opacity: 0.5;
-      margin-top: 6px;
-      font-style: italic;
-      text-align: center;
-    }
-
-    /* Setup wizard */
-    .setup-wizard { padding: 16px; max-width: 500px; }
-    .setup-wizard .setup-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; color: var(--fg); }
-    .setup-wizard .setup-label { font-size: 0.85rem; color: var(--fg); opacity: 0.7; margin-bottom: 8px; }
-    .setup-wizard .setup-presets { display: flex; flex-wrap: wrap; gap: 8px; }
-    .setup-wizard .setup-preset-btn {
-      padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
-      background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
-    }
-    .setup-wizard .setup-preset-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
-    .setup-wizard .setup-input {
-      display: block; width: 100%; padding: 8px 12px; margin-bottom: 8px;
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: 6px; color: var(--fg); font-size: 0.85rem; box-sizing: border-box;
-    }
-    .setup-wizard .setup-input:focus { border-color: var(--red); outline: none; }
-    .setup-wizard .setup-connect-btn {
-      padding: 8px 20px; background: var(--red); color: var(--bg);
-      border: none; border-radius: 6px; cursor: pointer; font-weight: 600; margin-top: 4px;
-    }
-    .setup-wizard .setup-connect-btn:hover { opacity: 0.9; }
-    .setup-wizard .setup-status { font-size: 0.8rem; margin-top: 8px; color: var(--fg); opacity: 0.7; }
-    .setup-wizard .setup-model-list { display: flex; flex-wrap: wrap; gap: 8px; }
-    .setup-wizard .setup-model-btn {
-      padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px;
-      background: var(--panel); color: var(--fg); cursor: pointer;
-      font-size: 0.85rem; transition: all 0.2s;
-    }
-    .setup-wizard .setup-model-btn:hover { border-color: var(--red); background: color-mix(in srgb, var(--red) 11%, transparent); }
-    .setup-wizard .setup-step.hidden { display: none; }
-
-    /* Dropdown menu styles */
-    .dropdown {
-      position: absolute;
-      top: calc(100% + 6px);
-      right: 0;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px color-mix(in srgb, var(--fg) 5%, transparent);
-      z-index: 1000;
-      display: none;
-      min-width: 220px;
-      padding: 6px;
-      backdrop-filter: blur(12px);
-    }
-
-    .dropdown.show {
-      display: block;
-      animation: dropdown-in 0.15s ease-out;
-    }
-    @keyframes dropdown-in {
-      from { opacity:0; transform:translateY(-6px) scale(0.97); }
-      to { opacity:1; transform:translateY(0) scale(1); }
-    }
-
-    .dropdown-item {
-      padding: 8px 10px;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background 0.12s ease;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
-    }
-
-    .dropdown-item:last-child {
-      border-bottom: none;
-    }
-
-    .dropdown-item .menu-icon {
-      width: 28px;
-      height: 28px;
-      border-radius: 6px;
-      background: color-mix(in srgb, var(--fg) 5%, transparent);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      flex-shrink: 0;
-    }
-
-    .dropdown-item .menu-text h4 {
-      margin: 0;
-      font-size: 12.5px;
-      font-weight: 500;
-      color: var(--fg);
-      line-height: 1.3;
-    }
-
-    .dropdown-item .menu-text p {
-      margin: 0;
-      font-size: 10.5px;
-      color: var(--color-subheader);
-      line-height: 1.3;
-    }
-
-    .dropdown-item:hover {
-      background: color-mix(in srgb, var(--red) 10%, transparent);
-    }
-    .dropdown-item:hover .menu-icon {
-      background: color-mix(in srgb, var(--red) 15%, transparent);
-    }
-
-    /* Compact dropdown items (session/model context menus) */
-    .dropdown-item-compact {
-      cursor: pointer;
-      padding: 6px 8px;
-      font-size: 11px;
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      color: var(--fg);
-      transition: background 0.1s;
-    }
-    .dropdown-item-compact:hover {
-      background: color-mix(in srgb, var(--accent) 10%, transparent);
-    }
-    .dropdown-item-compact .dropdown-icon {
-      width: 14px;
-      height: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      opacity: 0.5;
-    }
-    .dropdown-item-compact .dropdown-icon svg {
-      width: 14px;
-      height: 14px;
-    }
-    .dropdown-item-compact .dropdown-shortcut {
-      margin-left: auto;
-      font-size: 9.5px;
-      opacity: 0.35;
-      font-weight: 400;
-    }
-    /* Keyboard shortcut hints (⌘+Alt+D etc.) are meaningless on touch —
-       hide them in the per-chat actions menu on mobile. */
-    @media (max-width: 768px) {
-      .session-dropdown .dropdown-shortcut { display: none; }
-    }
-    .dropdown-item-danger {
-      color: var(--red) !important;
-    }
-    .dropdown-item-danger .dropdown-icon {
-      opacity: 0.7;
-    }
-
-    /* Inline rename input for sessions */
-    .session-rename-input {
-      width: 100%;
-      background: var(--bg);
-      color: var(--fg);
-      border: 1px solid var(--accent, var(--accent-primary));
-      border-radius: 4px;
-      padding: 2px 6px;
-      font-family: inherit;
-      font-size: 12px;
-      line-height: 1.3;
-      outline: none;
-    }
-
-    /* Session dropdown container */
-    .session-dropdown-menu {
-      position: fixed;
-      z-index: 1000;
-      display: none;
-      min-width: auto;
-      width: max-content;
-      padding: 4px;
-      animation: dropdown-in 0.15s ease-out;
-    }
-
-    /* Folder move submenu */
-    .session-folder-submenu {
-      position: fixed;
-      z-index: 1001;
-      display: none;
-      min-width: auto;
-      width: max-content;
-      padding: 4px;
-    }
-
-    .dropdown-divider {
-      height: 1px;
-      background: var(--border);
-      margin: 4px 8px;
-    }
-    
-    /* Search toggle styles */
-    .search-toggle {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 6px 0;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 8px;
-    }
-    
-    .search-provider-label {
-      font-size: 14px;
-      color: var(--fg);
-    }
-
-/* ── Voice, Search, Themes, Comparison, Censor, Print ── */
-
-    /* Voice recording styles */
-    #mic-btn {
-      color: var(--fg);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      transition: all 0.2s ease;
-    }
-    
-    #mic-btn:hover {
-      background: color-mix(in srgb, var(--fg) 6%, transparent);
-      border-color: var(--fg);
-    }
-    
-    #mic-btn.recording {
-      background: var(--color-recording);
-      border-color: var(--color-recording);
-      animation: pulse 1.5s infinite;
-    }
-    
-    @keyframes pulse {
-      0% { opacity: 1; }
-      50% { opacity: 0.7; }
-      100% { opacity: 1; }
-    }
-    
-    #recording-indicator {
-      position: fixed;
-      top: 10px;
-      left: 0;
-      right: 0;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(10px);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      margin: 10px;
-      z-index: 1000;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    }
-    
-    #recording-indicator.hidden {
-      display: none !important;
-    }
-    
-    .recording-content {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      color: white;
-    }
-    
-    .recording-icon {
-      color: var(--color-recording);
-      font-size: 20px;
-      animation: pulse 1.5s infinite;
-    }
-    
-    .recording-text {
-      font-size: 16px;
-      font-weight: 500;
-    }
-    
-    #stop-recording {
-      background: var(--color-recording);
-      color: white;
-      border: none;
-      border-radius: 6px;
-      padding: 6px 12px;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: background 0.2s ease;
-    }
-    
-    #stop-recording:hover {
-      background: var(--color-recording-hover);
-    }
-    
-    /* Error state for recording */
-    #recording-indicator.error {
-      background: rgba(173, 26, 26, 0.9);
-    }
-    
-    .recording-error {
-      color: var(--color-recording);
-      font-size: 14px;
-      margin-top: 4px;
-    }
-    
-    @media (max-width: 768px) {
-      #recording-indicator {
-        margin: 8px;
-        padding: 10px;
-      }
-      
-      .recording-text {
-        font-size: 14px;
-      }
-      
-      #stop-recording {
-        padding: 6px 10px;
-        font-size: 12px;
-      }
-    }
-/* SYNTAX HIGHLIGHTING — uses theme vars from style.css, no hardcoded overrides */
-.hljs { color: var(--hl-fg, #9cdef2); background: none !important; }
-pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
+    /* Session/dropdown utility block moved near dropdown definitions to preserve canonical order */
 
     /* ---------- Search overlay (Ctrl+K command palette) ---------- */
     .search-overlay {
@@ -883,15 +98,12 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       white-space: nowrap;
     }
     mark.search-highlight {
-      /* Was orange-on-orange (0.35 alpha bg + orange text) — too low-contrast
-         to read. Solid accent fill with bg-colored text reads clearly. */
       background: var(--accent, #e8a830);
       color: var(--bg, #1a1a1a);
       border-radius: 2px;
       padding: 0 2px;
       font-weight: 600;
     }
-    /* Document library search-term highlight — clear, high-contrast. */
     mark.doclib-search-hl {
       background: var(--accent, #e8a830);
       color: var(--bg, #1a1a1a);
@@ -909,10 +121,6 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     /* ---------- Theme popup (uses .modal > .modal-content frame) ---------- */
     #theme-modal { z-index: 260; }
     #theme-popup .theme-popup-sub { color: color-mix(in srgb, var(--fg) 50%, transparent); font-size: 11px; margin-bottom: 10px; }
-    /* `max-height` instead of a fixed height so the popup shrinks to fit its
-       content (avoids the leftover whitespace after the time-based switching
-       card was removed). The inner .theme-tab-panel keeps overflow:auto, so
-       any taller content still scrolls inside. */
     #theme-popup { overflow-y: hidden; max-height: min(85vh, 600px); }
     #theme-popup .modal-header { flex-shrink: 0; }
     #theme-popup .admin-tabs { margin: 0 -10px 8px; padding: 0 10px; flex-shrink: 0; }
@@ -929,6 +137,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .theme-swatch:hover { transform: scale(1.06); }
     .theme-swatch.active { border-color: var(--red); box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 33%, transparent); }
+
     .theme-swatch-colors {
       display: flex; justify-content: center; margin-bottom: 3px;
     }
@@ -2258,7 +1467,6 @@ a.chat-link:hover {
   .list-item .hamburger:active { opacity: 1; }
 }
 
-/* Hamburger menu button styling (overrides default button appearance) */
 button.hamburger {
   background: none;
   border: none;
@@ -2395,7 +1603,13 @@ button.hamburger {
   border-collapse: collapse;
   margin: 0.5em 0;
   font-size: 0.9em;
-  width: auto;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  table-layout: auto;
 }
 .msg th {
   background: color-mix(in srgb, var(--fg) 7%, transparent);
@@ -2404,13 +1618,18 @@ button.hamburger {
   padding: 6px 12px;
   border: 1px solid var(--border);
   text-align: left;
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .msg td {
   padding: 5px 12px;
   border: 1px solid var(--border);
+  min-width: 9ch;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
-/* Agent UI Styling */
 .agent-controls {
   background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
   border: 1px solid #dee2e6;
@@ -2482,12 +1701,10 @@ button.hamburger {
   text-align: center;
 }
 
-/* Scrollbar uses --red from :root (set at top of file) */
-
-/* Loading spinner */
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
 .spinner {
   width: 24px;
   height: 24px;
@@ -2498,7 +1715,6 @@ button.hamburger {
   animation: spin 0.9s linear infinite;
 }
 
-/* Inline spinner for buttons */
 .btn-spinner {
   display: inline-block;
   width: 12px;
@@ -2510,17 +1726,18 @@ button.hamburger {
   margin-right: 6px;
 }
 
-/* Loading indicator for messages */
 .loading-indicator {
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 10px;
 }
+
 .loading-dots {
   display: flex;
   gap: 4px;
 }
+
 .loading-dot {
   width: 6px;
   height: 6px;
@@ -2528,17 +1745,21 @@ button.hamburger {
   border-radius: 50%;
   opacity: 0.6;
 }
+
 .loading-dot:nth-child(1) {
   animation: loading-bounce 1.4s infinite ease-in-out both;
 }
+
 .loading-dot:nth-child(2) {
   animation: loading-bounce 1.4s infinite ease-in-out both;
   animation-delay: -0.32s;
 }
+
 .loading-dot:nth-child(3) {
   animation: loading-bounce 1.4s infinite ease-in-out both;
   animation-delay: -0.64s;
 }
+
 @keyframes loading-bounce {
   0%, 80%, 100% {
     transform: scale(0);
@@ -2548,7 +1769,6 @@ button.hamburger {
   }
 }
 
-/* Hamburger menu button */
 .hamburger {
   display: inline-flex;
   flex-direction: column;
@@ -2560,6 +1780,7 @@ button.hamburger {
   padding: 0;
   cursor: pointer;
 }
+
 .hamburger span {
   display: block;
   width: 100%;
@@ -2568,7 +1789,6 @@ button.hamburger {
   border-radius: 2px;
 }
 
-/* Agent indicator */
 #agent-indicator {
   position: fixed;
   top: 20px;
@@ -2584,17 +1804,18 @@ button.hamburger {
   cursor: pointer;
   transition: all 0.2s ease;
 }
+
 #agent-indicator.active {
   display: block;
   border-color: var(--color-agent-active);
   box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
 }
+
 #agent-indicator:hover {
   border-color: var(--color-agent-active);
   background: var(--panel);
 }
 
-/* Preset buttons */
 .preset-btn {
   height: 27.2px;
   padding: 0 8.5px;
@@ -2621,9 +1842,6 @@ button.hamburger {
   font-weight: 600;
 }
 
-/* Custom preset modal — inherits from .modal base class */
-
-/* Unified chat input area */
 .chat-input-area {
   display: flex;
   flex-direction: column;
@@ -2783,9 +2001,6 @@ button.hamburger {
   border-radius: 2px;
 }
 
-/* Attachment strip — centered + max-width to match the chat-input-bar below,
-   otherwise the chip floats flush-left while the input is centered (visible on
-   desktop where the chat area is wider than 800px). */
 .attach-strip {
   display: flex;
   gap: 6px;
@@ -2797,18 +2012,23 @@ button.hamburger {
   margin-right: auto;
   box-sizing: border-box;
 }
-.attach-strip:empty { display: none; }
 
-/* Upload-in-progress feedback: the message bubble shows immediately, so while
-   the files are still uploading we put a whirlpool ON each attachment chip and
-   dim the chip's content — making it obvious that file is being sent, not stuck. */
+.attach-strip:empty {
+  display: none;
+}
+
 .attach-strip.attach-uploading .thumb {
   position: relative;
   pointer-events: none;
 }
+
 .attach-strip.attach-uploading .thumb > :not(.thumb-upload-spinner) {
   opacity: 0.4;
 }
+
+/* Attachment strip — centered + max-width to match the chat-input-bar below,
+   otherwise the chip floats flush-left while the input is centered (visible on
+   desktop where the chat area is wider than 800px). */
 .thumb-upload-spinner {
   position: absolute;
   inset: 0;
@@ -2837,27 +2057,28 @@ button.hamburger {
   border-radius: 3px;
   object-fit: cover;
 }
+
 .attach-image-preview {
   margin: 4px 0;
 }
+
 .attach-image-preview img {
   box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-  /* Same border as the chat bubbles. */
   border: 1px solid var(--bubble-border, var(--border));
 }
-/* Image chips: image fills the chip, X overlays as a corner accent badge.
-   Same on desktop and mobile — doc/text chips keep the beside-X layout. */
+
 .thumb.thumb-image {
   position: relative;
   padding: 0;
 }
+
 .thumb.thumb-image .thumb-img {
   max-height: 56px;
   display: block;
 }
+
 .thumb.thumb-image button {
   position: absolute;
-  /* Sit on the top-right corner edge as an accent badge. */
   top: -7px;
   right: -7px;
   width: 24px;
@@ -2876,16 +2097,18 @@ button.hamburger {
   z-index: 3;
   transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
 }
+
 .thumb.thumb-image button:hover {
   transform: scale(1.12);
   filter: brightness(1.12);
   box-shadow: 0 2px 8px rgba(0,0,0,0.25);
 }
+
 .thumb.thumb-image button:active {
   transform: scale(0.96);
 }
+
 @media (max-width: 768px) {
-  /* Collapsed "N files" badge: use the same corner-X accent badge as image thumbs. */
   .thumb-collapsed { position: relative; }
   .thumb-collapsed .thumb-collapsed-x {
     position: absolute;
@@ -2907,13 +2130,13 @@ button.hamburger {
     z-index: 3;
     opacity: 1;
   }
-  /* Bigger remove-X tap target for non-image (doc/text) chips on mobile too. */
   .thumb button {
     height: 28px;
     min-width: 28px;
     font-size: 15px;
   }
 }
+
 .thumb span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3015,6 +2238,8 @@ button.hamburger {
   background: rgba(173, 26, 26, 0.9);
 }
 
+
+
 .recording-error {
   color: var(--color-recording);
   font-size: 14px;
@@ -3044,6 +2269,7 @@ body.hide-thinking .thinking-section { display: none !important; }
 .msg .body .stream-content {
   width: 100%;
 }
+
 .thinking-section {
   margin: 12px 0;
   width: 100%;
@@ -3069,6 +2295,14 @@ body.hide-thinking .thinking-section { display: none !important; }
   transition: background 0.2s ease;
 }
 
+.thinking-header > .token-new {
+  display: none;
+}
+
+.thinking-header > div:last-child {
+  flex-shrink: 0;
+}
+
 .thinking-header:hover {
   background: color-mix(in srgb, var(--red) 12%, transparent);
 }
@@ -3084,6 +2318,7 @@ body.hide-thinking .thinking-section { display: none !important; }
   min-width: 0;
 }
 .thinking-header-left span {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3126,6 +2361,7 @@ body.hide-thinking .thinking-section { display: none !important; }
   opacity: 0.9;
   line-height: 1.5;
 }
+
 .live-reply-content {
   animation: fadeSlideIn 0.3s ease-out;
 }
@@ -3317,6 +2553,146 @@ body.hide-thinking .thinking-section { display: none !important; }
 @keyframes stream-complete-pulse {
   0%, 100% { box-shadow: none; }
   50% { box-shadow: inset 0 0 0 1.5px var(--accent); }
+}
+
+/* ===== SLASH COMMAND RESPONSES ===== */
+.msg.msg-system {
+  padding: 6px 12px;
+  margin: 4px auto 4px 8px;
+  max-width: 85%;
+  background: none;
+  border-left: 2px solid var(--border);
+}
+.msg.msg-system .body { padding: 0; }
+.msg.msg-system pre { margin: 4px 0; white-space: pre-wrap; font-size: 0.85em; }
+.msg.stream-done-toast {
+  cursor: pointer;
+  border-left-color: var(--accent, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  transition: background 0.15s;
+}
+.msg.stream-done-toast:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.msg.stream-done-toast .body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stream-done-indicator {
+  font-family: monospace;
+  font-size: 1.1em;
+  line-height: 1;
+  color: var(--accent);
+  flex-shrink: 0;
+  animation: bar-pulse 1.2s ease-in-out infinite;
+}
+@keyframes bar-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+/* ===== AGENT MULTI-BUBBLE ===== */
+.msg.msg-tool {
+  display: none; /* legacy — hidden, replaced by agent-thread */
+}
+.msg.msg-continuation {
+  margin-top: 2px;
+}
+
+/* ===== AGENT THREAD TIMELINE ===== */
+.agent-thread {
+  position: relative;
+  margin: 2px 0 2px 28px;
+  padding: 4px 0 4px 22px;
+  max-width: calc(85% - 20px);
+  box-sizing: border-box;
+}
+.agent-thread::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: color-mix(in srgb, var(--red) 18%, transparent);
+  border-radius: 1px;
+}
+/* Extend line to connect to chat bubble above/below */
+.agent-thread.has-top::before {
+  top: -6.5px;
+}
+.agent-thread.has-bottom::before {
+  bottom: -5px;
+}
+/* Terminating dot at bottom when no bubble below and last node is expanded */
+.agent-thread:not(.has-bottom) .agent-thread-node.open:last-child::after {
+  content: '';
+  position: absolute;
+  /* -17px (was -15) nudges the terminating dot 2px further left so it
+     sits flush with the thread's left rail when the search node is
+     expanded. This is the "big glow dot at the bottom" the user sees
+     after a web_search step. */
+  left: -17px;
+  bottom: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 4px 1px color-mix(in srgb, var(--red) 55%, transparent),
+              0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent);
+}
+
+/* Synapse pulse — a bright dot traveling down the line */
+.agent-thread::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 3px 1px color-mix(in srgb, var(--red) 50%, transparent);
+  pointer-events: none;
+  top: 0%;
+  opacity: 0;
+}
+.agent-thread.streaming::after {
+  animation: synapse-capped-short 0.8s ease-in-out infinite;
+}
+.agent-thread.streaming.has-top::after {
+  animation: synapse-capped 0.8s ease-in-out infinite;
+}
+.agent-thread.streaming.has-bottom::after {
+  animation: synapse-travel-short 0.8s ease-in-out infinite;
+}
+.agent-thread.streaming.has-top.has-bottom::after {
+  animation: synapse-travel 0.8s ease-in-out infinite;
+}
+@keyframes synapse-travel {
+  0% { top: 0%; opacity: 0; }
+  5% { opacity: 0.5; }
+  85% { opacity: 0.35; }
+  100% { top: 100%; opacity: 0; }
+}
+@keyframes synapse-capped {
+  0% { top: 0%; opacity: 0; }
+  5% { opacity: 0.5; }
+  70% { opacity: 0.35; top: calc(100% - 20px); }
+  100% { opacity: 0; top: calc(100% - 20px); }
+}
+@keyframes synapse-travel-short {
+  0% { top: 14px; opacity: 0; }
+  5% { opacity: 0.5; }
+  85% { opacity: 0.35; }
+  100% { top: 100%; opacity: 0; }
+}
+@keyframes synapse-capped-short {
+  0% { top: 14px; opacity: 0; }
+  5% { opacity: 0.5; }
+  70% { opacity: 0.35; top: calc(100% - 20px); }
+  100% { opacity: 0; top: calc(100% - 20px); }
 }
 
 /* #endregion Legacy Components Block */

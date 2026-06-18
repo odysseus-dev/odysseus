@@ -1,1366 +1,3 @@
-/* #region Chat Header And Meta */
-/* Top bar — session meta + incognito, single row */
-.chat-top-bar {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
-	position: relative;
-	z-index: 2;
-	padding: 5px 0 0;
-	min-height: 25px;
-	box-sizing: border-box;
-}
-.chat-top-bar::after {
-	content: none;
-}
-body.sidebar-collapsed.hamburger-left .chat-top-bar {
-	padding-left: 38px;
-}
-body.sidebar-collapsed.hamburger-right .chat-top-bar {
-	padding-right: 38px;
-}
-.incognito-indicator {
-	position: absolute;
-	left: 12px;
-	top: 50%;
-	transform: translateY(-50%);
-	background: color-mix(in srgb, var(--accent) 12%, transparent);
-	border: 1px solid var(--accent);
-	color: var(--accent);
-	cursor: pointer;
-	padding: 4px;
-	border-radius: 6px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: opacity 0.15s, background 0.15s, left 0.15s;
-	z-index: 1;
-	opacity: 0.7;
-}
-body.sidebar-collapsed.hamburger-left .incognito-indicator {
-	left: 12px;
-}
-.incognito-indicator:hover {
-	opacity: 1;
-	background: color-mix(in srgb, var(--accent) 20%, transparent);
-}
-
-.chat-new-btn {
-	position: absolute;
-	right: 7px;
-	top: 50%;
-	transform: translateY(-50%);
-	background: none;
-	border: none;
-	color: var(--fg);
-	opacity: 0.6;
-	cursor: pointer;
-	padding: 4px;
-	border-radius: 6px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: opacity 0.08s, background 0.08s, left 0.15s, right 0.15s;
-	flex-shrink: 0;
-	z-index: 1;
-}
-.chat-new-btn:hover {
-	opacity: 1;
-	color: var(--accent);
-}
-/* Flip new-chat and incognito when sidebar is on the right */
-body:has(.sidebar.right-side) .chat-new-btn {
-	right: auto;
-	left: 12px;
-}
-body:has(.sidebar.right-side) .incognito-indicator {
-	left: auto;
-	right: 12px;
-}
-body.sidebar-collapsed.hamburger-right .incognito-indicator {
-	right: 42px;
-}
-
-/* Session meta — sits at top of chat area, scrolls with content */
-.chat-meta-overlay {
-	position: absolute;
-	left: 0;
-	right: 0;
-	top: 50%;
-	transform: translateY(calc(-50% - 2px));
-	font-size: 0.75em;
-	line-height: 1;
-	/* 70% mix keeps the chat title clearly above the WCAG AA 4.5:1
-		 contrast threshold (40% only reached ~2.8:1). */
-	color: color-mix(in srgb, var(--fg) 70%, transparent);
-	white-space: nowrap;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	gap: 2px;
-	pointer-events: none;
-}
-.chat-meta-overlay > * {
-	pointer-events: auto;
-}
-.chat-meta-overlay #current-meta {
-	overflow: hidden;
-	text-overflow: ellipsis;
-	cursor: pointer;
-}
-.chat-meta-overlay:hover {
-	color: color-mix(in srgb, var(--fg) 75%, transparent);
-}
-/* Offline model rows */
-.models-row-offline {
-	opacity: 0.4;
-	pointer-events: none;
-}
-.models-row-offline .model-chat-btn {
-	pointer-events: auto;
-}
-/* Offline badge next to endpoint name */
-.endpoint-offline-badge {
-	color: var(--danger, #f44);
-	font-size: 0.8em;
-	margin-left: 4px;
-	opacity: 0.7;
-}
-.chat-meta-overlay:empty,
-.chat-meta-overlay:not(:has(#current-meta:not(:empty))) {
-	display: none;
-}
-/* #endregion Chat Header And Meta */
-
-/* #region Header Export Dropdown */
-.export-dropdown-wrap {
-	position: relative;
-	display: inline-flex;
-	flex-shrink: 0;
-	margin-left: -4px;
-	margin-right: -20px;
-}
-.export-dl-btn {
-	background: none;
-	border: none;
-	color: inherit;
-	cursor: pointer;
-	padding: 4px 5px;
-	border-radius: 4px;
-	display: flex;
-	align-items: center;
-	transition: color 0.08s, background 0.08s;
-}
-.export-dl-btn:hover {
-	color: var(--accent);
-	background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.export-dropdown-menu {
-	display: none;
-	position: fixed;
-	background: var(--panel);
-	border: 1px solid var(--border);
-	border-radius: 8px;
-	padding: 4px;
-	min-width: 120px;
-	box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-	z-index: 300;
-	color: var(--fg);
-}
-.export-dropdown-menu.open { display: block; }
-.export-dropdown-item {
-	padding: 6px 8px;
-	font-size: 11px;
-	cursor: pointer;
-	border-radius: 6px;
-	color: var(--fg);
-	white-space: nowrap;
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	transition: background 0.1s;
-}
-.export-dropdown-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.export-dropdown-item .dropdown-icon {
-	width: 14px;
-	height: 14px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	flex-shrink: 0;
-	opacity: 0.5;
-}
-/* On mobile the chat-header export dropdown was cramped — items
-	 were 11px font with 6px padding. Bump to readable touch targets:
-	 larger min-width, taller rows, bigger icons + text. */
-@media (max-width: 768px) {
-	.export-dropdown-menu {
-		min-width: 200px;
-		padding: 6px;
-		border-radius: 10px;
-	}
-	.export-dropdown-item {
-		padding: 12px 14px;
-		font-size: 14px;
-		gap: 12px;
-		min-height: 44px;
-	}
-	.export-dropdown-item .dropdown-icon {
-		width: 18px;
-		height: 18px;
-		opacity: 0.7;
-	}
-	.export-dropdown-item .dropdown-icon svg {
-		width: 18px;
-		height: 18px;
-	}
-}
-/* #endregion Header Export Dropdown */
-
-/* #region Sidebar Shell */
-.sidebar {
-	width: 240px;
-	background: var(--sidebar-bg, var(--panel));
-	border-right: 1px solid var(--border);
-	transition: width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
-	display: flex;
-	flex-direction: column;
-	flex-shrink: 0;
-	overflow: hidden;
-	min-height: 0;
-	margin: 0;
-	padding: 0;
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-	backdrop-filter: blur(10px);
-	border: 1px solid color-mix(in srgb, var(--fg) 11%, transparent);
-	position: relative;
-}
-.sidebar-resize-handle {
-	position: absolute;
-	top: 0;
-	right: -3px;
-	width: 6px;
-	height: 100%;
-	cursor: col-resize;
-	z-index: 10;
-	background: transparent;
-}
-.sidebar-resize-handle:hover,
-.sidebar-resize-handle.dragging {
-	background: var(--accent);
-	opacity: 0.6;
-}
-.sidebar.right-side .sidebar-resize-handle {
-	right: auto;
-	left: -3px;
-}
-.sidebar.resizing {
-	transition: none;
-	user-select: none;
-}
-.sidebar.right-side {
-	order: 2;
-	margin: 0;
-	border-right: none;
-	border-left: 1px solid var(--border);
-}
-.sidebar.hidden {
-	/* !important so it beats the inline width init.js restores from storage —
-		 otherwise the width never changes and only opacity animates, making the
-		 collapse look instant. With this, width animates from the inline value
-		 down to 0 via the .sidebar width transition. */
-	width: 0 !important;
-	padding: 0 !important;
-	border: none;
-	overflow: hidden;
-	opacity: 0;
-}
-/* ===== Sidebar User Bar ===== */
-.sidebar-user-bar {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 12px 12px;
-	flex-shrink: 0;
-	gap: 4px;
-	min-height: 48px;
-}
-
-.user-bar-left {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	flex: 1;
-	min-width: 0;
-	cursor: pointer;
-	padding: 6px 8px;
-	border-radius: 8px;
-	transition: background 0.15s;
-}
-
-.user-bar-left:hover {
-	background: color-mix(in srgb, var(--fg) 6%, transparent);
-}
-
-.user-bar-avatar {
-	width: 24px;
-	height: 24px;
-	border-radius: 50%;
-	background: color-mix(in srgb, var(--fg) 12%, transparent);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	font-size: 10px;
-	font-weight: 600;
-	color: var(--fg);
-	opacity: 0.7;
-	flex-shrink: 0;
-	text-transform: uppercase;
-}
-
-.user-bar-name {
-	font-size: 9.75px;
-	font-weight: 500;
-	color: var(--fg);
-	opacity: 0.8;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.user-bar-actions {
-	display: flex;
-	gap: 1px;
-	flex-shrink: 0;
-}
-
-.user-bar-btn {
-	background: none;
-	border: none;
-	color: var(--fg);
-	opacity: 0.35;
-	cursor: pointer;
-	padding: 6px;
-	border-radius: 6px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	transition: opacity 0.12s, background 0.12s;
-}
-
-.user-bar-btn:hover {
-	opacity: 1;
-	background: color-mix(in srgb, var(--fg) 8%, transparent);
-}
-/* #endregion Sidebar Shell */
-
-/* #region Sidebar Header And Icon Rail */
-.sidebar.hidden .sidebar-user-bar {
-	display: none;
-}
-
-/* Sticky sidebar header — logo, never scrolls */
-.sidebar-header {
-	display: flex;
-	align-items: center;
-	justify-content: flex-end; /* right-align when sidebar is on left */
-	gap: 8px;
-	padding: 15px 10px 0 40px; /* top padding aligns logo with fixed hamburger */
-	flex-shrink: 0;
-	min-height: 40px;
-	border: none !important;
-	box-shadow: none !important;
-	position: relative;
-	z-index: 3;
-	background: var(--sidebar-bg, var(--panel));
-}
-.sidebar-hamburger {
-	display: none !important; /* external #hamburger-btn is the only toggle */
-}
-.sidebar-inner {
-	flex: 1;
-	overflow-y: auto;
-	overflow-x: hidden;
-	overscroll-behavior-y: none;
-	scrollbar-width: none;
-	display: flex;
-	flex-direction: column;
-	gap: 0;
-	padding: 10px 8px 8px;
-	min-height: 0;
-	transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
-}
-.sidebar-brand {
-	display: flex;
-	align-items: center;
-	flex-shrink: 0;
-	min-height: 24px;
-}
-.sidebar-brand-title {
-	font-size: 1rem;
-	font-weight: 600;
-	line-height: 1.35;
-	color: var(--brand-color, var(--red));
-	white-space: nowrap;
-	user-select: none;
-	position: relative;
-	top: 0;
-	left: -10px;
-}
-.sidebar-sep {
-	display: none;
-}
-#sidebar-search-btn,
-#sidebar-new-chat-btn {
-	margin: 0;
-	padding: 8px 8px;
-}
-#sessions-section {
-	margin-top: -1px;
-}
-#tools-section {
-	margin-top: 1px;
-}
-#tools-section .list-item {
-	padding: 8px 8px;
-}
-.sidebar.right-side .sidebar-header {
-	justify-content: flex-start;
-	padding-left: 10px;
-	padding-right: 40px;
-}
-.sidebar.right-side .sidebar-inner {
-	padding: 8px;
-}
-.sidebar.right-side .sidebar-brand {
-	justify-content: flex-start;
-	padding: 2px 30px 4px 4px;
-}
-.sidebar.right-side .sidebar-brand-title {
-	margin-left: 10px;
-}
-/* Fixed hamburger — always visible, toggles sidebar */
-.hamburger-btn {
-	position: fixed;
-	top: 12px;
-	left: 9px;
-	right: auto;
-	z-index: 210;
-	width: 30px;
-	height: 30px;
-	align-items: center;
-	justify-content: center;
-	background: none;
-	border: none;
-	color: var(--hamburger-color, var(--fg));
-	cursor: pointer;
-	opacity: 0.5;
-	-webkit-tap-highlight-color: transparent;
-	outline: none;
-	transition: opacity 0.15s;
-	padding: 0;
-	display: flex;
-}
-body.hamburger-right .hamburger-btn {
-	left: auto;
-	right: 9px;
-}
-.mobile-new-chat-btn {
-	display: none;
-}
-.hamburger-btn:hover {
-	opacity: 1;
-}
-/* Icon rail — mini sidebar that replaces the wide .sidebar when it's
-	 hidden (mutually exclusive — see sidebar-layout.js:57). Fullscreen
-	 panels reserve this strip of width via `left: var(--icon-rail-w)`
-	 so the rail stays visible without needing a z-index hack (which
-	 used to cover the fixed-position hamburger button). */
-.icon-rail {
-	width: 48px;
-	flex-shrink: 0;
-	background: var(--panel);
-	border-right: 1px solid var(--border);
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	padding: 48px 4px 8px 4px;
-	gap: 4px;
-	margin: 0;
-	position: relative;
-	box-sizing: border-box;
-	/* Allow hover labels (e.g. the rail-new-chat "New" tooltip) to extend
-		 outside the 48px column. overflow:hidden was clipping them. */
-	overflow: visible;
-}
-.rail-resize-handle {
-	position: absolute;
-	top: 0;
-	right: -3px;
-	width: 6px;
-	height: 100%;
-	cursor: col-resize;
-	z-index: 10;
-	background: transparent;
-}
-.rail-resize-handle:hover,
-.rail-resize-handle.dragging {
-	background: var(--accent);
-	opacity: 0.6;
-}
-.icon-rail.right-side .rail-resize-handle {
-	right: auto;
-	left: -3px;
-}
-.icon-rail.right-side {
-	order: 2;
-	margin: 0;
-	border-right: none;
-	border-left: 1px solid var(--border);
-}
-.icon-rail-divider {
-	width: 24px;
-	height: 1px;
-	background: var(--border);
-	margin: 4px 0;
-}
-.icon-rail-btn {
-	position: relative;
-	width: 34px;
-	height: 34px;
-	border: none;
-	background: transparent;
-	color: var(--accent, var(--red));
-	font-size: 16px;
-	border-radius: 6px;
-	cursor: pointer;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	opacity: 0.5;
-	transition: opacity 0.08s, background 0.08s;
-}
-.rail-notes-badge {
-	position: absolute;
-	top: 1px;
-	right: 1px;
-	min-width: 14px;
-	height: 14px;
-	padding: 0 3px;
-	border-radius: 7px;
-	background: color-mix(in srgb, var(--accent) 85%, var(--bg));
-	color: var(--bg);
-	font-size: 9px;
-	font-weight: 700;
-	line-height: 14px;
-	text-align: center;
-	box-sizing: border-box;
-	pointer-events: none;
-	box-shadow: 0 0 0 1px var(--bg);
-}
-.rail-notes-badge.fired {
-	background: var(--red);
-	animation: rail-notes-pulse 1.6s ease-in-out infinite;
-}
-@keyframes rail-notes-pulse {
-	0%, 100% { box-shadow: 0 0 0 1px var(--bg), 0 0 0 0 color-mix(in srgb, var(--red) 50%, transparent); }
-	50% { box-shadow: 0 0 0 1px var(--bg), 0 0 0 4px color-mix(in srgb, var(--red) 15%, transparent); }
-}
-/* Main sidebar notes button — dot when a reminder has fired */
-.tool-notes-dot {
-	display: inline-block;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--red);
-	/* Match the Deep Research badge: right-aligned (auto) with the same
-		 4px left nudge, so both sidebar buttons' dots line up identically. */
-	margin-left: auto;
-	position: relative;
-	left: -4px;
-	flex-shrink: 0;
-	align-self: center;
-	animation: rail-notes-pulse 1.6s ease-in-out infinite;
-	pointer-events: none;
-}
-/* Individual card — subtle accent border tint when a reminder has fired */
-.note-card.note-card-reminder-due .note-card-reminder {
-	background: color-mix(in srgb, var(--red) 22%, transparent);
-	color: var(--red);
-	font-weight: 600;
-}
-.icon-rail-btn:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.icon-rail-btn.active-section { opacity: 1; background: color-mix(in srgb, var(--color-accent) 15%, transparent); }
-/* Unified "minimized" indicator for any rail/sidebar button whose modal is held open */
-.rail-minimized { position: relative; }
-.rail-minimized::after {
-	content: '';
-	position: absolute;
-	/* Default for inline spans like #email-section-title — sit just to the
-		 right of the element so it never overlaps the icon. */
-	top: 50%; right: -10px; transform: translateY(-50%);
-	width: 6px; height: 6px; border-radius: 50%;
-	background: var(--accent, var(--red));
-	box-shadow: 0 0 0 2px var(--bg);
-	pointer-events: none;
-	animation: rail-min-pulse 2s ease-in-out infinite;
-}
-/* Compact icon-rail buttons: top-right corner of the icon */
-.icon-rail-btn.rail-minimized::after { top: 4px; right: 4px; transform: none; }
-/* Sidebar list-items are wider — anchor right-aligned vertically centered */
-.list-item.rail-minimized::after { top: 50%; right: 8px; transform: translateY(-50%); }
-#tool-memory-btn.rail-minimized::after { right: 12px; }
-/* Per-user nudge: the listed tools' minimized dot sits 2px further
-	 in from the right edge so it doesn't look glued to the border. */
-#tool-theme-btn.rail-minimized::after,
-#tool-tasks-btn.rail-minimized::after,
-#tool-notes-btn.rail-minimized::after,
-#tool-library-btn.rail-minimized::after,
-#tool-gallery-btn.rail-minimized::after,
-#tool-compare-btn.rail-minimized::after,
-#tool-calendar-btn.rail-minimized::after { right: 12px; }
-/* Cookbook already shows its own running/served-status dot
-	 (#cookbook-notif-dot, toggled with .cookbook-notif-active on the
-	 button). Don't stack the tabbed-down pulse on top of it — the two
-	 dots overlap. Suppress the minimized dot while the status dot is up. */
-.list-item.rail-minimized.cookbook-notif-active::after { display: none; }
-@media (max-width: 768px) {
-	/* On mobile the list-items are taller (touch-sized), so the tabbed-down
-		 pulsing dot reads a hair low and right. Email uses its own dot and is
-		 already aligned — only the tool list-item dots need the nudge:
-		 4px left (right 8 → 12) and 2px up. */
-	.list-item.rail-minimized::after {
-		right: 13px;
-		transform: translateY(calc(-50% - 2px));
-	}
-	#tool-memory-btn.rail-minimized::after { right: 17px; }
-}
-@keyframes rail-min-pulse {
-	0%,100% { opacity: 1; }
-	50%     { opacity: 0.4; }
-}
-/* #endregion Sidebar Header And Icon Rail */
-
-/* #region Modal Minimize And Dock */
-/* Compact `_` minimize button for modal headers — matches the close
-	 button's bordered square so the two read as a paired control. The
-	 header's h4 carries margin-right:auto, which groups minimize + close
-	 on the right; this button just needs a small gap before close. */
-.modal-minimize-btn {
-	background: var(--bg);
-	color: var(--fg);
-	border: 1px solid var(--fg);
-	cursor: pointer;
-	width: 24px;
-	height: 24px;
-	padding: 0;
-	margin-left: 0;
-	margin-right: 4px;
-	line-height: 1;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	border-radius: 4px;
-	flex-shrink: 0;
-	transition: background 0.15s, color 0.15s;
-}
-.modal-minimize-btn:hover { background: var(--fg); color: var(--bg); }
-.modal.modal-minimized { display: none !important; }
-/* Window tile snap ghost (desktop only) */
-#tile-ghost {
-	position: fixed;
-	pointer-events: none;
-	z-index: 9000;
-	background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
-	border: 2px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
-	border-radius: 8px;
-	opacity: 0;
-	transform: scale(0.96);
-	transition: left 0.12s ease, top 0.12s ease, width 0.12s ease, height 0.12s ease, opacity 0.12s, transform 0.12s;
-}
-#tile-ghost.visible { opacity: 1; transform: scale(1); }
-/* Bottom dock — chip per minimized modal */
-#minimized-dock {
-	position: fixed;
-	bottom: var(--composer-clearance, 12px);
-	left: 50%;
-	transform: translateX(-50%);
-	display: flex;
-	gap: 6px;
-	flex-wrap: wrap;
-	max-width: calc(100vw - 24px);
-	padding: 4px;
-	z-index: 10020;
-	pointer-events: none;
-}
-.minimized-dock-chip {
-	pointer-events: auto;
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	padding: 6px 8px 6px 10px;
-	background: var(--panel, var(--bg));
-	border: 1px solid var(--border);
-	border-radius: 999px;
-	color: var(--fg);
-	font-family: inherit;
-	font-size: 12px;
-	cursor: grab;
-	touch-action: none;
-	user-select: none;
-	box-shadow: 0 4px 14px rgba(0,0,0,0.35);
-	transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s, border-color 0.15s;
-	animation: dock-chip-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-.minimized-dock-chip:hover {
-	background: color-mix(in srgb, var(--accent, var(--red)) 12%, var(--panel, var(--bg)));
-	border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
-}
-.minimized-dock-chip:active { cursor: grabbing; }
-.minimized-dock-chip.dragging {
-	cursor: grabbing;
-	z-index: 1000;
-	box-shadow: 0 8px 24px rgba(0,0,0,0.55);
-	transition: none;
-	opacity: 0.95;
-}
-/* Whole-dock drag (grabbed an edge chip) */
-#minimized-dock.dock-dragging { cursor: grabbing; }
-#minimized-dock.dock-dragging .minimized-dock-chip {
-	transition: none;
-	box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-}
-/* Subtle visual cue that edge chips drag the whole dock */
-#minimized-dock .minimized-dock-chip:first-child:not(:only-child),
-#minimized-dock .minimized-dock-chip:last-child:not(:only-child) {
-	box-shadow: 0 4px 14px rgba(0,0,0,0.35),
-							inset 0 0 0 1px color-mix(in srgb, var(--accent, var(--red)) 25%, transparent);
-}
-.minimized-dock-chip svg { opacity: 0.7; flex-shrink: 0; }
-.minimized-dock-label { white-space: nowrap; }
-
-/* Mobile: chips are icon-only round pills. Tap to restore, drag toward
-	 the trash zone at top-center to close. touch-action:none lets the
-	 pointermove listener claim the gesture instead of the page scroll. */
-@media (max-width: 768px) {
-	.minimized-dock-chip {
-		width: 40px;
-		height: 40px;
-		padding: 0 !important;
-		border-radius: 50% !important;
-		justify-content: center;
-		position: relative;
-		overflow: visible;
-		touch-action: none;
-	}
-	.minimized-dock-chip svg { width: 18px; height: 18px; opacity: 0.9; }
-	.minimized-dock-label,
-	.minimized-dock-x { display: none !important; }
-	.minimized-dock-chip.chip-free-drag {
-		box-shadow: 0 8px 22px rgba(0,0,0,0.55),
-								0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 50%, transparent) !important;
-	}
-	/* Long-press hint — chip swells and settles while the detach timer
-		 counts down so the user feels feedback before the bubble peels out
-		 of the chain. Returns to scale(1) at the end so there's no visual
-		 jump when the timer fires and the chip becomes a free-drag puck. */
-	.minimized-dock-chip.chip-long-press {
-		background:
-			radial-gradient(circle at 30% 25%, color-mix(in srgb, #fff 28%, transparent), transparent 36%),
-			linear-gradient(135deg,
-				color-mix(in srgb, var(--accent, var(--red)) 34%, var(--panel, var(--bg))),
-				color-mix(in srgb, #7dd3fc 26%, var(--panel, var(--bg))) 52%,
-				color-mix(in srgb, #f0abfc 22%, var(--panel, var(--bg))));
-		border-color: color-mix(in srgb, var(--accent, var(--red)) 72%, #fff 12%) !important;
-		animation: chip-long-press-pulse 0.82s ease-in-out infinite;
-		z-index: 10030;
-	}
-	.minimized-dock-chip.chip-long-press::before {
-		content: '';
-		position: absolute;
-		inset: -96px;
-		border-radius: inherit;
-		background:
-			radial-gradient(circle,
-				color-mix(in srgb, var(--accent, var(--red)) 42%, transparent) 0 18%,
-				color-mix(in srgb, #7dd3fc 34%, transparent) 34%,
-				color-mix(in srgb, #f0abfc 30%, transparent) 50%,
-				transparent 72%);
-		pointer-events: none;
-		z-index: -1;
-		animation: chip-long-press-ripple 0.82s ease-out infinite;
-	}
-	@keyframes chip-long-press-pulse {
-		0%, 100% { transform: scale(1); }
-		50%      {
-			transform: scale(1.42);
-			box-shadow: 0 14px 42px rgba(0,0,0,0.66),
-									0 0 0 16px color-mix(in srgb, var(--accent, var(--red)) 42%, transparent),
-									0 0 72px color-mix(in srgb, #7dd3fc 44%, transparent),
-									0 0 118px color-mix(in srgb, #f0abfc 32%, transparent);
-		}
-	}
-	@keyframes chip-long-press-ripple {
-		0%   { opacity: 0.92; transform: scale(0.08); }
-		72%  { opacity: 0.28; transform: scale(3.6); }
-		100% { opacity: 0; transform: scale(5.4); }
-	}
-	/* Chip whose modal is currently open — accent ring so the user can
-		 tell at a glance which floating bubble belongs to the visible
-		 modal. Tap it to minimize. */
-	.minimized-dock-chip.chip-active {
-		border-color: var(--accent, var(--red)) !important;
-		box-shadow: 0 4px 14px rgba(0,0,0,0.35),
-								0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
-	}
-	.minimized-dock-chip.chip-active svg { opacity: 1; }
-}
-/* Magnetic close zone — slides in from the side opposite the chip's
-	 starting position so it never overlaps the dock. Always accent
-	 color, larger than the chips, snappy spring transition. */
-#dock-trash-zone {
-	position: fixed;
-	left: 50%;
-	width: 88px;
-	height: 88px;
-	border-radius: 50%;
-	background: var(--accent, var(--red, #e53935));
-	color: #fff;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	pointer-events: none;
-	opacity: 0;
-	z-index: 9000;
-	box-shadow: 0 8px 28px color-mix(in srgb, var(--accent, var(--red, #e53935)) 55%, transparent);
-	transition: opacity 0.18s ease,
-							transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1),
-							box-shadow 0.18s ease;
-}
-/* Off-screen start position depends on which side the chip is on so
-	 the X slides in from the opposite edge with a snappy overshoot. */
-#dock-trash-zone[data-side="top"]    { transform: translateX(-50%) translateY(-180%) scale(0.7); }
-#dock-trash-zone[data-side="bottom"] { transform: translateX(-50%) translateY(180%) scale(0.7); }
-#dock-trash-zone.visible {
-	opacity: 1;
-	transform: translateX(-50%) translateY(0) scale(1);
-}
-#dock-trash-zone.engaged {
-	transform: translateX(-50%) translateY(0) scale(1.22);
-	box-shadow: 0 0 0 14px color-mix(in srgb, var(--accent, var(--red, #e53935)) 22%, transparent),
-							0 12px 36px color-mix(in srgb, var(--accent, var(--red, #e53935)) 60%, transparent);
-}
-/* Whirlpool ring — fades in when chip is in capture range and spins
-	 continuously, then bursts on drop. */
-#dock-trash-zone .whirlpool {
-	position: absolute;
-	inset: -8px;
-	border-radius: 50%;
-	border: 2px solid transparent;
-	border-top-color: rgba(255,255,255,0.9);
-	border-right-color: rgba(255,255,255,0.55);
-	border-bottom-color: rgba(255,255,255,0.25);
-	opacity: 0;
-	pointer-events: none;
-	animation: whirlpool-spin 0.85s linear infinite;
-	transition: opacity 0.15s ease;
-}
-#dock-trash-zone.engaged .whirlpool { opacity: 1; }
-#dock-trash-zone.dropping .whirlpool {
-	opacity: 1;
-	animation: whirlpool-burst 0.36s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-/* When a chip is swirling into the trash X, its inline `rotate(720deg)`
-	 drags every child + ::after badge along with it — the count/dot pill
-	 spinning looks chaotic. Fade those out fast at the start of the close
-	 so visually only the icon glyph rotates. */
-.minimized-dock-chip.chip-trashing > :not(svg),
-.minimized-dock-chip.chip-trashing::after,
-.minimized-dock-chip.chip-trashing::before {
-	opacity: 0 !important;
-	transition: opacity 0.16s ease-out !important;
-}
-@keyframes whirlpool-spin { to { transform: rotate(360deg); } }
-@keyframes whirlpool-burst {
-	0%   { transform: rotate(0deg) scale(1); opacity: 1; }
-	60%  { transform: rotate(540deg) scale(1.5); opacity: 0.6; }
-	100% { transform: rotate(900deg) scale(2.2); opacity: 0; }
-}
-
-/* Email chip badges:
-	 - email-lib-modal chip: "1" badge when an email is expanded
-		 inside (JS sets data-has-expanded).
-	 - email-reader-* chips: auto-numbered 1, 2, 3 … via CSS counter,
-		 so multiple opened-email windows are visually distinguishable. */
-.minimized-dock-chip[data-modal-id="email-lib-modal"],
-.minimized-dock-chip[data-modal-id^="email-reader-"] {
-	position: relative;
-}
-.minimized-dock-chip[data-modal-id^="email-reader-"][data-tab-num]::after {
-	content: attr(data-tab-num);
-	position: absolute;
-	top: -4px;
-	right: -4px;
-	min-width: 16px;
-	height: 16px;
-	padding: 0 4px;
-	background: var(--accent, var(--red));
-	color: #fff;
-	font-size: 9px;
-	font-weight: 700;
-	line-height: 16px;
-	text-align: center;
-	border-radius: 8px;
-	box-shadow: 0 0 0 2px var(--bg);
-	pointer-events: none;
-}
-.minimized-dock-chip[data-modal-id="email-lib-modal"][data-email-unread-label]::after {
-	content: attr(data-email-unread-label);
-	position: absolute;
-	top: -6px;
-	right: 10px;
-	height: 16px;
-	padding: 0 6px;
-	background: var(--accent, var(--red));
-	color: #fff;
-	font-size: 9px;
-	font-weight: 700;
-	line-height: 16px;
-	white-space: nowrap;
-	border-radius: 8px;
-	box-shadow: 0 0 0 2px var(--bg);
-	pointer-events: none;
-}
-
-.minimized-dock-x {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	border-radius: 50%;
-	font-size: 14px;
-	line-height: 1;
-	opacity: 0.4;
-	margin-left: 3px;
-}
-.minimized-dock-x:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 12%, transparent); }
-@keyframes dock-chip-in {
-	from { opacity: 0; transform: translateY(20px) scale(0.85); }
-	to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-.rail-new-chat svg { transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.rail-new-chat:hover svg { transform: rotate(90deg); }
-/* A "New" label slides out from the right of the + as it spins, so users
-	 discover what the icon does without needing the tooltip. */
-.rail-new-chat { position: relative; }
-.rail-new-chat::after {
-	content: 'New';
-	position: absolute;
-	left: 100%;
-	top: 50%;
-	margin-left: 6px;
-	transform: translateY(-50%) translateX(-6px);
-	opacity: 0;
-	pointer-events: none;
-	white-space: nowrap;
-	font-size: 11px;
-	font-weight: 600;
-	color: var(--fg);
-	background: var(--panel);
-	padding: 2px 6px;
-	border-radius: 4px;
-	box-shadow: 0 2px 6px rgba(0,0,0,0.25);
-	z-index: 20;
-	transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.rail-new-chat:hover::after {
-	opacity: 1;
-	transform: translateY(-50%) translateX(0);
-}
-#rail-admin,
-#rail-settings { color: var(--fg); }
-.rail-separator { width: 20px; height: 1px; background: var(--border); margin: 4px auto; }
-.rail-dynamic {
-	position: relative;
-}
-.rail-dynamic::after {
-	content: '';
-	position: absolute;
-	bottom: 2px;
-	left: 50%;
-	transform: translateX(-50%);
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	background: var(--accent, var(--red));
-	opacity: 0.7;
-}
-/* #endregion Modal Minimize And Dock */
-
-/* #region Sidebar Sections */
-/* ── Sidebar sections (flat layout) ── */
-.section { padding: 0; border: none; background: none; border-radius: 0; box-shadow: none; margin: 0; }
-
-/* Section header row — identical sizing to .list-item */
-.section-header-flex {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 8px 8px;
-	margin: 1px 0;
-	border-radius: 4px;
-	background: transparent;
-	cursor: pointer;
-	transition: background 0.08s;
-	height: 29px;
-	box-sizing: border-box;
-}
-.section-header-flex:hover { background: color-mix(in srgb, var(--red) 8%, transparent); }
-.section-header-flex::after { content: none; }
-.section-header-flex h4::before { content: none; }
-
-/* Section title text — same font as .list-item .grow */
-.section-header-flex h4,
-.section-header-flex .section-title {
-	flex: 1;
-	cursor: pointer;
-	user-select: none;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	margin: 0;
-	padding: 0;
-	border: none;
-	font-size: 10px;
-	font-weight: 400;
-	font-family: inherit;
-	/* 1.3 (not 1) so Fira Code's tall glyph box isn't vertically clipped in
-		 Chromium/Edge — mirrors the .list-item fix. The title is flex-centred
-		 in a fixed-height (29px) header, so this adds headroom without reflow. */
-	line-height: 1.3;
-	letter-spacing: 0;
-	text-transform: none;
-	color: var(--fg);
-}
-.section-icon,
-.sidebar-action-icon {
-	flex-shrink: 0;
-	stroke: var(--accent, var(--red));
-	position: relative;
-	left: -1px;
-	color: var(--accent, var(--red));
-}
-/* Shared notification dot for sidebar section titles. Single source of
-	 truth so chats / email / assistant / future-section dots all sit at
-	 the same offset from their label. */
-.sidebar-notif-dot {
-	display: inline-block;
-	width: 6px;
-	height: 6px;
-	/* Push to the right edge of the flex section-title so chats / email
-		 / assistant dots all line up vertically in the same column
-		 instead of trailing right after each (differently-sized) label. */
-	margin-left: auto;
-	border-radius: 50%;
-	background: var(--accent, var(--red));
-	flex-shrink: 0;
-	vertical-align: middle;
-}
-/* The email notification gets a soft breathing glow so new-mail catches
-	 the eye without being shouty. Vertical alignment stays with the
-	 inherited .sidebar-notif-dot rule so it lines up with chats/assistant. */
-#email-unread-dot.sidebar-notif-dot {
-	animation: email-notif-breathe 2.2s ease-in-out infinite;
-	/* Nudge in from the far-right edge so it doesn't crowd the corner. */
-	margin-right: 4px;
-	/* Tiny vertical nudge to center with the email label. */
-	position: relative;
-	top: 0.1px;
-}
-@keyframes email-notif-breathe {
-	0%, 100% {
-		box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent, var(--red)) 60%, transparent);
-		opacity: 0.85;
-	}
-	50% {
-		box-shadow: 0 0 6px 2px color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
-		opacity: 1;
-	}
-}
-@media (prefers-reduced-motion: reduce) {
-	#email-unread-dot.sidebar-notif-dot { animation: none; }
-}
-@media (max-width: 768px) {
-	/* Nudge the sidebar notification dot up 1px on mobile so it lines
-		 up with the bigger section titles. vertical-align:middle drifts
-		 a hair low against the larger touch-friendly text. */
-	.sidebar-notif-dot {
-		position: relative;
-		top: -1px;
-	}
-	/* Cookbook's sidebar status dot carries an inline top:-1px, so override
-		 with the ID + !important to nudge it 2px left / 1px up on mobile. */
-	#cookbook-notif-dot {
-		left: -1px !important;
-		top: -2px !important;
-	}
-}
-#sidebar-new-chat-btn svg {
-	transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-#sidebar-new-chat-btn:hover svg {
-	transform: rotate(90deg);
-}
-
-/* Sort/select buttons in header — compact */
-.section-header-flex > div { display: flex; align-items: center; gap: 2px; }
-.section-header-btn {
-	all: unset;
-	cursor: pointer;
-	opacity: 0.4;
-	padding: 1px 3px;
-	border-radius: 4px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	transition: opacity 0.08s, background 0.08s;
-}
-.section-header-btn:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 7%, transparent); }
-.section-header-btn.active { opacity: 0.9; color: var(--accent); }
-.section-header-btn svg { width: 12px; height: 12px; }
-
-/* Chats library — grid icon, hover-reveal so the header only toggles collapse */
-#sessions-section .chats-manage-btn {
-	opacity: 0;
-	transition: opacity 0.12s, background 0.08s;
-}
-#sessions-section .section-header-flex:hover .chats-manage-btn,
-#sessions-section .chats-manage-btn:hover,
-#sessions-section .chats-manage-btn:focus-visible {
-	opacity: 0.45;
-}
-#sessions-section .chats-manage-btn:hover,
-#sessions-section .chats-manage-btn:focus-visible {
-	opacity: 1;
-}
-@media (hover: none) {
-	#sessions-section .chats-manage-btn { opacity: 0.35; }
-	#sessions-section .chats-manage-btn:active { opacity: 1; }
-}
-
-/* Collapse chevron */
-.section-collapse-btn {
-	all: unset;
-	cursor: pointer;
-	display: inline-flex;
-	align-items: center;
-	padding: 0 2px;
-	border-radius: 4px;
-}
-.section-collapse-btn:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
-.section-collapse-chevron { display: inline-flex; opacity: 0.3; transition: transform 0.2s, opacity 0.15s; }
-.section-collapse-btn:hover .section-collapse-chevron { opacity: 0.6; }
-.section.collapsed .section-collapse-chevron { transform: rotate(-90deg); opacity: 0.5; }
-.section-header-flex:has(.section-header-btn) .section-collapse-btn { display: none; }
-.section.collapsed .section-collapse-btn { display: inline-flex !important; }
-
-/* Collapsed state */
-.section.collapsed > *:not(h4):not(.section-title):not(.section-header-flex) { display: none !important; }
-.section.collapsed .section-header-flex { margin-bottom: 0; }
-.section.collapsed .section-header-btn { display: none; }
-.section.collapsed { cursor: pointer; }
-
-/* Domino expand: every time a section goes from .collapsed → open
-	 (toggleCollapse in section-management.js adds .section-just-expanded
-	 for ~700ms), the .list-item children cascade in one after another,
-	 same feel as the chat input's tools menu. Each row springs in
-	 from a tiny offset below + scaled-down, staggered by nth-child. */
-.section.section-just-expanded :is(.list-item, .models-row) {
-	animation: section-domino-in 0.36s cubic-bezier(0.22, 1.61, 0.36, 1) backwards;
-}
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(1)  { animation-delay: 0.04s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(2)  { animation-delay: 0.08s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(3)  { animation-delay: 0.12s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(4)  { animation-delay: 0.16s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(5)  { animation-delay: 0.20s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(6)  { animation-delay: 0.24s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(7)  { animation-delay: 0.28s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(8)  { animation-delay: 0.32s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(9)  { animation-delay: 0.36s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(10) { animation-delay: 0.40s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(11) { animation-delay: 0.44s; }
-.section.section-just-expanded :is(.list-item, .models-row):nth-child(12) { animation-delay: 0.48s; }
-@keyframes section-domino-in {
-	0%   { opacity: 0; transform: translateY(8px) translateX(-4px) scale(0.92); }
-	60%  { opacity: 1; }
-	100% { opacity: 1; transform: translateY(0) translateX(0) scale(1); }
-}
-
-/* Domino collapse: when toggleCollapse goes open → closed, JS adds
-	 .section-just-collapsing for ~530ms before flipping in .collapsed.
-	 During that window the items fade/slide DOWN one after another so
-	 you see them peel off instead of vanishing as a block. Uses
-	 nth-last-child so the BOTTOM item leaves first and the cascade
-	 rolls upward — mirrors the "stacked deck" feeling of the open
-	 animation reversed. */
-.section.section-just-collapsing :is(.list-item, .models-row) {
-	animation: section-domino-out 0.22s ease-in forwards;
-}
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(1)  { animation-delay: 0.00s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(2)  { animation-delay: 0.025s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(3)  { animation-delay: 0.05s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(4)  { animation-delay: 0.075s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(5)  { animation-delay: 0.10s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(6)  { animation-delay: 0.125s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(7)  { animation-delay: 0.15s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(8)  { animation-delay: 0.175s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(9)  { animation-delay: 0.20s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(10) { animation-delay: 0.225s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(11) { animation-delay: 0.25s; }
-.section.section-just-collapsing :is(.list-item, .models-row):nth-last-child(12) { animation-delay: 0.275s; }
-@keyframes section-domino-out {
-	0%   { opacity: 1; transform: translateY(0) translateX(0) scale(1); }
-	100% { opacity: 0; transform: translateY(6px) translateX(-3px) scale(0.94); }
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.row { display:flex; gap:6px; align-items:center; }
-.list-item:hover,
-.models-row:hover {
-	background: color-mix(in srgb, var(--red) 8%, transparent);
-	border-color: var(--red);
-}
-/* Disabled tool — dimmed to signal its feature is turned off globally */
-.list-item.tool-disabled {
-	opacity: 0.4;
-}
-.list-item.tool-disabled:hover {
-	opacity: 0.7;
-}
-/* Session bulk select mode */
-.session-bulk-bar {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	padding: 4px 8px;
-	border-bottom: 1px solid var(--border);
-	background: var(--sidebar-bg, var(--panel));
-	position: sticky;
-	top: 0;
-	z-index: 3;
-	font-size: 11px;
-}
-.session-bulk-bar.hidden { display: none; }
-#session-select-all-dot {
-	display: inline-block;
-	position: relative;
-	top: -2px;
-}
-.session-bulk-btn {
-	background: none;
-	border: none;
-	border-radius: 4px;
-	color: var(--fg);
-	padding: 4px;
-	font-family: inherit;
-	cursor: pointer;
-	opacity: 0.4;
-	transition: opacity 0.1s;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-}
-.session-bulk-btn:hover { opacity: 1; }
-.session-bulk-btn-danger { color: var(--red); opacity: 0.5; }
-.session-bulk-btn-danger:hover { opacity: 1; }
-/* Checkbox in select mode */
-.session-select-cb {
-	accent-color: var(--accent, var(--red));
-	margin: 0 4px 0 0;
-	flex-shrink: 0;
-	cursor: pointer;
-}
-
-.session-icon,
-.model-icon {
-	flex-shrink: 0;
-	opacity: 0.35;
-	display: inline-flex;
-	align-items: center;
-}
-.session-icon.has-docs {
-	color: inherit;
-	opacity: 0.5;
-}
-.session-star {
-	width: 10px;
-	height: 10px;
-	border-radius: 50%;
-	border: 1.5px solid color-mix(in srgb, var(--fg) 22%, transparent);
-	flex-shrink: 0;
-	position: relative;
-}
-.session-star.processing {
-	animation: research-pulse 1.5s ease-in-out infinite;
-}
-.session-star.notify {
-	animation: research-done-pulse 1.2s ease-in-out 5;
-	opacity: 1;
-	/* Bigger, solid status dot so "research done" reads clearly. Use the
-		 defined accent (bare --accent is undefined here → no colour). */
-	width: 14px;
-	height: 14px;
-	background: var(--accent-primary, var(--red));
-	border-color: var(--accent-primary, var(--red));
-}
-/* The dot doubles as the provider-logo holder; hide that logo in the
-	 done state so the solid notif dot doesn't collide with the SVG behind it. */
-.session-star.notify svg { display: none; }
-@keyframes research-done-pulse {
-	0%, 100% { transform: scale(1); opacity: 1; }
-	50% { transform: scale(1.5); opacity: 0.7; }
-}
-.session-fav {
-	flex-shrink: 0;
-	cursor: pointer;
-	color: var(--red);
-	opacity: 0.6;
-	display: inline-flex;
-	align-items: center;
-	transition: opacity 0.1s;
-}
-.session-fav:hover {
-	opacity: 1;
-}
-.list-item.active-session {
-	background: color-mix(in srgb, var(--red) 10%, transparent);
-	border-color: var(--red);
-	border-left-color: var(--red);
-}
-.list-item .provider-logo { opacity: 0.4 !important; }
-.list-item:has(.session-star.processing) .provider-logo { opacity: 1 !important; }
-.list-item.stream-complete .provider-logo { opacity: 1 !important; }
-.list-item.active {
-	background: color-mix(in srgb, var(--red) 10%, transparent);
-	border-color: var(--red);
-	border-left-color: var(--red);
-}
-/* Only show the red focus ring for keyboard navigation (Tab). Mouse
-	 clicks shouldn't leave a sticky red outline on a sidebar item. */
-.list-item:focus { outline: none; }
-.list-item:focus-visible {
-	outline: none;
-	border-color: var(--red, var(--color-error));
-	box-shadow: 0 0 0 1px var(--red, var(--color-error));
-}
-/* Drag handles hidden by default, shown via body.rearrange-mode */
-.drag-handle,
-.item-drag-handle,
-.folder-drag-handle { display: none; }
-/* #endregion Sidebar Sections */
-
-/* #region Legacy Layout Block */
 /* ── Layout ── */
 
     /* Top bar — session meta + incognito, single row */
@@ -2017,7 +654,7 @@ body.hamburger-right .hamburger-btn {
       display: flex; gap: 6px; flex-wrap: wrap;
       max-width: calc(100vw - 24px);
       padding: 4px;
-      z-index: 10020;
+      z-index: 100;
       pointer-events: none;
     }
     .minimized-dock-chip {
@@ -2414,23 +1051,53 @@ body.hamburger-right .hamburger-btn {
     .section-header-btn.active { opacity: 0.9; color: var(--accent); }
     .section-header-btn svg { width: 12px; height: 12px; }
 
-    /* Chats library — grid icon, hover-reveal so the header only toggles collapse */
+    /* Chats library — grid icon, hover-reveal so the header only toggles
+       collapse. Uses !important to win over .list-item-plus-btn's
+       opacity:1!important (the email-style plus button forces always-on,
+       which we don't want here — the manage button should fade until the
+       user actually hovers the section). */
     #sessions-section .chats-manage-btn {
-      opacity: 0;
+      opacity: 0 !important;
       transition: opacity 0.12s, background 0.08s;
     }
     #sessions-section .section-header-flex:hover .chats-manage-btn,
     #sessions-section .chats-manage-btn:hover,
     #sessions-section .chats-manage-btn:focus-visible {
-      opacity: 0.45;
+      opacity: 0.85 !important;
     }
     #sessions-section .chats-manage-btn:hover,
     #sessions-section .chats-manage-btn:focus-visible {
-      opacity: 1;
+      opacity: 1 !important;
+    }
+    /* No hover background on the Chats manage button — the inherited
+       section-header-btn rule was painting a tinted box behind the
+       'manage' label as it slid in. */
+    #sessions-section .chats-manage-btn,
+    #sessions-section .chats-manage-btn:hover,
+    #sessions-section .chats-manage-btn:focus-visible {
+      background: transparent !important;
     }
     @media (hover: none) {
-      #sessions-section .chats-manage-btn { opacity: 0.35; }
-      #sessions-section .chats-manage-btn:active { opacity: 1; }
+      #sessions-section .chats-manage-btn { opacity: 0.35 !important; }
+      #sessions-section .chats-manage-btn:active { opacity: 1 !important; }
+    }
+    /* Pull the 'manage' label out of email's absolute-positioning trick
+       so it sits in the flex flow and expands the button's clickable
+       area as it slides in. Otherwise hovering the visible 'manage'
+       text would actually be outside the button's bounding box. */
+    #sessions-section .chats-manage-btn .list-item-plus-label {
+      position: static;
+      transform: none;
+      max-width: 0;
+      overflow: hidden;
+      padding-right: 0;
+      transition: max-width 0.2s ease, opacity 0.18s ease, padding-right 0.18s ease;
+    }
+    #sessions-section .chats-manage-btn:hover .list-item-plus-label,
+    #sessions-section .chats-manage-btn:focus-visible .list-item-plus-label,
+    #sessions-section .section-header-flex:hover .chats-manage-btn .list-item-plus-label {
+      max-width: 80px;
+      padding-right: 4px;
     }
 
     /* Collapse chevron */
@@ -2948,6 +1615,8 @@ body.hamburger-right .hamburger-btn {
       min-width:0;
       margin-top:8px;
       margin-bottom: 0;
+      transition: margin-left 160ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                  margin-right 160ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .chat-meta { font-size:12px; color:color-mix(in srgb, var(--fg) 60%, transparent); margin-bottom:6px; }
     .chat-history {
@@ -3224,6 +1893,58 @@ body.hamburger-right .hamburger-btn {
     .msg-ai .body {
       color: var(--fg);
     }
+    .model-endpoint-add-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 7px;
+      padding: 2px 7px;
+      border: 1px solid color-mix(in srgb, var(--red) 34%, var(--border));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--red) 8%, transparent);
+      color: var(--red);
+      font: inherit;
+      font-size: 0.78em;
+      line-height: 1.45;
+      cursor: pointer;
+      vertical-align: 1px;
+    }
+    .model-endpoint-add-btn:hover {
+      background: color-mix(in srgb, var(--red) 14%, transparent);
+      border-color: color-mix(in srgb, var(--red) 55%, var(--border));
+    }
+    .model-endpoint-add-btn:disabled {
+      cursor: default;
+      opacity: 0.72;
+    }
+    .model-endpoint-add-btn.added {
+      color: var(--color-save-green, #4caf50);
+      border-color: color-mix(in srgb, var(--color-save-green, #4caf50) 45%, var(--border));
+      background: color-mix(in srgb, var(--color-save-green, #4caf50) 9%, transparent);
+    }
+    .task-completed-marker {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin: 7px 0 2px;
+      padding: 5px 9px;
+      border: 1px solid color-mix(in srgb, var(--color-save-green, #4caf50) 42%, var(--border));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--color-save-green, #4caf50) 9%, transparent);
+      color: var(--color-save-green, #4caf50);
+      font-size: 0.86em;
+      font-weight: 600;
+    }
+    .task-completed-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--color-save-green, #4caf50) 18%, transparent);
+      flex: 0 0 auto;
+    }
     .rag-sources {
       margin-top: 12px;
       border: 1px solid var(--border);
@@ -3355,7 +2076,7 @@ body.hamburger-right .hamburger-btn {
       position: absolute;
       top: 0;
       right: 0;
-      z-index: 2;
+      z-index: 250;
       transform-origin: top right;
       transition: opacity 0.22s ease, transform 0.22s ease;
       will-change: opacity, transform;
@@ -3479,6 +2200,63 @@ body.hamburger-right .hamburger-btn {
       opacity: 1;
       color: var(--fg);
       background: color-mix(in srgb, var(--fg) 9%, transparent);
+    }
+    /* GitHub-style task lists (- [ ] / - [x]) */
+    li.task-item {
+      list-style: none;
+      margin-left: -1.2em;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    li.task-item .task-check {
+      flex: 0 0 auto;
+      width: 15px;
+      height: 15px;
+      margin-top: 3px;
+      border-radius: 4px;
+      border: 1.5px solid color-mix(in srgb, var(--fg) 45%, transparent);
+      box-sizing: border-box;
+      position: relative;
+    }
+    li.task-item.task-done .task-check {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    li.task-item.task-done .task-check::after {
+      content: '';
+      position: absolute;
+      left: 4px;
+      top: 1px;
+      width: 4px;
+      height: 8px;
+      border: solid var(--bg);
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    li.task-item.task-done .task-text {
+      opacity: 0.6;
+      text-decoration: line-through;
+    }
+    /* Plan window: a draggable/dockable modal (shares .modal framework) */
+    .plan-window-content {
+      width: 520px;
+      max-width: 92vw;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .plan-window-body {
+      overflow-y: auto;
+      padding: 14px 18px;
+      flex: 1 1 auto;
+      line-height: 1.55;
+    }
+    .plan-window-footer {
+      padding: 10px 18px;
+      border-top: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+      display: flex;
+      justify-content: flex-end;
     }
     /* While the menu is open the chevron stays in its highlighted state
        — don't run the opacity fade transition so we never flash from
@@ -3706,7 +2484,8 @@ body.hamburger-right .hamburger-btn {
       transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
       z-index: 0;
     }
-    .mode-toggle.mode-chat::before {
+    .mode-toggle.mode-chat::before,
+    .mode-toggle.mode-right::before {
       transform: translateX(100%);
     }
     #mode-agent-btn {
@@ -3820,7 +2599,7 @@ body.hamburger-right .hamburger-btn {
       position: absolute;
       bottom: calc(100% + 16px);
       right: 0;
-      z-index: 300;
+      z-index: 250;
       min-width: 260px;
       max-width: 360px;
       background: var(--panel);
@@ -4653,6 +3432,38 @@ body.hamburger-right .hamburger-btn {
     .continue-btn:hover {
       opacity:0.8;
     }
+
+    /* Round-cap "Continue" affordance — a cohesive centered pill at the chat
+       bottom (not the bare red in-message stopped style). */
+    .rounds-exhausted {
+      justify-content:center;
+      gap:12px;
+      width:fit-content;
+      max-width:90%;
+      margin:14px auto 4px;
+      padding:7px 8px 7px 16px;
+      border:1px solid var(--border);
+      border-radius:999px;
+      background:color-mix(in srgb, var(--fg) 4%, transparent);
+      opacity:1;
+    }
+    .rounds-exhausted .rounds-exhausted-label {
+      color:color-mix(in srgb, var(--fg) 60%, transparent);
+      font-size:0.95em;
+    }
+    .rounds-exhausted .continue-btn {
+      font-size:0.9em;
+      font-weight:600;
+      opacity:1;
+      color:var(--bg);
+      background:var(--accent, var(--red));
+      border-radius:999px;
+      padding:4px 14px;
+      line-height:1.3;
+    }
+    .rounds-exhausted .continue-btn:hover {
+      opacity:0.88;
+    }
     .ctx-indicator {
       display:inline-flex; align-items:center; gap:1px;
       font-size:0.75rem;
@@ -5110,6 +3921,12 @@ body.hamburger-right .hamburger-btn {
         transition: transform 0.25s ease, opacity 0.25s ease !important;
         opacity: 1 !important;
         overflow: visible !important;
+        /* Force opaque background — Firefox mobile renders the
+           backdrop-filter+background combo as semi-transparent on
+           the slide-out drawer, letting the chat input model picker
+           label show through the sidebar. */
+        background: var(--panel) !important;
+        backdrop-filter: none !important;
       }
       .sidebar.hidden {
         width: 80% !important;
@@ -5663,10 +4480,9 @@ body.hamburger-right .hamburger-btn {
         flex-direction: column !important;
         align-items: flex-end !important;
         gap: 4px !important;
-        margin-left: auto !important;
         flex-shrink: 0 !important;
-        position: relative !important;
-        top: -3px !important; /* lift the reply/forward/etc. action buttons up on mobile */
+        margin-left: auto !important;
+        order: 0 !important;
       }
       #email-lib-modal .email-reader-actions-row,
       .email-reader-tab-modal .email-reader-actions-row,
@@ -5678,10 +4494,47 @@ body.hamburger-right .hamburger-btn {
         justify-content: flex-end !important;
         gap: 4px !important;
       }
+      /* Meta on mobile: From / To / Cc each on their own row, label
+         tight to chips, chips scroll horizontally per row. */
+      #email-lib-modal .email-reader-meta,
+      .email-reader-tab-modal .email-reader-meta,
+      .email-window-modal .email-reader-meta {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+        min-width: 0 !important;
+        width: 100% !important;
+      }
+      #email-lib-modal .email-reader-meta-row,
+      .email-reader-tab-modal .email-reader-meta-row,
+      .email-window-modal .email-reader-meta-row {
+        display: flex !important;
+        grid-template-columns: none !important;
+        align-items: center !important;
+        gap: 6px !important;
+        padding-right: 0 !important;
+        min-width: 0 !important;
+      }
+      #email-lib-modal .email-reader-meta-row .recipient-chips,
+      .email-reader-tab-modal .email-reader-meta-row .recipient-chips,
+      .email-window-modal .email-reader-meta-row .recipient-chips {
+        display: inline-flex !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        max-width: 100% !important;
+        scrollbar-width: none !important;
+        gap: 4px !important;
+      }
+      #email-lib-modal .email-reader-meta-row .recipient-chips::-webkit-scrollbar,
+      .email-reader-tab-modal .email-reader-meta-row .recipient-chips::-webkit-scrollbar,
+      .email-window-modal .email-reader-meta-row .recipient-chips::-webkit-scrollbar {
+        display: none !important;
+      }
       #email-lib-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
       .email-reader-tab-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn,
       .email-window-modal .email-reader-actions .memory-toolbar-btn.reader-icon-btn {
-        width: 44px !important;
+        width: auto !important;
         height: 44px !important;
         flex: 0 0 auto !important;
         display: inline-flex !important;
@@ -5983,6 +4836,15 @@ body.hamburger-right .hamburger-btn {
       box-shadow:0 8px 32px rgba(0,0,0,0.45);
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
+    }
+    .memory-modal-content,
+    .tasks-modal-content,
+    .preset-modal-content,
+    #cookbook-modal .modal-content,
+    #theme-popup,
+    .doclib-modal-content,
+    .gallery-modal-content {
+      container-type: inline-size;
     }
     .modal-header {
       display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;
@@ -6362,5 +5224,912 @@ body.hamburger-right .hamburger-btn {
       opacity: 0.6;
       cursor: not-allowed;
     }
-    
+
+    /* Drag and drop styling */
+    .section[dnd-active="true"] {
+      background: color-mix(in srgb, var(--red) 10%, transparent) !important;
+      border-color: var(--red) !important;
+    }
+
+    .section[dnd-over="true"] {
+      background: color-mix(in srgb, var(--red) 20%, transparent) !important;
+      border-color: var(--red) !important;
+      transform: scale(1.02);
+    }
+
+    .drag-handle {
+      cursor: grab;
+      opacity: 0.5;
+      padding: 0 6px;
+      user-select: none;
+    }
+
+    .drag-handle:hover {
+      opacity: 0.8;
+    }
+
+    .drag-handle:active {
+      cursor: grabbing;
+    }
+
+    /* Custom radio button styling */
+    .radio-option {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .radio-option:hover {
+      background: color-mix(in srgb, var(--fg) 9%, transparent);
+      border-color: var(--fg);
+    }
+
+    .radio-option input[type="radio"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border: 2px solid var(--border);
+      border-radius: 50%;
+      outline: none;
+      margin: 0;
+      background: var(--bg);
+      transition: all 0.2s ease;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .radio-option input[type="radio"]:checked {
+      border-color: var(--red);
+      background: var(--red);
+    }
+
+    .radio-option input[type="radio"]:focus {
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
+    }
+
+    .radio-label {
+      color: var(--fg);
+      font-size: 14px;
+      user-select: none;
+    }
+
+    /* Preset buttons */
+    .preset-btn {
+      height: 27.2px; /* 15% smaller than 32px */
+      padding: 0 8.5px; /* 15% smaller than 10px */
+      margin-left: 4px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: 'Fira Code', monospace;
+      font-size: 10.2px; /* 15% smaller than 12px */
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .preset-btn:hover {
+      background: var(--panel);
+      border-color: var(--fg);
+    }
+
+    .preset-btn.active {
+      background: var(--panel);
+      border-color: var(--fg);
+      box-shadow: 0 0 0 1px var(--fg), 0 0 8px color-mix(in srgb, var(--fg) 16%, transparent);
+      font-weight: 600;
+    }
+
+    /* All preset buttons use the same blue color */
+    .preset-btn {
+      border-color: var(--red); /* Blue color */
+    }
+
+    .preset-btn.active {
+      border-color: var(--red); /* Blue color when active */
+      box-shadow: 0 0 0 1px var(--red), 0 0 8px color-mix(in srgb, var(--red) 30%, transparent);
+    }
+
+    /* Custom preset modal: the base .preset-modal-content sets overflow:hidden
+       (for desktop rounded-corner clipping), which on the mobile sheet clipped
+       the footer (Start/Cancel) off the bottom with no way to reach it. Let the
+       whole sheet scroll — same as every other mobile modal (.modal-content is
+       overflow-y:auto on mobile) — so the footer is always reachable. No flex
+       changes, so the body can't collapse. */
+    #custom-preset-modal .preset-modal-content {
+      overflow-y: auto !important;
+    }
+    #custom-preset-modal .modal-body label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--fg);
+      margin-top: 8px;
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    #custom-preset-modal .modal-body input,
+    #custom-preset-modal .modal-body textarea {
+      width: 100%;
+      margin-bottom: 8px;
+      box-sizing: border-box;
+    }
+    #custom-preset-modal .modal-body textarea,
+    #custom-preset-modal .modal-body input[type="text"] {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--fg);
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    #custom-preset-modal .modal-body textarea {
+      resize: vertical;
+    }
+    #custom-preset-modal .modal-body textarea:focus,
+    #custom-preset-modal .modal-body input[type="text"]:focus {
+      outline: none;
+      border-color: var(--red);
+    }
+
+    #custom-preset-modal .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+
+    #custom-preset-modal .modal-footer button {
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: none;
+      color: var(--fg);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    #custom-preset-modal .modal-footer button:hover {
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+
+    #custom-preset-modal .modal-footer button#save-custom-preset {
+      background: var(--accent, var(--red));
+      color: var(--bg);
+      border-color: var(--accent, var(--red));
+    }
+    #custom-preset-modal .modal-footer button#save-custom-preset:hover {
+      opacity: 0.85;
+    }
+
+    .toolbar-hint {
+      font-size: 12px;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      margin-bottom: 12px;
+    }
+
+    .vis-toggles {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .vis-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 5px 6px;
+      border-radius: 4px;
+      transition: background 0.12s;
+    }
+
+    .vis-row:hover {
+      background: color-mix(in srgb, var(--fg) 5%, transparent);
+    }
+
+    .vis-row input[type="checkbox"] {
+      display: none;
+    }
+
+    .vis-icon {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: color-mix(in srgb, var(--fg) 40%, transparent);
+    }
+
+    .vis-icon-text {
+      font-size: 10px;
+      font-weight: 700;
+      font-family: inherit;
+      letter-spacing: -0.5px;
+    }
+
+    .vis-label {
+      flex: 1;
+      font-size: 12px;
+      color: var(--fg);
+      user-select: none;
+    }
+
+    .vis-switch {
+      position: relative;
+      width: 30px;
+      height: 16px;
+      background: color-mix(in srgb, var(--fg) 15%, transparent);
+      border-radius: 8px;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .vis-switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      background: var(--panel);
+      border-radius: 50%;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+    }
+
+    .vis-row input:checked + .vis-switch {
+      background: var(--red);
+    }
+
+    .vis-row input:checked + .vis-switch::after {
+      transform: translateX(14px);
+    }
+
+    .vis-row input:checked ~ .vis-icon,
+    .vis-row:has(input:checked) .vis-icon {
+      color: var(--fg);
+    }
+
+    #compare-model-overlay .modal-header h4 {
+      pointer-events: none;
+    }
+
+    #compare-model-overlay .modal-content {
+      display: flex;
+      flex-direction: column;
+      max-height: min(720px, calc(100dvh - 48px));
+      overflow: hidden;
+      min-height: 180px;
+    }
+
+    #compare-model-overlay .modal-body {
+      overflow: auto;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .vis-hint {
+      font-size: 10px;
+      color: color-mix(in srgb, var(--fg) 30%, transparent);
+      font-weight: 400;
+      margin-left: 2px;
+    }
+
+    .ui-vis-lock {
+      display: none;
+    }
+
+    .odysseus-highlight {
+      outline: 2px solid var(--accent, var(--red)) !important;
+      outline-offset: 1px;
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent);
+      animation: ody-pulse 1.5s ease-in-out infinite;
+      z-index: 100;
+      position: relative;
+    }
+
+    @keyframes ody-pulse {
+      0%, 100% { outline-color: var(--accent, var(--red)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent, var(--red)) 18%, transparent); }
+      50% { outline-color: color-mix(in srgb, var(--accent, var(--red)) 40%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 8%, transparent); }
+    }
+
+    .tour-halo {
+      position: fixed;
+      pointer-events: none;
+      border: 3px solid var(--accent, var(--red));
+      border-radius: 10px;
+      z-index: 10000;
+      animation: ody-breathe 1.4s ease-in-out infinite;
+      opacity: 0;
+      transform: scale(0.94);
+      transition: opacity 0.35s ease-out, transform 0.35s ease-out;
+    }
+
+    .tour-halo.tour-fade-in {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    @keyframes ody-breathe {
+      0%, 100% {
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, var(--red)) 55%, transparent),
+                    0 0 22px 4px color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
+        border-color: var(--accent, var(--red));
+      }
+      50% {
+        box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent, var(--red)) 30%, transparent),
+                    0 0 40px 14px color-mix(in srgb, var(--accent, var(--red)) 70%, transparent);
+        border-color: color-mix(in srgb, var(--accent, var(--red)) 80%, transparent);
+      }
+    }
+
+    body.tour-active .sidebar,
+    body.tour-active .sidebar-inner,
+    body.tour-active .chat-input-bar,
+    body.tour-active .chat-input-top,
+    body.tour-active .chat-input-wrap,
+    body.tour-active .chat-input-right,
+    body.tour-active .mode-toggle,
+    body.tour-active .model-picker-wrap {
+      overflow: visible !important;
+    }
+
+    .tour-hint {
+      position: fixed;
+      z-index: 10002;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px 10px;
+      width: 240px;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32);
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.28s ease-out, transform 0.28s ease-out;
+      pointer-events: auto;
+    }
+
+    .tour-hint.tour-hint-in {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .tour-hint.tour-hint-out {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+
+    .tour-hint-visual {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 8px;
+      color: var(--accent, var(--red));
+    }
+
+    .tour-hint-visual svg {
+      display: block;
+    }
+
+    .tour-hint-text {
+      margin-bottom: 10px;
+      opacity: 0.92;
+    }
+
+    .tour-hint-text b {
+      color: var(--accent, var(--red));
+      font-weight: 600;
+    }
+
+    .tour-hint-dismiss {
+      display: block;
+      margin: 0 0 0 auto;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 6px;
+      padding: 3px 12px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.72rem;
+      opacity: 0.85;
+      transition: opacity 0.15s, background 0.15s;
+    }
+
+    .tour-hint-dismiss:hover {
+      opacity: 1;
+      background: color-mix(in srgb, var(--fg) 8%, transparent);
+    }
+
+    .th-cursor {
+      animation: th-cursor 3.2s ease-in-out infinite;
+      transform-origin: 0 0;
+    }
+
+    .th-modal-group {
+      animation: th-modal-slide 3.2s ease-in-out infinite;
+      transform-origin: 39px 31px;
+    }
+
+    .th-zone {
+      animation: th-zone-flash 3.2s ease-in-out infinite;
+    }
+
+    @keyframes th-cursor {
+      0%, 5% { transform: translate(35px, 32px); }
+      18% { transform: translate(35px, 22px); }
+      48% { transform: translate(80px, 22px); }
+      72% { transform: translate(80px, 22px); }
+      90%, 100% { transform: translate(35px, 32px); }
+    }
+
+    @keyframes th-modal-slide {
+      0%, 18% { transform: translate(0, 0) scale(1, 1); }
+      48% { transform: translate(45px, 0) scale(1, 1); }
+      58% { transform: translate(30px, -19px) scale(1.4, 2.4); }
+      72% { transform: translate(30px, -19px) scale(1.4, 2.4); }
+      90%, 100% { transform: translate(0, 0) scale(1, 1); }
+    }
+
+    @keyframes th-zone-flash {
+      0%, 38% { opacity: 0; }
+      48% { opacity: 0.22; }
+      58%, 72% { opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .th-cursor, .th-modal-group, .th-zone {
+        animation: none !important;
+      }
+    }
+
+    .odysseus-hl-label {
+      position: absolute;
+      top: -22px;
+      left: 8px;
+      background: var(--red);
+      color: var(--bg);
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+      z-index: 101;
+      pointer-events: none;
+    }
+
+    .msg.generated-image-wrap .body {
+      text-align: center;
+    }
+
+    .generated-image {
+      max-width: 100%;
+      max-height: 512px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.2s;
+      display: inline-block;
+      margin: 0 auto;
+    }
+
+    .generated-image:hover {
+      transform: scale(1.02);
+    }
+
+    .generated-image-caption {
+      font-size: 0.8rem;
+      opacity: 0.5;
+      margin-top: 6px;
+      font-style: italic;
+      text-align: center;
+    }
+
+    .setup-wizard {
+      padding: 16px;
+      max-width: 500px;
+    }
+
+    .setup-wizard .setup-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--fg);
+    }
+
+    .setup-wizard .setup-label {
+      font-size: 0.85rem;
+      color: var(--fg);
+      opacity: 0.7;
+      margin-bottom: 8px;
+    }
+
+    .setup-wizard .setup-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .setup-wizard .setup-preset-btn {
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--fg);
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .setup-wizard .setup-preset-btn:hover {
+      border-color: var(--red);
+      background: color-mix(in srgb, var(--red) 11%, transparent);
+    }
+
+    .setup-wizard .setup-input {
+      display: block;
+      width: 100%;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--fg);
+      font-size: 0.85rem;
+      box-sizing: border-box;
+    }
+
+    .setup-wizard .setup-input:focus {
+      border-color: var(--red);
+      outline: none;
+    }
+
+    .setup-wizard .setup-connect-btn {
+      padding: 8px 20px;
+      background: var(--red);
+      color: var(--bg);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
+    .setup-wizard .setup-connect-btn:hover {
+      opacity: 0.9;
+    }
+
+    .setup-wizard .setup-status {
+      font-size: 0.8rem;
+      margin-top: 8px;
+      color: var(--fg);
+      opacity: 0.7;
+    }
+
+    .setup-wizard .setup-model-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .setup-wizard .setup-model-btn {
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--fg);
+      cursor: pointer;
+      font-size: 0.85rem;
+      transition: all 0.2s;
+    }
+
+    .setup-wizard .setup-model-btn:hover {
+      border-color: var(--red);
+      background: color-mix(in srgb, var(--red) 11%, transparent);
+    }
+
+    .setup-wizard .setup-step.hidden {
+      display: none;
+    }
+
+    .dropdown {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px color-mix(in srgb, var(--fg) 5%, transparent);
+      z-index: 1000;
+      display: none;
+      min-width: 220px;
+      padding: 6px;
+      backdrop-filter: blur(12px);
+    }
+
+    .dropdown.show {
+      display: block;
+      animation: dropdown-in 0.15s ease-out;
+    }
+
+    @keyframes dropdown-in {
+      from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .dropdown-item {
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.12s ease;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+    }
+
+    .dropdown-item:last-child {
+      border-bottom: none;
+    }
+
+    .dropdown-item .menu-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--fg) 5%, transparent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .dropdown-item .menu-text h4 {
+      margin: 0;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--fg);
+      line-height: 1.3;
+    }
+
+    .dropdown-item .menu-text p {
+      margin: 0;
+      font-size: 10.5px;
+      color: var(--color-subheader);
+      line-height: 1.3;
+    }
+
+    .dropdown-item:hover {
+      background: color-mix(in srgb, var(--red) 10%, transparent);
+    }
+
+    .dropdown-item:hover .menu-icon {
+      background: color-mix(in srgb, var(--red) 15%, transparent);
+    }
+
+    .dropdown-item-compact {
+      cursor: pointer;
+      padding: 6px 8px;
+      font-size: 11px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--fg);
+      transition: background 0.1s;
+    }
+
+    .dropdown-item-compact:hover {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    }
+
+    .dropdown-item-compact .dropdown-icon {
+      width: 14px;
+      height: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      opacity: 0.5;
+    }
+
+    .dropdown-item-compact .dropdown-icon svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .dropdown-item-compact .dropdown-shortcut {
+      margin-left: auto;
+      font-size: 9.5px;
+      opacity: 0.35;
+      font-weight: 400;
+    }
+
+    @media (max-width: 768px) {
+      .session-dropdown .dropdown-shortcut { display: none; }
+    }
+
+    .dropdown-item-danger {
+      color: var(--red) !important;
+    }
+
+    .dropdown-item-danger .dropdown-icon {
+      opacity: 0.7;
+    }
+
+    .session-rename-input {
+      width: 100%;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--accent, var(--accent-primary));
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-family: inherit;
+      font-size: 12px;
+      line-height: 1.3;
+      outline: none;
+    }
+
+    .session-dropdown-menu {
+      position: fixed;
+      z-index: 1000;
+      display: none;
+      min-width: auto;
+      width: max-content;
+      padding: 4px;
+      animation: dropdown-in 0.15s ease-out;
+    }
+
+    .session-folder-submenu {
+      position: fixed;
+      z-index: 1001;
+      display: none;
+      min-width: auto;
+      width: max-content;
+      padding: 4px;
+    }
+
+    .dropdown-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 8px;
+    }
+
+    .search-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
+    }
+
+    .search-provider-label {
+      font-size: 14px;
+      color: var(--fg);
+    }
+
+    #mic-btn {
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      transition: all 0.2s ease;
+    }
+
+    #mic-btn:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      border-color: var(--fg);
+    }
+
+    #mic-btn.recording {
+      background: var(--color-recording);
+      border-color: var(--color-recording);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.7; }
+      100% { opacity: 1; }
+    }
+
+    #recording-indicator {
+      position: fixed;
+      top: 10px;
+      left: 0;
+      right: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin: 10px;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    #recording-indicator.hidden {
+      display: none !important;
+    }
+
+    .recording-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: white;
+    }
+
+    .recording-icon {
+      color: var(--color-recording);
+      font-size: 20px;
+      animation: pulse 1.5s infinite;
+    }
+
+    .recording-text {
+      font-size: 16px;
+      font-weight: 500;
+    }
+
+    #stop-recording {
+      background: var(--color-recording);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    #stop-recording:hover {
+      background: var(--color-recording-hover);
+    }
+
+    #recording-indicator.error {
+      background: rgba(173, 26, 26, 0.9);
+    }
+
+    .recording-error {
+      color: var(--color-recording);
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    @media (max-width: 768px) {
+      #recording-indicator {
+        margin: 8px;
+        padding: 10px;
+      }
+
+      .recording-text {
+        font-size: 14px;
+      }
+
+      #stop-recording {
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+    }
+
+    .hljs { color: var(--hl-fg, #9cdef2); background: none !important; }
+    pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
+
 /* #endregion Legacy Layout Block */

@@ -1,11 +1,9 @@
 from pathlib import Path
 
-
-STYLE_CSS = Path(__file__).resolve().parents[1] / "static" / "style.css"
-
+from tests.helpers.css_loader import load_runtime_css_text
 
 def _style_text() -> str:
-    return STYLE_CSS.read_text(encoding="utf-8")
+    return load_runtime_css_text()
 
 
 def test_native_select_options_use_theme_tokens():

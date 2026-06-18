@@ -109,10 +109,6 @@ body.hide-thinking .thinking-section { display: none !important; }
 .live-reply-content {
 	animation: fadeSlideIn 0.3s ease-out;
 }
-@keyframes fadeSlideIn {
-	from { opacity: 0; transform: translateY(4px); }
-	to { opacity: 1; transform: translateY(0); }
-}
 
 /* Thinking indicator animation */
 .thinking-indicator {
@@ -130,12 +126,6 @@ body.hide-thinking .thinking-section { display: none !important; }
 	display: inline-block;
 	width: 20px;
 	text-align: left;
-}
-
-@keyframes thinking-dots {
-	0%, 20% { content: '.'; }
-	40% { content: '..'; }
-	60%, 100% { content: '...'; }
 }
 
 .thinking-complete {
@@ -253,10 +243,6 @@ body.hide-thinking .thinking-section { display: none !important; }
 
 /* #region Processing And Rail Notifications */
 /* ── Processing pulse animation (reused by session-star) ── */
-@keyframes research-pulse {
-	0%, 100% { opacity: 0.3; transform: scale(0.8); }
-	50% { opacity: 1; transform: scale(1.2); }
-}
 .ai-spinner {
 	color: var(--red);
 }
@@ -293,14 +279,6 @@ body.hide-thinking .thinking-section { display: none !important; }
 }
 .icon-rail-btn.rail-notify.rail-notify-success::before {
 	background: var(--color-success, #4caf50);
-}
-@keyframes rail-notif-pulse {
-	0%, 100% { opacity: 1; transform: scale(1); }
-	50% { opacity: 0.4; transform: scale(0.8); }
-}
-@keyframes stream-complete-pulse {
-	0%, 100% { box-shadow: none; }
-	50% { box-shadow: inset 0 0 0 1.5px var(--accent); }
 }
 /* #endregion Processing And Rail Notifications */
 
@@ -1233,24 +1211,6 @@ textarea.memory-add-input {
 #gallery-editor-drafts-bulk,
 #memory-modal .memory-bulk-bar {
   padding-right: 18px;
-}
-#email-lib-bulk-delete.email-bulk-loading {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  opacity: 0.9;
-  cursor: wait;
-}
-#email-lib-bulk-delete.email-bulk-loading .email-bulk-whirlpool {
-  width: 12px;
-  height: 12px;
-  margin: 0;
-  position: relative;
-  top: -1px;
-}
-#email-lib-bulk-delete.email-bulk-loading .email-bulk-loading-label {
-  position: relative;
-  top: 0;
 }
 /* Drafts bulk bar defaults to justify-content:flex-end (whole row hugs the
    right). Reset it so All + count sit on the left and only the action button

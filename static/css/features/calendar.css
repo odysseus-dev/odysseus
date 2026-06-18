@@ -77,6 +77,12 @@
   font-size: 18px;
   line-height: 1.2;
   white-space: nowrap;
+.cal-quickadd-hint .qa-hint-example {
+  opacity: 0.85;
+}
+.cal-quickadd-hint .qa-hint-example.qa-hint-fade {
+  opacity: 0.55;
+}
   pointer-events: none;
   color: color-mix(in srgb, var(--fg) 42%, transparent);
 }

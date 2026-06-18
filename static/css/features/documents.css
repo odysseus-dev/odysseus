@@ -530,6 +530,21 @@ body.right-dock-active {
 body.left-dock-active {
   padding-left: var(--left-dock-w, 0px);
 }
+
+/* Edge-dock resize handle hover accent stripe */
+.edge-dock-resize-handle-left:hover {
+  background: linear-gradient(to right, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+.edge-dock-resize-handle-right:hover {
+  background: linear-gradient(to left, transparent 0 3px, color-mix(in srgb, var(--accent, var(--red)) 35%, transparent) 3px 7px, transparent 7px 10px) !important;
+}
+
+body.left-dock-active:not(.email-doc-split-active) .chat-container {
+  margin-left: var(--left-dock-w, 0px);
+}
+body.right-dock-active:not(.email-doc-split-active) .doc-editor-pane {
+  margin-right: var(--right-dock-w, 0px);
+}
 .modal.modal-right-docked {
   align-items: stretch;
   justify-content: flex-end;
@@ -565,12 +580,12 @@ body.left-dock-active {
   flex-direction: column;
   gap: 6px;
 }
-.modal.modal-right-docked .email-reader-actions,
-.modal.modal-left-docked .email-reader-actions {
+.modal.modal-right-docked .email-reader-header > .email-reader-actions,
+.modal.modal-left-docked .email-reader-header > .email-reader-actions {
   align-self: flex-end;
 }
-.modal.modal-right-docked .email-reader-meta-row,
-.modal.modal-left-docked .email-reader-meta-row {
+.modal.modal-right-docked .email-reader-meta-row:not(.email-reader-meta-from),
+.modal.modal-left-docked .email-reader-meta-row:not(.email-reader-meta-from) {
   display: grid;
   grid-template-columns: 1fr;
   gap: 2px;

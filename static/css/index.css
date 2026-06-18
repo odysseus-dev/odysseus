@@ -3,7 +3,8 @@
 
 @import url("/static/css/layout/shell-and-windows.css");
 
-@import url("/static/css/components/forms-and-buttons.css");
+@import url("/static/css/utilities/helpers-and-overrides.css");
+
 @import url("/static/css/components/modals-and-popovers.css");
 
 @import url("/static/css/features/chat.css");
@@ -14,5 +15,3 @@
 @import url("/static/css/features/documents.css");
 @import url("/static/css/features/cookbook-and-models.css");
 @import url("/static/css/features/settings-and-admin.css");
-
-@import url("/static/css/utilities/helpers-and-overrides.css");

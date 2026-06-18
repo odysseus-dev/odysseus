@@ -520,6 +520,277 @@
   opacity: 0.7;
   color: var(--accent, var(--red));
 }
+
+/* Pass 2 parity backfill — cookbook/hwfit missing selectors */
+#cookbook-bg-status {
+  opacity: 0.75;
+}
+#cookbook-dl-tab-fold-body {
+  max-height: 999px;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+}
+#cookbook-dl-tab-fold-body.is-folded {
+  max-height: 0;
+}
+#cookbook-hf-latest-list .cookbook-hf-link {
+  text-decoration: none;
+}
+#cookbook-hf-latest-list .cookbook-hf-link:hover {
+  text-decoration: underline;
+}
+#cookbook-modal .hwfit-cached-list {
+  margin-top: 6px;
+}
+
+.cookbook-diagnosis code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cookbook-dl-repo.cookbook-dl-flash {
+  animation: cookbook-task-flash-anim 1.6s ease-out;
+}
+.cookbook-task-flash {
+  animation: cookbook-task-flash-anim 1.6s ease-out;
+}
+@keyframes cookbook-task-flash-anim {
+  0% { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
+
+.cookbook-group[data-backend-group="Running"] > [class*="cookbook-server-section-"] + [class*="cookbook-server-section-"] {
+  margin-top: 8px;
+}
+.cookbook-group[data-backend-group="Serve"] > .admin-card {
+  margin-top: 8px;
+}
+.cookbook-group[data-backend-group="Serve"] > .admin-card > .hwfit-cached-list {
+  margin-top: 8px;
+}
+.cookbook-group[data-backend-group="Serve"] > .admin-card > .hwfit-cached-list .doclib-card.doclib-card-expanded {
+  border-color: color-mix(in srgb, var(--accent, var(--red)) 40%, var(--border));
+}
+
+.cookbook-serve-downloading-pill {
+  opacity: 0.85;
+}
+.cookbook-serve-downloading-pill.is-stalled {
+  color: var(--warn);
+}
+.cookbook-serve-running-pill.is-clickable {
+  cursor: pointer;
+}
+.cookbook-serve-running-pill.is-clickable:hover {
+  filter: brightness(1.08);
+}
+
+.hwfit-hw-visibility-warning {
+  margin-top: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.hwfit-hw-visibility-warning-title { font-weight: 600; }
+.hwfit-hw-visibility-warning-body { opacity: 0.8; }
+.hwfit-hw-visibility-warning-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.hwfit-serve-launch-group {
+  display: inline-flex;
+  align-items: stretch;
+  vertical-align: middle;
+}
+.hwfit-serve-launch-group .hwfit-serve-launch {
+  border-top-right-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  margin-right: 0 !important;
+}
+.hwfit-serve-launch-group .hwfit-serve-schedule-arrow {
+  border-top-left-radius: 0 !important;
+  border-bottom-left-radius: 0 !important;
+  border-left: 1px solid var(--border) !important;
+  padding: 0 8px !important;
+  min-width: 26px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+.hwfit-serve-cancel > svg { opacity: 0.9; }
+
+.hwfit-schedule-form {
+  margin: 10px 0 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hwfit-schedule-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.95;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-title svg { opacity: 0.7; flex-shrink: 0; }
+.hwfit-schedule-title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hwfit-schedule-title-spacer { flex: 1; min-width: 8px; }
+.hwfit-schedule-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.hwfit-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-schedule-field input[type="time"] {
+  font: inherit;
+  min-width: 90px;
+}
+.hwfit-schedule-label {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.hwfit-sched-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.hwfit-schedule-days-field { margin-left: auto; }
+.hwfit-schedule-actions-inline {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 6px;
+  align-self: flex-end;
+  padding-bottom: 1px;
+}
+.hwfit-sched-day-chip {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.hwfit-sched-day-chip:hover { border-color: var(--accent, var(--red)); }
+.hwfit-sched-day-chip.is-on {
+  background: var(--accent, var(--red));
+  color: var(--panel, #fff);
+  border-color: var(--accent, var(--red));
+}
+.hwfit-schedule-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.hwfit-schedule-actions-spacer { flex: 1; }
+.hwfit-schedule-days-row {
+  align-items: center;
+}
+.hwfit-sched-save {
+  display: inline-flex !important;
+  align-items: center;
+}
+.hwfit-schedule-mirror-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  opacity: 0.9;
+  cursor: pointer;
+  user-select: none;
+}
+.hwfit-schedule-mirror-label { white-space: nowrap; }
+.hwfit-schedule-mirror-switch { transform: scale(0.85); transform-origin: left center; }
+.hwfit-sched-err {
+  font-size: 12px;
+  color: var(--red, #ff6b6b);
+  display: none;
+}
+.hwfit-sched-err.is-visible { display: block; }
+
+.hwfit-serve-row-core {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hwfit-serve-row .cookbook-serve-slots {
+  min-width: 88px;
+}
+.hwfit-serve-row label:has(> .cookbook-serve-slots) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hwfit-spec-tokens-bare {
+  min-width: 74px;
+}
+.hwfit-spec-tokens-bare::-webkit-inner-spin-button {
+  opacity: 1;
+}
+.hwfit-toolbar .hwfit-engine {
+  min-width: 110px;
+}
+
+details.hwfit-serve-advanced {
+  border-top: 1px dashed var(--border);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary {
+  cursor: pointer;
+  list-style: none;
+}
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary::after {
+  content: '\25BE';
+  margin-left: 6px;
+  font-size: 10px;
+}
+details.hwfit-serve-advanced:not([open]) > summary.hwfit-serve-advanced-summary::after {
+  content: '\25B8';
+}
+details.hwfit-serve-advanced > summary.hwfit-serve-advanced-summary:hover {
+  opacity: 0.92;
+}
+details.hwfit-serve-advanced[open] > summary.hwfit-serve-advanced-summary {
+  margin-bottom: 8px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row {
+  margin-top: 6px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-row label input {
+  margin-right: 6px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-checks {
+  margin-top: 6px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
+  margin-bottom: 2px;
+}
+details.hwfit-serve-advanced > .hwfit-serve-extra {
+  margin-top: 8px;
+}
 .cookbook-gpu-group {
   display: flex;
   gap: 2px;

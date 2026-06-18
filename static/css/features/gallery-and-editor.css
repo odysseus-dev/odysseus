@@ -868,6 +868,9 @@
 .doc-md-toolbar button:hover {
   opacity: 1;
 }
+.doc-md-toolbar button svg[style*="opacity"] {
+  opacity: 0.8;
+}
 .doc-md-toolbar button:active {
   opacity: 0.6;
 }

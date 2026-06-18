@@ -808,6 +808,13 @@ body.notes-drag-mode .note-card-pin svg {
   padding: 8px;
   display: flex;
   flex-direction: column;
+.note-card-flash {
+  animation: note-card-flash-anim 1.6s ease-out;
+}
+@keyframes note-card-flash-anim {
+  0%   { box-shadow: 0 0 0 2px var(--accent, var(--red)); }
+  100% { box-shadow: 0 0 0 2px transparent; }
+}
   gap: 6px;
   scrollbar-width: thin;
 }

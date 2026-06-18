@@ -1,148 +1,26 @@
-/* #region Slash Command Responses */
-.msg.msg-system {
-	padding: 6px 12px;
-	margin: 4px auto 4px 8px;
-	max-width: 85%;
-	background: none;
-	border-left: 2px solid var(--border);
-}
-.msg.msg-system .body { padding: 0; }
-.msg.msg-system pre { margin: 4px 0; white-space: pre-wrap; font-size: 0.85em; }
-.msg.stream-done-toast {
-	cursor: pointer;
-	border-left-color: var(--accent, var(--border));
-	border-radius: 6px;
-	background: color-mix(in srgb, var(--accent) 6%, transparent);
-	transition: background 0.15s;
-}
-.msg.stream-done-toast:hover {
-	background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.msg.stream-done-toast .body {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-.stream-done-indicator {
-	font-family: monospace;
-	font-size: 1.1em;
-	line-height: 1;
-	color: var(--accent);
-	flex-shrink: 0;
-	animation: bar-pulse 1.2s ease-in-out infinite;
-}
-@keyframes bar-pulse {
-	0%, 100% { opacity: 0.4; }
-	50% { opacity: 1; }
-}
-/* #endregion Slash Command Responses */
-
 /* #region Agent Thread Timeline */
-.msg.msg-tool {
-	display: none; /* legacy — hidden, replaced by agent-thread */
-}
-.msg.msg-continuation {
-	margin-top: 2px;
-}
-
-.agent-thread {
-	position: relative;
-	margin: 2px 0 2px 28px;
-	padding: 4px 0 4px 22px;
-	max-width: calc(85% - 20px);
-	box-sizing: border-box;
-}
-.agent-thread::before {
-	content: '';
-	position: absolute;
-	left: 5px;
-	top: 14px;
-	bottom: 14px;
-	width: 2px;
-	background: color-mix(in srgb, var(--red) 18%, transparent);
-	border-radius: 1px;
-}
-/* Extend line to connect to chat bubble above/below */
-.agent-thread.has-top::before {
-	top: -6.5px;
-}
-.agent-thread.has-bottom::before {
-	bottom: -5px;
-}
-/* Terminating dot at bottom when no bubble below and last node is expanded */
-.agent-thread:not(.has-bottom) .agent-thread-node.open:last-child::after {
-	content: '';
-	position: absolute;
-	/* -17px (was -15) nudges the terminating dot 2px further left so it
-		 sits flush with the thread's left rail when the search node is
-		 expanded. This is the "big glow dot at the bottom" the user sees
-		 after a web_search step. */
-	left: -17px;
-	bottom: 5px;
-	width: 6px;
-	height: 6px;
-	border-radius: 50%;
-	background: var(--red);
-	box-shadow: 0 0 4px 1px color-mix(in srgb, var(--red) 55%, transparent),
-							0 0 0 3px color-mix(in srgb, var(--red) 18%, transparent);
-}
-
-/* Synapse pulse — a bright dot traveling down the line */
-.agent-thread::after {
-	content: '';
-	position: absolute;
-	left: 4px;
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	background: var(--red);
-	box-shadow: 0 0 3px 1px color-mix(in srgb, var(--red) 50%, transparent);
-	pointer-events: none;
-	top: 0%;
-	opacity: 0;
-}
-.agent-thread.streaming::after {
-	animation: synapse-capped-short 0.8s ease-in-out infinite;
-}
-.agent-thread.streaming.has-top::after {
-	animation: synapse-capped 0.8s ease-in-out infinite;
-}
-.agent-thread.streaming.has-bottom::after {
-	animation: synapse-travel-short 0.8s ease-in-out infinite;
-}
-.agent-thread.streaming.has-top.has-bottom::after {
-	animation: synapse-travel 0.8s ease-in-out infinite;
-}
-@keyframes synapse-travel {
-	0% { top: 0%; opacity: 0; }
-	5% { opacity: 0.5; }
-	85% { opacity: 0.35; }
-	100% { top: 100%; opacity: 0; }
-}
-@keyframes synapse-capped {
-	0% { top: 0%; opacity: 0; }
-	5% { opacity: 0.5; }
-	70% { opacity: 0.35; top: calc(100% - 20px); }
-	100% { opacity: 0; top: calc(100% - 20px); }
-}
-@keyframes synapse-travel-short {
-	0% { top: 14px; opacity: 0; }
-	5% { opacity: 0.5; }
-	85% { opacity: 0.35; }
-	100% { top: 100%; opacity: 0; }
-}
-@keyframes synapse-capped-short {
-	0% { top: 14px; opacity: 0; }
-	5% { opacity: 0.5; }
-	70% { opacity: 0.35; top: calc(100% - 20px); }
-	100% { opacity: 0; top: calc(100% - 20px); }
-}
 .agent-thread-node {
 	position: relative;
 	padding: 5px 0;
 }
 .agent-thread-node + .agent-thread-node {
 	margin-top: 2px;
+}
+/* Supervisor ladder cards — same chrome as tool cards but tinted so the
+	 user can tell at a glance "this is the agent recovering" vs "this is
+	 the agent doing work". Stop rung gets the red accent. */
+.agent-thread-node.supervisor-step .agent-thread-tool {
+	color: color-mix(in srgb, var(--accent, #c08a3e) 80%, var(--fg));
+	font-style: italic;
+}
+.agent-thread-node.supervisor-step .agent-thread-dot {
+	background: color-mix(in srgb, var(--accent, #c08a3e) 60%, transparent);
+}
+.agent-thread-node.supervisor-step[data-rung="stop"] .agent-thread-tool {
+	color: var(--red, #d65a5a);
+}
+.agent-thread-node.supervisor-step[data-rung="stop"] .agent-thread-dot {
+	background: color-mix(in srgb, var(--red, #d65a5a) 60%, transparent);
 }
 .agent-thread-dot {
 	position: absolute;
@@ -176,8 +54,6 @@
 	font-size: 0.85em;
 	color: color-mix(in srgb, var(--fg) 70%, transparent);
 	user-select: none;
-/* ===== SLASH COMMAND RESPONSES ===== */
-/* #region Slash Command Responses */
 }
 .agent-thread-header:hover {
 	color: var(--fg);
@@ -195,8 +71,8 @@
 	text-transform: uppercase;
 	letter-spacing: 0.3px;
 	font-size: 0.9em;
-/* ===== AGENT THREAD TIMELINE ===== */
-/* #region Agent Thread Timeline */
+}
+
 .agent-thread-status {
 	font-size: 0.85em;
 	opacity: 0.5;
@@ -256,7 +132,6 @@
 	border: 1px solid var(--border);
 }
 .agent-thread-content {
-/* ===== PANE STYLES (shared by compare) ===== */
 	display: none;
 	padding: 4px 0 2px 0;
 	overflow-x: auto;
@@ -270,6 +145,12 @@
 	border: 1px solid var(--border);
 	border-radius: 6px;
 	padding: 8px 12px;
+.thinking-header > div:last-child {
+	margin-left: auto;
+}
+.thinking-header > .token-new {
+	margin-left: 6px;
+}
 	margin: 4px 0;
 	color: var(--fg);
 	font-size: 0.85em;
@@ -277,7 +158,6 @@
 	word-break: break-word;
 	line-height: 1.4;
 	overflow-x: auto;
-/* RESEARCH DETAILS EXPANDABLE SECTION - UPDATED */
 }
 
 /* Mobile: constrain thread content */
@@ -287,7 +167,6 @@
 		padding-left: 18px;
 		max-width: calc(90% - 16px);
 	}
-/* CUSTOM SYNTAX HIGHLIGHTING - Theme-Reactive  */
 	.agent-thread-cmd {
 		font-size: 0.78em;
 		padding: 6px 8px;
