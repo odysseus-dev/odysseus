@@ -49,6 +49,7 @@
     "skillInjectDesc": "Legt fest, wie viele relevante veröffentlichte oder genehmigte Fähigkeiten zu jeder Agenten-Anfrage hinzugefügt werden.",
     "maxSkillsPerRequest": "Max. Fähigkeiten pro Anfrage",
     "disableSkillInject": "Auf 0 setzen, um die Fähigkeits-Einbindung zu deaktivieren.",
+    "auditThresholdDesc": "Alle prüfen veröffentlicht bestandene, notwendige Fähigkeiten ab oder oberhalb dieser Konfidenz. Aus = Prüfergebnisse bleiben als Entwürfe, es sei denn, manuell genehmigt.",
     "minConfidence": "Mindest-Konfidenz",
     "importFileDesc": "Importiere eine .txt-, .md-, .pdf-, .csv-, .log-, .json-, .py-, .js- oder .html-Datei – die KI liest sie und schlägt Erinnerungen vor, die du freigeben kannst."
   },
