@@ -2510,17 +2510,25 @@ export function addMessage(role, content, modelName, metadata) {
       const timedOut = metadata.timed_out ||
         metadata.stop_reason === 'idle_timeout' ||
         metadata.stop_reason === 'wall_clock_timeout';
+      const lostAfterRestart = metadata.run_status === 'lost_after_restart' ||
+        metadata.stop_reason === 'server_restart';
+      const runFailed = metadata.run_status === 'error' ||
+        metadata.stop_reason === 'error';
       // Differentiate between "stopped mid-stream" (had content, can continue)
       // and "cancelled before any content" — the latter has no Continue affordance.
       stoppedLabel.textContent = timedOut
         ? '[Agent stopped after timeout]'
+        : lostAfterRestart
+        ? '[Agent stopped after server restart]'
+        : runFailed
+        ? '[Agent run failed]'
         : metadata.cancelled
         ? '[Cancelled by user]'
         : '[Message interrupted]';
       stoppedIndicator.appendChild(stoppedLabel);
       // Continue button only makes sense when there's partial content to
-      // resume from - skip it for fully-cancelled/timeout (empty) turns.
-      if (!metadata.cancelled && !timedOut) {
+      // resume from - skip it for fully-cancelled/timeout/lost/failed turns.
+      if (!metadata.cancelled && !timedOut && !lostAfterRestart && !runFailed) {
         const continueBtn = document.createElement('button');
         continueBtn.className = 'continue-btn';
         continueBtn.title = 'Continue';

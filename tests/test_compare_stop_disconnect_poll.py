@@ -445,4 +445,19 @@ def test_timeout_stopped_bubble_does_not_offer_continue():
     assert "metadata.stop_reason === 'idle_timeout'" in src
     assert "metadata.stop_reason === 'wall_clock_timeout'" in src
     assert "[Agent stopped after timeout]" in src
-    assert "if (!metadata.cancelled && !timedOut)" in src
+    assert "if (!metadata.cancelled && !timedOut && !lostAfterRestart && !runFailed)" in src
+
+
+def test_durable_terminal_run_status_renders_on_session_reload():
+    sessions = (Path(__file__).resolve().parents[1] / "static" / "js" / "sessions.js").read_text(encoding="utf-8")
+    renderer = (Path(__file__).resolve().parents[1] / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+
+    assert "_renderDurableTerminalRun(sessionId, info)" in sessions
+    assert "if (info.status !== 'streaming')" in sessions
+    assert "_hasAssistantAfterLastUser()" in sessions
+    assert "durable_run_id" in sessions
+    assert "chatRenderer.addMessage('assistant', '', model, metadata)" in sessions
+    assert "metadata.run_status === 'lost_after_restart'" in renderer
+    assert "[Agent stopped after server restart]" in renderer
+    assert "[Agent run failed]" in renderer
+    assert "!lostAfterRestart && !runFailed" in renderer

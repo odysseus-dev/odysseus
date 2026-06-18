@@ -52,6 +52,7 @@ async function _cleanupIncognitoSessions() {
 const _researchingSessions = new Set();
 const _streamingSessions = new Set();   // Background chat streams (not polled against research API)
 const _completedSessions = new Set();   // Sessions with completed background streams
+const _renderedDurableRunIds = new Set();
 let _researchPollTimer = null;
 
 // Session list keyboard navigation state
@@ -2156,7 +2157,10 @@ async function _checkServerStream(sessionId) {
     const res = await fetch(`${API_BASE}/api/chat/stream_status/${sessionId}`);
     if (!res.ok) return; // 404 = no active stream
     const info = await res.json();
-    if (info.status !== 'streaming') return;
+    if (info.status !== 'streaming') {
+      _renderDurableTerminalRun(sessionId, info);
+      return;
+    }
 
     // Skip if this is a research stream — research has its own progress UI
     if (info.mode === 'research' || info.is_research) return;
@@ -2224,6 +2228,54 @@ async function _checkServerStream(sessionId) {
   } catch (_) {
     // No stream active — nothing to do
   }
+}
+
+function _hasAssistantAfterLastUser() {
+  const box = document.getElementById('chat-history');
+  if (!box) return false;
+  const messages = Array.from(box.querySelectorAll(':scope > .msg'));
+  let lastUserIdx = -1;
+  messages.forEach((msg, idx) => {
+    if (msg.classList.contains('msg-user')) lastUserIdx = idx;
+  });
+  if (lastUserIdx < 0) return messages.some(msg => msg.classList.contains('msg-ai'));
+  return messages.slice(lastUserIdx + 1).some(msg => msg.classList.contains('msg-ai'));
+}
+
+function _durableTerminalMetadata(info) {
+  const run = (info && info.run) || {};
+  const status = String(info?.status || run.status || '').trim();
+  const reason = String(run.stop_reason || status || 'stopped').trim();
+  const timedOut = reason === 'idle_timeout' || reason === 'wall_clock_timeout';
+  return {
+    stopped: true,
+    cancelled: false,
+    timed_out: timedOut,
+    stop_reason: reason,
+    run_status: status,
+    model: run.model || run.requested_model || undefined,
+    requested_model: run.requested_model || run.model || undefined,
+    durable_run_id: run.id || undefined,
+    durable_run: true,
+  };
+}
+
+function _renderDurableTerminalRun(sessionId, info) {
+  const run = (info && info.run) || {};
+  const status = String(info?.status || run.status || '').trim();
+  if (!status || status === 'done' || status === 'running' || status === 'streaming') return;
+  if (getCurrentSessionId() !== sessionId) return;
+  if (_hasAssistantAfterLastUser()) return;
+
+  const runKey = run.id || `${sessionId}:${status}:${run.updated_at || run.finished_at || ''}`;
+  if (_renderedDurableRunIds.has(runKey)) return;
+  _renderedDurableRunIds.add(runKey);
+
+  const metadata = _durableTerminalMetadata(info);
+  const model = metadata.model || metadata.requested_model || null;
+  const wrap = chatRenderer.addMessage('assistant', '', model, metadata);
+  if (wrap && run.id) wrap.dataset.agentRunId = run.id;
+  uiModule.scrollHistory();
 }
 
 export function clearStreamComplete(sessionId) {
