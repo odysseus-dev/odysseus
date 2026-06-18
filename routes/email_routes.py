@@ -3357,7 +3357,17 @@ def setup_email_routes():
                 else:
                     smtp = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
                     if smtp_security == "starttls":
-                        smtp.starttls()
+                        try:
+                            smtp.starttls()
+                        except Exception:
+                            # A rejected STARTTLS otherwise leaks the open socket
+                            # (only smtp.login below is in a quit() finally). SMTP
+                            # has no shutdown(); close() is the socket close. (#3174)
+                            try:
+                                smtp.close()
+                            except Exception:
+                                pass
+                            raise
                 try:
                     smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}
