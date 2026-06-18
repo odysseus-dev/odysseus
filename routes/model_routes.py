@@ -5,6 +5,7 @@ import re
 import uuid
 import json
 import hashlib
+import ipaddress
 import socket
 import time as _time
 import logging
@@ -26,7 +27,7 @@ from src.endpoint_resolver import (
     build_models_url,
     build_headers,
 )
-from src.auth_helpers import _auth_disabled, owner_filter
+from src.auth_helpers import _auth_disabled, effective_user, owner_filter
 
 logger = logging.getLogger(__name__)
 
@@ -562,6 +563,8 @@ def _safe_build_models_url(base_url: str) -> str:
     """Build a /models URL without letting optional provider imports break probes."""
     try:
         return build_models_url(base_url)
+    except ValueError:
+        raise
     except Exception as exc:
         logger.debug("Model URL detection failed for %s: %s", base_url, exc)
         return f"{(base_url or '').rstrip('/')}/models"
@@ -633,7 +636,7 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
 
     try:
         t0 = _time.time()
-        r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
+        r = httpx.post(target_url, headers=h, json=payload, timeout=timeout, verify=llm_verify())
         latency = round((_time.time() - t0) * 1000)
         if r.is_success:
             return {"status": "ok", "latency_ms": latency}
@@ -659,13 +662,20 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
 
 # Hostnames / IP prefixes that indicate a local endpoint
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
-_PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
-                     "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
-                     "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
-                     "172.30.", "172.31.", "192.168.")
+_PRIVATE_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+_TAILSCALE_CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
-_TAILSCALE_RE = re.compile(r"^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.")
+def _local_ip_literal(host: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in _PRIVATE_NETWORKS) or ip in _TAILSCALE_CGNAT
 
 
 def _classify_endpoint(base_url: str, endpoint_kind: str = "auto") -> str:
@@ -679,9 +689,7 @@ def _classify_endpoint(base_url: str, endpoint_kind: str = "auto") -> str:
         return "api"
     try:
         host = urlparse(base_url).hostname or ""
-        if host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES):
-            return "local"
-        if _TAILSCALE_RE.match(host):
+        if host in _LOCAL_HOSTS or _local_ip_literal(host):
             return "local"
     except Exception:
         pass
@@ -1255,13 +1263,16 @@ def setup_model_routes(model_discovery):
         # Require auth; "" is the unconfigured single-user mode, treated as
         # "see everything" by _fetch_models.
         try:
-            from src.auth_helpers import get_current_user as _gcu
-            owner = _gcu(request) or ""
-        except Exception:
-            owner = ""
-        # Reject anonymous in configured deployments — no leaking the model
-        # list to unauthenticated callers.
-        try:
+            if getattr(request.state, "api_token", False):
+                scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+                if "chat" not in scopes:
+                    raise HTTPException(403, "API token is not scoped for chat")
+                if not getattr(request.state, "api_token_owner", None):
+                    raise HTTPException(403, "API token has no owner")
+            owner = effective_user(request) or ""
+
+            # Reject anonymous in configured deployments — no leaking the model
+            # list to unauthenticated callers.
             auth_mgr = getattr(request.app.state, "auth_manager", None)
             if not owner and not _auth_disabled() and auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
                 raise HTTPException(401, "Not authenticated")

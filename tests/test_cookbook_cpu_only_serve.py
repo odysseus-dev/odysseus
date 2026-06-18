@@ -38,11 +38,14 @@ def test_diffusers_is_not_blocked_on_windows_dependencies_panel():
     assert "new Set(['diffusers'" not in text
 
 
-def test_diffusers_is_available_on_windows_serve_panel():
+def test_diffusers_is_available_only_on_local_windows_serve_panel():
     text = SERVE_SRC.read_text(encoding="utf-8")
 
-    assert "? ['llamacpp', 'diffusers']" in text
-    assert "? [['llamacpp','llama.cpp'],['diffusers','Diffusers']]" in text
+    assert "function _remoteWindowsDiffusersUnsupported(target)" in text
+    assert "return !!(target?.host && target?.platform === 'windows');" in text
+    assert "if (_remoteWindowsDiffusersUnsupported(target)) return [['llamacpp','llama.cpp']];" in text
+    assert "return [['llamacpp','llama.cpp'],['diffusers','Diffusers']];" in text
+    assert "Diffusers serving is not supported on remote Windows servers yet." in text
 
 
 def test_windows_diffusers_uses_python_not_python3():

@@ -15,6 +15,7 @@ from collections import namedtuple
 from pathlib import Path
 from typing import Dict, Any
 from core.platform_compat import IS_APPLE_SILICON, which_tool
+from core.middleware import INTERNAL_TOOL_USER
 from src.optional_deps import prepare_optional_dependency_import
 
 # POSIX-only: `pty`/`fcntl` transitively import `termios`, which does NOT exist
@@ -55,7 +56,7 @@ def _require_admin(request: Request):
     # In-process tool loopback. The AuthMiddleware already validated the
     # internal token + loopback client before setting this marker, so
     # honour it here as admin-equivalent.
-    if user == "internal-tool":
+    if user == INTERNAL_TOOL_USER:
         return
     if not user or user == "api":
         raise HTTPException(403, "Admin only")
