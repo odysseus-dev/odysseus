@@ -3001,20 +3001,18 @@ async def do_list_served_models(content: str, owner: Optional[str] = None) -> Di
 
 async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
                                  ssh_port: str = "", verb: str = "Stopped") -> Dict:
-    """Kill a cookbook tmux session — remote-aware — AND mark the task
-    stopped in cookbook_state.json. Shared by stop_served_model and
-    cancel_download so both behave identically.
+    """Stop a cookbook session (download or serve) and mark it stopped in state.
 
-    Resolves the task's remote host from state when not passed in. A
-    local-only `tmux kill-session` silently no-ops for remote tasks —
-    that's the bug where "stop the download" appeared to work but the
-    download kept running on the remote host.
+    Delegates to POST /api/cookbook/stop-session so local Windows detached
+    downloads, remote hosts, and tmux-backed POSIX sessions all use the same
+    server-side kill logic as the UI Stop button.
     """
     import httpx
-    import shlex
     headers = _internal_headers()
     remote = remote_host or ""
     sport = ssh_port or ""
+    platform = ""
+    repo_id = ""
 
     # Look up the task's host + confirm it exists in state.
     state: Dict[str, Any] = {}
@@ -3034,6 +3032,9 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
                 remote = t.get("remoteHost") or ""
             if not sport:
                 sport = t.get("sshPort") or ""
+            platform = t.get("platform") or ""
+            payload = t.get("payload") if isinstance(t.get("payload"), dict) else {}
+            repo_id = payload.get("repo_id") or ""
             break
 
     if remote:
@@ -3041,35 +3042,37 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             remote, sport = _validate_cookbook_ssh_target(remote, sport)
         except HTTPException as e:
             return {"error": str(getattr(e, "detail", e)), "exit_code": 1}
-        _pf = f"-p {shlex.quote(str(sport))} " if sport and str(sport) != "22" else ""
-        cmd = (
-            f"ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "
-            f"{_pf}{shlex.quote(remote)} 'tmux kill-session -t {shlex.quote(session_id)}'"
-        )
-        target_label = f"{session_id} on {remote}"
-    else:
-        cmd = f"tmux kill-session -t {shlex.quote(session_id)}"
-        target_label = session_id
+
+    if not platform and not remote:
+        platform = state.get("serverPlatform") or ""
+
+    target_label = f"{session_id} on {remote}" if remote else session_id
+    body: Dict[str, Any] = {
+        "session_id": session_id,
+        "remote_host": remote,
+        "ssh_port": sport,
+        "platform": platform,
+    }
+    if repo_id:
+        body["repo_id"] = repo_id
 
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(f"{_INTERNAL_BASE}/api/shell/exec",
-                                     json={"command": cmd}, headers=headers)
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                f"{_INTERNAL_BASE}/api/cookbook/stop-session",
+                json=body,
+                headers=headers,
+            )
         if resp.status_code >= 400:
-            return {"error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
+            return {"error": f"stop-session returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
         try:
             data = resp.json()
         except Exception:
             data = {}
-        kill_failed = isinstance(data, dict) and data.get("exit_code") not in (None, 0)
-        kill_err = ((data.get("stderr") or data.get("error") or "").strip() if isinstance(data, dict) else "")
-        # "no server running" / "can't find session" means it was already
-        # gone — treat as success (the goal is "not running").
-        already_gone = any(s in kill_err.lower() for s in ("no server running", "can't find session", "session not found"))
-        if kill_failed and not already_gone:
-            return {"error": f"Failed to {verb.lower()} {target_label}: {kill_err or 'kill-session returned non-zero'}", "exit_code": 1}
+        if not isinstance(data, dict) or not data.get("ok"):
+            err = (data.get("error") or data.get("detail") or "stop-session failed") if isinstance(data, dict) else "stop-session failed"
+            return {"error": f"Failed to {verb.lower()} {target_label}: {err}", "exit_code": 1}
 
-        # Update state: mark stopped (so the UI + list reflect reality).
         if matched is not None:
             try:
                 matched["status"] = "stopped"
@@ -3079,8 +3082,7 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             except Exception as e:
                 logger.debug(f"failed to mark {session_id} stopped in state: {e}")
 
-        suffix = " (was already gone)" if already_gone else ""
-        return {"output": f"{verb} {target_label}{suffix}", "exit_code": 0}
+        return {"output": f"{verb} {target_label}", "exit_code": 0}
     except Exception as e:
         return {"error": str(e), "exit_code": 1}
 
