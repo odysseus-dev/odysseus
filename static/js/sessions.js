@@ -1693,6 +1693,8 @@ export async function selectSession(id, { keepSidebar = false } = {}) {
     if (window.chatModule && window.chatModule.checkPendingResearch) {
       window.chatModule.checkPendingResearch(id);
     }
+    // Check parent branch for updates (forked sessions)
+    _checkParentBranchStatus(id);
     // Restore group chat state if this is a group session
     if (window.groupModule && window.groupModule.restoreState && window.groupModule.restoreState(id)) {
       if (window._syncGroupIndicator) window._syncGroupIndicator(true);
@@ -2138,6 +2140,40 @@ function _updateRailNotifs() {
   }
   // Trigger rail sync so buttons become visible
   if (window._syncRailDynamic) window._syncRailDynamic();
+}
+
+/**
+ * Check whether this session is a fork and if the parent branch has new messages.
+ * Shows a dismissible banner in the chat header so the user knows context has changed.
+ */
+async function _checkParentBranchStatus(sessionId) {
+  try {
+    const BANNER_ID = 'branch-parent-banner';
+    // Remove any stale banner from a previous session
+    document.getElementById(BANNER_ID)?.remove();
+
+    const res = await fetch(`${API_BASE}/api/session/${sessionId}/branch-status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.has_parent || !data.parent_exists || data.new_messages_since_fork <= 0) return;
+
+    const chatHistory = document.getElementById('chat-history');
+    if (!chatHistory) return;
+
+    const banner = document.createElement('div');
+    banner.id = BANNER_ID;
+    banner.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 12px;margin-bottom:8px;background:var(--accent-subtle,rgba(99,179,237,0.12));border:1px solid var(--accent,#63b3ed);border-radius:8px;font-size:12px;color:var(--fg)';
+    banner.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;color:var(--accent,#63b3ed)"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+      <span style="flex:1"><strong>${data.new_messages_since_fork}</strong> new message${data.new_messages_since_fork > 1 ? 's' : ''} in parent branch <strong>${_escHtml(data.parent_name || data.parent_id)}</strong> since this fork — the AI is aware of them.</span>
+      <button onclick="document.getElementById('${BANNER_ID}')?.remove()" style="background:none;border:none;cursor:pointer;padding:0 2px;color:var(--fg-muted);font-size:14px;line-height:1" title="Dismiss">×</button>
+    `;
+    chatHistory.insertBefore(banner, chatHistory.firstChild);
+  } catch {}
+}
+
+function _escHtml(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 /**

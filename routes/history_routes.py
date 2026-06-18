@@ -497,6 +497,22 @@ def setup_history_routes(session_manager) -> APIRouter:
                 # edit/delete-by-id on the original conversation.
                 meta = dict(msg.metadata) if isinstance(msg.metadata, dict) else None
                 new_session.add_message(ChatMessage(msg.role, msg.content, meta))
+
+            # Store branch lineage: which parent session was forked and at what index
+            parent_msg_count = len(source.history)
+            db = SessionLocal()
+            try:
+                db_child = db.query(DbSession).filter(DbSession.id == new_id).first()
+                if db_child:
+                    db_child.parent_session_id = session_id
+                    db_child.fork_message_index = parent_msg_count
+                    db.commit()
+            except Exception as e:
+                logger.warning(f"Could not persist branch lineage for {new_id}: {e}")
+                db.rollback()
+            finally:
+                db.close()
+
             try:
                 from src.event_bus import fire_event
                 fire_event("session_created", getattr(source, 'owner', None))
@@ -508,12 +524,49 @@ def setup_history_routes(session_manager) -> APIRouter:
                 "id": new_id,
                 "name": fork_name,
                 "kept": len(msgs_to_copy),
+                "parent_session_id": session_id,
+                "fork_message_index": parent_msg_count,
             }
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Fork error {session_id}: {e}")
             raise HTTPException(500, str(e))
+
+    @router.get("/api/session/{session_id}/branch-status")
+    async def get_branch_status(request: Request, session_id: str):
+        """Return parent branch info and how many new messages the parent has since fork."""
+        _verify_session_owner(request, session_id)
+        db = SessionLocal()
+        try:
+            child = db.query(DbSession).filter(DbSession.id == session_id).first()
+            if not child:
+                raise HTTPException(404, "Session not found")
+
+            parent_id = getattr(child, "parent_session_id", None)
+            fork_index = getattr(child, "fork_message_index", None)
+
+            if not parent_id:
+                return {"has_parent": False}
+
+            parent = db.query(DbSession).filter(DbSession.id == parent_id).first()
+            if not parent:
+                return {"has_parent": True, "parent_id": parent_id, "parent_exists": False}
+
+            parent_msg_count = parent.message_count or 0
+            new_since_fork = max(0, parent_msg_count - (fork_index or 0))
+
+            return {
+                "has_parent": True,
+                "parent_id": parent_id,
+                "parent_name": parent.name,
+                "parent_exists": True,
+                "fork_message_index": fork_index,
+                "parent_message_count": parent_msg_count,
+                "new_messages_since_fork": new_since_fork,
+            }
+        finally:
+            db.close()
 
     @router.get("/api/conversations/topics")
     async def get_conversation_topics(request: Request) -> Dict[str, Any]:
