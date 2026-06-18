@@ -1,6 +1,6 @@
 # Security Policy
 
-Odysseus is a self-hosted AI workspace with privileged local capabilities. Please do not run it as a public, unauthenticated service.
+Vita Machina is a self-hosted AI workspace with privileged local capabilities. Please do not run it as a public, unauthenticated service.
 
 ## Supported Versions
 
@@ -10,18 +10,18 @@ Security fixes are handled on the default branch until formal releases are cut.
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment.
 - Keep `LOCALHOST_BYPASS=false` outside local development.
-- Set `SECURE_COOKIES=true` when Odysseus is served through HTTPS by a trusted reverse proxy or private access gateway.
+- Set `SECURE_COOKIES=true` when Vita Machina is served through HTTPS by a trusted reverse proxy or private access gateway.
 - Use HTTPS when exposing the app beyond localhost.
-- Put the authenticated Odysseus web/API entrypoint behind a trusted reverse proxy or private access layer such as Cloudflare Access, Tailscale, or a VPN.
+- Put the authenticated Vita Machina web/API entrypoint behind a trusted reverse proxy or private access layer such as Cloudflare Access, Tailscale, or a VPN.
 - Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only.
 - Protect `.env`, `data/`, `logs/`, uploads, generated media, backups, auth/session files, database files, API keys, and model/provider tokens.
 - Disable open signup unless you intentionally want new accounts.
 - Keep demo/test users non-admin, and remove them entirely on serious deployments.
 - Give admin accounts strong passwords and enable 2FA where possible.
 - Leave high-risk agent tools restricted to admins: shell, Python, file read/write, email send/read, MCP, app API, task/skill/memory management, settings, tokens, and model serving.
-- Rotate API keys, webhook secrets, and Odysseus API tokens if they appear in logs, screenshots, demos, or shared chats.
+- Rotate API keys, webhook secrets, and Vita Machina API tokens if they appear in logs, screenshots, demos, or shared chats.
 - Treat shell, model-serving, MCP, email, calendar, and vault features as privileged admin functionality.
-- Common internal-only ports are Odysseus `7000`, SearXNG `8080`, ntfy `8091`, ChromaDB `8100`, Ollama `11434`, and local model/provider APIs such as `8000-8020`.
+- Common internal-only ports are Vita Machina `7000`, SearXNG `8080`, ntfy `8091`, ChromaDB `8100`, Ollama `11434`, and local model/provider APIs such as `8000-8020`.
 
 ## Publishing A Fork
 

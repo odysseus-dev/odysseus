@@ -1,4 +1,4 @@
-// Odysseus UI — Initialization Scripts
+// Vita Machina UI — Initialization Scripts
 // ES6 module — extracted from index.html inline scripts
 
 import Storage from './storage.js';

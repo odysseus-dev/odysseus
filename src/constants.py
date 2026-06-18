@@ -111,7 +111,7 @@ DEFAULT_MAX_TOKENS = 0
 
 
 def internal_api_base() -> str:
-    """Base URL for in-process loopback calls to Odysseus's own API.
+    """Base URL for in-process loopback calls to Vita Machina's own API.
 
     Agent tools and background jobs reach admin-gated routes by calling the
     running server over HTTP. Resolution order:

@@ -69,7 +69,7 @@ PLIST
 # ── Launcher executable (placeholders filled below) ──
 cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<'LAUNCHER'
 #!/bin/bash
-# Odysseus.app — start the local server and open the UI in an app window.
+# Vita Machina.app — start the local server and open the UI in an app window.
 INSTALL_DIR="__INSTALL_DIR__"
 PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
@@ -78,13 +78,13 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
 LOG="$INSTALL_DIR/logs/vita-machina-app.log"
 
-notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Odysseus\"" >/dev/null 2>&1; }
+notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Vita Machina\"" >/dev/null 2>&1; }
 die_gui() {
-  /usr/bin/osascript -e "display dialog \"$1\" with title \"Odysseus\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
+  /usr/bin/osascript -e "display dialog \"$1\" with title \"Vita Machina\" buttons {\"OK\"} default button 1 with icon stop" >/dev/null 2>&1
   exit 1
 }
 
-[ -x "$UVICORN" ] || die_gui "Odysseus isn't set up yet. Open Terminal and run:
+[ -x "$UVICORN" ] || die_gui "Vita Machina isn't set up yet. Open Terminal and run:
 
 cd $INSTALL_DIR
 python3.11 -m venv venv

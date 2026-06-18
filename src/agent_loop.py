@@ -1,7 +1,7 @@
 """
 agent_loop.py
 
-Streaming agent loop for odysseus-ui.
+Streaming agent loop for vita-machina-ui.
 Wraps stream_llm() with multi-round tool execution.
 The LLM decides when to use tools by writing fenced code blocks.
 """
@@ -137,7 +137,7 @@ _API_AGENT_RULES = """\
 - Plain "list/show/check my inbox/emails" means latest inbox mail, including read messages. Do not set `unread_only: true` unless the user explicitly asks for unread/needs attention.
 - Multiple email accounts: if tool output says "Other accounts" or the user asks "my Gmail?", "other inbox?", "work mail?", "custom domain mail?", or names any mailbox/account, DO NOT answer from memory or infer it is the same inbox. Call `list_email_accounts` if needed, then call `list_emails`/`read_email`/`bulk_email` with the exact `account` value for that mailbox. Account names are user-defined labels; if the user typo-matches a known account, use the closest listed account instead of claiming it does not exist. NEVER use `app_api` or `/api/email/accounts` to discover email accounts; that route is owner-filtered in tool context and can falsely return empty.
 - User identity facts/preferences ("my name is <name>", "I live in <place>", "I prefer concise replies", "call me <name>") → use `manage_memory` with action=add. NEVER use `manage_contact` for facts about the user unless the user explicitly says to create/update a contact and provides contact details such as an email or phone.
-- You are running INSIDE Odysseus — there is no OpenWebUI, ChatGPT, or external chat backend to query. All chats/sessions live in THIS app and are accessed via `list_sessions` (or `manage_session` with `action=list`), and deleted via `manage_session` with `action=delete`. Do NOT shell out to find sqlite files, curl localhost:8080, or grep for routers — those don't exist here. If `list_sessions` returns rows, that IS the source of truth.
+- You are running INSIDE Vita Machina — there is no OpenWebUI, ChatGPT, or external chat backend to query. All chats/sessions live in THIS app and are accessed via `list_sessions` (or `manage_session` with `action=list`), and deleted via `manage_session` with `action=delete`. Do NOT shell out to find sqlite files, curl localhost:8080, or grep for routers — those don't exist here. If `list_sessions` returns rows, that IS the source of truth.
 - After `list_sessions`, preserve the returned `[Chat title](#session-<id>)` links in your user-facing reply. Do not rewrite chat lists as plain tables with non-clickable titles.
 - "Cookbook" = the LLM-serving subsystem (NOT chat sessions, NOT a recipe app). Routing:
   • "What's running" / "what's serving" / "show my cookbook" / "is anything up" → **first action MUST be `list_served_models` (no args)**. The tool is ALWAYS available. Do not run `ps aux`, do not `curl localhost:8000`, do not `which vllm`. Even if you don't remember seeing the tool listed, it IS available — call it. The output IS the source of truth (it tracks diffusion models, vLLM, SGLang, llama.cpp, Ollama, etc. — anything spawned via the cookbook, including remote hosts that `ps aux` here can't see).
@@ -250,7 +250,7 @@ _DOMAIN_RULES = {
 - Tool toggles like "turn off shell/search/research" use `ui_control toggle <name> <on|off>`, not memory.""",
     "sessions": """\
 ## Chat/session rules
-- Odysseus chats are sessions. Use `list_sessions`/`manage_session`; do not shell out looking for chat files.
+- Vita Machina chats are sessions. Use `list_sessions`/`manage_session`; do not shell out looking for chat files.
 - Preserve clickable session links from tool output in your final answer.""",
     "files": """\
 ## File rules
@@ -307,7 +307,7 @@ For LONG-running commands (package installs, pip/npm, ffmpeg, model downloads, t
 #!bg
 pip install openai-whisper
 ```
-SANDBOX LIMITS: stdin/stdout are pipes, so there is NO interactive terminal — `input()`, `curses`, `termios`, `pygame`, and `tkinter` will all fail. Don't try to RUN interactive terminal games or GUI apps here — verify syntax (`python -c "import py_compile; py_compile.compile('x.py')"`) and tell the user to run it themselves in their own terminal. For anything the USER should play/use interactively (games, UIs, demos), prefer a single self-contained HTML file with `<canvas>` + inline JS — save it via `create_document` with language="html" and tell the user to hit the Run / Preview button (▶) in the document editor toolbar; it renders inline in a sandboxed iframe so the game is playable right there. Works from any machine that can reach the Odysseus UI — no need to copy files out.
+SANDBOX LIMITS: stdin/stdout are pipes, so there is NO interactive terminal — `input()`, `curses`, `termios`, `pygame`, and `tkinter` will all fail. Don't try to RUN interactive terminal games or GUI apps here — verify syntax (`python -c "import py_compile; py_compile.compile('x.py')"`) and tell the user to run it themselves in their own terminal. For anything the USER should play/use interactively (games, UIs, demos), prefer a single self-contained HTML file with `<canvas>` + inline JS — save it via `create_document` with language="html" and tell the user to hit the Run / Preview button (▶) in the document editor toolbar; it renders inline in a sandboxed iframe so the game is playable right there. Works from any machine that can reach the Vita Machina UI — no need to copy files out.
 NEVER pipe multi-line Python through `python -c "..."` — shell quoting eats real newlines and `\\n` arrives as literal backslash-n, which Python parses as a line-continuation error on line 1. To run multi-line code, either use the dedicated `python` tool block above, or save to a file first with a quoted HEREDOC (`cat > /tmp/x.py << 'EOF' ... EOF`) and then `python /tmp/x.py`.""",
 
     "python": """\
@@ -487,7 +487,7 @@ If the user asks for a reminder/alarm before the event, pass `reminder_minutes` 
 ```app_api
 {"action": "call", "method": "GET", "path": "/api/cookbook/gpus"}
 ```
-GENERIC LOOPBACK to allowed Odysseus internal endpoints. Use this whenever the user wants something the UI can do but there's NO named tool for it. Many UI buttons hit /api/* endpoints — you can hit allowed ones. Auth is handled automatically.
+GENERIC LOOPBACK to allowed Vita Machina internal endpoints. Use this whenever the user wants something the UI can do but there's NO named tool for it. Many UI buttons hit /api/* endpoints — you can hit allowed ones. Auth is handled automatically.
 
 **Discovery first.** If you're not sure of the path, call `{"action":"endpoints","filter":"<keyword>"}` (e.g. filter='calendar' or 'gallery' or 'theme') to list available endpoints with their methods + summaries. Then call with action='call'.
 

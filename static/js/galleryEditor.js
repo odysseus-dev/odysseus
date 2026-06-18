@@ -3189,7 +3189,7 @@ function _openCookbookForDependency(pkgName) {
   tryHighlight();
 }
 
-// Async check whether `rembg` is installed on the Odysseus server.
+// Async check whether `rembg` is installed on the Vita Machina server.
 // Toggles the "install rembg" notice + the Bg Remove run button. The
 // `/api/cookbook/packages` endpoint is cheap (importlib calls only).
 async function _checkRembgInstalled() {

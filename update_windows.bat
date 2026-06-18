@@ -1,11 +1,11 @@
 @echo off
 setlocal
-title Update Odysseus Docker Deployment
+title Update Vita Machina Docker Deployment
 
 pushd "%~dp0" >nul
 
 echo =========================================
-echo Updating Odysseus Docker deployment
+echo Updating Vita Machina Docker deployment
 echo =========================================
 echo.
 

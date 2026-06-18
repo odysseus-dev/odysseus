@@ -1,10 +1,10 @@
-# Odysseus Codex Integration
+# Vita Machina Codex Integration
 
-This directory contains the Codex plugin/skill bundle for Odysseus.
+This directory contains the Codex plugin/skill bundle for Vita Machina.
 
 ## User Flow
 
-1. Open Odysseus Settings > Integrations.
+1. Open Vita Machina Settings > Integrations.
 2. Add a Codex Agent.
 3. Copy the full setup commands shown after the generated token.
 4. Toggle the tools Codex is allowed to use.
@@ -48,4 +48,4 @@ codex plugin add odysseus@personal
 python3 ~/plugins/odysseus/scripts/odysseus_api.py capabilities
 ```
 
-Codex must use `/api/codex/*` endpoints. SSH, Docker, direct Python imports, database queries, and MCP internals bypass Odysseus Settings and must not be used for user data access.
+Codex must use `/api/codex/*` endpoints. SSH, Docker, direct Python imports, database queries, and MCP internals bypass Vita Machina Settings and must not be used for user data access.

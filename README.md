@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/odysseus-wordmark.png" alt="Odysseus" width="280">
+  <img src="docs/vita-machina-wordmark.png" alt="Vita Machina" width="280">
 </p>
 
 <p align="center">
@@ -18,17 +18,17 @@
 </p>
 
 <p align="center">
-  <img src="docs/odysseus.jpg" alt="Odysseus interface">
+  <img src="docs/vita-machina.jpg" alt="Vita Machina interface">
 </p>
 
 ---
 
 ## Quick Start
 
-> `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main) if you want the more curated branch.
+> `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/sbelz192/odysseus-vita-machina/tree/main) if you want the more curated branch.
 
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/sbelz192/odysseus-vita-machina.git
 cd odysseus
 cp .env.example .env
 docker compose up -d --build
@@ -59,15 +59,15 @@ Help is welcome. The best entry points are fresh-install testing, provider setup
 
 ## Security
 
-Odysseus is a self-hosted workspace with powerful local tools. Keep auth enabled, keep private data out of Git, and do not expose raw model/service ports publicly. Deployment details are in the [setup guide](docs/setup.md#security-notes).
+Vita Machina is a self-hosted workspace with powerful local tools. Keep auth enabled, keep private data out of Git, and do not expose raw model/service ports publicly. Deployment details are in the [setup guide](docs/setup.md#security-notes).
 
 ## Star History
 
 <a href="https://www.star-history.com/?repos=pewdiepie-archdaemon%2Fodysseus&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=pewdiepie-archdaemon/odysseus&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sbelz192/odysseus-vita-machina&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sbelz192/odysseus-vita-machina&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sbelz192/odysseus-vita-machina&type=date&legend=top-left" />
  </picture>
 </a>
 

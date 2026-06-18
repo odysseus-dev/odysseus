@@ -1,5 +1,5 @@
 /* ============================================ */
-/* Odysseus UI — Consolidated Stylesheet        */
+/*/* Vita Machina UI — Consolidated Stylesheet        */
 /* ============================================ */
 
 
@@ -22222,7 +22222,7 @@ body.gallery-selecting .gallery-dl-btn,
 
 /* Welcome name — left-to-right wipe with a touch of horizontal stretch.
    Fires on initial render via the .welcome-name rule; restarts on Nobody⇄
-   Odysseus toggle via JS reflow trick. */
+   Vita Machina toggle via JS reflow trick. */
 .welcome-name {
   transform-origin: left center;
   animation: welcome-name-reveal 0.55s cubic-bezier(0.34, 1.32, 0.55, 1) both;

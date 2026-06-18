@@ -139,7 +139,7 @@ def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
 
     notice = (
         "\n\n[Notice: the pasted message was too large for this model's context "
-        "window, so Odysseus kept the beginning and end.]"
+        "window, so Vita Machina kept the beginning and end.]"
     )
     keep_chars = max(200, max_chars - len(notice))
     head_len = max(100, int(keep_chars * 0.7))

@@ -151,7 +151,7 @@ async def register_builtin_servers(mcp_manager):
                     f"  Reason: npm package {pkg_spec!r} is not installed in the npx cache.\n"
                     f"  Impact: tools provided by this MCP server will be unavailable.\n"
                     f"  Fix:    {os.path.basename(npx_path)} -y {pkg_spec} --version\n"
-                    f"          (run once, then restart Odysseus)\n"
+                    f"          (run once, then restart Vita Machina)\n"
                     f"  Notes:  this server is optional; see README.md "
                     f"'Built-in MCP servers' for details."
                 )

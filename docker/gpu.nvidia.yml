@@ -17,7 +17,7 @@
 #   docker info | grep -i nvidia
 #
 # This overlay only passes the host GPU through to the container.
-# The slim Odysseus image does not bundle CUDA userspace or inference
+# The slim Vita Machina image does not bundle CUDA userspace or inference
 # engines — install vLLM / llama-cpp-python / SGLang via
 # Cookbook -> Dependencies (or pip) before serving GPU models.
 services:

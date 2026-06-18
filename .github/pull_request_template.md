@@ -43,7 +43,7 @@ Fixes #
 **Anything that changes what the UI looks like — buttons, icons, padding, colors, fonts, spacing, layout, CSS, HTML, SVG, or any `static/js/` module that draws to the DOM — needs all of the following. PRs that change rendering without these WILL be closed.**
 
 - [ ] **Screenshot or short clip** of the change in the running app, attached below. Mobile screenshot too if the change affects mobile.
-- [ ] **Style match**: the change uses Odysseus's existing visual language. Specifically:
+- [ ] **Style match**: the change uses Vita Machina's existing visual language. Specifically:
   - Reuse existing CSS variables (`--red`, `--fg`, `--bg`, `--card`, `--border`, etc.) — do not introduce new color values, font sizes, or spacing units.
   - Reuse existing button/input/card/border classes. Don't invent parallel styling.
   - **No Unicode emoji in UI or code.** Use inline SVG (matching the monochrome icon style already in `static/index.html`) or plain text.

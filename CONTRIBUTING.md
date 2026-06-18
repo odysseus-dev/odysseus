@@ -1,10 +1,10 @@
-# Contributing to Odysseus
+# Contributing to Vita Machina
 
 Thanks for helping. The project is moving quickly, so the best contributions are focused, easy to review, and easy to test.
 
 ## Branch model
 
-Odysseus has two branches:
+Vita Machina has two branches:
 
 - **`dev`** — where all PRs land. Things can be in flux here; the merge button gets used freely.
 - **`main`** — what users run. Curated and tested by the maintainer. Fast-forwarded to a stable `dev` commit at each release.
@@ -25,7 +25,7 @@ End-users cloning the repo will land on `dev` by default. To run the curated/sta
 Docker is the recommended path for normal testing:
 
 ```bash
-git clone https://github.com/pewdiepie-archdaemon/odysseus.git
+git clone https://github.com/sbelz192/odysseus-vita-machina.git
 cd odysseus
 cp .env.example .env
 docker compose up -d --build
@@ -78,7 +78,7 @@ Please keep PRs small. Large PRs that mix unrelated cleanup, formatting, refacto
 
 ## Style and visual changes
 
-Odysseus has an intentional visual style. PRs that ignore it will be closed without merge, no matter how correct the underlying code is.
+Vita Machina has an intentional visual style. PRs that ignore it will be closed without merge, no matter how correct the underlying code is.
 
 Before submitting any change that affects what the app looks like — buttons, icons, fonts, colors, spacing, layout, CSS, HTML, SVG, or any `static/js/` module that draws to the DOM — please:
 

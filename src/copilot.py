@@ -46,13 +46,13 @@ COPILOT_BASE = "https://api.githubcopilot.com"
 # Copilot wants an editor-like User-Agent + integration id. These identify the
 # client to GitHub; keep them stable.
 COPILOT_USER_AGENT = os.environ.get(
-    "ODYSSEUS_COPILOT_USER_AGENT", "Odysseus/1.0"
+    "VITA_MACHINA_COPILOT_USER_AGENT", "VitaMachina/1.0"
 )
 COPILOT_INTEGRATION_ID = os.environ.get(
     "ODYSSEUS_COPILOT_INTEGRATION_ID", "vscode-chat"
 )
 COPILOT_EDITOR_VERSION = os.environ.get(
-    "ODYSSEUS_COPILOT_EDITOR_VERSION", "Odysseus/1.0"
+    "VITA_MACHINA_COPILOT_EDITOR_VERSION", "VitaMachina/1.0"
 )
 
 # OAuth scope requested during the device flow.

@@ -1,14 +1,14 @@
 #!/bin/bash
-# Odysseus — one-command quick start for macOS (Apple Silicon).
+# Vita Machina — one-command quick start for macOS (Apple Silicon).
 #
 #   ./start-macos.sh
 #
-# Installs everything Odysseus needs via Homebrew, sets up a local Python
+# Installs everything Vita Machina needs via Homebrew, sets up a local Python
 # environment, and launches the app — so a generic Mac user can run it without
 # knowing anything about venvs, pip, or uvicorn. Safe to re-run; it skips work
 # that's already done.
 #
-# Why native (not Docker): Cookbook serves models on whatever machine Odysseus
+# Why native (not Docker): Cookbook serves models on whatever machine Vita Machina
 # runs on, and Docker on macOS is a Linux VM with no access to the Metal GPU.
 # Running natively lets Cookbook detect and use your Mac's GPU.
 set -e
@@ -42,7 +42,7 @@ fi
 # Friendly message on any failure — re-running is safe (every step is idempotent).
 trap 'echo; echo "✗ Setup failed above. It is safe to re-run ./start-macos.sh."; exit 1' ERR
 
-echo "▶ Odysseus quick start for macOS"
+echo "▶ Vita Machina quick start for macOS"
 
 # Fail fast if the port is already taken (e.g. a previous run still running).
 if (exec 3<>"/dev/tcp/$PROBE_HOST/$PORT") 2>/dev/null; then
@@ -160,7 +160,7 @@ fi
 # 4. First-run setup: creates data dirs and prints an initial admin password
 #    the first time (idempotent — does nothing if already set up). Suppress its
 #    manual run hint — we launch the server ourselves just below.
-echo "▶ Preparing Odysseus…"
+echo "▶ Preparing Vita Machina…"
 ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 
 # Local provider bootstrap.
@@ -238,7 +238,7 @@ if [ -z "$ODYSSEUS_NO_OPEN" ] && command -v open >/dev/null 2>&1; then
             if (exec 3<>"/dev/tcp/$PROBE_HOST/$PORT") 2>/dev/null; then
                 printf '\n'
                 printf '  ┌────────────────────────────────────────────┐\n'
-                printf '  │  ✓ Odysseus is ready — opening your browser  │\n'
+                printf '  │  ✓ Vita Machina is ready — opening your browser  │\n'
                 printf '  │     %-40s │\n' "$URL"
                 printf '  │     (Press Ctrl+C in this window to stop)    │\n'
                 printf '  └────────────────────────────────────────────┘\n\n'
@@ -257,7 +257,7 @@ trap - ERR
 trap '[ -n "$POLLER_PID" ] && kill "$POLLER_PID" 2>/dev/null; [ -n "$APFEL_PID" ] && kill "$APFEL_PID" 2>/dev/null; [ -n "$CHROMA_PID" ] && kill "$CHROMA_PID" 2>/dev/null' EXIT INT TERM
 
 echo
-echo "▶ Starting Odysseus — it will open in your browser at $URL"
+echo "▶ Starting Vita Machina — it will open in your browser at $URL"
 if [ -n "$TAILSCALE_URL" ]; then
     echo "  Tailscale/LAN URL: $TAILSCALE_URL"
 fi

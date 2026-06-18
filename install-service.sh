@@ -9,7 +9,7 @@ if [ ! -f "$SERVICE_FILE" ]; then
   exit 1
 fi
 
-echo "Installing Odysseus UI service..."
+echo "Installing Vita Machina UI service..."
 echo "Make sure you've edited odysseus-ui.service with your username and paths first!"
 echo ""
 

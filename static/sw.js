@@ -1,4 +1,4 @@
-// static/sw.js — Odysseus PWA Service Worker
+// static/sw.js — Vita Machina PWA Service Worker
 // Strategy:
 //   - HTML (navigation): stale-while-revalidate. Instant open from cache,
 //     background refresh so the next open has latest HTML.
@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v327';
+const CACHE_NAME = .vita-machina-v327';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags

@@ -1,4 +1,4 @@
-"""Odysseus companion bridge — additive LAN endpoints.
+"""Vita Machina companion bridge — additive LAN endpoints.
 
 Read endpoints (/api/companion/ping, /info, owner-scoped /models) so a LAN
 client can discover what a server offers, plus admin-only pairing

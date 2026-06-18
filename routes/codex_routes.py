@@ -1,7 +1,7 @@
 """Codex integration routes.
 
 These are small HTTP surfaces intended for the Codex plugin/MCP bridge. They
-reuse existing Odysseus helpers and enforce API-token scopes before touching
+reuse existing Vita Machina helpers and enforce API-token scopes before touching
 user data.
 """
 

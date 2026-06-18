@@ -1,7 +1,7 @@
 # Copy to /etc/systemd/system/odysseus-ui.service
 # Edit User, WorkingDirectory, and ExecStart paths to match your setup
 [Unit]
-Description=Odysseus UI
+Description=Vita Machina UI
 After=network.target
 
 [Service]
