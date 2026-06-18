@@ -72,6 +72,9 @@ function _show(modal) {
 
   const pop = document.createElement('div');
   pop.className = 'tour-hint';
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-live', 'polite');
+  pop.setAttribute('aria-label', 'Window snapping tip');
   pop.innerHTML = `
     <div class="tour-hint-visual" aria-hidden="true">
       <svg viewBox="0 0 100 60" width="160" height="96">
@@ -89,7 +92,7 @@ function _show(modal) {
       </svg>
     </div>
     <div class="tour-hint-text"><b>Pro tip:</b> drag any window's title bar to a screen edge to snap it. Drag to the top for fullscreen.</div>
-    <button class="tour-hint-dismiss" type="button">Got it</button>
+    <button class="tour-hint-dismiss" type="button" aria-label="Dismiss window snapping tip">Got it</button>
   `;
   document.body.appendChild(pop);
 
@@ -115,11 +118,18 @@ function _show(modal) {
   });
 
   const dismiss = () => {
+    document.removeEventListener('keydown', onKeyDown, true);
     pop.classList.add('tour-hint-out');
     setTimeout(() => pop.remove(), 280);
     _markSeen();
   };
-  pop.querySelector('.tour-hint-dismiss').addEventListener('click', dismiss);
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') dismiss();
+  };
+  const dismissBtn = pop.querySelector('.tour-hint-dismiss');
+  dismissBtn.addEventListener('click', dismiss);
+  dismissBtn.focus?.();
+  document.addEventListener('keydown', onKeyDown, true);
   // Auto-dismiss after 14s so it doesn't linger forever.
   setTimeout(() => { if (pop.isConnected) dismiss(); }, 14000);
 }

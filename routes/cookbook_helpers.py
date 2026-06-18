@@ -1136,13 +1136,18 @@ def _diagnose_serve_output(text: str) -> dict | None:
     ]
     for pattern, message, suggestions in patterns:
         if re.search(pattern, tail, re.I):
-            return {"message": message, "suggestions": suggestions}
+            return {
+                "message": message,
+                "suggestions": suggestions,
+                "recovery_steps": [s.get("label") for s in suggestions if isinstance(s, dict) and s.get("label")][:3],
+            }
     if re.search(r"Traceback \(most recent call last\)", tail, re.I) and not re.search(
         r"Application startup complete|GET /v1/|Uvicorn running on", tail, re.I
     ):
         return {
             "message": "Python traceback detected during serve startup.",
             "suggestions": [{"label": "inspect traceback and retry with adjusted backend/settings", "op": "manual"}],
+            "recovery_steps": ["Inspect traceback and retry with adjusted backend/settings"],
         }
     return None
 

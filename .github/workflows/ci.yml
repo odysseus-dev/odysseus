@@ -46,6 +46,29 @@ jobs:
             node --check "$f"
           done
 
+  fresh-install-smoke:
+    name: Fresh install smoke (native + docker config)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: mkdir -p data
+      - name: Native startup smoke
+        run: |
+          python -c "import app; print('app-import-ok')"
+          python -m pytest -q tests/test_service_health.py tests/test_cookbook_error_feedback.py tests/test_dialog_aria.py
+      - name: Docker compose smoke
+        run: |
+          docker compose config >/dev/null
+          docker compose -f docker-compose.gpu-nvidia.yml config >/dev/null
+          docker compose -f docker-compose.gpu-amd.yml config >/dev/null
+
   python-tests:
     name: Python tests (pytest)
     runs-on: ubuntu-latest

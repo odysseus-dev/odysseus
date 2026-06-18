@@ -142,6 +142,12 @@ Odysseus SSH key and add the public key to the remote server's
 ssh-copy-id -i data/ssh/id_ed25519.pub user@server
 ```
 
+**Integration audit (recommended after first setup).** Open
+`/api/diagnostics/services` as admin to verify ChromaDB, SearXNG, ntfy, email,
+and provider endpoint health in one place. If something is intentionally unused,
+disable or remove it in Settings so the UI only shows integrations that are
+actually configured for your deployment.
+
 **Docker GPU overlays.** CPU-only users can skip this section. Cookbook can
 only detect GPUs that Docker exposes to the container — if the host runtime or
 device passthrough is not configured, Cookbook sees the iGPU, another card, or

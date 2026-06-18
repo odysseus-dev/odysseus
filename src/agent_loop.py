@@ -16,7 +16,7 @@ from typing import AsyncGenerator, List, Dict, Optional, Set
 from urllib.parse import urlparse
 
 from src.llm_core import stream_llm, stream_llm_with_fallback, _is_ollama_native_url
-from src.model_context import estimate_tokens
+from src.model_context import estimate_tokens, budget_context_for_model
 from src.settings import get_setting
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner, plan_mode_disabled_tools
@@ -623,6 +623,7 @@ _ADMIN_SCHEMA_NAMES = frozenset([
     "ask_teacher", "list_models", "search_chats",
 ])
 _TOOL_SELECTION_TIMEOUT_SECONDS = 1.5
+_SMALL_CONTEXT_COMPACT_THRESHOLD = 16_384
 
 
 def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
@@ -638,6 +639,23 @@ def _is_ollama_openai_compat_url(endpoint_url: str) -> bool:
         return False
     path = (parsed.path or "").rstrip("/")
     return parsed.port == 11434 and (path == "/v1" or path.startswith("/v1/"))
+
+
+def _should_use_compact_prompt(
+    *,
+    is_api_model: bool,
+    model: str,
+    endpoint_url: str,
+    small_context_threshold: int = _SMALL_CONTEXT_COMPACT_THRESHOLD,
+) -> bool:
+    """Use compact prompt mode for API models and small-context local models."""
+    if is_api_model:
+        return True
+    try:
+        context_window = int(budget_context_for_model(model, endpoint_url=endpoint_url) or 0)
+    except Exception:
+        context_window = 0
+    return 0 < context_window <= int(small_context_threshold)
 
 
 def _endpoint_lookup_keys(endpoint_url: str) -> List[str]:
@@ -2018,11 +2036,16 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+    _compact_prompt = _should_use_compact_prompt(
+        is_api_model=_is_api_model,
+        model=model,
+        endpoint_url=endpoint_url or "",
+    )
     messages, mcp_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
         mcp_disabled_map=_mcp_disabled_map,
-        compact=_is_api_model,
+        compact=_compact_prompt,
         owner=owner,
         suppress_local_context=guide_only,
     )

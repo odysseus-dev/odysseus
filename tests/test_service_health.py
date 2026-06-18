@@ -255,6 +255,28 @@ def test_collect_service_health_shape(monkeypatch):
     assert out["overall"] == sh.OK
 
 
+def test_collect_attaches_recovery_for_down_services(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr(sh, "_gather_inputs", lambda: {
+        "settings": {"search_provider": "searxng", "search_url": "http://sx:8080"},
+        "integrations": [],
+        "accounts": [],
+        "endpoints": [],
+    })
+    monkeypatch.setattr(sh, "searxng_health", lambda *_a, **_k: sh._svc(
+        "searxng", sh.DOWN, "Unreachable (connection refused).", error="connection_refused"
+    ))
+    monkeypatch.setattr(sh, "ntfy_health", lambda *_a, **_k: sh._svc("ntfy", sh.DISABLED, "", reminder_channel="browser"))
+    monkeypatch.setattr(sh, "email_health", lambda *_a, **_k: sh._svc("email", sh.DISABLED, ""))
+    monkeypatch.setattr(sh, "providers_health", lambda *_a, **_k: sh._svc("providers", sh.DISABLED, ""))
+
+    out = asyncio.run(sh.collect_service_health(None, None))
+    searx = next(s for s in out["services"] if s["name"] == "searxng")
+    assert searx["status"] == sh.DOWN
+    assert any("host/port" in step.lower() for step in searx["recovery"])
+
+
 # ── _safe_url: strip userinfo / query / fragment ──
 
 @pytest.mark.parametrize("raw,expected", [
