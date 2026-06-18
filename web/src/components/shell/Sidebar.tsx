@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { NavLink, useNavigate, useParams } from "react-router-dom"
-import { Plus, Search, PanelLeft, Settings, Trash2, Moon, Sun, LogOut, EyeOff, Keyboard, ChevronsUpDown, Pencil, Pin, Check } from "lucide-react"
+import { Plus, Search, PanelLeft, Settings, Trash2, Moon, Sun, LogOut, EyeOff, Keyboard, ChevronsUpDown, Pencil, Pin, Check, FolderKanban, ChevronRight, ChevronDown } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useComposer } from "@/stores/composer"
 import { useSessions, useSessionMutations } from "@/api/sessions"
@@ -82,14 +82,48 @@ export function Sidebar() {
   const [editId, setEditId] = useState<string | null>(null)
   const [editName, setEditName] = useState("")
   const [sortMode, setSortMode] = useState<"recent" | "az" | "oldest">("recent")
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set())
   const commitRename = () => { if (editId && editName.trim()) rename.mutate({ id: editId, name: editName.trim() }); setEditId(null) }
 
   const list = (sessions || []).filter((s) => !s.archived).filter((s) => !q || (s.name || "").toLowerCase().includes(q.toLowerCase()))
+  // Chats in a project (folder) group at the top; the rest fall into the
+  // time/sort buckets below.
+  const filed = list.filter((s) => s.folder)
+  const unfiled = list.filter((s) => !s.folder)
+  const projectMap = new Map<string, Session[]>()
+  for (const s of filed) { const k = s.folder as string; if (!projectMap.has(k)) projectMap.set(k, []); projectMap.get(k)!.push(s) }
+  const projectGroups = Array.from(projectMap.entries())
+    .map(([name, items]) => ({ name, items: [...items].sort((x, y) => new Date(y.last_message_at || y.updated_at || 0).getTime() - new Date(x.last_message_at || x.updated_at || 0).getTime()) }))
+    .sort((a, b) => a.name.localeCompare(b.name))
   const groups = sortMode === "recent"
-    ? BUCKETS.map((b) => ({ b, items: list.filter((s) => bucketOf(s) === b) })).filter((g) => g.items.length)
-    : [{ b: sortMode === "az" ? "A–Z" : "Oldest first", items: [...list].sort((x, y) =>
+    ? BUCKETS.map((b) => ({ b, items: unfiled.filter((s) => bucketOf(s) === b) })).filter((g) => g.items.length)
+    : [{ b: sortMode === "az" ? "A–Z" : "Oldest first", items: [...unfiled].sort((x, y) =>
         sortMode === "az" ? (x.name || "").localeCompare(y.name || "")
         : new Date(x.last_message_at || x.updated_at || 0).getTime() - new Date(y.last_message_at || y.updated_at || 0).getTime()) }]
+
+  const renderRow = (s: Session) => editId === s.id ? (
+    <div key={s.id} className="flex items-center gap-1 px-2 py-1">
+      <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditId(null) }}
+        onBlur={commitRename}
+        className="h-7 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring" />
+      <button onClick={commitRename} className="text-muted-foreground hover:text-foreground"><Check className="size-3.5" /></button>
+    </div>
+  ) : (
+    <div key={s.id} onClick={() => navigate(`/chat/${s.id}`)}
+      role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/chat/${s.id}`) } }}
+      className={cn("group flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm",
+        s.id === sessionId ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
+      {s.is_important && <Pin className="size-3 shrink-0 fill-current text-muted-foreground" />}
+      <span className="flex-1 truncate">{s.name || "Untitled"}</span>
+      <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+        <button onClick={(e) => { e.stopPropagation(); setImportant.mutate({ id: s.id, important: !s.is_important }) }} title={s.is_important ? "Unpin" : "Pin"} className={cn("hover:text-foreground", s.is_important && "text-foreground")}><Pin className="size-3.5" /></button>
+        <button onClick={(e) => { e.stopPropagation(); setEditId(s.id); setEditName(s.name || "") }} title="Rename" className="hover:text-foreground"><Pencil className="size-3.5" /></button>
+        <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this chat?")) { remove.mutate(s.id); if (s.id === sessionId) navigate("/chat") } }} title="Delete" className="hover:text-destructive"><Trash2 className="size-3.5" /></button>
+      </span>
+    </div>
+  )
 
   if (collapsed) {
     return (
@@ -136,32 +170,29 @@ export function Sidebar() {
         </select>
       </div>
       <div className="flex-1 overflow-y-auto px-2 pb-2">
+        {projectGroups.length > 0 && (
+          <div className="mb-2">
+            {projectGroups.map((g) => {
+              const isCollapsed = collapsedProjects.has(g.name)
+              return (
+                <div key={g.name} className="mb-0.5">
+                  <button onClick={() => setCollapsedProjects((prev) => { const n = new Set(prev); if (n.has(g.name)) n.delete(g.name); else n.add(g.name); return n })}
+                    className="flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground/80 hover:bg-accent/40 hover:text-foreground">
+                    {isCollapsed ? <ChevronRight className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
+                    <FolderKanban className="size-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate text-left">{g.name}</span>
+                    <span className="shrink-0">{g.items.length}</span>
+                  </button>
+                  {!isCollapsed && <div className="ml-3 border-l pl-1">{g.items.map(renderRow)}</div>}
+                </div>
+              )
+            })}
+          </div>
+        )}
         {groups.map((g) => (
           <div key={g.b} className="mb-2">
             <div className="px-2 py-1 text-xs font-medium text-muted-foreground/80">{g.b}</div>
-            {g.items.map((s) => editId === s.id ? (
-              <div key={s.id} className="flex items-center gap-1 px-2 py-1">
-                <input autoFocus value={editName} onChange={(e) => setEditName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") commitRename(); if (e.key === "Escape") setEditId(null) }}
-                  onBlur={commitRename}
-                  className="h-7 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring" />
-                <button onClick={commitRename} className="text-muted-foreground hover:text-foreground"><Check className="size-3.5" /></button>
-              </div>
-            ) : (
-              <div key={s.id} onClick={() => navigate(`/chat/${s.id}`)}
-                role="button" tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); navigate(`/chat/${s.id}`) } }}
-                className={cn("group flex cursor-pointer items-center gap-1.5 rounded-md px-2 py-1.5 text-sm",
-                  s.id === sessionId ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground")}>
-                {s.is_important && <Pin className="size-3 shrink-0 fill-current text-muted-foreground" />}
-                <span className="flex-1 truncate">{s.name || "Untitled"}</span>
-                <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                  <button onClick={(e) => { e.stopPropagation(); setImportant.mutate({ id: s.id, important: !s.is_important }) }} title={s.is_important ? "Unpin" : "Pin"} className={cn("hover:text-foreground", s.is_important && "text-foreground")}><Pin className="size-3.5" /></button>
-                  <button onClick={(e) => { e.stopPropagation(); setEditId(s.id); setEditName(s.name || "") }} title="Rename" className="hover:text-foreground"><Pencil className="size-3.5" /></button>
-                  <button onClick={(e) => { e.stopPropagation(); if (confirm("Delete this chat?")) { remove.mutate(s.id); if (s.id === sessionId) navigate("/chat") } }} title="Delete" className="hover:text-destructive"><Trash2 className="size-3.5" /></button>
-                </span>
-              </div>
-            ))}
+            {g.items.map(renderRow)}
           </div>
         ))}
         {list.length === 0 && <p className="px-2 py-4 text-xs text-muted-foreground">{q ? "No matches." : "No chats yet."}</p>}

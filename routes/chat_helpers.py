@@ -68,6 +68,52 @@ def compose_personalization(uprefs: dict) -> Optional[str]:
     return "\n\n".join(parts)
 
 
+def _session_folder_for(session_id: str) -> Optional[str]:
+    """The folder (project) a session belongs to, or None."""
+    db = SessionLocal()
+    try:
+        row = db.query(DBSession.folder).filter(DBSession.id == session_id).first()
+        return (row.folder if row else None) or None
+    finally:
+        db.close()
+
+
+def compose_project_instructions(uprefs: dict, folder: Optional[str]) -> Optional[str]:
+    """Per-project (folder) instructions/context for chats in that project.
+
+    Stored under the ``project_instructions`` pref key as ``{folder: text}``
+    (Projects view). Like personalization, this is the user's own trusted
+    guidance, injected as a system message for sessions in the project.
+    """
+    if not folder:
+        return None
+    pi = uprefs.get("project_instructions")
+    if not isinstance(pi, dict):
+        return None
+    text = str(pi.get(folder) or "").strip()
+    if not text:
+        return None
+    return f'This conversation is part of the project "{folder}". Project context and instructions:\n{text}'
+
+
+def compose_user_and_project_instructions(uprefs: dict, session_id: str) -> Optional[str]:
+    """Combine personalization + project instructions into one system block.
+
+    The DB folder lookup only runs when the user actually has project
+    instructions configured, so the common (no-projects) path stays query-free.
+    """
+    parts = []
+    personal = compose_personalization(uprefs)
+    if personal:
+        parts.append(personal)
+    pi = uprefs.get("project_instructions")
+    if isinstance(pi, dict) and pi:
+        project = compose_project_instructions(uprefs, _session_folder_for(session_id))
+        if project:
+            parts.append(project)
+    return "\n\n".join(parts) or None
+
+
 # ── Data containers ────────────────────────────────────────────────────── #
 
 @dataclass
@@ -670,9 +716,10 @@ async def build_chat_context(
         agent_mode=agent_mode,
         incognito=incognito,
         use_skills=skills_enabled,
-        # Per-user personalization is the user's own persona/instructions. Skip it
-        # in incognito so those turns stay clean (matching memory/skills above).
-        custom_instructions=None if incognito else compose_personalization(uprefs),
+        # Per-user personalization + per-project instructions are the user's own
+        # persona/context. Skip in incognito so those turns stay clean (matching
+        # memory/skills above).
+        custom_instructions=None if incognito else compose_user_and_project_instructions(uprefs, session_id),
     )
     if use_rag is not None or is_research_spinoff:
         _preface_kwargs["use_rag"] = use_rag_val

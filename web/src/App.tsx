@@ -19,6 +19,7 @@ import { DocumentsRoute } from "@/routes/DocumentsRoute"
 import { CompareRoute } from "@/routes/CompareRoute"
 import { CookbookRoute } from "@/routes/CookbookRoute"
 import { ResearchRoute } from "@/routes/ResearchRoute"
+import { ProjectsRoute } from "@/routes/ProjectsRoute"
 import { RagRoute } from "@/routes/RagRoute"
 import { PersonalRoute } from "@/routes/PersonalRoute"
 import { useUi } from "@/stores/ui"
@@ -57,6 +58,7 @@ function ThemedApp() {
         <Routes>
           <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/chat/:sessionId?" element={<ChatConsole />} />
+          <Route path="/projects" element={<ProjectsRoute />} />
           <Route path="/compare" element={<CompareRoute />} />
           <Route path="/research" element={<ResearchRoute />} />
           <Route path="/memory" element={<MemoryRoute />} />

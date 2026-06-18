@@ -1,6 +1,6 @@
 import {
   MessageSquare, GitCompareArrows, Image, Brain, Telescope,
-  Calendar, Mail, StickyNote, ListChecks, FileText, FolderOpen, Database, FlaskConical, Sparkles,
+  Calendar, Mail, StickyNote, ListChecks, FileText, FolderOpen, Database, FlaskConical, Sparkles, FolderKanban,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
@@ -10,6 +10,7 @@ export interface NavItem { to: string; icon: LucideIcon; label: string }
 
 export const PRIMARY: NavItem[] = [
   { to: "/chat", icon: MessageSquare, label: "Chat" },
+  { to: "/projects", icon: FolderKanban, label: "Projects" },
   { to: "/compare", icon: GitCompareArrows, label: "Compare" },
   { to: "/research", icon: Telescope, label: "Research" },
   { to: "/gallery", icon: Image, label: "Gallery" },
