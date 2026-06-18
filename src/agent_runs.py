@@ -21,6 +21,8 @@ import os
 import time
 from typing import AsyncGenerator, Dict, Optional
 
+from src import agent_run_records
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +30,7 @@ class _Run:
     __slots__ = (
         "buffer", "subscribers", "status", "task", "evict_task",
         "watchdog_task", "started_at", "last_event_at", "stop_reason",
+        "record_id", "error",
     )
 
     def __init__(self) -> None:
@@ -41,6 +44,8 @@ class _Run:
         self.started_at: float = now
         self.last_event_at: float = now
         self.stop_reason: str = ""
+        self.record_id: str = ""
+        self.error: str = ""
 
 
 _RUNS: Dict[str, _Run] = {}
@@ -76,6 +81,28 @@ def _publish(run: _Run, ev: str) -> None:
             q.put_nowait((seq, ev))
         except Exception:
             pass
+
+
+def _last_event_type(ev: str) -> str:
+    if not ev:
+        return ""
+    if ev.startswith("event: "):
+        return ev.splitlines()[0].replace("event:", "", 1).strip()
+    if ev.strip() == "data: [DONE]":
+        return "done"
+    if ev.startswith("data: "):
+        payload = ev[6:].strip()
+        try:
+            data = json.loads(payload)
+        except Exception:
+            return "data"
+        if isinstance(data, dict):
+            if data.get("type"):
+                return str(data.get("type"))
+            if "delta" in data:
+                return "delta"
+        return "data"
+    return ""
 
 
 def _schedule_evict(session_id: str) -> None:
@@ -192,6 +219,8 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
     except Exception as e:
         logger.error("[agent-run] %s failed: %s", session_id, e, exc_info=True)
         run.status = "error"
+        run.stop_reason = "error"
+        run.error = str(e)
         _publish(
             run,
             "event: error\n"
@@ -199,6 +228,15 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         )
         _publish(run, "data: [DONE]\n\n")
     finally:
+        if run.record_id:
+            agent_run_records.finish(
+                run.record_id,
+                status=run.status,
+                stop_reason=run.stop_reason,
+                error=run.error,
+                event_count=len(run.buffer),
+                last_event_type=_last_event_type(run.buffer[-1]) if run.buffer else "",
+            )
         if run.watchdog_task and not run.watchdog_task.done():
             run.watchdog_task.cancel()
         # Wake every subscriber with the end sentinel so their SSE closes.
@@ -213,7 +251,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         _schedule_evict(session_id)
 
 
-def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
+def start(session_id: str, agen: AsyncGenerator[str, None], *, record_id: str = "") -> _Run:
     """Start a detached run draining `agen` for a session. If a run is already in
     flight for this session (e.g. a rapid double-send), it's cancelled first."""
     prev = _RUNS.get(session_id)
@@ -228,6 +266,7 @@ def start(session_id: str, agen: AsyncGenerator[str, None]) -> _Run:
         if prev.watchdog_task and not prev.watchdog_task.done():
             prev.watchdog_task.cancel()
     run = _Run()
+    run.record_id = record_id or ""
     _RUNS[session_id] = run
     run.task = asyncio.create_task(_drain(session_id, agen, prev_task))
     run.watchdog_task = asyncio.create_task(_watchdog(session_id, run))

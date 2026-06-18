@@ -16,7 +16,7 @@ from core.models import ChatMessage
 from src.request_models import ChatRequest
 from src.llm_core import llm_call_async, stream_llm, stream_llm_with_fallback
 from src.agent_loop import stream_agent_loop
-from src import agent_runs
+from src import agent_run_records, agent_runs
 from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
@@ -49,6 +49,27 @@ logger = logging.getLogger(__name__)
 _active_streams: Dict[str, dict] = {}
 _IMAGE_MODEL_PREFIXES = ("gpt-image", "dall-e", "chatgpt-image")
 _DEFAULT_MOUNTED_WORKSPACE = os.environ.get("ODYSSEUS_DEFAULT_WORKSPACE", "/workspace").strip()
+
+
+def _workspace_display_label(workspace: str | None) -> str:
+    ws = str(workspace or "").strip()
+    if not ws:
+        return ""
+    label = os.environ.get("ODYSSEUS_WORKSPACE_LABEL", "").strip()
+    alias_path = os.environ.get("ODYSSEUS_DEFAULT_WORKSPACE", "/workspace").strip()
+    if label and alias_path and os.path.normpath(ws) == os.path.normpath(alias_path):
+        return f"{label} (mounted as {ws})"
+    return ws
+
+
+def _latest_user_message_id(sess) -> str:
+    try:
+        msg = (getattr(sess, "history", None) or [])[-1]
+        if getattr(msg, "role", "") == "user":
+            return str((getattr(msg, "metadata", None) or {}).get("_db_id") or "")
+    except Exception:
+        pass
+    return ""
 
 
 def _stream_set(session_id: str, **fields) -> None:
@@ -1432,7 +1453,20 @@ def setup_chat_routes(
         if compare_mode:
             return StreamingResponse(_safe_stream(), media_type="text/event-stream")
 
-        agent_runs.start(session, _safe_stream())
+        _run_record_id = ""
+        if not incognito:
+            _run_record_id = agent_run_records.begin(
+                session,
+                mode=_effective_mode,
+                model=str(getattr(sess, "model", "") or ""),
+                requested_model=str(getattr(sess, "model", "") or ""),
+                workspace_path=str(workspace or ""),
+                workspace_label=_workspace_display_label(workspace),
+                owner=ctx.user,
+                user_message_id=_latest_user_message_id(sess),
+            )
+
+        agent_runs.start(session, _safe_stream(), record_id=_run_record_id)
         return StreamingResponse(agent_runs.subscribe(session), media_type="text/event-stream")
 
     # ------------------------------------------------------------------ #
@@ -1482,6 +1516,9 @@ def setup_chat_routes(
         if rec is None:
             if agent_runs.is_active(session_id):
                 return {"status": "streaming", "detached": True}
+            latest = agent_run_records.latest_for_session(session_id)
+            if latest:
+                return {"status": latest.get("status") or "unknown", "detached": True, "durable": True, "run": latest}
             raise HTTPException(404, "No active stream for this session")
         return rec
 

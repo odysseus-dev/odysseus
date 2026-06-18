@@ -188,6 +188,43 @@ class ChatMessage(Base):
         Index('ix_messages_session_time', 'session_id', 'timestamp'),  # Composite for efficient message retrieval
     )
 
+
+class AgentRunRecord(Base):
+    """Durable lifecycle record for a detached chat/agent stream."""
+    __tablename__ = "agent_run_records"
+
+    id = Column(String, primary_key=True, index=True)
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_message_id = Column(String, nullable=True, index=True)
+    assistant_message_id = Column(String, nullable=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+
+    status = Column(String, nullable=False, default="running")
+    mode = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    requested_model = Column(String, nullable=True)
+    workspace_path = Column(String, nullable=True)
+    workspace_label = Column(String, nullable=True)
+
+    started_at = Column(DateTime, nullable=False, default=utcnow_naive)
+    updated_at = Column(DateTime, nullable=False, default=utcnow_naive, onupdate=utcnow_naive)
+    finished_at = Column(DateTime, nullable=True)
+    stop_reason = Column(String, nullable=True)
+    error = Column(Text, nullable=True)
+    event_count = Column(Integer, default=0)
+    partial_chars = Column(Integer, default=0)
+    last_event_type = Column(String, nullable=True)
+
+    session = relationship("Session", backref=backref(
+        "agent_run_records",
+        cascade="all, delete-orphan",
+    ))
+
+    __table_args__ = (
+        Index("ix_agent_run_records_session_status", "session_id", "status", "started_at"),
+        Index("ix_agent_run_records_owner_status", "owner", "status", "started_at"),
+    )
+
 class Document(TimestampMixin, Base):
     """Living document that the AI can create and edit in-place."""
     __tablename__ = "documents"
