@@ -87,7 +87,7 @@ async function _pollReminders() {
       if ('Notification' in window && Notification.permission === 'granted') {
         new Notification(note.title || 'Calendar Reminder', {
           body,
-          icon: '/static/favicon.png',
+          icon: '/static/icons/favicon-32x32.png',
           tag: `cal-remind-${note.id}`,
         });
       }

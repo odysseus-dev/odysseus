@@ -37832,3 +37832,104 @@ img.logo-boat,
   }
 }
 
+
+/* ============================================ */
+/* Hellaine FINAL logo + favicon visual lock     */
+/* Keep this block at the end of style.css.      */
+/* ============================================ */
+
+#welcome-screen .welcome-name,
+main.card .logo {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  align-items: center !important;
+  justify-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  gap: 14px !important;
+  background: none !important;
+  -webkit-text-fill-color: initial !important;
+  text-shadow: none !important;
+  filter: none !important;
+}
+
+#welcome-screen .welcome-name {
+  margin: 0 0 14px 0 !important;
+}
+
+main.card .logo {
+  margin: 0 0 1.5rem 0 !important;
+}
+
+#welcome-screen .welcome-name > img.welcome-boat,
+#welcome-screen img.welcome-boat,
+main.card .logo > img.logo-boat,
+main.card img.logo-boat {
+  display: block !important;
+  width: 128px !important;
+  height: 128px !important;
+  max-width: 128px !important;
+  max-height: 128px !important;
+  min-width: 128px !important;
+  min-height: 128px !important;
+  margin: 0 auto !important;
+  padding: 0 !important;
+  object-fit: contain !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+  transform: none !important;
+  opacity: 1 !important;
+}
+
+#welcome-screen .welcome-title,
+main.card .logo > span,
+main.card .logo span {
+  display: block !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+  text-align: center !important;
+  font-family: 'Fira Code', monospace !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.035em !important;
+  color: var(--brand-color, var(--red)) !important;
+  background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg))) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text !important;
+  text-shadow: none !important;
+  filter: none !important;
+}
+
+#welcome-screen .welcome-title {
+  font-size: 2.55rem !important;
+}
+
+main.card .logo > span,
+main.card .logo span {
+  font-size: 2.2rem !important;
+}
+
+@media (max-width: 768px) {
+  #welcome-screen .welcome-name > img.welcome-boat,
+  #welcome-screen img.welcome-boat,
+  main.card .logo > img.logo-boat,
+  main.card img.logo-boat {
+    width: 96px !important;
+    height: 96px !important;
+    max-width: 96px !important;
+    max-height: 96px !important;
+    min-width: 96px !important;
+    min-height: 96px !important;
+  }
+
+  #welcome-screen .welcome-title {
+    font-size: 2rem !important;
+  }
+
+  main.card .logo > span,
+  main.card .logo span {
+    font-size: 1.85rem !important;
+  }
+}

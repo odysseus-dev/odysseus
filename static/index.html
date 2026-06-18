@@ -3,11 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <title>Hellaine's Jade Palace</title>
-  <link rel="icon" type="image/x-icon" href="/static/icons/favicon.ico">
-  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
-  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
-  <link rel="manifest" href="/static/manifest.json">
+  <link rel="icon" type="image/x-icon" href="/static/icons/favicon.ico?v=hellaine-3">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png?v=hellaine-3">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png?v=hellaine-3">
+  <link rel="icon" type="image/png" sizes="48x48" href="/static/icons/favicon-48x48.png?v=hellaine-3">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=hellaine-3">
+  <link rel="manifest" href="/static/manifest.json?v=hellaine-3">
+
+
+
+
   <meta name="theme-color" content="#06120d">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -94,100 +99,32 @@
     } catch(e){}
   })();
   </script>
-  <!-- Per-route favicon. Bookmarking /calendar shows a calendar icon,
-       /notes a notes icon, etc. Each shape is rendered in the current
-       theme accent color. Falls back to the boat logo on the root path. -->
+  <!-- Hellaine favicon lock: keep the tab icon stable on every route. -->
   <script nonce="{{CSP_NONCE}}">
   (function(){
     try {
-      var path = (window.location.pathname || '').toLowerCase();
-      var theme = (function(){ try { return JSON.parse(localStorage.getItem('odysseus-theme')); } catch(_) { return null; } })();
-      var ac = (theme && (theme.red || theme.colors && theme.colors.red)) || '#e06c75';
-      // Shapes are line-stroke SVGs (no emoji glyphs). Each entry returns
-      // the inner SVG markup rendered against currentColor=`ac`.
-      var SHAPES = {
-        '/calendar':
-          "<rect x='4' y='6' width='24' height='22' rx='2' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<line x1='4' y1='12' x2='28' y2='12' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<line x1='10' y1='3' x2='10' y2='9' stroke='" + ac + "' stroke-width='2.5' stroke-linecap='round'/>" +
-          "<line x1='22' y1='3' x2='22' y2='9' stroke='" + ac + "' stroke-width='2.5' stroke-linecap='round'/>",
-        '/notes':
-          "<rect x='6' y='4' width='20' height='24' rx='2' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<line x1='10' y1='10' x2='22' y2='10' stroke='" + ac + "' stroke-width='2'/>" +
-          "<line x1='10' y1='15' x2='22' y2='15' stroke='" + ac + "' stroke-width='2'/>" +
-          "<line x1='10' y1='20' x2='18' y2='20' stroke='" + ac + "' stroke-width='2'/>",
-        '/cookbook':
-          "<path d='M5 8 L5 26 A2 2 0 0 0 7 28 L25 28 A2 2 0 0 0 27 26 L27 8' fill='none' stroke='" + ac + "' stroke-width='2.5' stroke-linejoin='round'/>" +
-          "<path d='M9 4 L23 4 L23 8 L9 8 Z' fill='none' stroke='" + ac + "' stroke-width='2.5' stroke-linejoin='round'/>" +
-          "<line x1='11' y1='14' x2='21' y2='14' stroke='" + ac + "' stroke-width='2'/>" +
-          "<line x1='11' y1='19' x2='17' y2='19' stroke='" + ac + "' stroke-width='2'/>",
-        '/email':
-          "<rect x='4' y='7' width='24' height='18' rx='2' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<path d='M5 9 L16 17 L27 9' fill='none' stroke='" + ac + "' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/>",
-        '/memory':
-          "<path d='M16 5 C10 5 6 9 6 14 C6 19 10 21 11 22 L11 26 L21 26 L21 22 C22 21 26 19 26 14 C26 9 22 5 16 5 Z' fill='none' stroke='" + ac + "' stroke-width='2.5' stroke-linejoin='round'/>" +
-          "<line x1='12' y1='28' x2='20' y2='28' stroke='" + ac + "' stroke-width='2'/>",
-        '/gallery':
-          "<rect x='4' y='4' width='24' height='24' rx='2' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<circle cx='12' cy='12' r='2.5' fill='" + ac + "'/>" +
-          "<path d='M4 22 L11 16 L18 21 L23 17 L28 22' fill='none' stroke='" + ac + "' stroke-width='2.5' stroke-linejoin='round'/>",
-        '/tasks':
-          "<rect x='4' y='4' width='24' height='24' rx='3' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<path d='M9 16 L14 21 L23 11' fill='none' stroke='" + ac + "' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/>",
-        '/library':
-          "<rect x='5' y='5' width='5' height='22' rx='1' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<rect x='13' y='5' width='5' height='22' rx='1' fill='none' stroke='" + ac + "' stroke-width='2.5'/>" +
-          "<rect x='21' y='8' width='6' height='19' rx='1' fill='none' stroke='" + ac + "' stroke-width='2.5' transform='rotate(8 24 17)'/>",
-      };
-      var inner = SHAPES[path];
-      if (!inner) return; // Root path keeps the default boat icon.
-      var svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" + inner + "</svg>";
-      var href = 'data:image/svg+xml,' + encodeURIComponent(svg);
-      var fav = document.querySelector("link[rel='icon']");
-      if (!fav) { fav = document.createElement('link'); fav.rel = 'icon'; fav.type = 'image/svg+xml'; document.head.appendChild(fav); }
-      fav.href = href;
-      var apple = document.querySelector("link[rel='apple-touch-icon']");
-      if (!apple) { apple = document.createElement('link'); apple.rel = 'apple-touch-icon'; document.head.appendChild(apple); }
-      apple.href = href;
-      // Also customize the page title so the bookmark inherits a useful name.
-      var titles = {
-        '/calendar': 'Calendar — Hellaine',
-        '/notes': 'Notes — Hellaine',
-        '/cookbook': 'Cookbook — Hellaine',
-        '/email': 'Email — Hellaine',
-        '/memory': 'Memory — Hellaine',
-        '/gallery': 'Gallery — Hellaine',
-        '/tasks': 'Tasks — Hellaine',
-        '/library': 'Library — Hellaine',
-      };
-      if (titles[path]) document.title = titles[path];
-      // Per-route Android home-screen icon. We swap the <link rel="manifest">
-      // to a per-page Blob URL with this route's SVG icon — that way "Add to
-      // Home Screen" picks up the route-specific glyph instead of the shared
-      // boat logo. Falls back silently on browsers without Blob URL support.
-      try {
-        if (inner && typeof Blob !== 'undefined') {
-          var pwa = {
-            name: (titles[path] || "Hellaine's Jade Palace"),
-            short_name: (titles[path] || "Hellaine's Jade Palace").split('—')[0].trim(),
-            start_url: path,
-            scope: '/',
-            display: 'standalone',
-            background_color: '#0e0e10',
-            theme_color: ac,
-            icons: [
-              { src: href, sizes: '192x192', type: 'image/svg+xml', purpose: 'any maskable' },
-              { src: href, sizes: '512x512', type: 'image/svg+xml', purpose: 'any maskable' },
-            ],
-          };
-          var blob = new Blob([JSON.stringify(pwa)], { type: 'application/manifest+json' });
-          var url = URL.createObjectURL(blob);
-          var ml = document.querySelector("link[rel='manifest']");
-          if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
-          ml.href = url;
-        }
-      } catch(_) {}
-    } catch(e){}
+      var iconBase = '/static/icons/';
+      var icons = [
+        ['icon', 'image/x-icon', 'favicon.ico?v=hellaine-3', ''],
+        ['icon', 'image/png', 'favicon-16x16.png?v=hellaine-3', '16x16'],
+        ['icon', 'image/png', 'favicon-32x32.png?v=hellaine-3', '32x32'],
+        ['icon', 'image/png', 'favicon-48x48.png?v=hellaine-3', '48x48'],
+        ['apple-touch-icon', '', 'apple-touch-icon.png?v=hellaine-3', '180x180']
+      ];
+      document.querySelectorAll("link[rel='icon'],link[rel='shortcut icon'],link[rel='apple-touch-icon']").forEach(function(n){ n.remove(); });
+      icons.forEach(function(row){
+        var l = document.createElement('link');
+        l.rel = row[0];
+        if (row[1]) l.type = row[1];
+        if (row[3]) l.sizes = row[3];
+        l.href = iconBase + row[2];
+        document.head.appendChild(l);
+      });
+      var ml = document.querySelector("link[rel='manifest']");
+      if (!ml) { ml = document.createElement('link'); ml.rel = 'manifest'; document.head.appendChild(ml); }
+      ml.href = '/static/manifest.json?v=hellaine-3';
+      document.title = "Hellaine's Jade Palace";
+    } catch (_) {}
   })();
   </script>
   <script defer src="/static/lib/highlight.min.js"></script>
@@ -944,7 +881,8 @@
       <button type="button" class="incognito-indicator" id="incognito-indicator" title="Nobody mode active — click to deactivate" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg></button>
       <div class="chat-meta-overlay"><span id="current-meta">Hellaine's Jade Palace</span><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item" id="export-doc-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Save to Documents</span></div></div></span></div>    </div>
     <div id="welcome-screen">
-      <div class="welcome-name"><img src="/static/hellaine-logo.svg" class="welcome-boat" alt="Hellaine logo">
+      <div class="welcome-name">
+        <img src="/static/hellaine-logo.svg" class="welcome-boat" alt="Hellaine logo">
         <h2 class="welcome-title">Hellaine</h2>
       </div>
       <div class="welcome-sub" id="welcome-sub">Welcome, <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">type /setup</span> to get started.</div>

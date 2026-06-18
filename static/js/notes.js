@@ -966,7 +966,7 @@ function _fireReminder(note) {
   const showLocal = (body) => {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
-        const n = new Notification(title, { body, tag: 'note-' + note.id, icon: '/static/favicon.ico' });
+        const n = new Notification(title, { body, tag: 'note-' + note.id, icon: '/static/icons/favicon.ico' });
         n.onclick = () => { window.focus(); openPanel(); n.close(); };
       } catch {}
     }

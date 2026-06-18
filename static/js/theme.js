@@ -284,7 +284,7 @@ export function applyColors(colors) {
     s.setProperty(css, adv[key] || defaults[key]);
   }
 
-  // Update favicon to match theme accent color
+  // Hellaine branding: favicon is fixed from /static/icons, not recolored per theme.
   _updateFavicon(colors.red || '#e06c75');
 }
 
@@ -327,30 +327,29 @@ const _ROUTE_FAVICON_SHAPES = {
 };
 
 function _updateFavicon(fg) {
-  const path = (window.location.pathname || '').toLowerCase();
-  const routeShape = _ROUTE_FAVICON_SHAPES[path];
-  let svg;
-  if (routeShape) {
-    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>${routeShape.split('__C__').join(fg)}</svg>`;
-  } else {
-    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 4L16 22L6 22Z' fill='${fg}'/><path d='M16 8L16 22L24 22Z' fill='${fg}' opacity='0.6'/><path d='M4 24Q10 20 16 24Q22 28 28 24' stroke='${fg}' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>`;
-  }
-  const href = 'data:image/svg+xml,' + encodeURIComponent(svg);
-  let link = document.querySelector("link[rel='icon']");
-  if (!link) {
-    link = document.createElement('link');
-    link.rel = 'icon';
-    link.type = 'image/svg+xml';
-    document.head.appendChild(link);
-  }
-  link.href = href;
-  let apple = document.querySelector("link[rel='apple-touch-icon']");
-  if (!apple) {
-    apple = document.createElement('link');
-    apple.rel = 'apple-touch-icon';
-    document.head.appendChild(apple);
-  }
-  apple.href = href;
+  // Keep Hellaine's tab icon stable. Older Odysseus code generated
+  // route/accent-colored SVG favicons here, which is why the tab kept
+  // drifting back to the boot/sail glyph. No more little identity crisis.
+  try {
+    var icons = [
+      ['icon', 'image/x-icon', '/static/icons/favicon.ico?v=hellaine-3', ''],
+      ['icon', 'image/png', '/static/icons/favicon-16x16.png?v=hellaine-3', '16x16'],
+      ['icon', 'image/png', '/static/icons/favicon-32x32.png?v=hellaine-3', '32x32'],
+      ['icon', 'image/png', '/static/icons/favicon-48x48.png?v=hellaine-3', '48x48'],
+      ['apple-touch-icon', '', '/static/icons/apple-touch-icon.png?v=hellaine-3', '180x180']
+    ];
+    document.querySelectorAll("link[rel='icon'],link[rel='shortcut icon'],link[rel='apple-touch-icon']").forEach(function(n){ n.remove(); });
+    icons.forEach(function(row){
+      var l = document.createElement('link');
+      l.rel = row[0];
+      if (row[1]) l.type = row[1];
+      if (row[3]) l.sizes = row[3];
+      l.href = row[2];
+      document.head.appendChild(l);
+    });
+    var manifest = document.querySelector("link[rel='manifest']");
+    if (manifest) manifest.href = '/static/manifest.json?v=hellaine-3';
+  } catch (_) {}
 }
 
 // Cache of discovered custom fonts: { "Family Name": [ {file, url, format} ] }
