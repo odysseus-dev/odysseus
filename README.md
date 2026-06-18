@@ -1,4 +1,3 @@
-````markdown
 <p align="center">
   <img src="docs/hellaine-logo.svg" alt="Hellaine's Jade Palace" width="280">
 </p>
