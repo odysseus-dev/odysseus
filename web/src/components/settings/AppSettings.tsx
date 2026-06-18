@@ -1,10 +1,15 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
+import { Plus, Trash2, Pencil, Copy, Check, X, Upload } from "lucide-react"
 import { useSettings, useSaveSettings, type Settings } from "@/api/settings"
 import { useModels } from "@/api/models"
 import { useIntegrations } from "@/api/integrations"
+import { useTokens, useTokenProfiles, useTokenMutations } from "@/api/tokens"
 import { apiFetch } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { SectionCard, Row, SettingSwitch, SettingSelect, SettingText, SettingNumber, SettingTextarea, StringListEditor } from "./fields"
+
+const tokInp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
+const WIPE_KINDS = ["chats", "memory", "skills", "notes", "tasks", "documents", "gallery", "calendar"] as const
 
 // Shared accessor for the admin settings store. `set` posts a partial patch.
 function useStore() {
@@ -163,7 +168,120 @@ export function AiModelsSettings() {
   )
 }
 
+// ─────────────────────── API tokens (admin) ───────────────────────
+export function ApiTokensSection() {
+  const { data: tokens } = useTokens()
+  const { data: profiles } = useTokenProfiles()
+  const { create, rename, remove } = useTokenMutations()
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
+  const [profile, setProfile] = useState("")
+  const [created, setCreated] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [err, setErr] = useState("")
+  const profileNames = Object.keys(profiles?.profiles || {})
+  const add = () => {
+    if (!name.trim()) { setErr("Name required"); return }
+    setErr("")
+    create.mutate({ name: name.trim(), profile: profile || undefined }, {
+      onSuccess: (t) => { setCreated(t.token); setName(""); setProfile(""); setOpen(false) },
+      onError: (e) => setErr(e instanceof Error ? e.message : "Failed"),
+    })
+  }
+  const copy = async () => { if (!created) return; try { await navigator.clipboard.writeText(created); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* ignore */ } }
+  return (
+    <section>
+      <h2 className={H}>API tokens <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
+      <div className="space-y-2">
+        {(tokens || []).map((t) => (
+          <div key={t.id} className="group flex items-center gap-2 rounded-lg border bg-card p-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{t.name} <span className="font-mono text-xs font-normal text-muted-foreground">{t.token_prefix}…</span></div>
+              <div className="truncate text-xs text-muted-foreground">{t.scopes.join(", ") || "default"}{t.last_used_at ? ` · used ${new Date(t.last_used_at).toLocaleDateString()}` : " · never used"}</div>
+            </div>
+            <button onClick={() => { const n = prompt("Rename token", t.name); if (n && n.trim()) rename.mutate({ id: t.id, name: n.trim() }) }} className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100" title="Rename"><Pencil className="size-4" /></button>
+            <button onClick={() => { if (confirm(`Revoke token "${t.name}"? Apps using it will stop working.`)) remove.mutate(t.id) }} className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Revoke"><Trash2 className="size-4" /></button>
+          </div>
+        ))}
+        {(tokens || []).length === 0 && <p className="py-1 text-sm text-muted-foreground">No API tokens.</p>}
+      </div>
+      {created && (
+        <div className="mt-2 space-y-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3">
+          <div className="text-xs font-medium text-muted-foreground">Copy this token now — it won't be shown again.</div>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1.5 font-mono text-xs">{created}</code>
+            <button onClick={copy} className="shrink-0 rounded-md p-1.5 hover:bg-accent">{copied ? <Check className="size-4" /> : <Copy className="size-4" />}</button>
+            <button onClick={() => setCreated(null)} className="shrink-0 rounded-md p-1.5 hover:bg-accent"><X className="size-4" /></button>
+          </div>
+        </div>
+      )}
+      {open ? (
+        <div className="mt-2 space-y-2 rounded-lg border bg-card p-3">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Token name (e.g. Claude Code)" className={tokInp} />
+          {profileNames.length > 0 && (
+            <select value={profile} onChange={(e) => setProfile(e.target.value)} className={tokInp}>
+              <option value="">Default scopes</option>
+              {profileNames.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          {err && <p className="text-xs text-destructive">{err}</p>}
+          <div className="flex justify-end gap-2"><Button variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancel</Button><Button size="sm" disabled={create.isPending} onClick={add}>{create.isPending ? "Creating…" : "Create token"}</Button></div>
+        </div>
+      ) : <Button variant="outline" size="sm" className="mt-2" onClick={() => setOpen(true)}><Plus className="size-4" />New API token</Button>}
+    </section>
+  )
+}
+
+// ─────────────────────── Data & backup (admin) ───────────────────────
+export function DataSection() {
+  const [importMsg, setImportMsg] = useState("")
+  const [wipeMsg, setWipeMsg] = useState("")
+  const fileRef = useRef<HTMLInputElement>(null)
+  const onImport = async (file?: File) => {
+    if (!file) return
+    setImportMsg("Importing…")
+    try {
+      const data = JSON.parse(await file.text())
+      const r = await apiFetch("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) })
+      const j = await r.json().catch(() => ({}))
+      setImportMsg(r.ok ? `Imported: ${(j.imported || []).join(", ") || "done"}` : `Failed: ${j.detail || r.status}`)
+    } catch (e) { setImportMsg(e instanceof SyntaxError ? "Not valid JSON" : "Import failed") }
+    finally { if (fileRef.current) fileRef.current.value = "" }
+  }
+  const wipe = async (kind: string) => {
+    if (!confirm(`Permanently delete ALL ${kind}? This cannot be undone.`)) return
+    setWipeMsg(`Wiping ${kind}…`)
+    try {
+      const r = await apiFetch(`/api/admin/wipe/${kind}`, { method: "DELETE" })
+      const j = await r.json().catch(() => ({}))
+      setWipeMsg(r.ok ? `Deleted ${j.count ?? ""} ${kind}.` : `Failed: ${j.detail || r.status}`)
+    } catch { setWipeMsg("Wipe failed") }
+  }
+  return (
+    <section>
+      <h2 className={H}>Data &amp; backup <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
+      <SectionCard>
+        <Row label="Export all data"><Button size="sm" variant="outline" onClick={() => window.open("/api/export", "_blank")}>Download JSON</Button></Row>
+        <Row label="Import data" hint="Merge a previously exported JSON export">
+          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => onImport(e.target.files?.[0])} />
+          <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}><Upload className="size-4" />Choose file</Button>
+        </Row>
+        {importMsg && <p className="text-xs text-muted-foreground">{importMsg}</p>}
+      </SectionCard>
+      <div className="mt-3 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+        <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-destructive">Danger zone</div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {WIPE_KINDS.map((k) => (
+            <Button key={k} size="sm" variant="outline" className="border-destructive/40 capitalize text-destructive hover:bg-destructive/10" onClick={() => wipe(k)}>Wipe {k}</Button>
+          ))}
+        </div>
+        {wipeMsg && <p className="mt-2 text-xs text-muted-foreground">{wipeMsg}</p>}
+      </div>
+    </section>
+  )
+}
+
 // All admin settings-store sections, gated by the caller on is_admin.
 export function AppSettingsSections() {
-  return (<><AiModelsSettings /><SearchSettings /><RemindersSettings /><AgentToolsSettings /></>)
+  return (<><AiModelsSettings /><SearchSettings /><RemindersSettings /><AgentToolsSettings /><ApiTokensSection /><DataSection /></>)
 }

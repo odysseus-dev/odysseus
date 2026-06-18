@@ -4,7 +4,7 @@ import { apiJson, apiFetch } from "@/lib/api"
 export function useAuthStatus() {
   return useQuery({
     queryKey: ["auth-status"],
-    queryFn: () => apiJson<{ authenticated?: boolean; username?: string; user?: string; is_admin?: boolean; two_factor_enabled?: boolean }>("/api/auth/status"),
+    queryFn: () => apiJson<{ authenticated?: boolean; username?: string; user?: string; is_admin?: boolean; two_factor_enabled?: boolean; signup_enabled?: boolean }>("/api/auth/status"),
   })
 }
 export async function logout() {
@@ -22,6 +22,18 @@ export async function setup2FA(): Promise<{ secret?: string; uri?: string; qr_co
 }
 export async function confirm2FA(code: string): Promise<{ ok?: boolean; error?: string; backup_codes?: string[] }> {
   const r = await apiFetch("/api/auth/2fa/confirm", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) })
+  return r.json().catch(() => ({ ok: r.ok }))
+}
+export async function disable2FA(password: string): Promise<{ ok?: boolean; error?: string }> {
+  const r = await apiFetch("/api/auth/2fa/disable", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) })
+  if (r.ok) return r.json().catch(() => ({ ok: true }))
+  return { error: (await r.json().catch(() => ({}))).detail || "Invalid password" }
+}
+export function useTwoFAStatus() {
+  return useQuery({ queryKey: ["2fa-status"], retry: false, queryFn: async () => { try { return await apiJson<{ enabled?: boolean }>("/api/auth/2fa/status") } catch { return { enabled: false } } } })
+}
+export async function setOpenSignup(enabled: boolean): Promise<{ ok?: boolean; signup_enabled?: boolean }> {
+  const r = await apiFetch("/api/auth/open-signup", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) })
   return r.json().catch(() => ({ ok: r.ok }))
 }
 
@@ -68,6 +80,18 @@ export function useUserMutations() {
           body: JSON.stringify({ username }),
         })
         if (!r.ok) throw new Error("Delete failed")
+        return r.json()
+      },
+      onSuccess: inv,
+    }),
+    rename: useMutation({
+      mutationFn: async (v: { username: string; new_username: string }) => {
+        const r = await apiFetch(`/api/auth/users/${encodeURIComponent(v.username)}/rename`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_username: v.new_username }),
+        })
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Rename failed")
         return r.json()
       },
       onSuccess: inv,

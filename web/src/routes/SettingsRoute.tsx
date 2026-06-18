@@ -1,7 +1,9 @@
 import { useState } from "react"
-import { Trash2, UserPlus, Plus } from "lucide-react"
+import { useQueryClient } from "@tanstack/react-query"
+import { Trash2, UserPlus, Plus, Pencil } from "lucide-react"
 import { useUi } from "@/stores/ui"
-import { useAuthStatus, useUsers, useUserMutations, logout, changePassword, setup2FA, confirm2FA } from "@/api/auth"
+import { useAuthStatus, useUsers, useUserMutations, logout, changePassword, setup2FA, confirm2FA, disable2FA, useTwoFAStatus, setOpenSignup } from "@/api/auth"
+import { Switch } from "@/components/ui/switch"
 import { useModels, useDefaultChat, useDeleteEndpoint, useEndpointMutations, useSetDefaultModel, testEndpoint } from "@/api/models"
 import { usePresets, useCreatePreset } from "@/api/presets"
 import { AdminSections } from "@/components/settings/AdminSections"
@@ -18,13 +20,21 @@ function AccountSecurity() {
   const [qr, setQr] = useState<string | null>(null)
   const [code, setCode] = useState("")
   const [twoMsg, setTwoMsg] = useState("")
+  const { data: twoFA } = useTwoFAStatus()
+  const qc = useQueryClient()
   const doChange = async () => {
     if (nw.length < 8) { setPwMsg("New password must be 8+ chars"); return }
     const r = await changePassword(cur, nw)
     if (r.ok) { setPwMsg("Password changed."); setCur(""); setNw("") } else setPwMsg(r.error || "Failed")
   }
   const startTwo = async () => { const r = await setup2FA(); if (r.qr_code) { setQr(r.qr_code); setTwoMsg("") } else setTwoMsg(r.error || "2FA unavailable") }
-  const confirmTwo = async () => { const r = await confirm2FA(code); if (r.ok) { setTwoMsg("2FA enabled."); setQr(null); setCode("") } else setTwoMsg(r.error || "Invalid code") }
+  const confirmTwo = async () => { const r = await confirm2FA(code); if (r.ok) { setTwoMsg("2FA enabled."); setQr(null); setCode(""); qc.invalidateQueries({ queryKey: ["2fa-status"] }) } else setTwoMsg(r.error || "Invalid code") }
+  const doDisable = async () => {
+    const pw = prompt("Enter your password to disable 2FA")
+    if (!pw) return
+    const r = await disable2FA(pw)
+    if (r.ok) { setTwoMsg("2FA disabled."); qc.invalidateQueries({ queryKey: ["2fa-status"] }) } else setTwoMsg(r.error || "Failed")
+  }
   return (
     <section>
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Security</h2>
@@ -37,7 +47,10 @@ function AccountSecurity() {
           <div className="flex justify-end"><Button size="sm" variant="outline" onClick={doChange} disabled={!cur || !nw}>Update password</Button></div>
         </div>
         <div className="border-t pt-3">
-          <div className="flex items-center justify-between"><span className="text-sm font-medium">Two-factor (TOTP)</span>{!qr && <Button size="sm" variant="outline" onClick={startTwo}>Enable 2FA</Button>}</div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Two-factor (TOTP){twoFA?.enabled && <span className="ml-1.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-normal text-emerald-600 dark:text-emerald-400">Enabled</span>}</span>
+            {twoFA?.enabled ? <Button size="sm" variant="outline" onClick={doDisable}>Disable</Button> : (!qr && <Button size="sm" variant="outline" onClick={startTwo}>Enable 2FA</Button>)}
+          </div>
           {qr && (
             <div className="mt-2 space-y-2">
               <img src={qr} alt="2FA QR" className="size-40 rounded-md border bg-white p-1" />
@@ -135,13 +148,14 @@ function AddEndpointForm() {
 export function SettingsRoute() {
   const { theme, setTheme, accent, setAccent, font, setFont, density, setDensity } = useUi()
   const { data: status } = useAuthStatus()
+  const qc = useQueryClient()
   const { data: models } = useModels()
   const { data: def } = useDefaultChat()
   const setDefault = useSetDefaultModel()
   const { data: users } = useUsers()
   const del = useDeleteEndpoint()
   const allModels = (models?.items || []).flatMap((e) => [...(e.models || []), ...(e.models_extra || [])])
-  const { create: createUser, remove: removeUser } = useUserMutations()
+  const { create: createUser, remove: removeUser, rename: renameUser } = useUserMutations()
   const user = status?.username || status?.user || "—"
   const endpoints = (models?.items || []).filter((e) => e.endpoint_id)
   const userList = users || []
@@ -234,6 +248,10 @@ export function SettingsRoute() {
         {userList.length > 0 && (
           <section>
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Users <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
+            <div className="mb-2 flex items-center justify-between rounded-lg border bg-card p-3">
+              <span className="min-w-0"><span className="block text-sm">Open registration</span><span className="block text-xs text-muted-foreground">Allow new users to sign up</span></span>
+              <Switch checked={!!status?.signup_enabled} onCheckedChange={async (v) => { await setOpenSignup(v); qc.invalidateQueries({ queryKey: ["auth-status"] }) }} />
+            </div>
             <div className="space-y-2">
               {userList.map((u) => (
                 <div key={u.username} className="group flex items-center justify-between rounded-lg border bg-card p-3">
@@ -241,7 +259,10 @@ export function SettingsRoute() {
                   <div className="flex items-center gap-2">
                     {u.is_admin && <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">admin</span>}
                     {u.username !== user && (
-                      <button onClick={() => { if (confirm(`Delete user "${u.username}"?`)) removeUser.mutate(u.username) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Delete user"><Trash2 className="size-4" /></button>
+                      <>
+                        <button onClick={() => { const n = prompt("Rename user", u.username); if (n && n.trim() && n.trim() !== u.username) renameUser.mutate({ username: u.username, new_username: n.trim() }) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100" title="Rename user"><Pencil className="size-4" /></button>
+                        <button onClick={() => { if (confirm(`Delete user "${u.username}"?`)) removeUser.mutate(u.username) }} className="text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100" title="Delete user"><Trash2 className="size-4" /></button>
+                      </>
                     )}
                   </div>
                 </div>
