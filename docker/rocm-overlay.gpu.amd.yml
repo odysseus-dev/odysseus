@@ -1,0 +1,24 @@
+services:
+  odysseus:
+    # Instead of building the stock Dockerfile, target our custom NixOS-AMD layer
+    build:
+      context: .
+      dockerfile: Dockerfile.rocm-overlay
+    
+    # Map the necessary Linux device paths for rendering pass-through
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    
+    # Bind the runtime execution groups
+    group_add:
+      - video
+      - ${RENDER_GID:-render}
+
+    # Inject execution flags into the container shell environment
+    environment:
+      - ROCM_PATH=/opt/rocm
+      - HIP_PATH=/opt/rocm
+      - HIPCXX=/opt/rocm/llvm/bin/clang++
+      - CXXFLAGS=-Wno-narrowing -Wno-c++11-narrowing
+      - HIPCXXFLAGS=-Wno-narrowing -Wno-c++11-narrowing
