@@ -566,6 +566,9 @@ function createSessionItem(s) {
   _sep.style.cssText = 'height:1px;margin:3px 0;background:color-mix(in srgb,var(--border) 40%,transparent)';
   dropdown.appendChild(_sep);
 
+  // Let packages inject their own dropdown items before destructive actions
+  try { window.OdysseusPkg?.events?.emit('session:dropdown', { sessionId: s.id, dropdown }); } catch {}
+
   dropdown.appendChild(archiveItem);
   dropdown.appendChild(deleteItem);
 

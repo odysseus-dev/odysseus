@@ -372,6 +372,31 @@
       _currentSession = sessionId;
       if (_open) _load();
     });
+
+    // ── Inject "Create Branch" into session dropdown ─────────────────────────
+    pkg.events.on('session:dropdown', ({ sessionId, dropdown }) => {
+      const item = document.createElement('div');
+      item.className = 'dropdown-item-compact';
+      item.innerHTML = `<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg></span><span>Create Branch</span>`;
+      item.addEventListener('click', async e => {
+        e.stopPropagation();
+        dropdown.style.display = 'none';
+        try {
+          const data = await _api(`/session/${encodeURIComponent(sessionId)}/branch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          });
+          if (window.sessionModule?.loadSessions) await window.sessionModule.loadSessions();
+          if (window.sessionModule?.selectSession) await window.sessionModule.selectSession(data.id);
+          if (window.uiModule?.showToast) window.uiModule.showToast(`Branch created: ${data.name}`);
+        } catch (err) {
+          if (window.uiModule?.showError) window.uiModule.showError('Branch failed: ' + err.message);
+        }
+      });
+      // Insert before the last item (Cancel mobile button)
+      dropdown.insertBefore(item, dropdown.lastElementChild);
+    });
   }
 
   // Pick up the session that's already selected when this widget loads
