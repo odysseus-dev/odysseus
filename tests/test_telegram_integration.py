@@ -778,6 +778,65 @@ class TestTelegramRoutes:
         assert saved_mappings["session-1"]["topic_id"] == 101
         assert saved_mappings["session-2"]["topic_id"] == 202
 
+    def test_start_linking_requires_internal_tool_token(self):
+        """The start-linking endpoint should only accept internal loopback calls."""
+        from routes import telegram_routes
+
+        app = FastAPI()
+        with patch.object(telegram_routes, "_start_poller"):
+            router = telegram_routes.setup_telegram_routes(chat_handler=Mock(), session_manager=Mock())
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/telegram/start-linking",
+                json={"telegram_user_id": 12345, "telegram_chat_id": 67890},
+            )
+
+        assert response.status_code == 403
+
+    def test_start_linking_allows_internal_tool_token(self):
+        """Internal loopback calls should be able to request linking tokens."""
+        from routes import telegram_routes
+
+        app = FastAPI()
+        with patch.object(telegram_routes, "_start_poller"), \
+             patch.object(telegram_routes, "create_linking_state", return_value="token-123"):
+            router = telegram_routes.setup_telegram_routes(chat_handler=Mock(), session_manager=Mock())
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/telegram/start-linking",
+                headers={telegram_routes.INTERNAL_TOOL_HEADER: telegram_routes.INTERNAL_TOOL_TOKEN},
+                json={"telegram_user_id": 12345, "telegram_chat_id": 67890},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["linking_token"] == "token-123"
+
+    def test_complete_linking_rejects_already_linked_telegram_user(self):
+        """Link completion should fail when Telegram user is linked to another account."""
+        from routes import telegram_routes
+
+        app = FastAPI()
+        with patch.object(telegram_routes, "_start_poller"), \
+             patch.object(telegram_routes, "get_current_user", return_value="admin"), \
+             patch.object(telegram_routes, "verify_linking_token", return_value={
+                 "telegram_user_id": 12345,
+                 "telegram_chat_id": 67890,
+             }), \
+             patch.object(telegram_routes, "find_owner_by_telegram_user_id", return_value="other-user"):
+            router = telegram_routes.setup_telegram_routes(chat_handler=Mock(), session_manager=Mock())
+            app.include_router(router)
+            client = TestClient(app)
+
+            response = client.post("/api/telegram/link", json={"linking_token": "token-123"})
+
+        assert response.status_code == 400
+        assert "already linked" in response.json()["detail"].lower()
+
 
 class TestTelegramHelpers:
     """Test utility helpers."""

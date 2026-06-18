@@ -13,8 +13,7 @@ Endpoints:
 """
 
 import logging
-import json
-import os
+import secrets
 from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any
 
@@ -22,7 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from src.auth_helpers import get_current_user
-from core.middleware import require_admin
+from core.middleware import require_admin, INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN, INTERNAL_TOOL_USER
 from routes.telegram_helpers import (
     _load_telegram_config,
     _load_telegram_system_config,
@@ -42,11 +41,23 @@ from routes.telegram_helpers import (
     edit_telegram_forum_topic,
     get_telegram_topic_mappings,
     set_telegram_topic_mappings,
+    find_owner_by_telegram_user_id,
 )
 from routes.telegram_chat_handler import TelegramChatHandler
 from routes.telegram_poller import _start_poller
 
 logger = logging.getLogger(__name__)
+
+
+def _is_internal_tool_request(request: Request) -> bool:
+    """Return True for in-process internal tool loopback calls."""
+    try:
+        hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+        if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
+            return True
+        return getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER
+    except Exception:
+        return False
 
 
 class TelegramConfigResponse(BaseModel):
@@ -280,6 +291,9 @@ def setup_telegram_routes(chat_handler=None, session_manager=None, research_hand
         """
         _ensure_poller_started()
         try:
+            if not _is_internal_tool_request(request):
+                raise HTTPException(status_code=403, detail="Forbidden")
+
             # Validate inputs
             if not data.telegram_user_id or not data.telegram_chat_id:
                 raise HTTPException(status_code=400, detail="Missing telegram_user_id or telegram_chat_id")
@@ -333,48 +347,16 @@ def setup_telegram_routes(chat_handler=None, session_manager=None, research_hand
             chat_id = state.get("telegram_chat_id")
             
             # Check if this Telegram account is already linked to a different Odysseus user
-            try:
-                from src.constants import USER_PREFS_FILE
-
-                prefs = {}
-                if os.path.exists(USER_PREFS_FILE):
-                    with open(USER_PREFS_FILE, "r", encoding="utf-8") as fh:
-                        prefs = json.load(fh)
-                for owner, owner_prefs in prefs.items():
-                    if owner == user:
-                        continue
-                    config = owner_prefs.get("telegram", {})
-                    if config.get("encrypted"):
-                        try:
-                            from src.secret_storage import decrypt
-                            decrypted = decrypt(config.get("data", ""))
-                            if decrypted:
-                                other_config = json.loads(decrypted)
-                                if other_config.get("telegram_user_id") == telegram_user_id:
-                                    logger.warning(
-                                        "Attempted to link already-linked Telegram user %s to different account",
-                                        hash_telegram_user_id(telegram_user_id)
-                                    )
-                                    raise HTTPException(
-                                        status_code=400,
-                                        detail="This Telegram account is already linked to another Odysseus user"
-                                    )
-                        except (json.JSONDecodeError, Exception):
-                            continue
-                    else:
-                        if config.get("telegram_user_id") == telegram_user_id:
-                            logger.warning(
-                                "Attempted to link already-linked Telegram user %s to different account",
-                                hash_telegram_user_id(telegram_user_id)
-                            )
-                            raise HTTPException(
-                                status_code=400,
-                                detail="This Telegram account is already linked to another Odysseus user"
-                            )
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error("Error checking for duplicate linking: %s", e, exc_info=True)
+            linked_owner = find_owner_by_telegram_user_id(int(telegram_user_id), exclude_owner=user)
+            if linked_owner:
+                logger.warning(
+                    "Attempted to link already-linked Telegram user %s to different account",
+                    hash_telegram_user_id(telegram_user_id)
+                )
+                raise HTTPException(
+                    status_code=400,
+                    detail="This Telegram account is already linked to another Odysseus user"
+                )
             
             # Save the linking
             user_config = _get_telegram_user_config(user) or {}

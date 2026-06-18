@@ -173,6 +173,12 @@ const TelegramIntegration = (() => {
     return init();
   }
 
+  function emitIntegrationsChanged() {
+    try {
+      window.dispatchEvent(new CustomEvent('odysseus-integrations-changed'));
+    } catch (_) {}
+  }
+
   function clearPendingRefresh() {
     if (pendingRefreshTimer) {
       clearTimeout(pendingRefreshTimer);
@@ -273,7 +279,7 @@ const TelegramIntegration = (() => {
       showMessage(data.message || 'Telegram bot configured successfully.', 'success');
       await loadConfig();
       renderUI();
-      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+      emitIntegrationsChanged();
     } catch (error) {
       console.error('Saving Telegram config failed:', error);
       showMessage(error.message, 'error');
@@ -306,7 +312,7 @@ const TelegramIntegration = (() => {
       showMessage(data.message || 'Telegram bot configuration cleared.', 'success');
       await loadConfig();
       renderUI();
-      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+      emitIntegrationsChanged();
     } catch (error) {
       console.error('Clearing Telegram config failed:', error);
       showMessage(error.message, 'error');
@@ -332,7 +338,7 @@ const TelegramIntegration = (() => {
       showMessage(data.message || 'Telegram integration removed.', 'success');
       await loadConfig();
       renderUI();
-      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+      emitIntegrationsChanged();
     } catch (error) {
       console.error('Removing Telegram integration failed:', error);
       showMessage(error.message, 'error');
@@ -345,7 +351,10 @@ const TelegramIntegration = (() => {
   async function handleStartLinking() {
     const input = document.getElementById('telegram-link-token-input');
     const token = (input && input.value ? input.value : '').trim();
-    if (!token) return;
+    if (!token) {
+      showMessage('Paste the linking token from Telegram first.', 'error');
+      return;
+    }
 
     try {
       linkingInProgress = true;
@@ -367,7 +376,7 @@ const TelegramIntegration = (() => {
       // Reload config and re-render
       await loadConfig();
       renderUI();
-      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+      emitIntegrationsChanged();
     } catch (error) {
       console.error('Linking failed:', error);
       showMessage(`Linking failed: ${error.message}`, 'error');
@@ -400,7 +409,7 @@ const TelegramIntegration = (() => {
       // Reload config and re-render
       await loadConfig();
       renderUI();
-      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+      emitIntegrationsChanged();
     } catch (error) {
       console.error('Unlinking failed:', error);
       showMessage(`Unlinking failed: ${error.message}`, 'error');
@@ -425,7 +434,7 @@ const TelegramIntegration = (() => {
       showMessage(`Telegram topics synced: ${created} created, ${updated} updated, ${skipped} unchanged.`, 'success');
       await loadConfig();
       renderUI();
-      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+      emitIntegrationsChanged();
     } catch (error) {
       console.error('Syncing Telegram topics failed:', error);
       showMessage(error.message, 'error');
@@ -449,7 +458,7 @@ const TelegramIntegration = (() => {
       showMessage(data.message || `Telegram mode updated to ${mode}.`, 'success');
       await loadConfig();
       renderUI();
-      try { window.dispatchEvent(new CustomEvent('odysseus-integrations-changed')); } catch (_) {}
+      emitIntegrationsChanged();
     } catch (error) {
       console.error('Updating Telegram mode failed:', error);
       showMessage(`Failed to update mode: ${error.message}`, 'error');
@@ -483,19 +492,6 @@ const TelegramIntegration = (() => {
     const str = String(chatId);
     if (str.length <= 8) return str;
     return `${str.slice(0, 4)}...${str.slice(-4)}`;
-  }
-
-  /**
-   * Format timestamp for display
-   */
-  function formatDate(isoString) {
-    if (!isoString) return 'Never';
-    try {
-      const date = new Date(isoString);
-      return date.toLocaleString();
-    } catch {
-      return isoString;
-    }
   }
 
   return {

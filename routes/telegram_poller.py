@@ -27,6 +27,7 @@ from routes.telegram_helpers import (
     format_for_telegram,
     remember_telegram_forum_chat,
     resolve_telegram_topic_session_id,
+    find_owner_by_telegram_user_id,
     TELEGRAM_POLLING_INTERVAL_SECONDS,
 )
 
@@ -91,30 +92,7 @@ def _save_polling_offset():
 async def _map_telegram_user_to_odysseus_user(telegram_user_id: int) -> Optional[str]:
     """Find which Odysseus user is linked to this Telegram user ID."""
     try:
-        from src.constants import USER_PREFS_FILE
-
-        prefs = {}
-        if os.path.exists(USER_PREFS_FILE):
-            with open(USER_PREFS_FILE, "r", encoding="utf-8") as fh:
-                prefs = json.load(fh)
-        
-        for owner, owner_prefs in prefs.items():
-            telegram_config = owner_prefs.get("telegram", {})
-            if telegram_config.get("encrypted"):
-                try:
-                    from src.secret_storage import decrypt
-                    decrypted_data = decrypt(telegram_config.get("data", ""))
-                    if decrypted_data:
-                        config = json.loads(decrypted_data)
-                        if config.get("telegram_user_id") == telegram_user_id:
-                            return owner
-                except Exception:
-                    continue
-            else:
-                if telegram_config.get("telegram_user_id") == telegram_user_id:
-                    return owner
-        
-        return None
+        return find_owner_by_telegram_user_id(int(telegram_user_id))
     except Exception as e:
         logger.error("Error mapping Telegram user to Odysseus user: %s", e, exc_info=True)
         return None

@@ -17,6 +17,7 @@ import httpx
 import secrets
 import hashlib
 import os
+import numbers
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -428,6 +429,59 @@ def _save_telegram_user_config(owner: str, config: Dict[str, Any]) -> bool:
     except Exception as e:
         logger.error("Error saving Telegram config for user %s: %s", owner, e, exc_info=True)
         return False
+
+
+def _extract_linked_telegram_user_id(owner_prefs: Any) -> Optional[int]:
+    """Extract a linked Telegram user id from one owner's raw prefs blob."""
+    try:
+        if not isinstance(owner_prefs, dict):
+            return None
+        telegram_config = owner_prefs.get("telegram", {})
+        if not isinstance(telegram_config, dict) or not telegram_config:
+            return None
+
+        payload = telegram_config
+        if telegram_config.get("encrypted"):
+            decrypted_data = decrypt(telegram_config.get("data", ""))
+            if not decrypted_data:
+                return None
+            payload = json.loads(decrypted_data)
+
+        user_id = payload.get("telegram_user_id")
+        if isinstance(user_id, bool):
+            return None
+        if isinstance(user_id, numbers.Integral):
+            return int(user_id)
+        if isinstance(user_id, str) and user_id.strip():
+            return int(user_id.strip())
+        return None
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    except Exception as e:
+        logger.debug("Failed extracting linked Telegram user id from prefs: %s", e)
+        return None
+
+
+def find_owner_by_telegram_user_id(telegram_user_id: int, *, exclude_owner: Optional[str] = None) -> Optional[str]:
+    """Return the Odysseus owner linked to a Telegram user id, if any."""
+    try:
+        from src.constants import USER_PREFS_FILE
+
+        prefs = _read_json_file(USER_PREFS_FILE, {})
+        if not isinstance(prefs, dict) or not prefs:
+            return None
+
+        wanted = int(telegram_user_id)
+        for owner, owner_prefs in prefs.items():
+            if exclude_owner is not None and owner == exclude_owner:
+                continue
+            linked_id = _extract_linked_telegram_user_id(owner_prefs)
+            if linked_id == wanted:
+                return owner
+        return None
+    except Exception as e:
+        logger.error("Error searching Telegram-linked owner for user id %s: %s", telegram_user_id, e, exc_info=True)
+        return None
 
 
 def _clear_telegram_user_config(owner: str) -> bool:
