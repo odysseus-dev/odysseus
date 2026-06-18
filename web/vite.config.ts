@@ -22,7 +22,9 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     rollupOptions: {
       output: {
-        entryFileNames: 'assets/index.js',
+        // Content-hash the entry too (not a stable `index.js`) so a deploy can't
+        // serve stale cached JS — index.html references the new hash each build.
+        entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',
       },
