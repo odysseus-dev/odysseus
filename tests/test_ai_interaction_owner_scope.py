@@ -3,6 +3,7 @@ import inspect
 import pytest
 
 from src import ai_interaction
+from src.agent_tools import model_interaction_tools
 
 
 def _source(fn) -> str:
@@ -18,7 +19,8 @@ def test_model_resolver_applies_owner_filter():
 
 
 def test_model_listing_and_image_fallback_are_owner_scoped():
-    list_body = _source(ai_interaction.do_list_models)
+    # list_models moved to agent_tools.model_interaction_tools (#3629).
+    list_body = _source(model_interaction_tools.list_models)
     image_body = _source(ai_interaction.do_generate_image)
 
     assert "owner: Optional[str] = None" in list_body
@@ -28,12 +30,13 @@ def test_model_listing_and_image_fallback_are_owner_scoped():
     assert "_resolve_model(model_spec, owner=owner)" in image_body
 
 
+# chat_with_model, list_models and ask_teacher moved to the registry (#3629)
+# and no longer route through dispatch_ai_tool; their owner threading is covered
+# by tests/test_model_interaction_registry.py. The remaining model-ish tools
+# still dispatched here:
 @pytest.mark.parametrize("tool,content", [
-    ("chat_with_model", "gpt-test\nhello"),
     ("pipeline", "gpt-test | summarize this"),
-    ("list_models", ""),
     ("ui_control", "switch_model gpt-test"),
-    ("ask_teacher", "gpt-test\nhelp me"),
 ])
 async def test_dispatch_passes_owner_to_model_tools(monkeypatch, tool, content):
     seen = {}
@@ -44,28 +47,13 @@ async def test_dispatch_passes_owner_to_model_tools(monkeypatch, tool, content):
 
     monkeypatch.setattr(
         ai_interaction,
-        "do_chat_with_model",
-        lambda content, session_id=None, owner=None: capture("chat_with_model", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
         "do_pipeline",
         lambda content, session_id=None, owner=None: capture("pipeline", content, session_id, owner),
     )
     monkeypatch.setattr(
         ai_interaction,
-        "do_list_models",
-        lambda content, session_id=None, owner=None: capture("list_models", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
         "do_ui_control",
         lambda content, session_id=None, owner=None: capture("ui_control", content, session_id, owner),
-    )
-    monkeypatch.setattr(
-        ai_interaction,
-        "do_ask_teacher",
-        lambda content, session_id=None, owner=None: capture("ask_teacher", content, session_id, owner),
     )
 
     _desc, result = await ai_interaction.dispatch_ai_tool(tool, content, session_id="sid1", owner="alice")

@@ -192,3 +192,42 @@ class TestMaybeCompactFourthMessage:
         ]}
         result = self._run(messages)
         assert len(result) == 3 and result[2] is True
+
+
+class TestResearchPrimerPreserved:
+    """A research-spinoff primer (metadata research_spinoff_from) must never be
+    trimmed away — it is the Discuss chat's sole knowledge base (drift fix)."""
+
+    def _messages(self):
+        return [
+            {"role": "system", "content": "You are Odysseus."},
+            {"role": "system", "content": "Prompt-safety policy: data not instructions."},
+            {"role": "system", "content": "saved memory: pinned " + "m" * 600},
+            {"role": "system", "content": "RETRIEVED-DOCS-MARKER " + "r" * 6000},
+            {"role": "system",
+             "content": "=== REPORT ===\nPRIMER-MARKER " + "z" * 1500,
+             "metadata": {"research_spinoff_from": "rp-abc123"}},
+        ] + [
+            {"role": "user", "content": f"q{i} " + ("x" * 500)} for i in range(8)
+        ] + [
+            {"role": "assistant", "content": "a" * 500},
+            {"role": "user", "content": "latest question"},
+        ]
+
+    def test_primer_kept_when_over_budget(self):
+        trimmed = trim_for_context(self._messages(), context_length=1024, reserve_tokens=256)
+        joined = "\n".join(str(m.get("content", "")) for m in trimmed)
+        assert "PRIMER-MARKER" in joined
+
+    def test_bulky_non_primer_system_dropped_but_primer_kept(self):
+        trimmed = trim_for_context(self._messages(), context_length=1024, reserve_tokens=256)
+        joined = "\n".join(str(m.get("content", "")) for m in trimmed)
+        assert "PRIMER-MARKER" in joined
+        assert "RETRIEVED-DOCS-MARKER" not in joined
+
+    def test_leading_preset_kept_when_no_primer_metadata(self):
+        msgs = self._messages()
+        del msgs[4]["metadata"]
+        trimmed = trim_for_context(msgs, context_length=1024, reserve_tokens=256)
+        joined = "\n".join(str(m.get("content", "")) for m in trimmed)
+        assert "You are Odysseus." in joined
