@@ -112,15 +112,28 @@ async def test_unrelated_paths_keep_strict_policy():
 # ---------------------------------------------------------------------------
 
 
-_TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_ENGINE = create_engine(
-    f"sqlite:///{_TMPDB.name}",
-    connect_args={"check_same_thread": False},
-    poolclass=NullPool,
-)
-cdb.Base.metadata.create_all(_ENGINE)
-_TS = sessionmaker(bind=_ENGINE, autoflush=False, autocommit=False)
-droutes.SessionLocal = _TS
+@pytest.fixture
+def test_db(monkeypatch):
+    """Create a temporary SQLite database and patch routes.document_routes.SessionLocal."""
+    import os
+    tmpdb = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmpdb.close()
+    engine = create_engine(
+        f"sqlite:///{tmpdb.name}",
+        connect_args={"check_same_thread": False},
+        poolclass=NullPool,
+    )
+    cdb.Base.metadata.create_all(engine)
+    ts = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    monkeypatch.setattr(droutes, "SessionLocal", ts)
+    try:
+        yield ts
+    finally:
+        engine.dispose()
+        try:
+            os.unlink(tmpdb.name)
+        except OSError:
+            pass
 
 
 def _req():
@@ -139,7 +152,7 @@ def _endpoint(method: str, path: str, upload_handler=None):
     raise RuntimeError(f"{method} {path} not found")
 
 
-def _make_pdf_doc() -> str:
+def _make_pdf_doc(db_session) -> str:
     """Create a test Document with a pdf_form_source front-matter pointer."""
     content = (
         '<!-- pdf_form_source upload_id="'
@@ -147,7 +160,7 @@ def _make_pdf_doc() -> str:
         + '" fields="3" -->\n'
         "- Field 1: value1\n- Field 2: value2\n- Field 3: value3\n"
     )
-    db = _TS()
+    db = db_session()
     try:
         doc = Document(
             id=str(uuid.uuid4()),
@@ -166,7 +179,7 @@ def _make_pdf_doc() -> str:
         db.close()
 
 
-async def test_render_pdf_returns_503_when_pymupdf_missing(monkeypatch):
+async def test_render_pdf_returns_503_when_pymupdf_missing(monkeypatch, test_db):
     """Assert that the render-pdf path returns 503 when PyMuPDF is not installed."""
     real_import = builtins.__import__
 
@@ -183,7 +196,7 @@ async def test_render_pdf_returns_503_when_pymupdf_missing(monkeypatch):
     monkeypatch.setattr(droutes, "_resolve_user_upload_path", lambda *a, **kw: "/tmp/fake.pdf")
 
     render_pdf = _endpoint("GET", "/api/document/{doc_id}/render-pdf", upload_handler=MagicMock())
-    doc_id = _make_pdf_doc()
+    doc_id = _make_pdf_doc(test_db)
 
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as excinfo:
@@ -195,7 +208,7 @@ async def test_render_pdf_returns_503_when_pymupdf_missing(monkeypatch):
     assert "PyMuPDF" in detail
 
 
-async def test_render_pdf_503_runs_before_file_io(monkeypatch, tmp_path):
+async def test_render_pdf_503_runs_before_file_io(monkeypatch, test_db, tmp_path):
     """Assert that the PyMuPDF check runs before resolving or checking the source file path."""
     real_import = builtins.__import__
 
@@ -216,7 +229,7 @@ async def test_render_pdf_503_runs_before_file_io(monkeypatch, tmp_path):
     monkeypatch.setattr(droutes, "_resolve_user_upload_path", lambda *a, **kw: sentinel_path)
 
     render_pdf = _endpoint("GET", "/api/document/{doc_id}/render-pdf", upload_handler=MagicMock())
-    doc_id = _make_pdf_doc()
+    doc_id = _make_pdf_doc(test_db)
 
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as excinfo:
