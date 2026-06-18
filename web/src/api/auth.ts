@@ -71,6 +71,7 @@ export function useUserMutations() {
         return r.json()
       },
       onSuccess: inv,
+      meta: { silent: true },
     }),
     remove: useMutation({
       mutationFn: async (username: string) => {

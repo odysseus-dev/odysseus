@@ -45,6 +45,7 @@ export function useTokenMutations() {
         return r.json() as Promise<ApiToken & { token: string }>
       },
       onSuccess: inv,
+      meta: { silent: true },
     }),
     rename: useMutation({
       mutationFn: async (v: { id: string; name: string }) => {

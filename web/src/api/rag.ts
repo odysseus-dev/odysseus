@@ -90,6 +90,7 @@ export function useRagMutations() {
         return r.json()
       },
       onSuccess: invDocs,
+      meta: { silent: true },
     }),
     removeFile: useMutation({
       mutationFn: async (filepath: string) => {
@@ -130,6 +131,7 @@ export function useRagMutations() {
         return r.json()
       },
       onSuccess: invModels,
+      meta: { silent: true },
     }),
     clearEndpoint: useMutation({
       mutationFn: async () => { const r = await apiFetch("/api/embeddings/endpoint", { method: "DELETE" }); if (!r.ok) throw new Error("Clear failed"); return r.json() },

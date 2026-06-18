@@ -52,6 +52,7 @@ export function useRunSkill() {
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Run failed") }
       return r.json() as Promise<{ ok: boolean; type: string; name: string; command: string; message: string }>
     },
+    meta: { silent: true },
   })
 }
 
@@ -91,6 +92,7 @@ export function useStartSkillTest() {
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || "Test failed to start") }
       return r.json() as Promise<{ ok: boolean; status: string; skill: string; model: string }>
     },
+    meta: { silent: true }, // TestPanel renders start.error inline
   })
 }
 
@@ -130,6 +132,7 @@ export function useSkillMutations() {
         return r.json() as Promise<{ ok: boolean; skill: Skill; files: number }>
       },
       onSuccess: inv,
+      meta: { silent: true },
     }),
     saveBuiltinOverride: useMutation({
       mutationFn: async (v: { name: string; text: string }) => {
@@ -140,6 +143,7 @@ export function useSkillMutations() {
         return r.json()
       },
       onSuccess: (_d, v) => invBuiltin(v.name),
+      meta: { silent: true },
     }),
     resetBuiltinOverride: useMutation({
       mutationFn: async (name: string) => {
@@ -148,6 +152,7 @@ export function useSkillMutations() {
         return r.json()
       },
       onSuccess: (_d, name) => invBuiltin(name),
+      meta: { silent: true },
     }),
     remove: useMutation({
       mutationFn: async (id: string) => { await apiFetch(`/api/skills/${id}`, { method: "DELETE" }) },
@@ -162,6 +167,7 @@ export function useSkillMutations() {
         return r.json()
       },
       onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["skill-md", v.id] }); inv() },
+      meta: { silent: true },
     }),
     auditAll: useMutation({
       mutationFn: async () => {
@@ -179,6 +185,7 @@ export function useSkillMutations() {
         return r.json()
       },
       onSuccess: inv,
+      meta: { silent: true },
     }),
   }
 }

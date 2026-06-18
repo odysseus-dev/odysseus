@@ -20,8 +20,8 @@ export function useEmailAccountMutations() {
   const qc = useQueryClient()
   const inv = () => qc.invalidateQueries({ queryKey: ["email-accounts"] })
   return {
-    create: useMutation({ mutationFn: async (v: EmailAccountInput) => { const r = await jx("POST", "/api/email/accounts", v); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || "Create failed"); return d }, onSuccess: inv }),
-    update: useMutation({ mutationFn: async (v: { id: string } & EmailAccountInput) => { const { id, ...rest } = v; const r = await jx("PUT", `/api/email/accounts/${id}`, rest); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || "Update failed"); return d }, onSuccess: inv }),
+    create: useMutation({ mutationFn: async (v: EmailAccountInput) => { const r = await jx("POST", "/api/email/accounts", v); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || "Create failed"); return d }, onSuccess: inv, meta: { silent: true } }),
+    update: useMutation({ mutationFn: async (v: { id: string } & EmailAccountInput) => { const { id, ...rest } = v; const r = await jx("PUT", `/api/email/accounts/${id}`, rest); const d = await r.json().catch(() => ({})); if (!r.ok || d.ok === false) throw new Error(d.error || "Update failed"); return d }, onSuccess: inv, meta: { silent: true } }),
     remove: useMutation({ mutationFn: async (id: string) => { const r = await jx("DELETE", `/api/email/accounts/${id}`); if (!r.ok) throw new Error("Delete failed"); return r.json() }, onSuccess: inv }),
     setDefault: useMutation({ mutationFn: async (id: string) => { const r = await jx("POST", `/api/email/accounts/${id}/set-default`); if (!r.ok) throw new Error("Failed"); return r.json() }, onSuccess: inv }),
   }
@@ -48,8 +48,8 @@ export function useCalDavMutations() {
   const qc = useQueryClient()
   const inv = () => qc.invalidateQueries({ queryKey: ["caldav-accounts"] })
   return {
-    create: useMutation({ mutationFn: async (v: { label?: string; url: string; username?: string; password: string }) => { const r = await jx("POST", "/api/calendar/config/accounts", v); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || "Add failed"); return d }, onSuccess: inv }),
-    update: useMutation({ mutationFn: async (v: { id: string; label?: string; url?: string; username?: string; password?: string }) => { const { id, ...rest } = v; const r = await jx("PUT", `/api/calendar/config/accounts/${id}`, rest); if (!r.ok) throw new Error("Update failed"); return r.json() }, onSuccess: inv }),
+    create: useMutation({ mutationFn: async (v: { label?: string; url: string; username?: string; password: string }) => { const r = await jx("POST", "/api/calendar/config/accounts", v); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.detail || "Add failed"); return d }, onSuccess: inv, meta: { silent: true } }),
+    update: useMutation({ mutationFn: async (v: { id: string; label?: string; url?: string; username?: string; password?: string }) => { const { id, ...rest } = v; const r = await jx("PUT", `/api/calendar/config/accounts/${id}`, rest); if (!r.ok) throw new Error("Update failed"); return r.json() }, onSuccess: inv, meta: { silent: true } }),
     remove: useMutation({ mutationFn: async (id: string) => { const r = await jx("DELETE", `/api/calendar/config/accounts/${id}`); if (!r.ok) throw new Error("Delete failed"); return r.json() }, onSuccess: inv }),
   }
 }

@@ -51,6 +51,7 @@ export function useEndpointMutations() {
         return r.json()
       },
       onSuccess: () => { qc.invalidateQueries({ queryKey: ["models"] }); qc.invalidateQueries({ queryKey: ["default-chat"] }) },
+      meta: { silent: true },
     }),
   }
 }

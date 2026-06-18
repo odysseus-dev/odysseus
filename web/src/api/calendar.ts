@@ -42,6 +42,7 @@ export function useEventMutations() {
         if (!r.ok) throw new Error("Couldn't create event"); return r.json()
       },
       onSuccess: inv,
+      meta: { silent: true },
     }),
     update: useMutation({
       mutationFn: async (v: { uid: string } & EventPatch) => {
@@ -50,6 +51,7 @@ export function useEventMutations() {
         if (!r.ok) throw new Error("Couldn't update event"); return r.json()
       },
       onSuccess: inv,
+      meta: { silent: true },
     }),
     remove: useMutation({
       mutationFn: async (uid: string) => { const r = await apiFetch(`/api/calendar/events/${encodeURIComponent(uid)}`, { method: "DELETE" }); if (!r.ok) throw new Error("delete failed") },
@@ -87,6 +89,7 @@ export function useSync() {
       qc.invalidateQueries({ queryKey: ["calendar"] })
       qc.invalidateQueries({ queryKey: ["calendars"] })
     },
+    meta: { silent: true },
   })
 }
 
@@ -106,6 +109,7 @@ export function useImportIcs() {
       qc.invalidateQueries({ queryKey: ["calendar"] })
       qc.invalidateQueries({ queryKey: ["calendars"] })
     },
+    meta: { silent: true },
   })
 }
 

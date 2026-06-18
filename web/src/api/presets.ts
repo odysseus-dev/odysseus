@@ -13,6 +13,7 @@ export function useCreatePreset() {
       if (!r.ok) throw new Error("save failed"); return r.json()
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["presets"] }),
+    meta: { silent: true },
   })
 }
 export function usePresets() {

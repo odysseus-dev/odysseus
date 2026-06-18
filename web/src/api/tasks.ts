@@ -21,6 +21,7 @@ export function useTaskMutations() {
         return r.json()
       },
       onSuccess: inv,
+      meta: { silent: true },
     }),
     run: useMutation({ mutationFn: async (id: string) => { const r = await post(id, "run"); if (!r.ok) throw new Error("Couldn't run the task") }, onSuccess: inv }),
     pause: useMutation({ mutationFn: async (id: string) => { const r = await post(id, "pause"); if (!r.ok) throw new Error("Couldn't pause the task") }, onSuccess: inv }),
