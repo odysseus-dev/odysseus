@@ -24,6 +24,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { createStreamRenderer } from './streamingRenderer.js';
 import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composerArrowUpRecall.js';
+import { shouldTreatStopClick } from './composerStopGuard.js';
 
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
@@ -291,8 +292,13 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
       return;
     }
 
-    // If currently streaming, stop it
-    if (isStreaming) {
+    // If currently streaming (or the button is visually in Stop mode even
+    // though the streaming flag hasn't re-armed yet — e.g. a run resumed after
+    // a page refresh), treat the click as Stop. Keying off the button's visible
+    // mode as well as the flag prevents the click from falling through to the
+    // send path, which would clear the composer and fire the user's freshly
+    // typed draft as a new message instead of just stopping.
+    if (shouldTreatStopClick(isStreaming, submitBtn)) {
       // Cancel server-side research if in progress
       const _cancelSid = sessionModule.getCurrentSessionId();
       if (_cancelSid && _researchingStreamIds.has(_cancelSid)) {
