@@ -1,25 +1,4 @@
-"""Regression tests for the document /render-pdf iframe path.
-
-Two related bugs were fixed together:
-
-  1. ``core/middleware.py:SecurityHeadersMiddleware`` was sending
-     ``X-Frame-Options: DENY`` and ``Content-Security-Policy: ...;
-     frame-ancestors 'none'`` on the ``/api/document/{doc_id}/render-pdf``
-     response. The document library preview embeds the rendered PDF in an
-     ``<iframe>`` (``static/js/documentLibrary.js``), so the browser blocked
-     the load with ``ERR_BLOCKED_BY_RESPONSE`` and the user saw a blank
-     panel. The fix extends the existing ``is_tool_render`` exemption to
-     also cover ``/api/document/.../render-pdf`` — per-document auth still
-     runs in the route handler.
-
-  2. ``routes/document_routes.py:render_pdf`` calls ``fill_fields`` which
-     calls ``src.pdf_forms._require_fitz``. When PyMuPDF is not installed
-     that raises ``RuntimeError`` deep inside the route, bubbles out as a
-     generic 500 with the cryptic "PDF render failed" message. The fix
-     reuses the existing ``_load_pdf_viewer_fitz`` helper to fail fast with
-     a clear 503 and a user-actionable install hint, matching the
-     convention used by the other PDF endpoints.
-"""
+"""Regression tests for the document PDF preview framing headers and PyMuPDF dependency handling."""
 
 import builtins
 import tempfile
@@ -39,20 +18,20 @@ from core.middleware import SecurityHeadersMiddleware
 
 
 # ---------------------------------------------------------------------------
-# Helpers — minimal fake request/response so we can drive dispatch directly.
-# Drives the real middleware in isolation, no Starlette TestClient, no app
-# boot, no auth — just the header logic.
+# Helpers
 # ---------------------------------------------------------------------------
 
 
 class _FakeURL:
     def __init__(self, path: str):
         self.path = path
+        self.scheme = "http"
 
 
 class _FakeRequest:
     def __init__(self, path: str):
         self.url = _FakeURL(path)
+        self.headers = {}
         self.state = SimpleNamespace()
 
 
@@ -74,24 +53,17 @@ async def _dispatch(path: str) -> _FakeResponse:
 # ---------------------------------------------------------------------------
 
 
-async def test_doc_render_pdf_is_iframeable():
-    """Bug 1 fix: /api/document/{id}/render-pdf must NOT carry frame-blocking
-    headers — the library preview embeds it in an iframe (see
-    static/js/documentLibrary.js)."""
+async def test_doc_render_pdf_same_origin_framing():
+    """Assert that /api/document/{id}/render-pdf allows same-origin framing."""
     resp = await _dispatch("/api/document/abc-123/render-pdf")
 
-    assert "X-Frame-Options" not in resp.headers, (
-        "render-pdf must not carry X-Frame-Options: DENY — the document "
-        "library embeds it in an iframe."
-    )
+    assert resp.headers.get("X-Frame-Options") == "SAMEORIGIN"
     csp = resp.headers.get("Content-Security-Policy", "")
-    assert "frame-ancestors" not in csp, csp
+    assert "frame-ancestors 'self'" in csp
 
 
 async def test_doc_render_pdf_keeps_baseline_security_headers():
-    """The exemption only relaxes framing. ``X-Content-Type-Options`` and
-    ``Referrer-Policy`` are still set on every response (see the
-    SecurityHeadersMiddleware contract) and must be preserved here."""
+    """Assert that baseline security headers are preserved on the render-pdf path."""
     resp = await _dispatch("/api/document/abc-123/render-pdf")
 
     assert resp.headers.get("X-Content-Type-Options") == "nosniff"
@@ -99,9 +71,7 @@ async def test_doc_render_pdf_keeps_baseline_security_headers():
 
 
 async def test_doc_export_pdf_still_frame_blocked():
-    """export-pdf is a download (Content-Disposition: attachment), not an
-    iframe embed. The exemption must NOT cover it — the path match has to
-    be precise to avoid loosening the policy without benefit."""
+    """Assert that the export-pdf path remains frame-blocked."""
     resp = await _dispatch("/api/document/abc-123/export-pdf")
 
     assert resp.headers.get("X-Frame-Options") == "DENY"
@@ -109,26 +79,18 @@ async def test_doc_export_pdf_still_frame_blocked():
 
 
 async def test_doc_path_matching_is_precise():
-    """Negative cases: paths that LOOK similar to render-pdf must NOT be
-    exempted. Guards against future refactors that loosen the matcher.
-
-    The matcher is the same startswith+endswith style the project already
-    uses for is_tool_render / is_report, so the test pins that style.
-    """
+    """Assert that similar paths are not exempted from framing restrictions."""
     for path in [
-        "/api/document/abc-123/render-pdfx",         # extra suffix
-        "/api/document/abc-123/render-pdf/foo",      # subpath
-        "/api/documents/abc-123/render-pdf",         # wrong prefix (note plural)
+        "/api/document/abc-123/render-pdfx",
+        "/api/document/abc-123/render-pdf/foo",
+        "/api/documents/abc-123/render-pdf",
     ]:
         resp = await _dispatch(path)
-        assert resp.headers.get("X-Frame-Options") == "DENY", (
-            f"Path {path!r} must keep the strict frame-blocking policy"
-        )
+        assert resp.headers.get("X-Frame-Options") == "DENY"
 
 
 async def test_tool_render_exemption_preserved():
-    """Sanity check: the existing /api/tools/.../render exemption is not
-    broken by the new /api/document/.../render-pdf exemption."""
+    """Assert that the tool-render path remains exempt from framing headers."""
     resp = await _dispatch("/api/tools/foo/bar/render")
 
     assert "X-Frame-Options" not in resp.headers
@@ -137,8 +99,7 @@ async def test_tool_render_exemption_preserved():
 
 
 async def test_unrelated_paths_keep_strict_policy():
-    """Other paths must keep the strict framing policy (no regression on
-    the main change)."""
+    """Assert that other paths keep the strict framing policy."""
     resp = await _dispatch("/api/chat")
 
     assert resp.headers.get("X-Frame-Options") == "DENY"
@@ -163,7 +124,7 @@ droutes.SessionLocal = _TS
 
 
 def _req():
-    """Minimal request stub: owner + auth_manager lookup path."""
+    """Minimal request stub."""
     return SimpleNamespace(
         state=SimpleNamespace(current_user="tester"),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
@@ -179,12 +140,10 @@ def _endpoint(method: str, path: str, upload_handler=None):
 
 
 def _make_pdf_doc() -> str:
-    """Create a Document whose current_content carries a valid pdf_form_source
-    front-matter pointer. The render-pdf handler reads this to look up the
-    source upload — we only need a real marker to get past the 400 check."""
+    """Create a test Document with a pdf_form_source front-matter pointer."""
     content = (
         '<!-- pdf_form_source upload_id="'
-        + "a" * 32  # matches UPLOAD_ID_RE (32 hex chars)
+        + "a" * 32
         + '" fields="3" -->\n'
         "- Field 1: value1\n- Field 2: value2\n- Field 3: value3\n"
     )
@@ -208,7 +167,7 @@ def _make_pdf_doc() -> str:
 
 
 async def test_render_pdf_returns_503_when_pymupdf_missing(monkeypatch):
-    """Bug 2 fix: missing PyMuPDF must surface as a clear 503, not a 500."""
+    """Assert that the render-pdf path returns 503 when PyMuPDF is not installed."""
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -218,12 +177,7 @@ async def test_render_pdf_returns_503_when_pymupdf_missing(monkeypatch):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
-    # Stub the helpers the handler calls before the PyMuPDF gate so we
-    # exercise the actual 503 path without a real uploaded PDF on disk.
-    # - find_source_upload_id is imported lazily inside the handler — patch
-    #   the source module.
-    # - _resolve_user_upload_path is imported at module top level — patch
-    #   via droutes.
+    # Stub route dependencies to isolate the PyMuPDF check
     import src.pdf_form_doc as pdf_form_doc
     monkeypatch.setattr(pdf_form_doc, "find_source_upload_id", lambda _content: "a" * 32)
     monkeypatch.setattr(droutes, "_resolve_user_upload_path", lambda *a, **kw: "/tmp/fake.pdf")
@@ -235,19 +189,14 @@ async def test_render_pdf_returns_503_when_pymupdf_missing(monkeypatch):
     with pytest.raises(HTTPException) as excinfo:
         await render_pdf(doc_id, _req())
 
-    assert excinfo.value.status_code == 503, (
-        f"Expected 503 with install hint, got {excinfo.value.status_code}: {excinfo.value.detail}"
-    )
+    assert excinfo.value.status_code == 503
     detail = str(excinfo.value.detail)
-    assert "requirements-optional.txt" in detail, detail
-    assert "PyMuPDF" in detail, detail
+    assert "requirements-optional.txt" in detail
+    assert "PyMuPDF" in detail
 
 
 async def test_render_pdf_503_runs_before_file_io(monkeypatch, tmp_path):
-    """Stronger guarantee: the 503 is raised BEFORE we touch the source PDF
-    path. If the route ever reordered the PyMuPDF check to happen after
-    fill_fields, a missing PyMuPDF would still be a 500. This test pins
-    the fail-fast ordering."""
+    """Assert that the PyMuPDF check runs before resolving or checking the source file path."""
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
@@ -257,14 +206,13 @@ async def test_render_pdf_503_runs_before_file_io(monkeypatch, tmp_path):
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
+    # Use a non-existent path to verify the check fails before checking path existence
     sentinel_dir = tmp_path / "should-never-be-touched"
     sentinel_dir.mkdir()
     sentinel_path = str(sentinel_dir / "source.pdf")
 
     import src.pdf_form_doc as pdf_form_doc
     monkeypatch.setattr(pdf_form_doc, "find_source_upload_id", lambda _content: "a" * 32)
-    # If the route opens the path before the PyMuPDF check, this will
-    # raise FileNotFoundError and the test will fail with the wrong type.
     monkeypatch.setattr(droutes, "_resolve_user_upload_path", lambda *a, **kw: sentinel_path)
 
     render_pdf = _endpoint("GET", "/api/document/{doc_id}/render-pdf", upload_handler=MagicMock())
