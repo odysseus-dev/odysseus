@@ -1012,6 +1012,9 @@ async def _startup_event():
                 await asyncio.sleep(300)  # Back off on error
 
     _startup_tasks.append(asyncio.create_task(_keepalive_loop()))
+    # CalDAV bidirectional background sync (every 5 min)
+    from src.caldav_sync import start_background_sync_scheduler
+    _startup_tasks.append(start_background_sync_scheduler())
 
     async def _ensure_default_tasks():
         # Create/reconcile default automation tasks + personal assistant for every user.

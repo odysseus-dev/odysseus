@@ -2037,7 +2037,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 )
             db.commit()
             if cal.source == "caldav":
-                await _push_caldav_event_after_commit(owner, uid, "create")
+                asyncio.create_task(_push_caldav_event_after_commit(owner, uid, "create"))
             tag_blurb = f" [{event_type}]" if event_type else ""
             if minutes_before is None:
                 reminder_blurb = ""
@@ -2100,7 +2100,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
                 ev.caldav_sync_pending = "update"
             db.commit()
             if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "update")
+                asyncio.create_task(_push_caldav_event_after_commit(owner, base_uid, "update"))
             return {"response": f"Updated event {uid}", "exit_code": 0}
 
         elif action == "delete_event":
@@ -2120,7 +2120,7 @@ async def do_manage_calendar(content: str, owner: Optional[str] = None) -> Dict:
             db.delete(ev)
             db.commit()
             if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "delete")
+                asyncio.create_task(_push_caldav_event_after_commit(owner, base_uid, "delete"))
             return {"response": f"Deleted event {uid}", "exit_code": 0}
 
         else:

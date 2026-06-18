@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, date, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy import or_, and_
 from dateutil.rrule import rrulestr
@@ -1006,7 +1006,7 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.post("/events")
-    async def create_event(request: Request, data: EventCreate):
+    async def create_event(request: Request, data: EventCreate, bg_tasks: BackgroundTasks):
         owner = _require_user(request)
         db = SessionLocal()
         try:
@@ -1055,7 +1055,7 @@ def setup_calendar_routes() -> APIRouter:
             db.add(ev)
             db.commit()
             if cal.source == "caldav":
-                await _push_caldav_event_after_commit(owner, uid, "create")
+                bg_tasks.add_task(_push_caldav_event_after_commit, owner, uid, "create")
             return {"ok": True, "uid": uid}
         except HTTPException:
             raise
@@ -1067,7 +1067,7 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.put("/events/{uid}")
-    async def update_event(request: Request, uid: str, data: EventUpdate):
+    async def update_event(request: Request, uid: str, data: EventUpdate, bg_tasks: BackgroundTasks):
         owner = _require_user(request)
         try:
             base_uid = _resolve_base_uid(uid)
@@ -1106,7 +1106,7 @@ def setup_calendar_routes() -> APIRouter:
                 ev.caldav_sync_pending = "update"
             db.commit()
             if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "update")
+                bg_tasks.add_task(_push_caldav_event_after_commit, owner, base_uid, "update")
             return {"ok": True}
         except HTTPException:
             raise
@@ -1118,7 +1118,7 @@ def setup_calendar_routes() -> APIRouter:
             db.close()
 
     @router.delete("/events/{uid}")
-    async def delete_event(request: Request, uid: str):
+    async def delete_event(request: Request, uid: str, bg_tasks: BackgroundTasks):
         owner = _require_user(request)
         try:
             base_uid = _resolve_base_uid(uid)
@@ -1133,7 +1133,7 @@ def setup_calendar_routes() -> APIRouter:
             db.delete(ev)
             db.commit()
             if is_caldav:
-                await _push_caldav_event_after_commit(owner, base_uid, "delete")
+                bg_tasks.add_task(_push_caldav_event_after_commit, owner, base_uid, "delete")
             return {"ok": True}
         except HTTPException:
             raise

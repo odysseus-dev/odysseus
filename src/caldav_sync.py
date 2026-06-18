@@ -28,6 +28,8 @@ import ipaddress
 import logging
 import os
 import socket
+import tempfile
+import time
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse, urlunparse
@@ -334,7 +336,12 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 else:
                     # Refresh display name and stamp CalDAV metadata if missing.
                     changed = False
-                    if local_cal.name != display_name:
+                    # Preserve a user‑friendly name if it was already set.
+                    # The remote CalDAV server may return an empty or generic name
+                    # ("CalDAV"), which would otherwise overwrite a custom name like
+                    # "Feriados do Brasil". Only replace the name when the local record
+                    # is empty or still holds the generic placeholder.
+                    if not local_cal.name or local_cal.name in ("CalDAV", ""):
                         local_cal.name = display_name
                         changed = True
                     if account_id and not local_cal.account_id:
@@ -710,3 +717,134 @@ async def sync_caldav_direction(owner: str, direction: str = "pull") -> dict:
         "deleted": 0,
         "errors": [f"Unsupported CalDAV sync direction: {direction}"],
     }
+
+
+# ── Background scheduler ──────────────────────────────────────────────────
+
+_SYNC_LOCK_FILE = os.path.join(
+    tempfile.gettempdir(), ".odysseus_caldav_sync.lock"
+)
+_SYNC_LOCK_STALE_SECONDS = 600  # lock older than 10 min is considered stale
+
+logger = logging.getLogger(__name__)
+
+
+def _acquire_sync_lock() -> bool:
+    """Try to acquire a file-based lock for multi-worker safety.
+
+    Returns True if this worker should run the sync cycle (lock acquired),
+    False if another worker is already doing it.
+    """
+    try:
+        os.makedirs(os.path.dirname(_SYNC_LOCK_FILE), exist_ok=True)
+        lock_id = os.environ.get("HOSTNAME", os.environ.get("COMPUTERNAME", ""))
+        pid = os.getpid()
+        content = f"{lock_id}:{pid}:{time.monotonic()}"
+
+        # Check for stale lock
+        if os.path.exists(_SYNC_LOCK_FILE):
+            try:
+                with open(_SYNC_LOCK_FILE) as f:
+                    stored = f.read().strip()
+                parts = stored.split(":")
+                if len(parts) >= 2:
+                    lock_host = parts[0]
+                    lock_pid = parts[1]
+                    # Same host+pid still alive? If so, lock is valid.
+                    if lock_host == lock_id and lock_pid == str(pid):
+                        return True  # we already hold it
+                # Check mtime staleness
+                mtime = os.path.getmtime(_SYNC_LOCK_FILE)
+                if time.time() - mtime < _SYNC_LOCK_STALE_SECONDS:
+                    return False  # another worker holds a fresh lock
+            except (OSError, ValueError, IndexError):
+                pass  # broken lock file — overwrite below
+
+        with open(_SYNC_LOCK_FILE, "w") as f:
+            f.write(content)
+        os.chmod(_SYNC_LOCK_FILE, 0o644)
+        return True
+    except OSError:
+        return False
+
+
+def _release_sync_lock() -> None:
+    """Release the lock if we still hold it."""
+    try:
+        if os.path.exists(_SYNC_LOCK_FILE):
+            os.remove(_SYNC_LOCK_FILE)
+    except OSError:
+        pass
+
+
+async def _bidirectional_sync_all_users() -> None:
+    """Sync bidirectionally for every user who has CalDAV calendars.
+
+    This is called by the background scheduler loop.
+    """
+    from core.database import CalendarCal, SessionLocal
+
+    if not _acquire_sync_lock():
+        logger.debug("CalDAV sync lock held by another worker — skipping cycle")
+        return
+
+    db = SessionLocal()
+    try:
+        owners = [
+            row[0]
+            for row in db.query(CalendarCal.owner)
+            .filter(CalendarCal.source == "caldav", CalendarCal.owner.isnot(None))
+            .distinct()
+            .all()
+        ]
+    except Exception:
+        logger.exception("Failed to query CalDAV owners for background sync")
+        return
+    finally:
+        db.close()
+
+    try:
+        for owner in owners:
+            try:
+                result = await sync_caldav_direction(owner, "both")
+                if not result:
+                    continue
+                push_ok = result.get("push", {}).get("events", 0)
+                pull_ok = result.get("pull", {}).get("events", 0)
+                push_errors = result.get("push", {}).get("errors", [])
+                pull_errors = result.get("pull", {}).get("errors", [])
+                if push_errors or pull_errors:
+                    logger.warning(
+                        "CalDAV background sync for %s: push=%d pull=%d errors=%s",
+                        owner, push_ok, pull_ok,
+                        push_errors[:2] + pull_errors[:2],
+                    )
+            except Exception:
+                logger.exception("CalDAV background sync failed for %s", owner)
+    finally:
+        _release_sync_lock()
+
+
+async def start_background_sync_scheduler(
+    interval_seconds: int = 300,
+) -> None:
+    """Run in the event loop as a fire-and-forget task.
+
+    Iterates over all users with CalDAV calendars and syncs
+    bidirectional (push pending events, pull remote changes).
+
+    Designed for multi-worker safety via an advisory file lock.
+    """
+    logger.info(
+        "CalDAV background sync scheduler started (interval=%ds)", interval_seconds
+    )
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            await _bidirectional_sync_all_users()
+        except asyncio.CancelledError:
+            logger.info("CalDAV background sync scheduler cancelled")
+            break
+        except Exception:
+            logger.exception("CalDAV background sync cycle crashed")
+            await asyncio.sleep(60)  # back off on error

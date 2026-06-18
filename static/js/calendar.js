@@ -199,12 +199,14 @@ async function _fetchCalendars() {
   }
 }
 
-// Trigger a CalDAV pull. `interactive=true` waits for the result and
+// Trigger a CalDAV sync. `interactive=true` waits for the result and
 // refreshes the UI; false fires-and-forgets (used on first open). Both
 // no-op silently if CalDAV isn't configured.
-async function _syncCaldav(interactive) {
+// `direction` defaults to "pull" (first-open background sync) but the
+// toolbar Sync button passes "both" so push and pull run together.
+async function _syncCaldav(interactive, direction = "pull") {
   try {
-    const res = await fetch(`${API_BASE}/api/calendar/sync`, {
+    const res = await fetch(`${API_BASE}/api/calendar/sync?direction=${encodeURIComponent(direction)}`, {
       method: 'POST', credentials: 'same-origin',
     });
     const data = await res.json().catch(() => ({}));
@@ -2152,6 +2154,7 @@ function _wireAll(body) {
     try {
       await Promise.all([
         _fetchEvents(_range[0], _range[1], /*force*/ true).catch(() => {}),
+        _syncCaldav(true, "both").catch(() => {}),
         minSpin,
       ]);
     } finally {
@@ -2668,7 +2671,7 @@ async function _showCalSettings() {
     const status = overlay.querySelector('#cal-settings-sync-status');
     btn.disabled = true;
     status.textContent = 'Syncing…';
-    const data = await _syncCaldav(true) || {};
+    const data = await _syncCaldav(true, "both") || {};
     if (data.errors && data.errors.length) {
       status.textContent = `Sync failed: ${data.errors[0]}`;
     } else {
