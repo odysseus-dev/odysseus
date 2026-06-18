@@ -186,6 +186,10 @@ export function AiModelsSettings() {
         <SettingSelect label="Research model" value={str("research_model")} onChange={(v) => set({ research_model: v })} options={models} />
         <SettingNumber label="Research max tokens" value={num("research_max_tokens", 16384)} onCommit={(v) => set({ research_max_tokens: v })} min={256} />
         <SettingNumber label="Research run timeout (s)" hint="0 = unlimited" value={num("research_run_timeout_seconds", 1800)} onCommit={(v) => set({ research_run_timeout_seconds: v })} min={0} />
+        <SettingNumber label="Research extraction timeout (s)" value={num("research_extraction_timeout_seconds", 90)} onCommit={(v) => set({ research_extraction_timeout_seconds: v })} min={5} />
+        <SettingNumber label="Research planning timeout (s)" value={num("research_planning_timeout_seconds", 90)} onCommit={(v) => set({ research_planning_timeout_seconds: v })} min={5} />
+        <SettingNumber label="Research query timeout (s)" value={num("research_query_timeout_seconds", 90)} onCommit={(v) => set({ research_query_timeout_seconds: v })} min={5} />
+        <SettingNumber label="Research extraction concurrency" value={num("research_extraction_concurrency", 3)} onCommit={(v) => set({ research_extraction_concurrency: v })} min={1} max={20} />
         <div className="border-t pt-2 text-xs font-medium text-muted-foreground">Teacher &amp; skills</div>
         <SettingSwitch label="Teacher enabled" value={bool("teacher_enabled")} onChange={(v) => set({ teacher_enabled: v })} />
         <SettingSelect label="Teacher model" value={str("teacher_model")} onChange={(v) => set({ teacher_model: v })} options={models} />
