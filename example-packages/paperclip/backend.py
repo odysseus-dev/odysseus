@@ -199,6 +199,29 @@ def register_routes(app):
             cto_id = str(uuid.uuid4())
             goal_text = f" Company goal: {company_goal}." if company_goal else ""
 
+            action_instructions = (
+                "\n\n## Management Actions\n"
+                "When you want to take a concrete action (hire, assign a task, set a model, update memory), "
+                "output it as a JSON code block tagged `action`. The Paperclip UI will execute it automatically.\n\n"
+                "**Hire an agent:**\n"
+                "```action\n"
+                '{"action":"hire","name":"Alice","role":"Backend Engineer","model":"","system_prompt":"You are a backend engineer..."}\n'
+                "```\n\n"
+                "**Assign a task:**\n"
+                "```action\n"
+                '{"action":"assign_task","title":"Build REST API","description":"...","assignee":"Alice"}\n'
+                "```\n\n"
+                "**Set an agent's model:**\n"
+                "```action\n"
+                '{"action":"set_model","agent":"Alice","model":"claude-opus-4-8"}\n'
+                "```\n\n"
+                "**Update an agent's memory:**\n"
+                "```action\n"
+                '{"action":"update_memory","agent":"Alice","memory":"Alice specializes in Python/FastAPI."}\n'
+                "```\n\n"
+                "You can include one or more action blocks in a single response alongside your normal explanation."
+            )
+
             db.execute(sa.text(
                 "INSERT INTO pc_agents (id,company_id,name,role,model,system_prompt,is_ceo,skills,mcps,memory,owner) "
                 "VALUES (:id,:cid,:name,:role,:model,:sp,1,'[]','[]','',:owner)"
@@ -214,9 +237,8 @@ def register_routes(app):
                     "- Define and communicate company strategy\n"
                     "- Hire agents with the right skills for each role\n"
                     "- Assign tasks and review progress\n"
-                    "- Make final decisions on technical and product direction\n\n"
-                    "When you recommend a management action (hiring, task assignment, strategy change), "
-                    "state it clearly and the Paperclip interface will execute it."
+                    "- Make final decisions on technical and product direction"
+                    + action_instructions
                 ),
                 "owner": owner,
             })
@@ -234,6 +256,7 @@ def register_routes(app):
                     "You lead technical strategy, architecture decisions, and engineering execution. "
                     "You work closely with the CEO to turn company goals into concrete technical plans. "
                     "You evaluate tooling, set engineering standards, and unblock the technical team."
+                    + action_instructions
                 ),
                 "owner": owner,
             })
@@ -513,11 +536,12 @@ def register_routes(app):
 
             parts.append(
                 "## Management Actions\n"
-                "You can plan and approve the following actions (the Paperclip UI will execute them):\n"
-                "- **HIRE**: specify name, role, model, and responsibilities\n"
-                "- **ASSIGN TASK**: specify title, assignee, and description\n"
-                "- **UPDATE MEMORY**: add facts to an agent's persistent memory\n"
-                "- **SET MODEL**: recommend which model an agent should use\n"
+                "To take a concrete action, output a JSON code block tagged `action`. "
+                "The Paperclip UI parses and executes it automatically.\n\n"
+                "Hire: ```action\n{\"action\":\"hire\",\"name\":\"Alice\",\"role\":\"Backend Engineer\",\"model\":\"\",\"system_prompt\":\"...\"}\n```\n\n"
+                "Assign task: ```action\n{\"action\":\"assign_task\",\"title\":\"Build API\",\"description\":\"...\",\"assignee\":\"Alice\"}\n```\n\n"
+                "Set model: ```action\n{\"action\":\"set_model\",\"agent\":\"Alice\",\"model\":\"claude-opus-4-8\"}\n```\n\n"
+                "Update memory: ```action\n{\"action\":\"update_memory\",\"agent\":\"Alice\",\"memory\":\"...\"}\n```"
             )
 
         enhanced_prompt = "\n\n---\n\n".join(parts)

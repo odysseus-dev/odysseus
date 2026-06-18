@@ -1,7 +1,8 @@
 /**
  * Paperclip — widget.js
  * Full-page AI team management. CEO agents get company context + management tools.
- * Each agent has persistent chat sessions, skills, MCPs, and memory.
+ * Embedded chat panel: stay in Paperclip while talking to agents.
+ * AI responses with ```action JSON blocks are parsed and executed automatically.
  */
 (() => {
   const API = '/api/paperclip';
@@ -10,16 +11,21 @@
   let _companies = [];
   let _agents  = {};  // { [cid]: agent[] }
   let _tasks   = {};  // { [cid]: task[] }
-  let _models  = [];  // [{ id, endpoint }]
-  let _mcps    = [];  // [{ id, name }]
-  let _skills  = [];  // [{ id, name, category }]
+  let _models  = [];
+  let _mcps    = [];
+  let _skills  = [];
   let _cid   = null;
   let _aid   = null;
-  let _view  = 'dashboard';
+  let _view  = 'dashboard'; // 'dashboard' | 'project' | 'agent' | 'chat'
   let _root  = null;
   let _navEl = null;
   let _mainEl = null;
   let _resourcesLoaded = false;
+  // Chat state
+  let _chatSession  = null;
+  let _chatMessages = []; // [{role,content}]
+  let _chatStreaming = false;
+  let _chatAbort    = null;
 
   // ── CSS ────────────────────────────────────────────────────────────────────
   const CSS = `
@@ -111,6 +117,28 @@
     .pc-info-card { background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:18px;margin-bottom:24px; }
     .pc-mem-badge { font-size:10px;padding:1px 6px;border-radius:8px;background:color-mix(in srgb,var(--accent,#63b3ed) 15%,transparent);border:1px solid color-mix(in srgb,var(--accent,#63b3ed) 30%,transparent);cursor:pointer; }
     .pc-mem-badge:hover { opacity:.7; }
+    /* ── Chat panel ─────────────────────────────────────────────────────────── */
+    .pc-chat { display:flex;flex-direction:column;flex:1;height:100%;overflow:hidden; }
+    .pc-chat-hdr { padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;align-items:center;gap:10px; }
+    .pc-chat-msgs { flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px; }
+    .pc-msg { display:flex;gap:8px;max-width:88%; }
+    .pc-msg.user { flex-direction:row-reverse;align-self:flex-end; }
+    .pc-msg-bubble { padding:8px 12px;border-radius:10px;font-size:12px;line-height:1.6;word-break:break-word;white-space:pre-wrap; }
+    .pc-msg.user .pc-msg-bubble { background:var(--accent,#63b3ed);color:#000;border-bottom-right-radius:3px; }
+    .pc-msg.assistant .pc-msg-bubble { background:var(--panel);border:1px solid var(--border);border-bottom-left-radius:3px; }
+    .pc-msg-av { width:26px;height:26px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:color-mix(in srgb,var(--accent,#63b3ed) 18%,var(--panel));align-self:flex-end; }
+    .pc-msg-av.ceo { background:color-mix(in srgb,var(--yellow,#e5c07b) 25%,var(--panel)); }
+    .pc-action-toast { background:color-mix(in srgb,var(--green,#98c379) 12%,var(--panel));border:1px solid color-mix(in srgb,var(--green,#98c379) 40%,var(--border));border-radius:6px;padding:6px 10px;font-size:11px;color:var(--green,#98c379);display:flex;gap:6px;align-items:center;margin-top:4px; }
+    .pc-action-err { background:color-mix(in srgb,var(--danger,#e55) 10%,var(--panel));border:1px solid color-mix(in srgb,var(--danger,#e55) 30%,var(--border));border-radius:6px;padding:6px 10px;font-size:11px;color:var(--danger,#e55);margin-top:4px; }
+    .pc-chat-input-row { padding:10px 16px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:8px;align-items:flex-end; }
+    .pc-chat-ta { flex:1;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:8px 11px;font-size:12px;color:var(--fg);font-family:inherit;resize:none;min-height:38px;max-height:140px;line-height:1.5; }
+    .pc-chat-ta:focus { outline:none;border-color:var(--accent,#63b3ed); }
+    .pc-action-block { background:color-mix(in srgb,var(--yellow,#e5c07b) 6%,var(--panel));border:1px solid color-mix(in srgb,var(--yellow,#e5c07b) 25%,var(--border));border-radius:6px;padding:8px 10px;font-size:11px;font-family:monospace;color:var(--fg);opacity:.8;white-space:pre-wrap;margin-top:6px; }
+    .pc-typing { display:flex;gap:4px;align-items:center;padding:4px 0; }
+    .pc-typing span { width:6px;height:6px;border-radius:50%;background:var(--fg);opacity:.4;animation:pc-bounce 1.2s infinite; }
+    .pc-typing span:nth-child(2) { animation-delay:.2s; }
+    .pc-typing span:nth-child(3) { animation-delay:.4s; }
+    @keyframes pc-bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-5px)} }
   `;
 
   // ── HTTP ───────────────────────────────────────────────────────────────────
@@ -186,7 +214,10 @@
     _loadResources().then(() => _reload());
   }
 
-  function _unmount() { _root = null; _navEl = null; _mainEl = null; }
+  function _unmount() {
+    if (_chatAbort) { _chatAbort.abort(); _chatAbort = null; }
+    _root = null; _navEl = null; _mainEl = null;
+  }
 
   function _renderAll() {
     if (!_navEl || !_mainEl) return;
@@ -228,7 +259,10 @@
         item.className = 'pc-nav-item' + (_cid === c.id && _view !== 'dashboard' ? ' active' : '');
         item.dataset.cid = c.id;
         item.innerHTML = `<div class="pc-nav-dot" style="background:${_color(c.id)}"></div><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(c.name)}</span><span class="pc-nav-badge">${(_agents[c.id] || []).length}</span>`;
-        item.addEventListener('click', () => { _cid = c.id; _view = 'project'; _aid = null; _renderAll(); });
+        item.addEventListener('click', () => {
+          if (_chatAbort) { _chatAbort.abort(); _chatAbort = null; }
+          _cid = c.id; _view = 'project'; _aid = null; _renderAll();
+        });
         body.appendChild(item);
       });
     }
@@ -242,14 +276,17 @@
       body.appendChild(_mk('div', 'pc-nav-sep'));
       const sec2 = _mk('div', 'pc-nav-section'); sec2.textContent = 'Team'; body.appendChild(sec2);
       (_agents[_cid] || []).forEach(a => {
+        const isChatting = _view === 'chat' && _aid === a.id;
         const item = document.createElement('div');
-        item.className = 'pc-nav-item' + (_aid === a.id ? ' active' : '');
+        item.className = 'pc-nav-item' + ((_aid === a.id && _view !== 'chat') || isChatting ? ' active' : '');
         const icon = a.is_ceo
           ? `<span style="font-size:12px">👑</span>`
           : `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity=".5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>`;
-        const dot = a.active_session_id ? `<div class="pc-session-dot"></div>` : '';
-        item.innerHTML = `${icon}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(a.name)}</span>${dot}${a.role ? `<span class="pc-nav-badge">${_esc(a.role.slice(0,8))}</span>` : ''}`;
-        item.addEventListener('click', () => { _aid = a.id; _renderAll(); });
+        const dot = a.active_session_id
+          ? `<div class="pc-session-dot" title="Active chat"></div>`
+          : (isChatting ? `<span style="font-size:10px">💬</span>` : '');
+        item.innerHTML = `${icon}<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(a.name)}</span>${dot}${a.role && !isChatting ? `<span class="pc-nav-badge">${_esc(a.role.slice(0,8))}</span>` : ''}`;
+        item.addEventListener('click', () => { _aid = a.id; _view = 'agent'; _renderAll(); });
         body.appendChild(item);
       });
       const addAgent = _mk('div', 'pc-nav-add');
@@ -272,6 +309,7 @@
   // ── Main ───────────────────────────────────────────────────────────────────
   function _renderMain() {
     _mainEl.innerHTML = '';
+    if (_view === 'chat' && _aid && _chatSession) { _renderChat(); return; }
     if (_aid)                        { _renderAgent();   return; }
     if (_view === 'project' && _cid) { _renderProject(); return; }
     _renderDashboard();
@@ -311,7 +349,6 @@
     } else {
       const two = _mk('div', 'pc-two');
 
-      // Recent tasks
       const tasksCol = document.createElement('div');
       const t1 = _mk('div', 'pc-section'); t1.textContent = 'Recent Tasks'; tasksCol.appendChild(t1);
       const recent = allT.slice(-15).reverse();
@@ -325,7 +362,6 @@
       }
       two.appendChild(tasksCol);
 
-      // Agents
       const agentsCol = document.createElement('div');
       const t2 = _mk('div', 'pc-section'); t2.textContent = 'Team'; agentsCol.appendChild(t2);
       if (!all.length) {
@@ -348,9 +384,9 @@
           chatBtn.className = 'pc-btn pc-btn-primary';
           chatBtn.style.cssText = 'font-size:10px;padding:3px 8px';
           chatBtn.textContent = a.active_session_id ? '▶ Continue' : '▶ Chat';
-          chatBtn.addEventListener('click', async e => { e.stopPropagation(); await _chat(a.id, chatBtn); });
+          chatBtn.addEventListener('click', async e => { e.stopPropagation(); await _openChat(a); });
           row.appendChild(chatBtn);
-          row.addEventListener('click', () => { _cid = a.company_id; _aid = a.id; _view = 'project'; _renderAll(); });
+          row.addEventListener('click', () => { _cid = a.company_id; _aid = a.id; _view = 'agent'; _renderAll(); });
           list.appendChild(row);
         });
         agentsCol.appendChild(list);
@@ -368,7 +404,6 @@
     if (!company) return;
     const agents = _agents[_cid] || [];
     const tasks  = _tasks[_cid]  || [];
-    const hasCeo = agents.some(a => a.is_ceo);
 
     const hdr = _mk('div', 'pc-main-hdr');
     hdr.innerHTML = `<div style="flex:1"><div class="pc-main-title">${_esc(company.name)}</div>${company.goal?`<div class="pc-main-sub">${_esc(company.goal)}</div>`:''}</div>`;
@@ -401,7 +436,6 @@
 
     const body = _mk('div', 'pc-main-body');
 
-    // Bootstrap banner (no agents yet)
     if (!agents.length) {
       const banner = _mk('div', 'pc-bootstrap');
       banner.innerHTML = `
@@ -424,14 +458,12 @@
       body.appendChild(banner);
     }
 
-    // Agents grid
     const aSec = _mk('div', 'pc-section');
     aSec.textContent = `Team (${agents.length})`;
     body.appendChild(aSec);
 
     if (agents.length) {
       const grid = _mk('div', 'pc-agent-grid');
-      // CEO first
       [...agents].sort((a, b) => (b.is_ceo ? 1 : 0) - (a.is_ceo ? 1 : 0)).forEach(a => {
         const card = document.createElement('div');
         card.className = 'pc-agent-card' + (a.is_ceo ? ' ceo' : '') + (_aid === a.id ? ' active' : '');
@@ -447,7 +479,6 @@
         info.style.flex = '1';
         info.innerHTML = `<div class="pc-agent-name">${_esc(a.name)}${a.is_ceo ? ' <span style="font-size:9px;opacity:.5;font-weight:400">CEO</span>' : ''}</div><div class="pc-agent-role">${_esc(a.role||'Agent')}</div>${a.model?`<div class="pc-agent-model">${_esc(a.model)}</div>`:''}`;
 
-        // Skill/MCP chips
         if ((a.skills||[]).length || (a.mcps||[]).length) {
           const chips = _mk('div', 'pc-agent-chips');
           (a.skills||[]).slice(0,3).forEach(s => {
@@ -468,8 +499,8 @@
         chatBtn.className = 'pc-btn pc-btn-primary';
         chatBtn.innerHTML = a.active_session_id
           ? `<div class="pc-session-dot" style="width:6px;height:6px;animation:none;opacity:.8;margin-right:4px;display:inline-block"></div> Continue`
-          : '▶ Chat';
-        chatBtn.addEventListener('click', async e => { e.stopPropagation(); await _chat(a.id, chatBtn); });
+          : '💬 Chat';
+        chatBtn.addEventListener('click', async e => { e.stopPropagation(); await _openChat(a); });
 
         const editBtn = document.createElement('button');
         editBtn.className = 'pc-btn pc-btn-ghost'; editBtn.textContent = '✎';
@@ -487,13 +518,12 @@
 
         cardActs.append(chatBtn, editBtn, xBtn);
         card.appendChild(cardActs);
-        card.addEventListener('click', () => { _aid = a.id; _renderAll(); });
+        card.addEventListener('click', () => { _aid = a.id; _view = 'agent'; _renderAll(); });
         grid.appendChild(card);
       });
       body.appendChild(grid);
     }
 
-    // Tasks
     const tSec = _mk('div', 'pc-section');
     tSec.style.marginTop = '20px';
     tSec.textContent = `Tasks (${tasks.length})`;
@@ -533,8 +563,8 @@
 
     const chatBtn = document.createElement('button');
     chatBtn.className = 'pc-btn pc-btn-primary';
-    chatBtn.textContent = agent.active_session_id ? '▶ Continue Chat' : '▶ Start Chat';
-    chatBtn.addEventListener('click', async () => await _chat(agent.id, chatBtn));
+    chatBtn.textContent = agent.active_session_id ? '💬 Continue Chat' : '💬 Start Chat';
+    chatBtn.addEventListener('click', async () => await _openChat(agent));
 
     const editBtn = document.createElement('button');
     editBtn.className = 'pc-btn pc-btn-ghost'; editBtn.textContent = '✎ Edit';
@@ -545,7 +575,6 @@
 
     const body = _mk('div', 'pc-main-body');
 
-    // Info card
     const info = _mk('div', 'pc-info-card');
     let infoHtml = `
       <div style="display:flex;gap:16px;align-items:flex-start">
@@ -569,7 +598,6 @@
     info.innerHTML = infoHtml;
     body.appendChild(info);
 
-    // Memory section
     const memSec = _mk('div', 'pc-section');
     memSec.innerHTML = `Memory <span class="pc-mem-badge" title="Edit memory">✎</span>`;
     memSec.querySelector('.pc-mem-badge').addEventListener('click', () => _editMemory(agent));
@@ -577,11 +605,7 @@
 
     if (agent.memory) {
       const memBox = _mk('div', 'pc-info-card');
-      memBox.style.marginBottom = '20px';
-      memBox.style.fontSize = '12px';
-      memBox.style.opacity = '.7';
-      memBox.style.whiteSpace = 'pre-wrap';
-      memBox.style.lineHeight = '1.6';
+      memBox.style.cssText = 'margin-bottom:20px;font-size:12px;opacity:.7;white-space:pre-wrap;line-height:1.6';
       memBox.textContent = agent.memory;
       body.appendChild(memBox);
     } else {
@@ -591,7 +615,6 @@
       body.appendChild(noMem);
     }
 
-    // Tasks
     const tSec = _mk('div', 'pc-section');
     tSec.textContent = `Assigned Tasks (${tasks.length})`;
     body.appendChild(tSec);
@@ -605,6 +628,356 @@
     }
 
     _mainEl.appendChild(body);
+  }
+
+  // ── EMBEDDED CHAT ──────────────────────────────────────────────────────────
+  async function _openChat(agent) {
+    if (_chatAbort) { _chatAbort.abort(); _chatAbort = null; }
+    _chatStreaming = false;
+    _chatSession = null;
+    _chatMessages = [];
+
+    // Get/create session
+    try {
+      const d = await _api('POST', `/agents/${agent.id}/run`);
+      _chatSession = d.session_id;
+      _aid = agent.id;
+      _cid = agent.company_id;
+    } catch (e) {
+      alert('Could not start agent: ' + e.message); return;
+    }
+
+    // Load history
+    try {
+      const hist = await fetch(`/api/history/${_chatSession}`).then(r => r.json());
+      const msgs = hist.messages || hist.history || [];
+      _chatMessages = msgs.filter(m => m.role !== 'system' && !m.metadata?.hidden);
+    } catch (e) { _chatMessages = []; }
+
+    _view = 'chat';
+    _renderAll();
+  }
+
+  function _renderChat() {
+    const agent = (_agents[_cid] || []).find(a => a.id === _aid);
+    if (!agent) { _view = 'project'; _renderMain(); return; }
+
+    const chat = _mk('div', 'pc-chat');
+
+    // Header
+    const hdr = _mk('div', 'pc-chat-hdr');
+    const back = document.createElement('button');
+    back.className = 'pc-btn pc-btn-ghost'; back.style.padding = '4px 8px';
+    back.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>`;
+    back.addEventListener('click', () => {
+      if (_chatAbort) { _chatAbort.abort(); _chatAbort = null; }
+      _chatStreaming = false;
+      _view = 'project'; _renderAll();
+    });
+    const agentInfo = _mk('div', '');
+    agentInfo.style.flex = '1';
+    agentInfo.innerHTML = `<span style="font-size:13px;font-weight:700">${agent.is_ceo?'👑 ':''}${_esc(agent.name)}</span><span style="font-size:11px;opacity:.4;margin-left:8px">${_esc(agent.role||'')}</span>`;
+    const helpBtn = _mk('div', '');
+    helpBtn.style.cssText = 'font-size:10px;opacity:.35;cursor:pointer;max-width:280px;text-align:right;line-height:1.4';
+    helpBtn.innerHTML = `Tip: CEO/CTO can hire agents, assign tasks, set models.<br>Actions are executed automatically.`;
+    hdr.append(back, agentInfo, helpBtn);
+    chat.appendChild(hdr);
+
+    // Messages area
+    const msgsEl = _mk('div', 'pc-chat-msgs');
+    msgsEl.id = 'pc-chat-msgs';
+
+    _chatMessages.forEach(m => {
+      msgsEl.appendChild(_msgBubble(m.role, m.content, agent));
+    });
+
+    // Typing indicator placeholder
+    const typingEl = _mk('div', '');
+    typingEl.id = 'pc-chat-typing';
+    msgsEl.appendChild(typingEl);
+
+    chat.appendChild(msgsEl);
+
+    // Input row
+    const inputRow = _mk('div', 'pc-chat-input-row');
+    const ta = document.createElement('textarea');
+    ta.className = 'pc-chat-ta';
+    ta.placeholder = `Message ${agent.name}…`;
+    ta.rows = 1;
+    ta.addEventListener('input', () => {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+    });
+    ta.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendBtn.click();
+      }
+    });
+
+    const sendBtn = document.createElement('button');
+    sendBtn.className = 'pc-btn pc-btn-primary';
+    sendBtn.style.cssText = 'padding:8px 14px;align-self:flex-end';
+    sendBtn.textContent = 'Send';
+    sendBtn.addEventListener('click', async () => {
+      const text = ta.value.trim();
+      if (!text || _chatStreaming) return;
+      ta.value = ''; ta.style.height = 'auto';
+      await _sendMsg(text, agent, msgsEl, typingEl);
+    });
+
+    inputRow.append(ta, sendBtn);
+    chat.appendChild(inputRow);
+
+    _mainEl.appendChild(chat);
+
+    // Scroll to bottom
+    requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight; });
+  }
+
+  function _msgBubble(role, content, agent) {
+    const isUser = role === 'user';
+    const wrap = _mk('div', `pc-msg ${isUser ? 'user' : 'assistant'}`);
+
+    const av = _mk('div', `pc-msg-av${agent?.is_ceo && !isUser ? ' ceo' : ''}`);
+    av.textContent = isUser ? 'U' : (agent?.is_ceo ? '👑' : (agent?.name?.[0]?.toUpperCase() || 'A'));
+
+    // Render content: strip action blocks from display, show as separate element
+    const { display, actions } = _splitContent(content);
+
+    const bubble = _mk('div', 'pc-msg-bubble');
+    bubble.textContent = display;
+
+    wrap.append(isUser ? bubble : av, isUser ? av : bubble);
+
+    // Show action blocks as annotations
+    if (!isUser && actions.length) {
+      const actWrap = _mk('div', '');
+      actWrap.style.cssText = 'padding-left:34px;display:flex;flex-direction:column;gap:4px';
+      actions.forEach(({ raw }) => {
+        const blk = _mk('div', 'pc-action-block');
+        blk.textContent = raw;
+        actWrap.appendChild(blk);
+      });
+      const outer = _mk('div', '');
+      outer.style.cssText = 'display:flex;flex-direction:column';
+      outer.appendChild(wrap);
+      outer.appendChild(actWrap);
+      return outer;
+    }
+    return wrap;
+  }
+
+  async function _sendMsg(text, agent, msgsEl, typingEl) {
+    if (!_chatSession) return;
+    _chatStreaming = true;
+
+    // Add user bubble
+    const userBubble = _msgBubble('user', text, agent);
+    msgsEl.insertBefore(userBubble, typingEl);
+    _scrollBottom(msgsEl);
+
+    // Show typing indicator
+    typingEl.innerHTML = `
+      <div class="pc-msg assistant" style="align-self:flex-start">
+        <div class="pc-msg-av${agent.is_ceo?' ceo':''}">${agent.is_ceo?'👑':agent.name[0].toUpperCase()}</div>
+        <div class="pc-msg-bubble"><div class="pc-typing"><span></span><span></span><span></span></div></div>
+      </div>`;
+    _scrollBottom(msgsEl);
+
+    // Create streaming bubble
+    const streamBubble = _mk('div', 'pc-msg-bubble');
+    const streamWrap = _mk('div', 'pc-msg assistant');
+    streamWrap.style.alignSelf = 'flex-start';
+    const streamAv = _mk('div', `pc-msg-av${agent.is_ceo?' ceo':''}`);
+    streamAv.textContent = agent.is_ceo ? '👑' : agent.name[0].toUpperCase();
+    streamWrap.append(streamAv, streamBubble);
+
+    let fullText = '';
+
+    try {
+      const fd = new FormData();
+      fd.append('message', text);
+      fd.append('session', _chatSession);
+
+      _chatAbort = new AbortController();
+      const res = await fetch('/api/chat_stream', {
+        method: 'POST', body: fd,
+        signal: _chatAbort.signal,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Stream error ${res.status}`);
+      }
+
+      typingEl.innerHTML = '';
+      msgsEl.insertBefore(streamWrap, typingEl);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() || '';
+        for (const part of parts) {
+          const lines = part.split('\n');
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const json = JSON.parse(line.slice(6));
+              if (json.delta) {
+                fullText += json.delta;
+                streamBubble.textContent = fullText;
+                _scrollBottom(msgsEl);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') { _chatStreaming = false; return; }
+      typingEl.innerHTML = '';
+      const errEl = _mk('div', 'pc-action-err');
+      errEl.textContent = 'Error: ' + e.message;
+      msgsEl.insertBefore(errEl, typingEl);
+    } finally {
+      _chatAbort = null;
+      _chatStreaming = false;
+    }
+
+    // Save to local messages
+    _chatMessages.push({ role: 'user', content: text });
+    _chatMessages.push({ role: 'assistant', content: fullText });
+
+    // Parse and execute actions
+    if (fullText) {
+      const actions = _parseActions(fullText);
+      if (actions.length) {
+        // Replace the plain text bubble with annotated one
+        const { display } = _splitContent(fullText);
+        streamBubble.textContent = display;
+
+        const actWrap = _mk('div', '');
+        actWrap.style.cssText = 'padding-left:34px;display:flex;flex-direction:column;gap:6px';
+
+        for (const act of actions) {
+          const toast = _mk('div', 'pc-action-toast');
+          toast.innerHTML = `<span style="font-size:13px">⚙</span> Executing: <strong>${act.action}</strong>…`;
+          actWrap.appendChild(toast);
+          msgsEl.insertBefore(actWrap, typingEl);
+          _scrollBottom(msgsEl);
+
+          try {
+            const result = await _execAction(act);
+            toast.innerHTML = `<span style="font-size:13px">✅</span> ${result}`;
+            await _reload();
+          } catch (err) {
+            const errEl = _mk('div', 'pc-action-err');
+            errEl.textContent = `❌ ${act.action} failed: ${err.message}`;
+            actWrap.appendChild(errEl);
+          }
+        }
+        // Re-render nav to show new agents
+        _renderNav();
+      }
+    }
+
+    _scrollBottom(msgsEl);
+  }
+
+  // ── Action parsing ─────────────────────────────────────────────────────────
+  function _parseActions(text) {
+    const results = [];
+    const re = /```action\s*\n([\s\S]*?)\n```/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      try {
+        const obj = JSON.parse(m[1].trim());
+        results.push({ ...obj, _raw: m[0] });
+      } catch (e) {}
+    }
+    return results;
+  }
+
+  function _splitContent(text) {
+    const re = /```action\s*\n([\s\S]*?)\n```/g;
+    const actions = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      try { actions.push({ raw: m[1].trim(), parsed: JSON.parse(m[1].trim()) }); } catch(e) {}
+    }
+    const display = text.replace(/```action\s*\n[\s\S]*?\n```/g, '').trim();
+    return { display, actions };
+  }
+
+  // ── Action execution ───────────────────────────────────────────────────────
+  async function _execAction(act) {
+    const cid = _cid || _companies[0]?.id;
+    if (!cid) throw new Error('No active project');
+    const agents = _agents[cid] || [];
+
+    switch ((act.action || '').toLowerCase()) {
+
+      case 'hire':
+      case 'hire_agent': {
+        if (!act.name) throw new Error('name required');
+        await _api('POST', `/companies/${cid}/agents`, {
+          name: act.name,
+          role: act.role || '',
+          model: act.model || '',
+          system_prompt: act.system_prompt || '',
+          is_ceo: !!act.is_ceo,
+          skills: act.skills || [],
+          mcps: act.mcps || [],
+        });
+        return `Hired ${act.name} as ${act.role || 'Agent'}`;
+      }
+
+      case 'assign_task':
+      case 'create_task': {
+        if (!act.title) throw new Error('title required');
+        const assignee = act.assignee
+          ? agents.find(a => a.name.toLowerCase() === String(act.assignee).toLowerCase() || a.id === act.assignee)
+          : null;
+        await _api('POST', `/companies/${cid}/tasks`, {
+          title: act.title,
+          description: act.description || '',
+          agent_id: assignee?.id || null,
+        });
+        return `Task created: "${act.title}"${assignee ? ` → ${assignee.name}` : ''}`;
+      }
+
+      case 'set_model': {
+        const target = act.agent
+          ? agents.find(a => a.name.toLowerCase() === String(act.agent).toLowerCase() || a.id === act.agent)
+          : (_agents[cid] || []).find(a => a.id === _aid);
+        if (!target) throw new Error(`Agent "${act.agent}" not found`);
+        await _api('PUT', `/agents/${target.id}`, { model: act.model });
+        return `Set ${target.name} model to ${act.model}`;
+      }
+
+      case 'update_memory': {
+        const target = act.agent
+          ? agents.find(a => a.name.toLowerCase() === String(act.agent).toLowerCase() || a.id === act.agent)
+          : (_agents[cid] || []).find(a => a.id === _aid);
+        if (!target) throw new Error(`Agent "${act.agent}" not found`);
+        const existing = target.memory || '';
+        const newMem = existing ? existing + '\n\n' + act.memory : act.memory;
+        await _api('PUT', `/agents/${target.id}`, { memory: newMem });
+        return `Memory updated for ${target.name}`;
+      }
+
+      default:
+        throw new Error(`Unknown action: ${act.action}`);
+    }
+  }
+
+  function _scrollBottom(el) {
+    requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
   }
 
   // ── Edit memory inline ─────────────────────────────────────────────────────
@@ -656,13 +1029,9 @@
     const ceoToggle = document.createElement('input');
     ceoToggle.type = 'checkbox'; ceoToggle.checked = !!agent.is_ceo;
 
-    const ceoRow = _mk('div', 'pc-fg');
-    const ceoLabel = _mk('div', 'pc-fl');
     const ceoWrap = document.createElement('label');
-    ceoWrap.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px';
-    ceoWrap.innerHTML = `<span class="pc-fl">CEO Role</span>`;
-    ceoWrap.prepend(ceoToggle);
-    ceoRow.appendChild(ceoWrap);
+    ceoWrap.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;padding:2px 0';
+    ceoWrap.append(ceoToggle, 'CEO / Manager role');
 
     card.append(
       _mhd(`Edit — ${agent.name}`),
@@ -670,14 +1039,12 @@
       _fg('Role', roleIn),
       _fg('Model', modelSel),
       _fg('System Prompt', sysIn),
-      ceoRow,
+      _fg('', ceoWrap),
     );
 
-    // Skills section
     if (_skills.length) {
       card.appendChild(_checkSection('Skills', _skills, agent.skills || [], 'pc-check-skills'));
     }
-    // MCPs section
     if (_mcps.length) {
       card.appendChild(_checkSection('MCP Tools', _mcps.map(m => ({ id: m.id, name: m.name })), agent.mcps || [], 'pc-check-mcps'));
     }
@@ -741,21 +1108,6 @@
     });
     row.appendChild(del);
     return row;
-  }
-
-  // ── Chat / Run ─────────────────────────────────────────────────────────────
-  async function _chat(aid, btn) {
-    const orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '…';
-    try {
-      const d = await _api('POST', `/agents/${aid}/run`);
-      if (window.sessionModule?.loadSessions) await window.sessionModule.loadSessions();
-      document.getElementById('pkg-nav-paperclip')?._pkgClose?.();
-      if (window.sessionModule?.selectSession) window.sessionModule.selectSession(d.session_id);
-    } catch(e) {
-      alert('Failed: ' + e.message);
-      btn.disabled = false; btn.textContent = orig;
-    }
   }
 
   // ── Modals ─────────────────────────────────────────────────────────────────
@@ -922,7 +1274,6 @@
       const o = document.createElement('option'); o.value = current; o.textContent = current; o.selected = true;
       sel.appendChild(o);
     }
-    // If current not in list, add it
     if (current && ![...sel.options].some(o => o.value === current)) {
       const o = document.createElement('option'); o.value = current; o.textContent = current; o.selected = true;
       sel.appendChild(o);
