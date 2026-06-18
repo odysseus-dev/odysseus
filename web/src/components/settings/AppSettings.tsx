@@ -6,9 +6,39 @@ import { useIntegrations } from "@/api/integrations"
 import { useTokens, useTokenProfiles, useTokenMutations } from "@/api/tokens"
 import { usePrefs, useSetPref } from "@/api/prefs"
 import { PRIMARY, WORKSPACE } from "@/components/shell/nav"
+import { DEFAULT_KEYBINDS } from "@/lib/useHotkeys"
 import { apiFetch } from "@/lib/api"
 import { Button } from "@/components/ui/button"
-import { SectionCard, Row, SettingSwitch, SettingSelect, SettingText, SettingNumber, SettingTextarea, StringListEditor } from "./fields"
+import { SectionCard, Row, FieldRow, SettingSwitch, SettingSelect, SettingText, SettingNumber, SettingTextarea, StringListEditor } from "./fields"
+
+interface ModelRef { endpoint_id: string; model: string }
+function useModelsWithEndpoint(): ModelRef[] {
+  const { data: models } = useModels()
+  return (models?.items || []).flatMap((e) => [...(e.models || []), ...(e.models_extra || [])].map((m) => ({ endpoint_id: e.endpoint_id, model: m })))
+}
+
+// Ordered model fallback-chain editor (default/utility/vision). Stores
+// [{endpoint_id, model}] — the shape the backend dispatch retries through.
+function ModelFallbackEditor({ label, value, choices, onChange }: { label: string; value: ModelRef[]; choices: ModelRef[]; onChange: (v: ModelRef[]) => void }) {
+  const [sel, setSel] = useState("")
+  const add = () => { if (!sel) return; const m = choices.find((c) => c.model === sel); onChange([...value, { model: sel, endpoint_id: m?.endpoint_id || "" }]); setSel("") }
+  return (
+    <FieldRow label={label} hint="Tried in order if the primary fails">
+      <div className="space-y-1.5">
+        {value.map((f, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate rounded-md border bg-background px-3 py-1.5 text-sm">{i + 1}. {f.model}</span>
+            <button onClick={() => onChange(value.filter((_, j) => j !== i))} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"><X className="size-4" /></button>
+          </div>
+        ))}
+        <div className="flex gap-2">
+          <select value={sel} onChange={(e) => setSel(e.target.value)} className="h-9 flex-1 rounded-md border bg-background px-2 text-sm outline-none focus-visible:border-ring"><option value="">Add fallback…</option>{choices.map((c) => <option key={c.endpoint_id + c.model} value={c.model}>{c.model}</option>)}</select>
+          <button onClick={add} disabled={!sel} className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"><Plus className="size-4" /></button>
+        </div>
+      </div>
+    </FieldRow>
+  )
+}
 
 const tokInp = "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:border-ring"
 const WIPE_KINDS = ["chats", "memory", "skills", "notes", "tasks", "documents", "gallery", "calendar"] as const
@@ -131,18 +161,23 @@ export function AgentToolsSettings() {
 
 // ─────────────────────── AI / Models (admin) ───────────────────────
 export function AiModelsSettings() {
-  const { str, num, bool, set } = useStore()
+  const { s, str, num, bool, set } = useStore()
   const models = useModelOptions()
+  const choices = useModelsWithEndpoint()
+  const fb = (k: string): ModelRef[] => (Array.isArray(s[k]) ? (s[k] as ModelRef[]) : [])
   return (
     <section>
       <h2 className={H}>AI models <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
       <SectionCard>
         <SettingText label="Public app URL" hint="Base URL for deep-links in alerts" value={str("app_public_url")} onCommit={(v) => set({ app_public_url: v })} placeholder="https://chat.example.com" />
+        <ModelFallbackEditor label="Default model fallbacks" value={fb("default_model_fallbacks")} choices={choices} onChange={(v) => set({ default_model_fallbacks: v })} />
         <div className="border-t pt-2 text-xs font-medium text-muted-foreground">Utility model (summaries, naming)</div>
         <SettingSelect label="Utility model" value={str("utility_model")} onChange={(v) => set({ utility_model: v })} options={models} />
+        <ModelFallbackEditor label="Utility model fallbacks" value={fb("utility_model_fallbacks")} choices={choices} onChange={(v) => set({ utility_model_fallbacks: v })} />
         <div className="border-t pt-2 text-xs font-medium text-muted-foreground">Vision</div>
         <SettingSwitch label="Vision enabled" value={bool("vision_enabled")} onChange={(v) => set({ vision_enabled: v })} />
         <SettingSelect label="Vision model" value={str("vision_model")} onChange={(v) => set({ vision_model: v })} options={models} />
+        <ModelFallbackEditor label="Vision model fallbacks" value={fb("vision_model_fallbacks")} choices={choices} onChange={(v) => set({ vision_model_fallbacks: v })} />
         <div className="border-t pt-2 text-xs font-medium text-muted-foreground">Image generation</div>
         <SettingSwitch label="Image generation enabled" value={bool("image_gen_enabled")} onChange={(v) => set({ image_gen_enabled: v })} />
         <SettingSelect label="Image model" value={str("image_model")} onChange={(v) => set({ image_model: v })} options={models} />
@@ -305,7 +340,33 @@ export function SidebarItemsSettings() {
   )
 }
 
+// ─────────────────────── Keyboard shortcuts (admin) ───────────────────────
+const KEYBIND_LABELS: Record<string, string> = {
+  search: "Search / new chat", toggle_sidebar: "Toggle sidebar", new_session: "New chat",
+  star_session: "Star session", delete_session: "Delete session", admin_panel: "Open settings", cancel: "Cancel / close",
+}
+export function KeybindsSection() {
+  const { data } = useSettings()
+  const save = useSaveSettings()
+  const kb = { ...DEFAULT_KEYBINDS, ...((data?.keybinds as Record<string, string>) || {}) }
+  const setBind = (action: string, combo: string) => save.mutate({ keybinds: { ...kb, [action]: combo } })
+  return (
+    <section>
+      <h2 className={H}>Keyboard shortcuts <span className="normal-case text-muted-foreground/70">(admin)</span></h2>
+      <SectionCard>
+        {Object.keys(DEFAULT_KEYBINDS).map((action) => (
+          <FieldRow key={action} label={KEYBIND_LABELS[action] || action}>
+            <input key={kb[action]} defaultValue={kb[action]} placeholder="e.g. ctrl+b" className="h-9 w-full rounded-md border bg-background px-3 font-mono text-sm outline-none focus-visible:border-ring"
+              onBlur={(e) => { const v = e.target.value.trim().toLowerCase(); if (v && v !== kb[action]) setBind(action, v) }} />
+          </FieldRow>
+        ))}
+        <div className="flex justify-end pt-1"><Button size="sm" variant="outline" onClick={() => save.mutate({ keybinds: DEFAULT_KEYBINDS })}>Reset to defaults</Button></div>
+      </SectionCard>
+    </section>
+  )
+}
+
 // All admin settings-store sections, gated by the caller on is_admin.
 export function AppSettingsSections() {
-  return (<><AiModelsSettings /><SearchSettings /><RemindersSettings /><AgentToolsSettings /><ApiTokensSection /><DataSection /></>)
+  return (<><AiModelsSettings /><SearchSettings /><RemindersSettings /><AgentToolsSettings /><KeybindsSection /><ApiTokensSection /><DataSection /></>)
 }
