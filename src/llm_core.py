@@ -1492,10 +1492,13 @@ def llm_call_with_fallback(candidates, messages, **kwargs) -> str:
     cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
+    call_kwargs = dict(kwargs)
+    default_headers = call_kwargs.pop("headers", None)
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return llm_call(url, model, messages, headers=headers, **kwargs)
+            effective_headers = headers if headers is not None else default_headers
+            return llm_call(url, model, messages, headers=effective_headers, **call_kwargs)
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
@@ -1509,10 +1512,13 @@ async def llm_call_async_with_fallback(candidates, messages, **kwargs) -> str:
     cands = _dedupe_candidates(candidates)
     if not cands:
         raise HTTPException(503, "No model endpoint configured")
+    call_kwargs = dict(kwargs)
+    default_headers = call_kwargs.pop("headers", None)
     last_err = None
     for i, (url, model, headers) in enumerate(cands):
         try:
-            return await llm_call_async(url, model, messages, headers=headers, **kwargs)
+            effective_headers = headers if headers is not None else default_headers
+            return await llm_call_async(url, model, messages, headers=effective_headers, **call_kwargs)
         except Exception as e:
             last_err = e
             tag = "primary" if i == 0 else "candidate"
@@ -2307,13 +2313,19 @@ async def stream_llm_with_fallback(candidates, messages, **kwargs):
         yield f'event: error\ndata: {json.dumps({"error": "No model endpoint configured", "status": 503})}\n\n'
         return
 
+    # Avoid passing `headers` twice when callers provide headers via kwargs
+    # and candidates also carry per-endpoint headers.
+    call_kwargs = dict(kwargs)
+    default_headers = call_kwargs.pop("headers", None)
+
     primary_model = cands[0][1]
     last_error = None
     for i, (url, model, headers) in enumerate(cands):
         is_last = (i == len(cands) - 1)
         emitted = False
         retried = False
-        async for chunk in stream_llm(url, model, messages, headers=headers, **kwargs):
+        effective_headers = headers if headers is not None else default_headers
+        async for chunk in stream_llm(url, model, messages, headers=effective_headers, **call_kwargs):
             if chunk.startswith("event: error"):
                 if not emitted and not is_last:
                     # Pre-content failure with fallbacks left — swallow and
