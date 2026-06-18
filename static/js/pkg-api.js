@@ -319,30 +319,30 @@ function addSettingsTab(pkgId, label, initFn, iconSvg) {
 }
 
 /**
- * Register a full sidebar view for a package.
+ * Register a full-page app view for a package.
  *
- * Injects a nav item (with icon + label) into the sidebar below the default
- * nav items. When clicked, sidebar-inner is hidden and this package's view
- * fills the sidebar instead. A "← Back" row is prepended automatically.
+ * Injects a nav item into the sidebar. When clicked, the chat-container is
+ * hidden and #pkg-app-view fills its place with the package's full UI.
+ * Navigating to a chat session automatically closes the app view.
  *
  * @param {string} id    Unique view ID (should match package id)
  * @param {object} opts
- * @param {string}   opts.icon     SVG string for the nav icon
- * @param {string}   opts.label    Display label
- * @param {Function} opts.onMount  Called with the content <div> when view opens
- * @param {Function} [opts.onUnmount]  Called when the user goes back
+ * @param {string}   opts.icon       SVG string for the nav icon
+ * @param {string}   opts.label      Display label
+ * @param {Function} opts.onMount    Called with the root <div> when view opens
+ * @param {Function} [opts.onUnmount]  Called when the view is closed
  */
-function registerSidebarView(id, { icon = '', label, onMount, onUnmount } = {}) {
+function registerAppView(id, { icon = '', label, onMount, onUnmount } = {}) {
   function _setup() {
     const navSlot = document.getElementById('pkg-slot-sidebar-nav');
-    const viewHost = document.getElementById('pkg-sidebar-view');
-    const sidebarInner = document.querySelector('.sidebar-inner');
-    if (!navSlot || !viewHost || !sidebarInner) {
+    const appView = document.getElementById('pkg-app-view');
+    const chatContainer = document.getElementById('chat-container');
+    if (!navSlot || !appView || !chatContainer) {
       setTimeout(_setup, 300);
       return;
     }
 
-    // Nav button (matches .list-item style)
+    // Nav button in the sidebar
     const btn = document.createElement('div');
     btn.className = 'list-item';
     btn.id = `pkg-nav-${id}`;
@@ -350,46 +350,34 @@ function registerSidebarView(id, { icon = '', label, onMount, onUnmount } = {}) 
     btn.innerHTML = `<span style="flex-shrink:0;display:flex;align-items:center;opacity:.7">${icon}</span><span class="grow" style="margin-left:6px">${label}</span>`;
     navSlot.appendChild(btn);
 
-    btn.addEventListener('click', () => {
-      // Hide regular sidebar content, show package view
-      sidebarInner.style.display = 'none';
-      viewHost.style.display = 'flex';
-      viewHost.style.flexDirection = 'column';
+    function _open() {
+      chatContainer.style.display = 'none';
+      appView.style.display = 'flex';
       btn.classList.add('active');
-
-      // Build content area (clear previous)
-      viewHost.innerHTML = '';
-
-      // Back row
-      const backRow = document.createElement('div');
-      backRow.className = 'list-item';
-      backRow.style.cssText = 'cursor:pointer;flex-shrink:0;border-bottom:1px solid var(--border);padding-bottom:6px;margin-bottom:4px';
-      backRow.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="flex-shrink:0"><polyline points="15 18 9 12 15 6"/></svg><span class="grow" style="margin-left:4px;font-size:12px;opacity:.7">Chats</span><span style="font-size:12px;font-weight:600;opacity:.9">${label}</span>`;
-      backRow.addEventListener('click', _close);
-      viewHost.appendChild(backRow);
-
-      // Content div
-      const content = document.createElement('div');
-      content.id = `pkg-view-content-${id}`;
-      content.style.cssText = 'flex:1;min-height:0;overflow-y:auto;padding:4px 0';
-      viewHost.appendChild(content);
-
-      if (onMount) onMount(content);
-    });
+      appView.innerHTML = '';
+      if (onMount) onMount(appView);
+    }
 
     function _close() {
-      viewHost.style.display = 'none';
-      sidebarInner.style.display = '';
+      appView.style.display = 'none';
+      chatContainer.style.display = '';
       btn.classList.remove('active');
+      appView.innerHTML = '';
       if (onUnmount) onUnmount();
     }
 
-    // Close when user navigates away (session selected → chat mode)
-    try {
-      events.on('session:selected', () => {
-        if (viewHost.style.display !== 'none') _close();
-      });
-    } catch {}
+    btn.addEventListener('click', () => {
+      if (appView.style.display !== 'none') { _close(); return; }
+      _open();
+    });
+
+    // Close when user selects a chat session
+    events.on('session:selected', () => {
+      if (appView.style.display !== 'none') _close();
+    });
+
+    // Expose close so the package can call it (e.g. after "Run agent → open session")
+    btn._pkgClose = _close;
   }
 
   if (document.readyState === 'loading') {
@@ -399,7 +387,15 @@ function registerSidebarView(id, { icon = '', label, onMount, onUnmount } = {}) 
   }
 }
 
-const OdysseusPkg = { addWidget, getChatInput, setChatInput, callLLM, openPanel, getConfig, setConfig, addSettingsTab, registerSidebarView, events, storage };
+/**
+ * @deprecated Use registerAppView instead.
+ * Kept for backward compatibility — opens a view inside the sidebar.
+ */
+function registerSidebarView(id, { icon = '', label, onMount, onUnmount } = {}) {
+  registerAppView(id, { icon, label, onMount, onUnmount });
+}
+
+const OdysseusPkg = { addWidget, getChatInput, setChatInput, callLLM, openPanel, getConfig, setConfig, addSettingsTab, registerAppView, registerSidebarView, events, storage };
 
 // Expose globally so widget scripts that can't do ES6 imports can access it
 window.OdysseusPkg = OdysseusPkg;
