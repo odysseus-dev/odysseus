@@ -205,10 +205,21 @@ def test_image_data_html_url_rejected(node_available):
     assert "<script>alert(1)</script>" not in html
 
 
-def test_image_https_and_relative_urls_render(node_available):
-    https = _run_markdown_case("![pic](https://e.com/a.png)")
-    assert '<img class="md-img"' in https
-    assert 'src="https://e.com/a.png"' in https
+def test_image_external_https_url_rejected(node_available):
+    # External hosts are rejected to match the page CSP (img-src 'self' data:
+    # blob:): the browser would block the request anyway, and a remote <img> is
+    # a tracking pixel. Falls back to the alt text.
+    html = _run_markdown_case("![pic](https://e.com/a.png)")
+    assert "<img" not in html
+    assert "e.com/a.png" not in html
+    assert "pic" in html
+
+
+def test_image_same_origin_and_relative_urls_render(node_available):
+    # Same-origin absolute URLs (the test harness origin is http://localhost).
+    same = _run_markdown_case("![pic](http://localhost/api/upload/abc123)")
+    assert '<img class="md-img"' in same
+    assert "/api/upload/abc123" in same
 
     # Root-relative (e.g. an upload) resolves against the page origin.
     rel = _run_markdown_case("![up](/api/upload/abc123)")
@@ -223,10 +234,10 @@ def test_image_data_image_url_allowed(node_available):
 
 
 def test_image_width_title_sets_style_and_clamps(node_available):
-    sized = _run_markdown_case('![x](https://e.com/a.png "w=50")')
+    sized = _run_markdown_case('![x](/api/upload/abc123 "w=50")')
     assert 'style="width:50%"' in sized
 
-    clamped = _run_markdown_case('![x](https://e.com/a.png "w=999")')
+    clamped = _run_markdown_case('![x](/api/upload/abc123 "w=999")')
     assert 'style="width:100%"' in clamped  # clamped to 100
 
 

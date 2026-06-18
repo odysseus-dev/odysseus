@@ -36,16 +36,23 @@ function linkHtml(text, url) {
   return `<a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${safeText}</a>`;
 }
 
-// Validate an image URL for `![alt](url)`. Allows http(s) (including root-
-// relative paths like /api/upload/<id>, resolved against the page origin) and
-// inline data:image. Anything else (javascript:, etc.) yields '' → not an image.
+// Validate an image URL for `![alt](url)`. The gate mirrors the page CSP
+// (`img-src 'self' data: blob:`): same-origin http(s) — including root-relative
+// uploads like /api/upload/<id>, resolved against the page origin — plus inline
+// data:image and blob:. External http(s) hosts are rejected: the CSP would block
+// them (rendering a broken <img>) and a remote image is a tracking pixel that
+// leaks the viewer's IP/timing, which matters once notes are shared. Want a
+// remote image? Proxy it same-origin. Anything else (javascript:, etc.) → ''.
 function safeImageUrl(rawUrl) {
   const url = String(rawUrl || '').trim();
   if (!url) return '';
   if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(url)) return url;
+  if (/^blob:/i.test(url)) return url;
   try {
     const parsed = new URL(url, window.location.origin);
-    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return parsed.href;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+    if (parsed.origin !== window.location.origin) return '';
+    return parsed.href;
   } catch (_) { return ''; }
   return '';
 }

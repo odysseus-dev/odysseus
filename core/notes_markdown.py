@@ -21,6 +21,12 @@ from typing import Dict, List, Optional, Tuple
 # mirrors the JS/markdown regexes exactly so task indexing stays identical.
 _TASK_RE = re.compile(r"^([ \t]*)[-*+][ \t]+\[([ xX])\][ \t]?(.*)$")
 
+# A fenced-code delimiter: optional indent then a run of 3+ backticks or tildes.
+# Task-looking lines inside such a fence are code samples, not real checklist
+# items — the browser renderer shows them verbatim, so the helpers below must
+# ignore them too (otherwise migration/toggle/list diverge from what renders).
+_FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+
 # Two spaces per nesting level when we *emit* task lines.
 _INDENT_UNIT = 2
 
@@ -29,6 +35,33 @@ def _indent_level(ws: str) -> int:
     """Leading whitespace -> nesting level (tabs count as one unit each)."""
     width = sum(_INDENT_UNIT if ch == "\t" else 1 for ch in ws)
     return width // _INDENT_UNIT
+
+
+def _iter_task_candidate_lines(content: str):
+    """Yield (lineno, raw) for lines that may hold a real task line.
+
+    Lines inside a fenced code block — and the fence delimiter lines
+    themselves — are skipped, so task-line examples shown as code are not
+    treated as toggleable checklist items. A fence opens on the first backtick
+    or tilde run (3+ chars) and closes on the next delimiter of the same
+    character that is at least as long (CommonMark rule); a delimiter of the
+    *other* character while a fence is open is just code content.
+    """
+    fence_char: Optional[str] = None
+    fence_len = 0
+    for lineno, raw in enumerate(content.splitlines()):
+        m = _FENCE_RE.match(raw)
+        if m:
+            marker = m.group(1)
+            if fence_char is None:
+                fence_char, fence_len = marker[0], len(marker)
+            elif marker[0] == fence_char and len(marker) >= fence_len:
+                fence_char, fence_len = None, 0
+            # Either way a fence delimiter line is never a task line.
+            continue
+        if fence_char is not None:
+            continue  # inside a fenced block -> code, not a task
+        yield lineno, raw
 
 
 def parse_task_lines(content: Optional[str]) -> List[Dict]:
@@ -41,7 +74,7 @@ def parse_task_lines(content: Optional[str]) -> List[Dict]:
     if not content:
         return []
     out: List[Dict] = []
-    for lineno, raw in enumerate(content.splitlines()):
+    for lineno, raw in _iter_task_candidate_lines(content):
         m = _TASK_RE.match(raw)
         if not m:
             continue
@@ -59,7 +92,7 @@ def has_tasks(content: Optional[str]) -> bool:
     """True if `content` contains at least one task line."""
     if not content:
         return False
-    return any(_TASK_RE.match(line) for line in content.splitlines())
+    return any(_TASK_RE.match(raw) for _, raw in _iter_task_candidate_lines(content))
 
 
 def toggle_task(content: Optional[str], index: int) -> Tuple[str, Dict]:
@@ -72,7 +105,7 @@ def toggle_task(content: Optional[str], index: int) -> Tuple[str, Dict]:
     text = content or ""
     lines = text.splitlines()
     seen = -1
-    for lineno, raw in enumerate(lines):
+    for lineno, raw in _iter_task_candidate_lines(text):
         m = _TASK_RE.match(raw)
         if not m:
             continue

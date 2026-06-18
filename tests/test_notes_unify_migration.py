@@ -101,6 +101,26 @@ def test_no_double_up_when_content_already_has_tasks(monkeypatch):
         os.unlink(path)
 
 
+def test_legacy_items_preserved_when_only_fenced_code_has_tasks(monkeypatch):
+    # Data-loss regression: if a note's only task-looking lines live inside a
+    # fenced code block, has_tasks() must report no real tasks so the legacy
+    # `items` are still folded in instead of being dropped when `items` is nulled.
+    content = "How to add a task:\n```\n- [ ] example only\n```"
+    path = _make_notes_db([{
+        "id": "n1", "content": content,
+        "items": json.dumps([{"text": "Real one", "done": False}]),
+        "note_type": "checklist",
+    }])
+    try:
+        _run_migration(monkeypatch, path)
+        row = _fetch(path, "n1")
+        assert "- [ ] Real one" in row["content"]  # legacy item NOT dropped
+        assert "```" in row["content"]             # code sample preserved
+        assert row["items"] is None
+    finally:
+        os.unlink(path)
+
+
 def test_survives_malformed_items(monkeypatch):
     # A row with non-JSON items must not abort the batch — it's treated as having
     # no items (content kept, items cleared) and other rows still convert.

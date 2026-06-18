@@ -101,28 +101,26 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
 
 
 def _reminder_text_from_note(note: Note) -> tuple[str, str]:
-    """Return the reminder title/body from a stored note row."""
+    """Return the reminder (title, body) for a stored note row.
+
+    Checklists now live as markdown task lines inside `content` (the legacy
+    `items` column is folded away by the unify migration), so the body is
+    derived from those task lines via the shared parser. When a note has task
+    lines we show a *pending-only* summary — never the raw markdown, which would
+    leak completed `- [x]` items into the reminder. Notes with no task lines
+    fall back to their raw content. Shared by the route fire-path and the
+    backend note-ping scanner so both surfaces stay consistent.
+    """
     title = (note.title or "Note reminder").strip() or "Note reminder"
-    if note.items:
-        try:
-            items = json.loads(note.items)
-        except (json.JSONDecodeError, TypeError):
-            items = None
-        if isinstance(items, list):
-            pending: list[str] = []
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("done") or item.get("checked"):
-                    continue
-                text = str(item.get("text") or "").strip()
-                if text:
-                    pending.append(text)
-            if pending:
-                shown = "\n".join(f"- {text}" for text in pending[:8])
-                extra = f"\n...and {len(pending) - 8} more" if len(pending) > 8 else ""
-                return title, f"Pending ({len(pending)}):\n{shown}{extra}"
-            return title, f"{len(items)} item{'s' if len(items) != 1 else ''}"
+    tasks = parse_task_lines(note.content)
+    if tasks:
+        pending = [t["text"] for t in tasks if not t["done"] and t["text"]]
+        if pending:
+            shown = "\n".join(f"- {text}" for text in pending[:8])
+            extra = f"\n...and {len(pending) - 8} more" if len(pending) > 8 else ""
+            return title, f"Pending ({len(pending)}):\n{shown}{extra}"
+        # Every task is complete — nothing pending to summarise.
+        return title, f"{len(tasks)} item{'s' if len(tasks) != 1 else ''}, all done"
     return title, (note.content or "").strip()[:400]
 
 

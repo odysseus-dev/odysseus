@@ -88,6 +88,53 @@ def test_toggle_preserves_trailing_newline():
     assert not nm.toggle_task("- [ ] x", 0)[0].endswith("\n")
 
 
+def test_fenced_code_task_lines_are_not_tasks():
+    # `- [ ]` lines inside a ``` fence are a code sample, not a checklist. The
+    # browser renderer shows them verbatim, so the helpers must ignore them too —
+    # otherwise migration/toggle/list diverge from what the user sees.
+    content = (
+        "real list:\n"
+        "- [ ] Milk\n"
+        "```\n"
+        "- [ ] not a task\n"
+        "- [x] also code\n"
+        "```\n"
+        "- [x] Bread\n"
+    )
+    tasks = nm.parse_task_lines(content)
+    assert [t["text"] for t in tasks] == ["Milk", "Bread"]
+    assert [t["index"] for t in tasks] == [0, 1]
+    assert nm.has_tasks("```\n- [ ] code only\n```") is False
+
+
+def test_tilde_fence_and_long_fence_also_ignored():
+    # Tilde fences and >3-char fences are honoured the same way.
+    assert nm.parse_task_lines("~~~\n- [ ] code\n~~~") == []
+    assert nm.has_tasks("````\n- [ ] code\n````") is False
+    # A shorter same-char run inside an open fence is content, not a close.
+    content = "````\n```\n- [ ] still code\n````\n- [ ] real"
+    assert [t["text"] for t in nm.parse_task_lines(content)] == ["real"]
+
+
+def test_toggle_skips_fenced_code_when_indexing():
+    # Index 0 is the only real task; the fenced look-alike must not be toggled
+    # and must not shift the index of the real one.
+    content = "```\n- [ ] code\n```\n- [ ] real"
+    new, item = nm.toggle_task(content, 0)
+    assert item["text"] == "real"
+    assert "- [x] real" in new
+    assert "- [ ] code" in new  # the code sample is untouched
+
+
+def test_merge_appends_when_only_fenced_code_has_tasks():
+    # The data-loss case: a note whose only task-looking lines are inside a fence
+    # has no real tasks, so legacy `items` must still be folded in (not dropped).
+    content = "How to:\n```\n- [ ] example\n```"
+    out = nm.merge_items_into_content(content, [{"text": "Real"}])
+    assert out.endswith("- [ ] Real")
+    assert "```" in out  # original code sample preserved
+
+
 def test_items_to_markdown():
     md = nm.items_to_markdown([
         {"text": "A", "done": True},

@@ -1402,27 +1402,14 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                             continue
                     except Exception:
                         pass
-                # Compose + dispatch.
-                title = (n.title or "Reminder").strip() or "Reminder"
-                body_parts = []
-                if n.content:
-                    body_parts.append(n.content[:400])
-                # Items: list pending checklist entries inline.
-                if n.items:
-                    try:
-                        items = _json.loads(n.items)
-                        pending = [
-                            it.get("text", "")
-                            for it in items
-                            if not it.get("done") and not it.get("checked")
-                        ]
-                        if pending:
-                            body_parts.append("Pending:\n" + "\n".join(f"- {t}" for t in pending[:8]))
-                    except Exception:
-                        pass
-                body = "\n\n".join(p for p in body_parts if p) or title
+                # Compose + dispatch. Body is derived from the markdown task
+                # lines (pending-only summary, raw-content fallback) via the same
+                # helper the route fire-path uses, so a migrated checklist note
+                # doesn't ping with completed `- [x]` items mixed in.
+                from routes.note_routes import _reminder_text_from_note, dispatch_reminder
+                title, body = _reminder_text_from_note(n)
+                body = body or title
                 try:
-                    from routes.note_routes import dispatch_reminder
                     await dispatch_reminder(
                         title=title, note_body=body, note_id=n.id,
                         owner=n.owner or owner or "",

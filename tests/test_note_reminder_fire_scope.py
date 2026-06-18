@@ -118,16 +118,27 @@ def test_real_reminder_uses_stored_note_and_ignores_overrides(monkeypatch):
     }]
 
 
-def test_real_checklist_reminder_body_is_built_from_stored_items(monkeypatch):
-    endpoint, calls, _db = _endpoint(monkeypatch, _note(items=(
-        '[{"text":"first","done":false},'
-        '{"text":"finished","done":true},'
-        '{"text":"second","checked":false}]'
+def test_real_checklist_reminder_body_is_built_from_task_lines(monkeypatch):
+    # Checklists now live as markdown task lines in `content`; the body is a
+    # pending-only summary that must NOT leak the completed `- [x]` item.
+    endpoint, calls, _db = _endpoint(monkeypatch, _note(content=(
+        "- [ ] first\n- [x] finished\n- [ ] second"
     )))
 
     asyncio.run(endpoint(_Request({"note_id": "note-1"}, user="alice")))
 
     assert calls[0]["note_body"] == "Pending (2):\n- first\n- second"
+
+
+def test_checklist_reminder_ignores_fenced_code_tasks(monkeypatch):
+    # Task-looking lines inside a fence are code samples, not pending items.
+    endpoint, calls, _db = _endpoint(monkeypatch, _note(content=(
+        "- [ ] real\n```\n- [ ] from a code sample\n```"
+    )))
+
+    asyncio.run(endpoint(_Request({"note_id": "note-1"}, user="alice")))
+
+    assert calls[0]["note_body"] == "Pending (1):\n- real"
 
 
 def test_non_admin_cannot_fire_synthetic_test_reminder(monkeypatch):
