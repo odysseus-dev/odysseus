@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import difflib
 import fnmatch
 import shutil
@@ -15,6 +16,31 @@ _CODENAV_SKIP_DIRS = frozenset({
 })
 _CODENAV_MAX_HITS = 200
 _CODENAV_MAX_LINE = 400
+
+
+def _glob_to_regex(pat: str) -> "re.Pattern":
+    """Translate a forward-slash glob (**, *, ?) into a compiled regex.
+    `**/` matches zero or more complete directories.
+    `*` matches within a single path segment (does not cross /).
+    """
+    i, n, out = 0, len(pat), []
+    while i < n:
+        if pat[i : i + 3] == "**/":
+            out.append("(?:[^/]+/)*")
+            i += 3
+        elif pat[i : i + 2] == "**":
+            out.append(".*")
+            i += 2
+        elif pat[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pat[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pat[i]))
+            i += 1
+    return re.compile("".join(out))
 
 def _unified_diff(old: str, new: str, path: str) -> Optional[Dict[str, Any]]:
     if old == new:
@@ -268,17 +294,10 @@ class GlobTool:
                 cand = os.path.normpath(os.path.join(base, norm_pat))
                 if os.path.exists(cand):
                     return [cand], None
-                return [], None
-            has_double_star = "**" in norm_pat
-            # Pre-compute the suffix after **/ for fallback matching
-            # (e.g. "**/*.py" → "*.py" so root-level files match too).
-            ds_suffix = None
-            if has_double_star:
-                idx = norm_pat.find("**/")
-                if idx >= 0:
-                    ds_suffix = norm_pat[idx + 3:]
-                elif norm_pat.endswith("**"):
-                    ds_suffix = "*"
+                # Literal not at exact path — fall through to walk so
+                # e.g. "foo.py" still matches at any depth (like rglob).
+            # Compile glob to regex: * stays within one segment, **/ spans dirs.
+            regex = _glob_to_regex(norm_pat)
             matched = []
             cap = _CODENAV_MAX_HITS * 5
             try:
@@ -289,21 +308,12 @@ class GlobTool:
                     for name in fns + dns:
                         full = os.path.join(dp, name)
                         rel = os.path.relpath(full, base).replace(os.sep, "/")
-                        if has_double_star:
-                            hit = fnmatch.fnmatch(rel, norm_pat)
-                            # **/ prefix means zero-or-more dirs — also match
-                            # the suffix pattern directly against the basename.
-                            if not hit and ds_suffix:
-                                hit = fnmatch.fnmatch(name, ds_suffix)
-                        else:
-                            hit = fnmatch.fnmatch(name, norm_pat) or fnmatch.fnmatch(rel, norm_pat)
-                        if not hit:
-                            continue
-                        try:
-                            mtime = os.stat(full).st_mtime
-                        except OSError:
-                            mtime = 0
-                        matched.append((mtime, full))
+                        if regex.fullmatch(rel) or regex.fullmatch(name):
+                            try:
+                                mtime = os.stat(full).st_mtime
+                            except OSError:
+                                mtime = 0
+                            matched.append((mtime, full))
                     if len(matched) > cap:
                         break
             except OSError as _e:
