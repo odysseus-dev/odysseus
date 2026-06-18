@@ -578,23 +578,49 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
-    // Tail-only + healthy-server suppression. tmux capture-pane returns the
-    // entire scrollback every poll, so a one-shot startup traceback would
-    // otherwise stick on the panel forever even while the server happily
-    // serves /v1/models. Only fire if the traceback is in recent output AND
-    // the server isn't currently logging healthy traffic.
+    // Dependency-install (pip) build failure — a required package failed to
+    // build its wheel (common when an old sdist's setup.py breaks on a newer
+    // Python, e.g. basicsr on 3.13). This is an install problem, NOT a serve
+    // problem, so it must never suggest killing vLLM.
+    match: (text) => {
+      const TAIL = text.slice(-6000);
+      // A serve script can run a fallback build and then start serving fine —
+      // don't flag a stale build error once the server is up.
+      if (/Application startup complete|"(?:GET|POST)\s+\/v1\/[^"]+ HTTP\/[\d.]+"\s*2\d\d|Uvicorn running on|server is listening on https?:\/\//i.test(TAIL)) return false;
+      return /Failed to build\b|subprocess-exited-with-error|Could not build wheels|metadata-generation-failed/i.test(TAIL);
+    },
+    message: 'A dependency failed to build during install — usually an older package whose build breaks on this Python version, not a server problem. The install did not finish.',
+    suggestion: 'Suggested action: check the captured output for the package that failed to build; it may need a newer release or a patch to install on this Python version.',
+    fixes: [],
+  },
+  {
+    // vLLM-specific traceback: only offer the kill-processes recovery when the
+    // output is actually about vLLM. Tail-only + healthy-server suppression so
+    // a one-shot startup traceback doesn't stick on the panel forever while
+    // the server happily serves /v1/models.
     match: (text) => {
       const TAIL = text.slice(-4096);
       if (!/Traceback \(most recent call last\)/i.test(TAIL)) return false;
-      // Healthy markers in the tail mean whatever blew up has been recovered
-      // from — the server is up and answering requests.
       if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
-      return true;
+      return /vllm/i.test(TAIL);
     },
-    message: 'Python traceback detected — may be a handled error, check logs.',
+    message: 'A vLLM process hit a Python traceback and may be wedged.',
     fixes: [
       { label: 'Kill vLLM processes', action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
     ],
+  },
+  {
+    // Generic traceback (not vLLM, not a pip build): surface it without
+    // suggesting an unrelated vLLM kill. Same tail-only + healthy suppression.
+    match: (text) => {
+      const TAIL = text.slice(-4096);
+      if (!/Traceback \(most recent call last\)/i.test(TAIL)) return false;
+      if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
+      return true;
+    },
+    message: 'Python traceback detected — check the captured output below for the underlying error.',
+    suggestion: 'Suggested action: read the captured output for the failing step; copy the troubleshooting bundle if you need help.',
+    fixes: [],
   },
 ];
 
