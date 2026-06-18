@@ -32,6 +32,15 @@ export function useDocument(id: string | null) {
   })
 }
 
+export interface DocVersion { id: string; version_number: number; content: string; summary?: string; source?: string; created_at?: string }
+export function useDocVersions(id: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["doc-versions", id],
+    enabled: !!id && enabled,
+    queryFn: () => apiJson<DocVersion[]>(`/api/document/${id}/versions`),
+  })
+}
+
 export function useDocMutations() {
   const qc = useQueryClient()
   return {
@@ -44,7 +53,26 @@ export function useDocMutations() {
         })
         if (!r.ok) throw new Error("save failed"); return r.json()
       },
-      onSuccess: (_d, v) => { qc.invalidateQueries({ queryKey: ["document", v.id] }); qc.invalidateQueries({ queryKey: ["documents"] }) },
+      onSuccess: (_d, v) => {
+        qc.invalidateQueries({ queryKey: ["document", v.id] })
+        qc.invalidateQueries({ queryKey: ["doc-versions", v.id] })
+        qc.invalidateQueries({ queryKey: ["documents"] })
+        qc.invalidateQueries({ queryKey: ["session-documents"] })
+      },
+      meta: { silent: true },
+    }),
+    restore: useMutation({
+      mutationFn: async (v: { id: string; num: number }) => {
+        const r = await apiFetch(`/api/document/${v.id}/restore/${v.num}`, { method: "POST" })
+        if (!r.ok) throw new Error("restore failed"); return r.json() as Promise<DocFull>
+      },
+      onSuccess: (_d, v) => {
+        qc.invalidateQueries({ queryKey: ["document", v.id] })
+        qc.invalidateQueries({ queryKey: ["doc-versions", v.id] })
+        qc.invalidateQueries({ queryKey: ["documents"] })
+        qc.invalidateQueries({ queryKey: ["session-documents"] })
+      },
+      meta: { silent: true },
     }),
     remove: useMutation({
       mutationFn: async (id: string) => { const r = await apiFetch(`/api/document/${id}`, { method: "DELETE" }); if (!r.ok) throw new Error("delete failed") },

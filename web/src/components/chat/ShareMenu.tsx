@@ -3,9 +3,10 @@ import { Share2, Copy, Check, Link2Off, Loader2 } from "lucide-react"
 import { useShareLink, useShareMutations, shareUrl, type ShareResource } from "@/api/share"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/stores/toast"
+import { cn } from "@/lib/utils"
 
 // Read-only share popover. Reused for chat sessions and document artifacts.
-export function ShareMenu({ resourceType, resourceId, label = "Share" }: { resourceType: ShareResource; resourceId: string; label?: string }) {
+export function ShareMenu({ resourceType, resourceId, label = "Share", placement = "down" }: { resourceType: ShareResource; resourceId: string; label?: string; placement?: "up" | "down" }) {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const { data: link, isLoading } = useShareLink(resourceType, resourceId, open)
@@ -27,7 +28,8 @@ export function ShareMenu({ resourceType, resourceId, label = "Share" }: { resou
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-80 origin-top-right animate-pop-in rounded-xl border bg-popover p-3 shadow-lg">
+          <div className={cn("absolute right-0 z-20 w-80 animate-pop-in rounded-xl border bg-popover p-3 shadow-lg",
+            placement === "up" ? "bottom-full mb-1 origin-bottom-right" : "mt-1 origin-top-right")}>
             <div className="mb-1 text-sm font-semibold">Share {resourceType === "session" ? "chat" : "artifact"}</div>
             <p className="mb-3 text-xs text-muted-foreground">Anyone with the link can view a read-only copy. No sign-in required.</p>
             {isLoading ? (
