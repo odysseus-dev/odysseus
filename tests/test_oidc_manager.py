@@ -781,3 +781,170 @@ class TestJwksCache:
             assert claims2["sub"] == "user123"
             # One GET call for userinfo (not JWKS — that's cached)
             assert mock_get.call_count == 1
+
+    def test_jwks_refresh_network_error_wraps_as_oidc_error(self):
+        """Transient JWKS network/parse failures must produce OidcError, not raw exceptions."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "p" * 64
+        id_token = _make_id_token("user123", nonce)
+        import core.oidc as mod
+
+        mod.OidcManager._jwks_cache = {}
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            # Discovery succeeds
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+
+            # Simulate a network failure on the JWKS fetch inside _verify_id_token
+            # (triggered by an unknown kid).
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                ConnectionError("Temporary network failure"),  # JWKS fails
+            ]
+
+            with pytest.raises(mod.OidcError, match="JWKS fetch"):
+                mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+    def test_jwks_refresh_bad_json_wraps_as_oidc_error(self):
+        """JWKS response that isn't valid JSON should produce OidcError."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "q" * 64
+        id_token = _make_id_token("user123", nonce)
+        import core.oidc as mod
+
+        mod.OidcManager._jwks_cache = {}
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+
+            # Simulate a bad JSON response from the JWKS endpoint
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _FakeResponse(200, None, "not json at all"),
+            ]
+
+            with pytest.raises(mod.OidcError, match="JWKS fetch"):
+                mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+    def test_jwks_refresh_http_error_wraps_as_oidc_error(self):
+        """JWKS endpoint returning HTTP 500 should produce OidcError."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "r" * 64
+        id_token = _make_id_token("user123", nonce)
+        import core.oidc as mod
+
+        mod.OidcManager._jwks_cache = {}
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, "https://app.example.com/callback")
+            mock_post.return_value = _mock_token_response(id_token)
+
+            # Simulate HTTP 500 from the JWKS endpoint
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _FakeResponse(500, {"error": "internal"}, "internal server error"),
+            ]
+
+            with pytest.raises(mod.OidcError, match="JWKS fetch"):
+                mgr.exchange_code("code", state, "https://app.example.com/callback")
+
+
+class TestRedirectUriBinding:
+    """The token exchange must bind to the stored redirect_uri from state."""
+
+    def test_mismatched_redirect_uri_rejected(self):
+        """Token exchange with a callback-derived redirect_uri that differs
+        from the stored state value must be rejected."""
+        jwt_jwks, _ = _make_test_jwks_and_key()
+        import core.oidc as mod
+
+        with patch.object(mod.httpx, "get") as mock_get:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+        # State encodes "https://original.example.com/callback"
+        state = mod._encode_state("nonce", "https://original.example.com/callback")
+
+        # But the callback derives a different redirect_uri
+        with pytest.raises(mod.OidcError, match="redirect_uri mismatch"):
+            mgr.exchange_code("code", state, "https://evil.example.com/callback")
+
+    def test_stored_redirect_uri_used_for_token_request(self):
+        """The token exchange must POST the stored redirect_uri, not the
+        callback-derived one."""
+        jwt_jwks, jwk = _make_test_jwks_and_key()
+        nonce = "s" * 64
+        id_token = _make_id_token("user123", nonce)
+        stored_uri = "https://original.example.com/callback"
+        import core.oidc as mod
+
+        mod.OidcManager._jwks_cache = {}
+
+        with patch.object(mod.httpx, "get") as mock_get, \
+             patch.object(mod.httpx, "post") as mock_post:
+            mock_get.side_effect = [
+                _mock_discovery_response(),
+                _mock_jwks_response(jwt_jwks),
+            ]
+            mgr = mod.OidcManager(
+                issuer=FAKE_ISSUER,
+                client_id=FAKE_CLIENT_ID,
+                client_secret=FAKE_CLIENT_SECRET,
+            )
+
+            state = mod._encode_state(nonce, stored_uri)
+            mock_post.return_value = _mock_token_response(id_token)
+            mock_get.reset_mock()
+            mock_get.side_effect = [
+                _mock_jwks_response(jwt_jwks),
+            ]
+
+            # Pass a different callback-derived URI — should still use stored_uri
+            claims = mgr.exchange_code("code", state, stored_uri)
+            assert claims["sub"] == "user123"
+
+            # Verify the token endpoint received the stored URI
+            call_data = mock_post.call_args.kwargs["data"]
+            assert call_data["redirect_uri"] == stored_uri
