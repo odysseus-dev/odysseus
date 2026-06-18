@@ -5,6 +5,7 @@ import {
   useEndpointModels, useEndpointAdmin, probeEndpoint,
   useVaultConfig, useVaultMutations, useSystemLogs,
   usePresetTemplates, usePresetTemplateMutations,
+  usePresetGroups, useSavePresetGroups,
 } from "@/api/advanced"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
@@ -167,6 +168,26 @@ export function SystemLogsSection() {
   )
 }
 
+// ───────────────────────── Preset groups (group chat) ─────────────────────────
+export function PresetGroupsSection() {
+  const { data: groups } = usePresetGroups()
+  const save = useSavePresetGroups()
+  if (!groups || groups.length === 0) return null
+  return (
+    <section>
+      <h2 className={H}>Preset groups <span className="normal-case text-muted-foreground/70">(group chat)</span></h2>
+      <div className="space-y-2">
+        {groups.map((g, i) => (
+          <div key={g.id || i} className="group flex items-center gap-2 rounded-lg border bg-card p-3">
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{g.name || `Group ${i + 1}`}</span>
+            <button onClick={() => { if (confirm("Delete this group?")) save.mutate(groups.filter((_, j) => j !== i)) }} className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"><Trash2 className="size-4" /></button>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 export function AdvancedSections() {
-  return (<><ModelEndpointAdmin /><PresetTemplatesSection /><VaultSection /><SystemLogsSection /></>)
+  return (<><ModelEndpointAdmin /><PresetTemplatesSection /><PresetGroupsSection /><VaultSection /><SystemLogsSection /></>)
 }

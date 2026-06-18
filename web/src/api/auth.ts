@@ -37,7 +37,7 @@ export async function setOpenSignup(enabled: boolean): Promise<{ ok?: boolean; s
   return r.json().catch(() => ({ ok: r.ok }))
 }
 
-export interface AppUser { username: string; is_admin?: boolean }
+export interface AppUser { username: string; is_admin?: boolean; privileges?: Record<string, unknown> }
 export function useUsers() {
   return useQuery({
     queryKey: ["users"],
@@ -92,6 +92,18 @@ export function useUserMutations() {
           body: JSON.stringify({ new_username: v.new_username }),
         })
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "Rename failed")
+        return r.json()
+      },
+      onSuccess: inv,
+    }),
+    setPrivileges: useMutation({
+      mutationFn: async (v: { username: string; privileges: Record<string, unknown> }) => {
+        const r = await apiFetch(`/api/auth/users/${encodeURIComponent(v.username)}/privileges`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(v.privileges),
+        })
+        if (!r.ok) throw new Error("Update failed")
         return r.json()
       },
       onSuccess: inv,

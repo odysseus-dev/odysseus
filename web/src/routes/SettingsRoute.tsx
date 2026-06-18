@@ -10,7 +10,8 @@ import { AdminSections } from "@/components/settings/AdminSections"
 import { AppSettingsSections, SidebarItemsSettings } from "@/components/settings/AppSettings"
 import { IntegrationsExtraSections } from "@/components/settings/IntegrationsExtra"
 import { AdvancedSections } from "@/components/settings/AdvancedSettings"
-import { useSetUserAdmin } from "@/api/advanced"
+import { UserPrivileges } from "@/components/settings/UserPrivileges"
+import { useSetUserAdmin, useProviders } from "@/api/advanced"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -113,6 +114,7 @@ function PresetSection() {
 
 function AddEndpointForm() {
   const { create } = useEndpointMutations()
+  const { data: providers } = useProviders()
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [url, setUrl] = useState("")
@@ -135,6 +137,12 @@ function AddEndpointForm() {
   if (!open) return <Button variant="outline" size="sm" className="mt-2" onClick={() => setOpen(true)}><Plus className="size-4" />Add endpoint</Button>
   return (
     <div className="mt-2 space-y-2 rounded-lg border bg-card p-3">
+      {(providers || []).length > 0 && (
+        <select defaultValue="" onChange={(e) => { const p = (providers || []).find((x) => x.provider === e.target.value); if (p) { setName(p.provider); if (p.items?.[0]?.url) setUrl(p.items[0].url) } }} className={inpCls}>
+          <option value="">Provider preset…</option>
+          {(providers || []).map((p) => <option key={p.provider} value={p.provider}>{p.provider}</option>)}
+        </select>
+      )}
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional, e.g. OpenAI)" className={inpCls} />
       <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Base URL — e.g. https://api.openai.com/v1" className={inpCls} />
       <input value={key} onChange={(e) => setKey(e.target.value)} type="password" placeholder="API key (optional for local)" autoComplete="off" className={inpCls} />
@@ -260,7 +268,8 @@ export function SettingsRoute() {
             </div>
             <div className="space-y-2">
               {userList.map((u) => (
-                <div key={u.username} className="group flex items-center justify-between rounded-lg border bg-card p-3">
+                <div key={u.username} className="rounded-lg border bg-card p-3">
+                  <div className="group flex items-center justify-between">
                   <span className="text-sm font-medium">{u.username}{u.username === user && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(you)</span>}</span>
                   <div className="flex items-center gap-2">
                     {u.username === user
@@ -273,6 +282,8 @@ export function SettingsRoute() {
                         </>
                       )}
                   </div>
+                  </div>
+                  {u.username !== user && !u.is_admin && <UserPrivileges user={u} />}
                 </div>
               ))}
             </div>

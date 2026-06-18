@@ -69,6 +69,22 @@ export function usePresetTemplateMutations() {
   }
 }
 
+// ───────────────────────── Provider presets (add-endpoint) ─────────────────────────
+export interface Provider { provider: string; items?: { url: string; models?: string[] }[] }
+export function useProviders() {
+  return useQuery({ queryKey: ["providers"], retry: false, queryFn: async () => { try { return (await apiJson<{ providers: Provider[] }>("/api/providers")).providers } catch { return [] } } })
+}
+
+// ───────────────────────── Preset groups ─────────────────────────
+export interface PresetGroup { id?: string; name?: string; [k: string]: unknown }
+export function usePresetGroups() {
+  return useQuery({ queryKey: ["preset-groups"], retry: false, queryFn: async () => { try { return (await apiJson<{ groups: PresetGroup[] }>("/api/presets/groups")).groups || [] } catch { return [] } } })
+}
+export function useSavePresetGroups() {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: async (groups: PresetGroup[]) => { const r = await jx("POST", "/api/presets/groups", { groups }); if (!r.ok) throw new Error("Save failed"); return r.json() }, onSuccess: () => qc.invalidateQueries({ queryKey: ["preset-groups"] }) })
+}
+
 // ───────────────────────── Admin: toggle user admin ─────────────────────────
 export function useSetUserAdmin() {
   const qc = useQueryClient()
