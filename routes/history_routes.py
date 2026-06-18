@@ -3,6 +3,7 @@
 import json
 import uuid
 import logging
+from datetime import datetime
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request, HTTPException
@@ -618,6 +619,58 @@ def setup_history_routes(session_manager) -> APIRouter:
                 "parent_message_count": parent_msg_count,
                 "new_messages_since_fork": new_since_fork,
             }
+        finally:
+            db.close()
+
+    @router.get("/api/session/{session_id}/branch-tree")
+    async def get_branch_tree(request: Request, session_id: str):
+        """Return the full branch tree rooted at the topmost ancestor of session_id."""
+        _verify_session_owner(request, session_id)
+        from src.auth_helpers import effective_user
+        owner = effective_user(request)
+
+        db = SessionLocal()
+        try:
+            q = db.query(DbSession).filter(DbSession.archived == False)
+            if owner:
+                q = q.filter(DbSession.owner == owner)
+            all_sessions = q.all()
+            by_id = {s.id: s for s in all_sessions}
+
+            # Walk parent chain to find the root
+            root_id = session_id
+            seen: set = set()
+            while True:
+                s = by_id.get(root_id)
+                if not s:
+                    break
+                pid = getattr(s, "parent_session_id", None)
+                if not pid or pid not in by_id or pid in seen:
+                    break
+                seen.add(root_id)
+                root_id = pid
+
+            def build(sid: str, depth: int = 0):
+                s = by_id.get(sid)
+                if not s or depth > 20:
+                    return None
+                children_rows = sorted(
+                    [c for c in all_sessions if getattr(c, "parent_session_id", None) == sid],
+                    key=lambda c: c.created_at or datetime.min,
+                )
+                children = [n for n in (build(c.id, depth + 1) for c in children_rows) if n]
+                return {
+                    "id": s.id,
+                    "name": s.name,
+                    "message_count": s.message_count or 0,
+                    "fork_message_index": getattr(s, "fork_message_index", None),
+                    "parent_session_id": getattr(s, "parent_session_id", None),
+                    "created_at": s.created_at.isoformat() if s.created_at else None,
+                    "children": children,
+                }
+
+            tree = build(root_id)
+            return {"tree": tree, "current_session_id": session_id, "root_id": root_id}
         finally:
             db.close()
 
