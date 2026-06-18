@@ -1,0 +1,101 @@
+services:
+  odysseus:
+    build: .
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-7000}:7000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # Cookbook remote-server SSH identity. Odysseus can generate a key here;
+      # add the shown public key to each remote server's authorized_keys.
+      - ./data/ssh:/app/.ssh
+      # Cookbook local model cache. Inside Docker, "Local" means the Odysseus
+      # container, so persist its HuggingFace cache under ./data/huggingface.
+      - ./data/huggingface:/app/.cache/huggingface
+      # Cookbook-installed Python CLIs/packages (vLLM, llama-cpp-python, etc.)
+      # land under /app/.local for the odysseus user. Persist them so a
+      # container recreate does not silently remove installed serve engines.
+      - ./data/local:/app/.local
+    extra_hosts:
+      # Lets the container reach local services on the Docker host, including
+      # Ollama at http://host.docker.internal:11434.
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      - SEARXNG_INSTANCE=http://searxng:8080
+      - CHROMADB_HOST=chromadb
+      - CHROMADB_PORT=8000
+      # PUID / PGID — the user/group the container drops to before
+      # running uvicorn (entrypoint also chowns /app/data + /app/logs
+      # to match, so bind-mounted files stay editable from the host).
+      # 1000 is the default first user on most Linux installs. If your
+      # host user has a different id, override here or via .env, e.g.:
+      #   PUID=1001
+      #   PGID=1001
+      # Find yours with:  id -u  /  id -g
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+    depends_on:
+      searxng:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+    restart: unless-stopped
+
+  chromadb:
+    image: docker.io/chromadb/chroma:latest
+    ports:
+      - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
+    volumes:
+      - chromadb-data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=FALSE
+    restart: unless-stopped
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ ! -s /etc/searxng/settings.yml ] || grep -q 'odysseus-local-searxng-json-2026-05-30\|__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
+          secret="$${SEARXNG_SECRET:-}"
+          if [ -z "$$secret" ]; then
+            secret="$$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          fi
+          sed "s|__SEARXNG_SECRET__|$$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
+        fi
+        exec /usr/local/searxng/entrypoint.sh
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - searxng-data:/etc/searxng
+      - ./config/searxng/settings.yml:/tmp/searxng-settings.yml.template:ro
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/', timeout=5).read(1)\""]
+      interval: 5s
+      timeout: 6s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  ntfy:
+    image: docker.io/binwiederhier/ntfy
+    command: serve
+    ports:
+      - "${NTFY_BIND:-127.0.0.1}:8091:80"
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+    environment:
+      - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
+    restart: unless-stopped
+
+volumes:
+  searxng-data:
+  chromadb-data:
+  ntfy-cache:
