@@ -263,6 +263,8 @@ and configure everything else inside **Settings**.
 
 ## Troubleshooting & Advanced Setup
 
+See also the [self-host troubleshooting cookbook](troubleshooting.md) for common self-hosting traps: local mail servers (Dovecot) refusing plaintext auth, Radicale CalDAV collection URLs, ntfy instant delivery on Android, and clipboard copy buttons over plain-HTTP URLs.
+
 ### `chromadb-client` conflicts with embedded ChromaDB
 If `chromadb-client` (the lightweight HTTP-only package) is installed alongside the full `chromadb` package, Odysseus starts but ChromaDB silently falls back to HTTP-only mode and fails.
 
