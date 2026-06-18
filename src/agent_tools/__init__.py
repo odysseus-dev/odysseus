@@ -22,6 +22,7 @@ from .subprocess_tools import BashTool, PythonTool
 from .web_tools import WebSearchTool, WebFetchTool
 from .filesystem_tools import ReadFileTool, WriteFileTool, EditFileTool, LsTool, GlobTool, GrepTool, GetWorkspaceTool
 from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocumentTool, SuggestDocumentTool, ManageDocumentTool
+from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 
 TOOL_HANDLERS = {
     "bash": BashTool().execute,
@@ -40,6 +41,9 @@ TOOL_HANDLERS = {
     "suggest_document": SuggestDocumentTool().execute,
     "manage_documents": ManageDocumentTool().execute,
     "get_workspace": GetWorkspaceTool().execute,
+    "chat_with_model": ChatWithModelTool().execute,
+    "ask_teacher": AskTeacherTool().execute,
+    "list_models": ListModelsTool().execute,
 }
 
 # ---------------------------------------------------------------------------
