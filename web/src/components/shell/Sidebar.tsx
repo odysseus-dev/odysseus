@@ -1,37 +1,14 @@
 import { useState } from "react"
 import { NavLink, useNavigate, useParams } from "react-router-dom"
-import {
-  Plus, Search, PanelLeft, MessageSquare, GitCompareArrows, Image, Brain,
-  Calendar, Mail, StickyNote, ListChecks, FileText, FlaskConical, Sparkles,
-  Telescope, Database, FolderOpen,
-  Settings, Trash2, Moon, Sun, LogOut, EyeOff, Keyboard, ChevronsUpDown, Pencil, Pin, Check,
-} from "lucide-react"
+import { Plus, Search, PanelLeft, Settings, Trash2, Moon, Sun, LogOut, EyeOff, Keyboard, ChevronsUpDown, Pencil, Pin, Check } from "lucide-react"
 import { useUi } from "@/stores/ui"
 import { useComposer } from "@/stores/composer"
 import { useSessions, useSessionMutations } from "@/api/sessions"
 import { useAuthStatus, logout } from "@/api/auth"
+import { usePrefs } from "@/api/prefs"
+import { PRIMARY, WORKSPACE } from "./nav"
 import type { Session } from "@/types"
 import { cn } from "@/lib/utils"
-
-const PRIMARY = [
-  { to: "/chat", icon: MessageSquare, label: "Chat" },
-  { to: "/compare", icon: GitCompareArrows, label: "Compare" },
-  { to: "/research", icon: Telescope, label: "Research" },
-  { to: "/gallery", icon: Image, label: "Gallery" },
-  { to: "/memory", icon: Brain, label: "Memory" },
-]
-const WORKSPACE = [
-  { to: "/calendar", icon: Calendar, label: "Calendar" },
-  { to: "/email", icon: Mail, label: "Email" },
-  { to: "/notes", icon: StickyNote, label: "Notes" },
-  { to: "/tasks", icon: ListChecks, label: "Tasks" },
-  { to: "/library", icon: FileText, label: "Library" },
-  { to: "/personal", icon: FolderOpen, label: "Personal files" },
-  { to: "/knowledge", icon: Database, label: "Knowledge" },
-  { to: "/cookbook", icon: FlaskConical, label: "Cookbook" },
-  { to: "/skills", icon: Sparkles, label: "Skills" },
-]
-const ALL = [...PRIMARY, ...WORKSPACE]
 
 const BUCKETS = ["Today", "Yesterday", "Previous 7 days", "Older"] as const
 function bucketOf(s: Session): typeof BUCKETS[number] {
@@ -95,6 +72,11 @@ export function Sidebar() {
   const navigate = useNavigate()
   const { sessionId } = useParams()
   const { data: sessions } = useSessions()
+  const { data: prefs } = usePrefs()
+  const hidden = new Set((prefs?.hidden_nav as string[] | undefined) || [])
+  const primary = PRIMARY.filter((i) => i.to === "/chat" || !hidden.has(i.to))
+  const workspace = WORKSPACE.filter((i) => !hidden.has(i.to))
+  const allNav = [...primary, ...workspace]
   const { remove, rename, setImportant } = useSessionMutations()
   const [q, setQ] = useState("")
   const [editId, setEditId] = useState<string | null>(null)
@@ -115,7 +97,7 @@ export function Sidebar() {
         <button onClick={toggleSidebar} title="Expand sidebar (⌘B)" className={iconBtn(false)}><PanelLeft className="size-5" /></button>
         <button onClick={() => navigate("/chat")} title="New chat (⌘K)" className={iconBtn(false)}><Plus className="size-5" /></button>
         <div className="my-1 h-px w-6 bg-border" />
-        {ALL.map(({ to, icon: Icon, label }) => (
+        {allNav.map(({ to, icon: Icon, label }) => (
           <NavLink key={to} to={to} title={label} className={({ isActive }) => iconBtn(isActive)}><Icon className="size-5" /></NavLink>
         ))}
         <Account collapsed />
@@ -137,13 +119,13 @@ export function Sidebar() {
         </div>
       </div>
       <nav className="space-y-0.5 px-2">
-        {PRIMARY.map(({ to, icon: Icon, label }) => (
+        {primary.map(({ to, icon: Icon, label }) => (
           <NavLink key={to} to={to} className={({ isActive }) => navRow(isActive)}><Icon className="size-4 shrink-0" />{label}</NavLink>
         ))}
       </nav>
-      <div className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Workspace</div>
+      {workspace.length > 0 && <div className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Workspace</div>}
       <nav className="space-y-0.5 px-2">
-        {WORKSPACE.map(({ to, icon: Icon, label }) => (
+        {workspace.map(({ to, icon: Icon, label }) => (
           <NavLink key={to} to={to} className={({ isActive }) => navRow(isActive)}><Icon className="size-4 shrink-0" />{label}</NavLink>
         ))}
       </nav>

@@ -4,6 +4,8 @@ import { useSettings, useSaveSettings, type Settings } from "@/api/settings"
 import { useModels } from "@/api/models"
 import { useIntegrations } from "@/api/integrations"
 import { useTokens, useTokenProfiles, useTokenMutations } from "@/api/tokens"
+import { usePrefs, useSetPref } from "@/api/prefs"
+import { PRIMARY, WORKSPACE } from "@/components/shell/nav"
 import { apiFetch } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { SectionCard, Row, SettingSwitch, SettingSelect, SettingText, SettingNumber, SettingTextarea, StringListEditor } from "./fields"
@@ -277,6 +279,28 @@ export function DataSection() {
         </div>
         {wipeMsg && <p className="mt-2 text-xs text-muted-foreground">{wipeMsg}</p>}
       </div>
+    </section>
+  )
+}
+
+// ─────────────────────── Sidebar items (per-user, not admin) ───────────────────────
+export function SidebarItemsSettings() {
+  const { data: prefs } = usePrefs()
+  const setPref = useSetPref()
+  const hidden = new Set((prefs?.hidden_nav as string[] | undefined) || [])
+  const items = [...PRIMARY, ...WORKSPACE].filter((i) => i.to !== "/chat")
+  const toggle = (to: string, visible: boolean) => {
+    const next = new Set(hidden)
+    if (visible) next.delete(to); else next.add(to)
+    setPref.mutate({ key: "hidden_nav", value: [...next] })
+  }
+  return (
+    <section>
+      <h2 className={H}>Sidebar items</h2>
+      <p className="-mt-1 mb-2 text-xs text-muted-foreground">Show or hide navigation entries in the sidebar.</p>
+      <SectionCard>
+        {items.map((i) => <SettingSwitch key={i.to} label={i.label} value={!hidden.has(i.to)} onChange={(v) => toggle(i.to, v)} />)}
+      </SectionCard>
     </section>
   )
 }

@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch"
 import { useModels, useDefaultChat, useDeleteEndpoint, useEndpointMutations, useSetDefaultModel, testEndpoint } from "@/api/models"
 import { usePresets, useCreatePreset } from "@/api/presets"
 import { AdminSections } from "@/components/settings/AdminSections"
-import { AppSettingsSections } from "@/components/settings/AppSettings"
+import { AppSettingsSections, SidebarItemsSettings } from "@/components/settings/AppSettings"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -216,6 +216,8 @@ export function SettingsRoute() {
             </div>
           </div>
         </section>
+
+        <SidebarItemsSettings />
 
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">AI defaults</h2>
