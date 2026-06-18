@@ -132,6 +132,16 @@ Respect upstream work. Keep acknowledgments and license terms intact.
  </picture>
 </a>
 
+## Educational / Hobby Note
+
+Hellaine's Jade Palace is primarily a personal, educational, and hobby-driven project.
+
+It exists to explore self-hosted AI, local models, privacy-first workflows, Docker, Unraid, GPU acceleration, automation, and the strange little disasters that appear when modern software decides to behave like a haunted manor.
+
+Use it to learn. Use it to experiment. Use it to understand what happens under the hood instead of blindly handing every thought to someone else's cloud.
+
+This project is not presented as a polished commercial product. It is a private laboratory, a learning exercise, and a very dramatic way to make a homelab more interesting.
+
 ## License
 
 AGPL-3.0-or-later — see [LICENSE](LICENSE) and [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md).
