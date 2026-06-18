@@ -248,14 +248,25 @@ class OidcManager:
         Returns a dict of claims extracted from the verified id_token.
         Raises :class:`OidcError` on any failure.
         """
-        # 1. Decrypt state and recover the nonce
+        # 1. Decrypt state and recover the nonce and original redirect_uri
         stored = _decode_state(state)
         if stored is None:
             raise OidcError("OIDC state not found — may be expired, reused, or from a different worker")
         nonce = stored.get("nonce", "")
+        stored_redirect_uri = stored.get("redirect_uri", "")
 
-        # 2. Exchange code for tokens
-        token_data = self._token_request(code, redirect_uri)
+        # Bind the token exchange to the redirect_uri that was used in the
+        # authorization request (carried in the signed state token).  Reject
+        # any callback-derived redirect_uri that differs — this removes the
+        # last callback dependence on request-derived redirect URI behaviour.
+        if stored_redirect_uri and stored_redirect_uri != redirect_uri:
+            raise OidcError(
+                f"OIDC redirect_uri mismatch: state={stored_redirect_uri!r} "
+                f"callback={redirect_uri!r}"
+            )
+
+        # 2. Exchange code for tokens (using the stored redirect_uri)
+        token_data = self._token_request(code, stored_redirect_uri or redirect_uri)
 
         # 3. Verify id_token
         id_token = token_data.get("id_token")
@@ -345,9 +356,14 @@ class OidcManager:
         return self._refresh_jwks()
 
     def _refresh_jwks(self):
-        resp = httpx.get(self._config["jwks_uri"], timeout=15.0)
-        resp.raise_for_status()
-        jwks = resp.json()
+        try:
+            resp = httpx.get(self._config["jwks_uri"], timeout=15.0)
+            resp.raise_for_status()
+            jwks = resp.json()
+        except OidcError:
+            raise
+        except Exception as exc:
+            raise OidcError(f"JWKS fetch/parse failed: {exc}") from exc
         keys = jwks.get("keys", [])
         with self._jwks_cache_lock:
             self._jwks_cache.clear()
