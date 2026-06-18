@@ -370,7 +370,6 @@
   if (pkg?.events) {
     pkg.events.on('session:selected', ({ sessionId }) => {
       _currentSession = sessionId;
-      _updateSidebar();
       if (_open) _load();
     });
   }
@@ -378,48 +377,4 @@
   // Pick up the session that's already selected when this widget loads
   const initial = window.OdysseusShell?.getSelectedSession?.();
   if (initial) _currentSession = initial;
-
-  // ── Sidebar widget — parent branch status ────────────────────────────────────
-  const sidebarEl = document.createElement('div');
-  sidebarEl.id = 'bc-sidebar-widget';
-  sidebarEl.style.cssText = 'padding:4px 2px';
-
-  async function _updateSidebar() {
-    if (!_currentSession) {
-      sidebarEl.innerHTML = '<div style="font-size:11px;opacity:.45">No session selected.</div>';
-      return;
-    }
-    try {
-      const data = await _api(`/session/${encodeURIComponent(_currentSession)}/branch-status`);
-      if (!data.has_parent) {
-        sidebarEl.innerHTML = '<div style="font-size:11px;opacity:.45">No parent branch.</div>';
-      } else if (!data.parent_exists) {
-        sidebarEl.innerHTML = '<div style="font-size:11px;opacity:.45">Parent branch deleted.</div>';
-      } else {
-        const delta = data.new_messages_since_fork;
-        sidebarEl.innerHTML = `
-          <div style="font-size:11px">
-            <div style="font-weight:600;margin-bottom:3px;color:var(--accent,#63b3ed)">Parent branch</div>
-            <div style="opacity:.75;word-break:break-all">${_esc(data.parent_name || data.parent_id)}</div>
-            <div style="margin-top:4px;opacity:.65">
-              ${delta > 0
-                ? `<span style="color:var(--accent,#63b3ed);font-weight:600">${delta}</span> new msg${delta !== 1 ? 's' : ''} since fork`
-                : 'Up to date'}
-            </div>
-            <button class="admin-btn-sm" style="margin-top:6px;font-size:10px;padding:2px 8px"
-              onclick="window.sessionModule?.selectSession?.('${_esc(data.parent_id)}')">
-              Go to parent
-            </button>
-          </div>
-        `;
-      }
-    } catch {
-      sidebarEl.innerHTML = '<div style="font-size:11px;opacity:.45">—</div>';
-    }
-  }
-  _updateSidebar();
-
-  if (pkg?.addWidget) {
-    pkg.addWidget('sidebar', sidebarEl);
-  }
 })();
