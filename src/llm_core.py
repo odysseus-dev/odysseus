@@ -604,6 +604,8 @@ def _detect_provider(url: str) -> str:
         return "openrouter"
     if _host_match(url, "groq.com"):
         return "groq"
+    if _host_match(url, "atlascloud.ai"):
+        return "atlascloud"
     if _host_match(url, "nvidia.com"):
         return "nvidia"
     if _host_match(url, "moonshot.ai") or _host_match(url, "moonshot.cn"):
@@ -694,6 +696,7 @@ def _provider_label(url: str) -> str:
     if _host_match(url, "opencode.ai/zen/go"): return "OpenCode Go"
     if _host_match(url, "opencode.ai/zen"): return "OpenCode Zen"
     if _host_match(url, "groq.com"): return "Groq"
+    if _host_match(url, "atlascloud.ai"): return "Atlas Cloud"
     from src.chatgpt_subscription import is_chatgpt_subscription_base
     if is_chatgpt_subscription_base(url): return "ChatGPT Subscription"
     from src.copilot import is_copilot_base

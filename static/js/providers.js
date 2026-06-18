@@ -115,6 +115,7 @@ const _ENDPOINT_LABELS = [
   [/(^|\.)deepseek\.com$/i, "DeepSeek"],
   [/(^|\.)mistral\.ai$/i, "Mistral"],
   [/(^|\.)groq\.com$/i, "Groq"],
+  [/(^|\.)atlascloud\.ai$/i, "Atlas Cloud"],
   [/(^|\.)together\.(ai|xyz)$/i, "Together"],
   [/(^|\.)fireworks\.ai$/i, "Fireworks"],
   [/(^|\.)perplexity\.ai$/i, "Perplexity"],
