@@ -1,6 +1,7 @@
 import { useRef, useState } from "react"
 import { ChevronRight, Brain, Telescope, Loader2, Volume2, Square, BookOpen, Copy, Check, RotateCcw, Pencil, ArrowRight, FileCode2 } from "lucide-react"
 import { usePanel } from "@/stores/panel"
+import { Mascot } from "@/components/ui/Mascot"
 import { Markdown } from "./Markdown"
 import { ToolThread } from "./ToolThread"
 import { parseArtifact } from "@/lib/artifact"
@@ -58,7 +59,7 @@ function Reasoning({ text, live }: { text: string; live: boolean }) {
     <div className="rounded-lg border bg-card text-xs">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-3 py-2 text-muted-foreground hover:text-foreground">
         <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
-        <Brain className="size-3.5" />
+        {live ? <Mascot size={5} title="Thinking" /> : <Brain className="size-3.5" />}
         {live ? "Thinking…" : "Reasoning"}
       </button>
       {open && <div className="whitespace-pre-wrap border-t px-3 py-2 text-muted-foreground">{text}</div>}
@@ -95,7 +96,7 @@ export function Message({ m, onRegenerate, onEdit }: { m: ChatMessage; onRegener
           <Loader2 className="ml-auto size-3.5 shrink-0 animate-spin text-muted-foreground" />
         </div>
       )}
-      {display ? <Markdown>{display}</Markdown> : (m.streaming && !m.reasoning && !m.research && !doc && (!m.tools || m.tools.length === 0)) ? <div className="animate-pulse-soft text-sm text-muted-foreground">Thinking…</div> : null}
+      {display ? <Markdown>{display}</Markdown> : (m.streaming && !m.reasoning && !m.research && !doc && (!m.tools || m.tools.length === 0)) ? <div className="flex items-center gap-2.5 text-sm text-muted-foreground"><Mascot size={9} title="Thinking" /><span className="animate-pulse-soft">Thinking…</span></div> : null}
       {doc && <ArtifactCard artifact={doc} />}
       {m.sources && m.sources.length > 0 && (
         <button onClick={() => usePanel.getState().show("sources", { title: `Sources · ${m.sources!.length}`, payload: m.sources })}

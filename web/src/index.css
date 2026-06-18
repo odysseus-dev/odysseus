@@ -119,6 +119,14 @@
 @keyframes odys-panel-in { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
 @keyframes odys-pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
 @keyframes odys-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+/* Odysseus mascot ripple — a cell fills its colour then fades, with a gentle
+   pop in scale, so the 3×3 grid pulses along a diagonal wave. */
+@keyframes odys-ripple {
+  0%   { background-color: color-mix(in srgb, var(--cell-color), transparent 86%); transform: scale(0.72); }
+  28%  { background-color: var(--cell-color); transform: scale(1); }
+  60%  { background-color: color-mix(in srgb, var(--cell-color), transparent 86%); transform: scale(0.72); }
+  100% { background-color: color-mix(in srgb, var(--cell-color), transparent 86%); transform: scale(0.72); }
+}
 
 @layer utilities {
   .animate-msg-in { animation: odys-msg-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
@@ -126,6 +134,40 @@
   .animate-panel-in { animation: odys-panel-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both; }
   .animate-pop-in { animation: odys-pop-in 0.18s cubic-bezier(0.22, 1, 0.36, 1) both; }
   .animate-pulse-soft { animation: odys-pulse-soft 1.6s ease-in-out infinite; }
+}
+
+/* ---- Odysseus mascot — themed ripple loader (adapted from 21st.dev loader-4
+   by ravikatiyar). The 3×3 cells ripple their fill on a staggered diagonal;
+   colours derive from --primary (set to the accent in App.tsx) so the mascot
+   tracks the theme/accent selection. Used as the thinking/reasoning loader and
+   as a brand mark. */
+@layer components {
+  .mascot {
+    --cell-size: 12px;
+    --cell-gap: 2px;
+    display: grid;
+    grid-template-columns: repeat(3, var(--cell-size));
+    gap: var(--cell-gap);
+    width: max-content;
+  }
+  .mascot .cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    border-radius: calc(var(--cell-size) * 0.24);
+    background-color: transparent;
+    animation: odys-ripple 1.5s ease infinite;
+    will-change: transform, background-color;
+  }
+  /* delay + fill fade both grow with (row + col) → a top-left → bottom-right wave */
+  .mascot .cell:nth-child(1) { animation-delay: 0ms;   --cell-color: var(--primary); }
+  .mascot .cell:nth-child(2) { animation-delay: 90ms;  --cell-color: color-mix(in srgb, var(--primary), transparent 8%); }
+  .mascot .cell:nth-child(3) { animation-delay: 180ms; --cell-color: color-mix(in srgb, var(--primary), transparent 16%); }
+  .mascot .cell:nth-child(4) { animation-delay: 90ms;  --cell-color: color-mix(in srgb, var(--primary), transparent 8%); }
+  .mascot .cell:nth-child(5) { animation-delay: 180ms; --cell-color: color-mix(in srgb, var(--primary), transparent 16%); }
+  .mascot .cell:nth-child(6) { animation-delay: 270ms; --cell-color: color-mix(in srgb, var(--primary), transparent 24%); }
+  .mascot .cell:nth-child(7) { animation-delay: 180ms; --cell-color: color-mix(in srgb, var(--primary), transparent 16%); }
+  .mascot .cell:nth-child(8) { animation-delay: 270ms; --cell-color: color-mix(in srgb, var(--primary), transparent 24%); }
+  .mascot .cell:nth-child(9) { animation-delay: 360ms; --cell-color: color-mix(in srgb, var(--primary), transparent 32%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
