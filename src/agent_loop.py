@@ -1811,6 +1811,38 @@ _WORKSPACE_FILE_TOOL_RECOVERY_TOOLS = {
     "get_workspace", "ls", "glob", "grep", "read_file", "write_file", "edit_file",
 }
 _MAX_WORKSPACE_SHELL_WRITE_RECOVERY_NUDGES = 2
+_MAX_INCOMPLETE_FINAL_NUDGES = 2
+
+_INCOMPLETE_FINAL_ACTION_RE = re.compile(
+    r"(?:^|[\n.!?]\s*)"
+    r"(?:(?:sure|okay|ok|yes|absolutely|of course|got it)[,!\s-]*)?"
+    r"(?:(?:first|next|now|then|after that|from here|to do this)[,:\s-]*)?"
+    r"(?:"
+    r"i\s*(?:'ll|will|am going to)|"
+    r"i'?m\s+going\s+to|"
+    r"let\s+me|"
+    r"we\s*(?:'ll|will|are going to)|"
+    r"we'?re\s+going\s+to|"
+    r"i\s+(?:need|should|must|can)\s+to|"
+    r"we\s+(?:need|should|must|can)\s+to|"
+    r"my\s+next\s+step\s+is\s+to|"
+    r"the\s+next\s+step\s+is\s+to|"
+    r"i\s+can\s+do\s+this\s+by"
+    r")"
+    r"\s+[^.\n]{0,180}\b"
+    r"(?:read|write|edit|create|copy|append|verify|check|inspect|run|search|"
+    r"list|open|modify|update|fix|test|build|commit|send|draft|delete|remove|"
+    r"rename|move|upload|download|fetch|look\s+up|find|diagnose|review|"
+    r"summari[sz]e|analy[sz]e|compare|install|start|stop|restart|call|use)"
+    r"\b",
+    re.IGNORECASE,
+)
+_INCOMPLETE_FINAL_BLOCKER_RE = re.compile(
+    r"\b(?:blocked|permission denied|not allowed|can't|cannot|couldn't|unable|"
+    r"failed|failure|error|need (?:you|the user) to|please (?:provide|choose|"
+    r"confirm))\b",
+    re.IGNORECASE,
+)
 
 
 def _tool_schema_name(schema: dict) -> str:
@@ -1820,6 +1852,17 @@ def _tool_schema_name(schema: dict) -> str:
     if isinstance(fn, dict):
         return str(fn.get("name") or "")
     return str(schema.get("name") or "")
+
+
+def _find_incomplete_final_promise(text: str):
+    """Return the first unfinished promise/plan in a no-tool final answer."""
+    visible = strip_tool_blocks(text or "").strip()
+    visible = re.sub(r"<think>.*?</think>", "", visible, flags=re.DOTALL | re.IGNORECASE).strip()
+    if not visible or "```" in visible or len(visible) > 2000:
+        return None
+    if _INCOMPLETE_FINAL_BLOCKER_RE.search(visible):
+        return None
+    return _INCOMPLETE_FINAL_ACTION_RE.search(visible)
 
 
 def _is_workspace_shell_write_block_event(event: dict) -> bool:
@@ -2232,10 +2275,8 @@ async def stream_agent_loop(
     _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL | re.IGNORECASE)
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
-    # an action without emitting the tool call. Capped to prevent a model
-    # that *can't* call the tool from looping forever.
+    # an action without doing it. Capped so weak models cannot loop forever.
     _intent_nudge_count = 0
-    _MAX_INTENT_NUDGES = 2
     _workspace_shell_write_recovery_pending = False
     _workspace_shell_write_blocked_seen = False
     _workspace_shell_write_recovery_nudges = 0
@@ -2247,16 +2288,6 @@ async def stream_agent_loop(
     # Match the common phrasings + an action verb that maps to an available
     # tool, so we don't nudge on harmless transitional text like "let me
     # know what you think".
-    _INTENT_RE = re.compile(
-        r"(?:^|\n)\s*(?:let me|i'?ll|i will|i need to|we need to|need to|"
-        r"i should|we should|i must|we must|going to|let's)\s+"
-        r"(?:tail|check|investigate|look at|see|tail|read|fetch|inspect|"
-        r"verify|diagnose|examine|debug|capture|grab|pull|view|run|call|"
-        r"trigger|launch|start|kick off|stop|kill|restart|adopt|serve|"
-        r"register|adopt|list|search|find|query|hit|ping|test|use|perform|do)"
-        r"\b[^.\n]{0,140}",
-        re.IGNORECASE,
-    )
     _awaiting_user = False  # set by ask_user → end the turn and wait for a choice
 
     # Document streaming state (persists across rounds)
@@ -2588,9 +2619,6 @@ async def stream_agent_loop(
         # on reload (#3222 follow-up).
         cleaned_round = strip_tool_blocks(round_response, skip_fenced=(_is_api_model and not used_native)).strip()
         round_texts.append(cleaned_round)
-        if cleaned_round:
-            _round_event_type = "agent_process" if tool_blocks else "agent_final"
-            yield f'data: {json.dumps({"type": _round_event_type, "round": round_num, "text": cleaned_round})}\n\n'
 
         if not tool_blocks:
             # ── Completion verifier (mechanism 3a) ────────────────────
@@ -2613,6 +2641,8 @@ async def stream_agent_loop(
                     _workspace_shell_write_recovery_nudges,
                     round_num,
                 )
+                if cleaned_round:
+                    yield f'data: {json.dumps({"type": "agent_process", "round": round_num, "text": cleaned_round})}\n\n'
                 messages.append({
                     "role": "system",
                     "content": (
@@ -2650,6 +2680,8 @@ async def stream_agent_loop(
                     _verifier_rounds += 1
                     logger.info(f"[agent] verifier flagged {len(_vfail)} issue(s) on round {round_num}: {_vfail}")
                     _note = "\n\n_Double-checked the work and found something to fix._\n\n"
+                    if cleaned_round:
+                        yield f'data: {json.dumps({"type": "agent_process", "round": round_num, "text": cleaned_round})}\n\n'
                     yield f'data: {json.dumps({"delta": _note})}\n\n'
                     full_response += _note
                     messages.append({
@@ -2665,17 +2697,13 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
-            # ── Intent-without-action supervisor ─────────────────────
-            # Catch "Let me tail the output" / "I'll check the logs" /
-            # "Let me investigate" patterns where the model announces an
-            # action but emits no tool_call. The bug shows up most on
-            # smaller models trained to verbalize plans before acting.
-            # We inject one sharp nudge ("you said you would X — call the
-            # actual tool now") and loop again. Capped at
-            # _MAX_INTENT_NUDGES so a model that genuinely cannot use the
-            # tool doesn't pin us in a forever loop.
+            # ── Incomplete-final supervisor ──────────────────────────
+            # Catch promise-only endings like "I'll check the logs" or
+            # "I'll write the file" where the model stops before using a tool
+            # or giving the direct answer. The bounded nudge keeps weak models
+            # from pinning the turn in a forever loop.
             _intent_text = _THINK_RE.sub("", cleaned_round).strip()
-            _intent_match = _INTENT_RE.search(_intent_text) if _intent_text else None
+            _intent_match = _find_incomplete_final_promise(_intent_text) if _intent_text else None
             # Only nudge when the round REALLY looks like an unfinished
             # promise: short response (<400 chars), no fenced code/answer,
             # and an action-intent phrase was matched. Long answers that
@@ -2683,29 +2711,30 @@ async def stream_agent_loop(
             _looks_like_promise = (
                 not guide_only
                 and _intent_match is not None
-                and len(_intent_text) < 400
-                and "```" not in _intent_text
-                and _intent_nudge_count < _MAX_INTENT_NUDGES
+                and _intent_nudge_count < _MAX_INCOMPLETE_FINAL_NUDGES
             )
             if _looks_like_promise:
                 _intent_nudge_count += 1
                 _matched_phrase = _intent_match.group(0).strip()
-                logger.info(f"[agent] intent-without-action nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                logger.info(f"[agent] incomplete-final nudge #{_intent_nudge_count} on round {round_num}: {_matched_phrase!r}")
+                if cleaned_round:
+                    yield f'data: {json.dumps({"type": "agent_process", "round": round_num, "text": cleaned_round})}\n\n'
                 messages.append({
                     "role": "system",
                     "content": (
-                        f"You just wrote: \"{_matched_phrase}\" — but ended the "
-                        "turn without making the actual tool call. The user can "
-                        "see you announced the action but didn't run it, which "
-                        "is the most frustrating thing you can do. "
-                        "DO IT NOW: emit the actual function call this turn. "
-                        "If you decided not to do it after all, say so plainly in "
-                        "one sentence instead of restating the plan."
+                        f"You just wrote: \"{_matched_phrase}\" but ended the "
+                        "turn with an unfinished promise or plan. Do not restate "
+                        "what you will do. In this next round, either call the "
+                        "tool needed to complete the action, or if no tool is "
+                        "needed, provide the completed answer directly. If you "
+                        "are blocked, state the exact blocker in one sentence."
                     ),
                 })
                 # Visible signal in the stream so the user knows we caught it.
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
                 continue
+            if cleaned_round:
+                yield f'data: {json.dumps({"type": "agent_final", "round": round_num, "text": cleaned_round})}\n\n'
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
@@ -2719,6 +2748,9 @@ async def stream_agent_loop(
         # runaway backstop). On bail we don't give up — we force one
         # tool-free round so the model declares done or declares blocked,
         # mirroring Terminus's explicit-completion handshake.
+        if cleaned_round:
+            yield f'data: {json.dumps({"type": "agent_process", "round": round_num, "text": cleaned_round})}\n\n'
+
         _sig = "|".join(sorted(f"{b.tool_type}:{(b.content or '').strip()[:120]}" for b in tool_blocks))
         _is_repeat = _sig in _recent_call_sigs
         _recent_call_sigs.append(_sig)
@@ -3153,6 +3185,11 @@ async def stream_agent_loop(
             "blocked_shell_write": True,
             "nudges": _workspace_shell_write_recovery_nudges,
             "pending": _workspace_shell_write_recovery_pending,
+        }
+    if _intent_nudge_count:
+        metrics["agent_incomplete_final_recovery"] = {
+            "nudges": _intent_nudge_count,
+            "max_nudges": _MAX_INCOMPLETE_FINAL_NUDGES,
         }
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 

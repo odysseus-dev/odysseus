@@ -105,3 +105,88 @@ def test_emits_explicit_process_and_final_round_events(monkeypatch):
     assert metrics["agent_limits"]["rounds_used"] == 2
     assert metrics["agent_limits"]["tool_calls_used"] == 1
     assert metrics["agent_limits"]["workspace_bound"] is True
+
+
+def test_incomplete_no_tool_promise_gets_recovery_round(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+    message_snapshots = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        message_snapshots.append([dict(m) for m in messages])
+        text = (
+            "I'll inspect the workspace files and summarize what I find."
+            if calls == 1
+            else "Done: README.txt is present."
+        )
+        yield f'data: {json.dumps({"delta": text})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1", "m",
+        [{"role": "user", "content": "Inspect the workspace files and summarize them."}],
+        max_rounds=3,
+        relevant_tools={"bash", "ls"},
+    )
+    events = _types(_collect(gen))
+
+    assert calls == 2
+    assert any(e.get("type") == "agent_step" and e.get("round") == 2 for e in events), events
+    assert any(
+        e.get("type") == "agent_process"
+        and e.get("text") == "I'll inspect the workspace files and summarize what I find."
+        for e in events
+    )
+    assert not any(
+        e.get("type") == "agent_final"
+        and e.get("text") == "I'll inspect the workspace files and summarize what I find."
+        for e in events
+    )
+    assert any(
+        e.get("type") == "agent_final"
+        and e.get("round") == 2
+        and e.get("text") == "Done: README.txt is present."
+        for e in events
+    )
+    assert any(
+        "unfinished promise or plan" in str(m.get("content", ""))
+        for m in message_snapshots[1]
+    )
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert metrics["agent_incomplete_final_recovery"]["nudges"] == 1
+
+
+def test_incomplete_final_guard_accepts_honest_blocker(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        text = "I can't inspect the files because no workspace is attached."
+        yield f'data: {json.dumps({"delta": text})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1", "m",
+        [{"role": "user", "content": "Inspect the workspace files."}],
+        max_rounds=3,
+        relevant_tools={"bash", "ls"},
+    )
+    events = _types(_collect(gen))
+
+    assert calls == 1
+    assert not any(e.get("type") == "agent_step" for e in events), events
+    assert any(
+        e.get("type") == "agent_final"
+        and e.get("text") == "I can't inspect the files because no workspace is attached."
+        for e in events
+    )
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert "agent_incomplete_final_recovery" not in metrics

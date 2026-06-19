@@ -458,6 +458,16 @@ def test_blocked_workspace_shell_write_forces_file_tool_recovery(monkeypatch):
     assert calls == ["bash", "read_file", "write_file"]
     assert len(stream_rounds) == 4
     assert any(event.get("type") == "agent_step" and event.get("round") == 3 for event in events)
+    assert any(
+        event.get("type") == "agent_process"
+        and "I'll read `README.txt`" in event.get("text", "")
+        for event in events
+    )
+    assert not any(
+        event.get("type") == "agent_final"
+        and "I'll read `README.txt`" in event.get("text", "")
+        for event in events
+    )
     metrics = next(event["data"] for event in events if event.get("type") == "metrics")
     recovery = metrics["agent_workspace_shell_write_recovery"]
     assert recovery["blocked_shell_write"] is True
