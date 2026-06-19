@@ -190,3 +190,85 @@ def test_incomplete_final_guard_accepts_honest_blocker(monkeypatch):
     )
     metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
     assert "agent_incomplete_final_recovery" not in metrics
+
+
+def test_empty_agent_round_retries_then_accepts_answer(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+    message_snapshots = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        message_snapshots.append([dict(m) for m in messages])
+        if calls == 1:
+            yield "data: [DONE]\n\n"
+            return
+        yield f'data: {json.dumps({"delta": "Recovered answer."})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1", "m",
+        [{"role": "user", "content": "Answer after an empty model response."}],
+        max_rounds=3,
+        relevant_tools={"bash"},
+    )
+    events = _types(_collect(gen))
+
+    assert calls == 2
+    assert any(e.get("type") == "agent_step" and e.get("round") == 2 for e in events), events
+    assert any(
+        "produced no user-visible answer" in str(m.get("content", ""))
+        for m in message_snapshots[1]
+    )
+    assert any(
+        e.get("type") == "agent_final"
+        and e.get("round") == 2
+        and e.get("text") == "Recovered answer."
+        for e in events
+    )
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert metrics["agent_empty_response_recovery"] == {
+        "retries": 1,
+        "max_retries": 2,
+        "failed": False,
+    }
+
+
+def test_empty_agent_round_emits_failure_after_bounded_retries(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1", "m",
+        [{"role": "user", "content": "This model will stay empty."}],
+        max_rounds=4,
+        relevant_tools={"bash"},
+    )
+    events = _types(_collect(gen))
+
+    assert calls == 3
+    assert not any(e.get("type") == "rounds_exhausted" for e in events), events
+    failure = "The model returned an empty response"
+    assert any(e.get("delta", "").startswith(failure) for e in events), events
+    assert any(
+        e.get("type") == "agent_final"
+        and e.get("round") == 3
+        and e.get("text", "").startswith(failure)
+        for e in events
+    )
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert metrics["agent_empty_response_recovery"] == {
+        "retries": 2,
+        "max_retries": 2,
+        "failed": True,
+    }

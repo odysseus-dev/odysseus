@@ -1812,6 +1812,7 @@ _WORKSPACE_FILE_TOOL_RECOVERY_TOOLS = {
 }
 _MAX_WORKSPACE_SHELL_WRITE_RECOVERY_NUDGES = 2
 _MAX_INCOMPLETE_FINAL_NUDGES = 2
+_MAX_EMPTY_RESPONSE_RETRIES = 2
 
 _INCOMPLETE_FINAL_ACTION_RE = re.compile(
     r"(?:^|[\n.!?]\s*)"
@@ -2280,6 +2281,9 @@ async def stream_agent_loop(
     _workspace_shell_write_recovery_pending = False
     _workspace_shell_write_blocked_seen = False
     _workspace_shell_write_recovery_nudges = 0
+    _empty_response_retries = 0
+    _empty_response_seen = False
+    _empty_response_failed = False
 
     # "I said I would, then didn't" detector. The pattern that breaks debug
     # loops on weak models (deepseek-v4-flash mid-2026): the model writes
@@ -2629,6 +2633,52 @@ async def stream_agent_loop(
             # to re-trigger). Skipped on force-answer rounds (no tools to
             # fix with), pure Q&A, and when the toggle is off.
             _claimed_done = bool(_THINK_RE.sub("", cleaned_round).strip())
+            if (
+                not _claimed_done
+                and not _force_answer
+                and _empty_response_retries < _MAX_EMPTY_RESPONSE_RETRIES
+                and round_num < max_rounds
+            ):
+                _empty_response_seen = True
+                _empty_response_retries += 1
+                logger.info(
+                    "[agent] empty-response retry #%d on round %d",
+                    _empty_response_retries,
+                    round_num,
+                )
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "The previous model round produced no user-visible answer "
+                        "and no tool call. That empty response cannot complete the "
+                        "turn. In this next round, either call the needed tool, "
+                        "write the final answer directly, or state the exact blocker "
+                        "in one sentence. Do not output only reasoning or empty text."
+                    ),
+                })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
+            if not _claimed_done and not _force_answer:
+                _empty_response_seen = True
+                _empty_response_failed = True
+                _empty_failure = (
+                    "The model returned an empty response, so I couldn't complete "
+                    "this agent turn. Please try again or switch models."
+                )
+                logger.warning(
+                    "[agent] empty response persisted after %d retry round(s); "
+                    "emitting failure final on round %d",
+                    _empty_response_retries,
+                    round_num,
+                )
+                if round_texts:
+                    round_texts[-1] = _empty_failure
+                else:
+                    round_texts.append(_empty_failure)
+                yield f'data: {json.dumps({"delta": _empty_failure})}\n\n'
+                full_response += _empty_failure
+                yield f'data: {json.dumps({"type": "agent_final", "round": round_num, "text": _empty_failure})}\n\n'
+                break
             if (
                 _workspace_shell_write_recovery_pending
                 and not _force_answer
@@ -3190,6 +3240,12 @@ async def stream_agent_loop(
         metrics["agent_incomplete_final_recovery"] = {
             "nudges": _intent_nudge_count,
             "max_nudges": _MAX_INCOMPLETE_FINAL_NUDGES,
+        }
+    if _empty_response_seen:
+        metrics["agent_empty_response_recovery"] = {
+            "retries": _empty_response_retries,
+            "max_retries": _MAX_EMPTY_RESPONSE_RETRIES,
+            "failed": _empty_response_failed,
         }
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
