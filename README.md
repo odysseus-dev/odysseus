@@ -36,6 +36,46 @@ docker compose up -d --build
 
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
+## Run locally (without Docker)
+
+Odysseus runs natively on Linux, macOS, and Windows — no Docker required. You only
+need **Python 3.11+**. Running natively also lets Cookbook detect and use your
+machine's GPU (Docker on macOS can't reach Metal). The first run prints an initial
+**admin password** in the console — save it, that's your login.
+
+**Windows** — one-command launcher (creates the venv, installs deps, runs setup, starts the server):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
+```
+
+Then open `http://localhost:7000`.
+
+**macOS (Apple Silicon)** — one-command launcher (installs Homebrew deps, sets up the venv, launches):
+
+```bash
+./start-macos.sh
+```
+
+Then open `http://127.0.0.1:7860` (port `7860` because macOS AirPlay often holds `7000`).
+
+**Manual install** (any OS — the steps both launchers automate):
+
+```bash
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python setup.py                   # creates data dirs + DB, prints the admin password
+python -m uvicorn app:app --host 127.0.0.1 --port 7000
+```
+
+Bind to `127.0.0.1` for local-only use; set `--host 0.0.0.0` (or `APP_BIND=0.0.0.0`
+in `.env`) only when you intentionally want other devices on your LAN/Tailscale to
+reach it. The launchers are safe to re-run — they skip whatever already exists.
+
+> Tip: installing **Git for Windows** (so `bash.exe` is on PATH) unlocks full
+> Cookbook background downloads and the agent shell tool. The core app works without it.
+
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
 ## Features
