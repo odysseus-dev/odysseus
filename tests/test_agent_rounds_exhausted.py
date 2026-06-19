@@ -35,6 +35,7 @@ def _patch_common(monkeypatch):
     monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
     monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
     monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
 
     async def _fake_exec(block, *a, **k):
         return ("bash", {"output": "ok", "exit_code": 0})
@@ -272,3 +273,116 @@ def test_empty_agent_round_emits_failure_after_bounded_retries(monkeypatch):
         "max_retries": 2,
         "failed": True,
     }
+
+
+def test_workspace_clarification_gets_inspection_recovery_round(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+    tool_calls = []
+    message_snapshots = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        message_snapshots.append([dict(m) for m in messages])
+        if calls == 1:
+            text = "Which README file or workspace path should I inspect?"
+        elif calls == 2:
+            text = "```ls\n.\n```"
+        else:
+            text = "Done: README.txt is present in the workspace."
+        yield f'data: {json.dumps({"delta": text})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    async def _fake_exec(block, *args, **kwargs):
+        tool_calls.append(block.tool_type)
+        assert block.tool_type == "ls"
+        return ("ls: .", {"output": "README.txt\nnotes", "exit_code": 0})
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+    monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1",
+        "m",
+        [{"role": "user", "content": "Read the README in the workspace and summarize it."}],
+        max_rounds=3,
+        relevant_tools={"get_workspace", "ls", "glob", "grep", "read_file"},
+        workspace="/workspace",
+    )
+    events = _types(_collect(gen))
+
+    assert calls == 3
+    assert tool_calls == ["ls"]
+    assert any(e.get("type") == "agent_step" and e.get("round") == 2 for e in events), events
+    assert any(
+        e.get("type") == "agent_process"
+        and e.get("text") == "Which README file or workspace path should I inspect?"
+        for e in events
+    )
+    assert not any(
+        e.get("type") == "agent_final"
+        and e.get("text") == "Which README file or workspace path should I inspect?"
+        for e in events
+    )
+    assert any(
+        "before inspecting the active workspace" in str(m.get("content", ""))
+        for m in message_snapshots[1]
+    )
+    assert any(
+        e.get("type") == "agent_final"
+        and e.get("round") == 3
+        and e.get("text") == "Done: README.txt is present in the workspace."
+        for e in events
+    )
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert metrics["agent_workspace_clarification_recovery"] == {
+        "nudges": 1,
+        "max_nudges": 1,
+    }
+
+
+def test_workspace_clarification_after_inspection_is_allowed(monkeypatch):
+    _patch_common(monkeypatch)
+    calls = 0
+    tool_calls = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        text = (
+            "```ls\n.\n```"
+            if calls == 1
+            else "I found README.md and README.txt. Which file should I summarize?"
+        )
+        yield f'data: {json.dumps({"delta": text})}\n\n'
+        yield "data: [DONE]\n\n"
+
+    async def _fake_exec(block, *args, **kwargs):
+        tool_calls.append(block.tool_type)
+        assert block.tool_type == "ls"
+        return ("ls: .", {"output": "README.md\nREADME.txt", "exit_code": 0})
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+    monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
+
+    gen = al.stream_agent_loop(
+        "http://x/v1",
+        "m",
+        [{"role": "user", "content": "Read the README in the workspace and summarize it."}],
+        max_rounds=4,
+        relevant_tools={"get_workspace", "ls", "glob", "grep", "read_file"},
+        workspace="/workspace",
+    )
+    events = _types(_collect(gen))
+
+    assert calls == 2
+    assert tool_calls == ["ls"]
+    assert not any(e.get("type") == "agent_step" and e.get("round") == 3 for e in events), events
+    assert any(
+        e.get("type") == "agent_final"
+        and e.get("text") == "I found README.md and README.txt. Which file should I summarize?"
+        for e in events
+    )
+    metrics = [e["data"] for e in events if e.get("type") == "metrics"][-1]
+    assert "agent_workspace_clarification_recovery" not in metrics

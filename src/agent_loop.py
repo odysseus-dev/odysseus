@@ -1813,6 +1813,46 @@ _WORKSPACE_FILE_TOOL_RECOVERY_TOOLS = {
 _MAX_WORKSPACE_SHELL_WRITE_RECOVERY_NUDGES = 2
 _MAX_INCOMPLETE_FINAL_NUDGES = 2
 _MAX_EMPTY_RESPONSE_RETRIES = 2
+_MAX_WORKSPACE_CLARIFICATION_NUDGES = 1
+
+_WORKSPACE_READ_TOOL_NAMES = {"get_workspace", "ls", "glob", "grep", "read_file"}
+_WORKSPACE_FILE_TOOL_NAMES = _WORKSPACE_READ_TOOL_NAMES | {"write_file", "edit_file"}
+
+_WORKSPACE_INSPECTION_REQUEST_RE = re.compile(
+    r"(?:"
+    r"\b(?:read|inspect|summari[sz]e|list|show|check|look\s+at|review|find|"
+    r"search|grep|open|describe|tell\s+me|what(?:'s|\s+is)|what\s+files?)\b"
+    r"[^.\n]{0,180}"
+    r"\b(?:workspace|project|repo|repository|folder|directory|files?|readme|"
+    r"codebase|local|here)\b"
+    r"|"
+    r"\b(?:workspace|project|repo|repository|folder|directory|files?|readme|"
+    r"codebase|local)\b"
+    r"[^.\n]{0,180}"
+    r"\b(?:read|inspect|summari[sz]e|list|show|check|review|find|search|grep|"
+    r"open|describe)\b"
+    r")",
+    re.IGNORECASE,
+)
+_WORKSPACE_CLARIFICATION_RE = re.compile(
+    r"(?:"
+    r"\b(?:which|what|where)\b[^?\n]{0,180}"
+    r"\b(?:file|folder|directory|path|workspace|project|repo|repository|readme)\b"
+    r"|"
+    r"\b(?:please|can\s+you|could\s+you|would\s+you)\b[^?\n]{0,180}"
+    r"\b(?:provide|specify|confirm|share|send|tell\s+me|give\s+me)\b[^?\n]{0,140}"
+    r"\b(?:file|folder|directory|path|workspace|project|repo|repository|readme)\b"
+    r"|"
+    r"\b(?:i\s+need|i'?ll\s+need|i\s+would\s+need|need)\b[^.\n]{0,180}"
+    r"\b(?:file|folder|directory|path|workspace|project|repo|repository|readme|"
+    r"more\s+details|clarification)\b"
+    r"|"
+    r"\b(?:i\s+can't|i\s+cannot|i\s+couldn'?t|i\s+do\s+not|i\s+don't)\b[^.\n]{0,180}"
+    r"\b(?:see|access|know|find|determine)\b[^.\n]{0,140}"
+    r"\b(?:workspace|project|files?|folder|directory|path|readme)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 _INCOMPLETE_FINAL_ACTION_RE = re.compile(
     r"(?:^|[\n.!?]\s*)"
@@ -1864,6 +1904,60 @@ def _find_incomplete_final_promise(text: str):
     if _INCOMPLETE_FINAL_BLOCKER_RE.search(visible):
         return None
     return _INCOMPLETE_FINAL_ACTION_RE.search(visible)
+
+
+def _looks_like_workspace_file_request(text: str, intent: dict, workspace: Optional[str]) -> bool:
+    """True when a bound workspace gives the agent enough context to inspect first."""
+    if not workspace:
+        return False
+    q = str(text or "").strip()
+    if not q:
+        return False
+    domains = set(intent.get("domains") or set())
+    if "files" in domains or bool(intent.get("file_mutation")):
+        return True
+    return bool(_WORKSPACE_INSPECTION_REQUEST_RE.search(q))
+
+
+def _workspace_read_tools_available(
+    relevant_tools: Optional[Set[str]],
+    disabled_tools: Optional[Set[str]],
+) -> bool:
+    """Return true when the next round can actually inspect workspace files."""
+    disabled = set(disabled_tools or set())
+    if relevant_tools is None:
+        candidates = set(_WORKSPACE_READ_TOOL_NAMES)
+    else:
+        candidates = set(relevant_tools) & _WORKSPACE_READ_TOOL_NAMES
+    return bool(candidates - disabled)
+
+
+def _has_workspace_file_tool_event(tool_events: list) -> bool:
+    return any(str(event.get("tool") or "").lower() in _WORKSPACE_FILE_TOOL_NAMES for event in tool_events)
+
+
+def _find_avoidable_workspace_clarification(
+    text: str,
+    user_text: str,
+    intent: dict,
+    workspace: Optional[str],
+    tool_events: list,
+    relevant_tools: Optional[Set[str]],
+    disabled_tools: Optional[Set[str]],
+) -> Optional[re.Match]:
+    """Detect clarification that should have been preceded by workspace inspection."""
+    if not _looks_like_workspace_file_request(user_text, intent, workspace):
+        return None
+    if _has_workspace_file_tool_event(tool_events):
+        return None
+    if not _workspace_read_tools_available(relevant_tools, disabled_tools):
+        return None
+
+    visible = strip_tool_blocks(text or "").strip()
+    visible = re.sub(r"<think>.*?</think>", "", visible, flags=re.DOTALL | re.IGNORECASE).strip()
+    if not visible or "```" in visible or len(visible) > 1600:
+        return None
+    return _WORKSPACE_CLARIFICATION_RE.search(visible)
 
 
 def _is_workspace_shell_write_block_event(event: dict) -> bool:
@@ -2284,6 +2378,7 @@ async def stream_agent_loop(
     _empty_response_retries = 0
     _empty_response_seen = False
     _empty_response_failed = False
+    _workspace_clarification_nudges = 0
 
     # "I said I would, then didn't" detector. The pattern that breaks debug
     # loops on weak models (deepseek-v4-flash mid-2026): the model writes
@@ -2707,6 +2802,50 @@ async def stream_agent_loop(
                         "read the source file if needed, write the target file with "
                         "the full desired contents, then read the target before the "
                         "final answer."
+                    ),
+                })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
+            _workspace_clarification_match = _find_avoidable_workspace_clarification(
+                _THINK_RE.sub("", cleaned_round).strip(),
+                _last_user,
+                _intent,
+                workspace,
+                tool_events,
+                _relevant_tools,
+                disabled_tools,
+            )
+            if (
+                _workspace_clarification_match is not None
+                and not _force_answer
+                and not guide_only
+                and _workspace_clarification_nudges < _MAX_WORKSPACE_CLARIFICATION_NUDGES
+                and round_num < max_rounds
+            ):
+                _workspace_clarification_nudges += 1
+                logger.info(
+                    "[agent] avoidable workspace clarification nudge #%d on round %d: %r",
+                    _workspace_clarification_nudges,
+                    round_num,
+                    _workspace_clarification_match.group(0).strip()[:200],
+                )
+                if cleaned_round:
+                    yield f'data: {json.dumps({"type": "agent_process", "round": round_num, "text": cleaned_round})}\n\n'
+                _ws_prompt = str(workspace or "").replace("`", "\\`")
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "The previous round asked for workspace/file clarification "
+                        "before inspecting the active workspace. A workspace is "
+                        f"already bound at `{_ws_prompt}`. Do not ask which file, "
+                        "folder, path, project, or README before trying the "
+                        "available read-only workspace tools. In this next round, "
+                        "call `get_workspace`, `ls`, `glob`, `grep`, or `read_file` "
+                        "to inspect the workspace first. Then answer from what you "
+                        "find, or ask one precise clarification only if inspection "
+                        "still leaves multiple plausible targets. If the user asked "
+                        "for a write/edit/delete and the target is still ambiguous "
+                        "after inspection, ask before mutating files."
                     ),
                 })
                 yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
@@ -3246,6 +3385,11 @@ async def stream_agent_loop(
             "retries": _empty_response_retries,
             "max_retries": _MAX_EMPTY_RESPONSE_RETRIES,
             "failed": _empty_response_failed,
+        }
+    if _workspace_clarification_nudges:
+        metrics["agent_workspace_clarification_recovery"] = {
+            "nudges": _workspace_clarification_nudges,
+            "max_nudges": _MAX_WORKSPACE_CLARIFICATION_NUDGES,
         }
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
