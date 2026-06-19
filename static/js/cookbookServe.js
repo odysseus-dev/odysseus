@@ -9,6 +9,7 @@ import spinnerModule from './spinner.js';
 import { providerLogo } from './providers.js';
 import { modelColor } from './chatRenderer.js';
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
+import { openCookbookDependencies } from './cookbook-diagnosis.js';
 
 // Shared state/functions injected by init()
 let _envState;
@@ -115,11 +116,26 @@ function _selectedServeTarget(panel) {
     : (server?.name || 'local server');
   return {
     host,
-    port: host ? (_getPort(host) || server?.port || '') : '',
+    port: host ? (server?.port || _getPort(host) || '') : '',
+    env: server?.env || '',
     venv,
     platform: server?.platform || _envState.platform || '',
     label,
   };
+}
+
+function _remoteWindowsDiffusersUnsupported(target) {
+  return !!(target?.host && target?.platform === 'windows');
+}
+
+function _backendChoicesForTarget(target) {
+  if (target?.platform === 'windows') {
+    if (_remoteWindowsDiffusersUnsupported(target)) return [['llamacpp','llama.cpp']];
+    return [['llamacpp','llama.cpp'],['diffusers','Diffusers']];
+  }
+  return _isMetal()
+    ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
+    : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
 }
 
 async function _fetchServeRuntimePackage(panel, backend) {
@@ -528,13 +544,14 @@ function _rerenderCachedModels() {
       const ss = (_byRepo[repo] && typeof _byRepo[repo] === 'object')
         ? _byRepo[repo]
         : (_lastUsed || (_isLegacyFlat ? _allSs : {}));
+      const _serveTarget = _selectedServeTarget();
+      const _backendChoices = _backendChoicesForTarget(_serveTarget);
+      const _allowedBackends = new Set(_backendChoices.map(([v]) => v));
       const detectedBackend = _detectBackend(m).backend;
-      const _allowedBackends = new Set(_isWindows()
-        ? ['llamacpp']
-        : (_isMetal() ? ['llamacpp', 'ollama'] : ['vllm', 'sglang', 'llamacpp', 'ollama', 'diffusers']));
-      const defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
+      let defaultBackend = (ss._forceBackend && ss.backend && _allowedBackends.has(ss.backend))
         ? ss.backend
         : detectedBackend;
+      if (!_allowedBackends.has(defaultBackend)) defaultBackend = _backendChoices[0]?.[0] || detectedBackend;
       const savedMatchesBackend = !!ss._forceBackend || (ss.backend || 'vllm') === detectedBackend;
       const sv = (k, def) => (ss[k] !== undefined && savedMatchesBackend) ? ss[k] : def;
       const defaultTp = defaultBackend === 'llamacpp' ? '1' : sv('tp', '1');
@@ -546,7 +563,14 @@ function _rerenderCachedModels() {
           : (_es.gpus || detectedGpuIds));
       const tpOpts = [1,2,4,8].map(n => `<option${defaultTp==String(n)?' selected':''}>${n}</option>`).join('');
       const dtypeOpts = ['auto','float16','bfloat16'].map(d => `<option value="${d}"${sv('dtype','auto')===d?' selected':''}>${d}</option>`).join('');
-      const vllmKvCacheOpts = ['auto','fp8'].map(d => `<option value="${d}"${sv('vllm_kv_cache_dtype','auto')===d?' selected':''}>${d}</option>`).join('');
+      // KV cache default — most models are fine on auto, but a few
+      // (e.g. DeepSeek-V3/V4/R1 MoE) need fp8 explicitly or the launch
+      // OOMs. _detectModelOptimizations seeds opts.kvCacheDtype for
+      // those families; honour it unless the user has a saved override.
+      const _kvOptsCheck = _detectModelOptimizations(repo);
+      const _kvAutoDefault = (_kvOptsCheck && _kvOptsCheck.kvCacheDtype) || 'auto';
+      const _kvSelected = sv('vllm_kv_cache_dtype', _kvAutoDefault);
+      const vllmKvCacheOpts = ['auto','fp8'].map(d => `<option value="${d}"${_kvSelected===d?' selected':''}>${d}</option>`).join('');
       const _l = (name, tip) => `<span>${name}<span class="hwfit-hint" title="${tip}">?</span></span>`;
       const _ggufChoices = _runnableGgufFiles(m);
       const _savedGguf = String(sv('gguf_file', '') || '');
@@ -572,12 +596,22 @@ function _rerenderCachedModels() {
       const _arrowTitle = _modelPresets.length > 0
         ? `${_modelPresets.length} saved launch config${_modelPresets.length === 1 ? '' : 's'} for ${_repoShort} — click ▾ to load or delete`
         : `No saved launch configs for ${_repoShort} yet — click Save to add one`;
-      let _slotsHtml = `<div class="cookbook-serve-slots cookbook-saved-split">`
+      // Wrap the Save split in a <label> so it picks up the same "field
+      // title + ?-help" treatment as Backend / venv / Port / GPUs sitting
+      // beside it in Row 1. Button text is "Save" (the action), label is
+      // "Settings" (what the saved blob represents).
+      let _slotsHtml = `<label>${_l('Settings','Saved launch configurations for this model — click ▾ to load or delete')}`
+        + `<div class="cookbook-serve-slots cookbook-saved-split">`
         + `<button type="button" class="cookbook-slot-btn cookbook-saved-save" title="Save current config"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save</button>`
         + `<button type="button" class="cookbook-slot-btn cookbook-saved-arrow" title="${esc(_arrowTitle)}">${_arrowLabel}</button>`
-        + `</div>`;
+        + `</div></label>`;
 
       let panelHtml = `<div class="hwfit-serve-panel">`;
+      // Runtime-readiness note pinned at the top of the serve area so the
+      // user sees "vLLM ready on …" before scrolling into the configure
+      // form. Hidden until the readiness probe returns. The × button
+      // dismisses it for this panel only (re-shows on re-expand).
+      panelHtml += `<div class="hwfit-serve-runtime-note" style="display:none;font-size:11px;line-height:1.35;color:var(--fg-muted);margin:0 0 8px;padding:6px 28px 6px 10px;border-radius:5px;background:color-mix(in srgb, var(--fg) 4%, transparent);border:1px solid color-mix(in srgb, var(--border) 60%, transparent);position:relative;"><span class="hwfit-serve-runtime-text"></span><button type="button" class="hwfit-serve-runtime-close" title="Dismiss" aria-label="Dismiss" style="position:absolute;top:-8px;right:5px;background:none;border:0;color:inherit;cursor:pointer;padding:2px 4px;line-height:1;font-size:13px;opacity:0.6;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div>`;
       // Warn when serving a model whose download hasn't fully completed —
       // the user CAN still hit Launch (vLLM/llama-server will start, then
       // crash trying to read missing shards), but they should know.
@@ -589,16 +623,20 @@ function _rerenderCachedModels() {
       }
       // Row 1: Backend + Server + Env
       panelHtml += `<div class="hwfit-serve-row">`;
-      const _backendChoices = _isWindows()
-        ? [['llamacpp','llama.cpp']]
-        : _isMetal()
-        // Diffusers (diffusion_server.py) is CUDA-only — omit it on Metal.
-        ? [['llamacpp','llama.cpp'],['ollama','Ollama']]
-        : [['vllm','vLLM'],['sglang','SGLang'],['llamacpp','llama.cpp'],['ollama','Ollama'],['diffusers','Diffusers']];
       const backendOpts = _backendChoices.map(([v,l]) => `<option value="${v}"${defaultBackend===v?' selected':''}>${l}</option>`).join('');
-      panelHtml += `<label>${_l('Backend','Inference engine: vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<select class="hwfit-sf" data-field="backend">${backendOpts}</select></label>`;
+      // Custom Backend picker — native <select> can't host SVG inside
+      // options, so we render a button + menu that show the backend logo
+      // beside its name. The hidden <select.hwfit-sf data-field="backend">
+      // stays as the source-of-truth so every existing change handler
+      // (updateBackendVisibility, runtime readiness, command builder)
+      // still fires via dispatchEvent('change') on selection.
+      panelHtml += `<label>${_l('Backend','Inference engine: vLLM, SGLang, llama.cpp, Ollama, or Diffusers')}<div class="hwfit-backend-picker" data-backend-picker style="position:relative;width:100%;"><select class="hwfit-sf hwfit-backend-source" data-field="backend" style="display:none;">${backendOpts}</select><button type="button" class="hwfit-backend-btn" data-backend-btn aria-haspopup="listbox" aria-expanded="false" style="display:flex;align-items:center;gap:6px;width:100%;height:28px;padding:0 8px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;font:inherit;font-size:11px;cursor:pointer;text-align:left;"><span class="hwfit-backend-btn-icon" data-backend-icon-slot aria-hidden="true" style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--accent, var(--red));flex-shrink:0;"></span><span class="hwfit-backend-btn-label" data-backend-label style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="opacity:0.6;flex-shrink:0;"><polyline points="6 9 12 15 18 9"/></svg></button><div class="hwfit-backend-menu" data-backend-menu role="listbox" hidden style="position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:100;background:var(--panel, var(--bg));border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,0.22);padding:4px;"></div></div></label>`;
       panelHtml += `<input type="hidden" class="hwfit-sf" data-field="host" value="${esc(_es.remoteHost || '')}" />`;
       panelHtml += `<label>${_l('venv','Path to Python venv or conda env activate script')}<input type="text" class="hwfit-sf hwfit-sf-wide" data-field="venv" value="${esc(sv('venv', _es.envPath || _srvVenv || ''))}" placeholder="~/venv" /></label>`;
+      // Dtype lives in Row 1 (next to venv) — it's the first knob people
+      // change when matching the model to the box, so it earns top-row
+      // real estate over Row 2's launch-tuning controls.
+      panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
       const defaultPort = defaultBackend === 'ollama' ? '11434' : _nextAvailablePort();
       panelHtml += `<label>${_l('Port','HTTP port for the API server')}<input type="text" class="hwfit-sf" data-field="port" value="${esc(sv('port', defaultPort))}" /></label>`;
       const _activeGpus = (defaultGpus || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -609,12 +647,16 @@ function _rerenderCachedModels() {
         const on = _activeGpus.includes(String(i));
         _gpuBtnsHtml += `<button type="button" class="cookbook-gpu-btn${on ? ' active' : ''}" data-gpu="${i}">${i}</button>`;
       }
-      panelHtml += `<label>${_l('GPUs','Toggle which GPUs to use')}<div class="cookbook-gpu-group">${_gpuBtnsHtml}</div><input type="hidden" class="hwfit-sf" data-field="gpus" value="${esc(defaultGpus)}" /></label>`;
-      // Save / saved-configs split button — moved into Row 1 (next to GPUs)
-      // so it shares the same baseline as the rest of the top controls.
+      // GPUs button strip moved to Row 2 (next to GPU Mem) below. 4px
+      // margin on the left, 8px on the right — extra 4px right-side gap
+      // separates the GPU chiclets from the GPU Mem field that follows
+      // (asked-for breathing room; 4px on either side felt cramped on
+      // the GPU-Mem boundary).
+      const _gpusLabelHtml = `<label class="hwfit-gpus-label" style="margin:0 8px 0 4px;">${_l('GPUs','Toggle which GPUs to use')}<div class="cookbook-gpu-group">${_gpuBtnsHtml}</div><input type="hidden" class="hwfit-sf" data-field="gpus" value="${esc(defaultGpus)}" /></label>`;
+      // Save / saved-configs split button — sits at the right end of Row 1.
       panelHtml += _slotsHtml;
       panelHtml += `</div>`;
-      panelHtml += `<div class="hwfit-serve-runtime-note" style="display:none;font-size:11px;line-height:1.35;color:var(--fg-muted);margin-top:-4px;"></div>`;
+      // (hwfit-serve-runtime-note moved to the top of the panel — see above.)
       if (_ggufChoices.length > 1) {
         // Show the GGUF File dropdown for BOTH llama.cpp and Ollama — Ollama
         // also needs to know which exact .gguf to import via the new
@@ -631,15 +673,22 @@ function _rerenderCachedModels() {
       // TP / Context / GPU / GPU Mem / Max Seqs / Dtype. Everything else
       // (Swap, KV Cache, Attention backend, Env vars, llama.cpp batch/ubatch)
       // moved to the Advanced fold below to keep this row scannable.
-      panelHtml += `<div class="hwfit-serve-row hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp hwfit-backend-ollama">`;
+      panelHtml += `<div class="hwfit-serve-row hwfit-serve-row-core hwfit-backend-vllm hwfit-backend-sglang hwfit-backend-llamacpp hwfit-backend-ollama">`;
+      // Order: TP → Context → Max Seqs → GPUs → GPU Mem.
+      // Dtype moved up to Row 1. GPUs moved here next to GPU Mem so the
+      // "which devices + how much of them" decisions sit adjacent. Max
+      // Seqs follows Context per the "request-shape" cluster.
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('TP','Tensor Parallelism — split model across N GPUs')}<select class="hwfit-sf" data-field="tp">${tpOpts}</select></label>`;
       // ctx resets to the model's max on every panel open (the real ctx slider
       // lives in the Scan/Download toolbar — see cookbook.js .hwfit-ctx-control).
       panelHtml += `<label>${_l('Context','Max tokens per request — resets to the model max on every open. Lower = less VRAM')}<input type="text" class="hwfit-sf" data-field="ctx" value="${esc(m.context_length || m.context || '20000')}" /></label>`;
-      panelHtml += `<label>${_l('GPU','Which GPU to use. Leave empty for default')}<input type="text" class="hwfit-sf" data-field="gpu_id" value="${esc(sv('gpu_id', ''))}" placeholder="auto" style="width:50px;" /></label>`;
-      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', '0.90'))}" /></label>`;
       panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('Max Seqs','Maximum concurrent requests. Lower = less memory. Default 4 — prosumer GPUs often OOM on vLLM default 256 during CUDA graph capture.')}<input type="text" class="hwfit-sf" data-field="max_seqs" value="${esc(sv('max_seqs', '4'))}" placeholder="4" /></label>`;
-      panelHtml += `<label>${_l('Dtype','Data type for weights. auto picks best for GPU')}<select class="hwfit-sf" data-field="dtype">${dtypeOpts}</select></label>`;
+      // GPU "auto" field removed — the GPU button strip below already
+      // writes data-field="gpus" (the canonical comma-separated device
+      // list) and the command builders now read from that single source.
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang">${_l('GPU Mem','Fraction of GPU memory (0.0–1.0). Lower if OOM')}<input type="text" class="hwfit-sf" data-field="gpu_mem" value="${esc(sv('gpu_mem', '0.90'))}" /></label>`;
+      // GPUs button strip at the far right of Row 2.
+      panelHtml += _gpusLabelHtml;
       panelHtml += `</div>`;
       // ── Advanced (collapsed by default) ──
       // Everything below the fold is tuning users only touch occasionally:
@@ -667,7 +716,10 @@ function _rerenderCachedModels() {
       // tuning, or any other KEY=VALUE pair that doesn't have a dedicated
       // field. After the venv activate runs, $VIRTUAL_ENV / $PATH / etc. are
       // already exported so they expand correctly here.
-      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang" style="flex:1 1 100%;">${_l('Env','Extra KEY=VALUE env-var pairs prepended to the launch (space-separated). Example: CUDACXX=$VIRTUAL_ENV/lib/python3.10/site-packages/nvidia/cuda_nvcc/bin/nvcc — points flashinfer at the venv-bundled nvcc when the system one is too old for your GPU.')}<input type="text" class="hwfit-sf" data-field="extra_env" value="${esc(sv('extra_env',''))}" placeholder="CUDACXX=/path/to/nvcc NCCL_P2P_DISABLE=1" style="width:100%;" /></label>`;
+      // grid-column: 1 / -1 makes Env span every column of the Advanced
+      // row's CSS grid (the old flex:1 1 100% did nothing in a grid
+      // container — left an empty trailing column gap on wide modals).
+      panelHtml += `<label class="hwfit-backend-vllm hwfit-backend-sglang" style="grid-column:1 / -1;">${_l('Env','Extra KEY=VALUE env-var pairs prepended to the launch (space-separated). Example: CUDACXX=$VIRTUAL_ENV/lib/python3.10/site-packages/nvidia/cuda_nvcc/bin/nvcc — points flashinfer at the venv-bundled nvcc when the system one is too old for your GPU.')}<input type="text" class="hwfit-sf" data-field="extra_env" value="${esc(sv('extra_env',''))}" placeholder="CUDACXX=/path/to/nvcc NCCL_P2P_DISABLE=1" style="width:100%;" /></label>`;
       panelHtml += `</div>`;
       // Advanced llama.cpp row (Batch / UBatch — moved out of Core for the
       // same "rarely touched" reason as the vLLM extras above).
@@ -686,11 +738,36 @@ function _rerenderCachedModels() {
       panelHtml += `<label>Height${_h('Default output height')} <input type="text" class="hwfit-sf" data-field="diff_height" value="${esc(sv('diff_height', ''))}" placeholder="1024" /></label>`;
       panelHtml += `</div>`;
       // Row 3: Checkboxes (vLLM)
+      // Order: Trust Remote → Auto Tool → Reasoning Parser (when the
+      // model has one) → Enforce Eager → Prefix Caching. Reasoning
+      // Parser was previously in a separate row below; the user wanted
+      // it inline with the other vLLM toggles between Auto Tool and
+      // Enforce Eager so the "what the model needs" decisions sit
+      // together at the top.
+      const _opts2_row3 = _detectModelOptimizations(repo);
+      const _rp_flag = _opts2_row3.flags.find(f => f.includes('--reasoning-parser'));
+      const _rp_name = _rp_flag ? _rp_flag.split(' ')[1] : '';
       panelHtml += `<div class="hwfit-serve-checks hwfit-backend-vllm hwfit-backend-sglang">`;
-      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="enforce_eager"${sv('enforce_eager',false)?' checked':''} /> Enforce Eager${_h('Disable CUDA graphs. Slower but uses less memory')}</label>`;
       panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="trust_remote"${sv('trust_remote',false)?' checked':''} /> Trust Remote Code${_h('Allow model to run custom code from HuggingFace')}</label>`;
-      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="prefix_cache"${sv('prefix_cache',false)?' checked':''} /> Prefix Caching${_h('Cache shared prompt prefixes across requests')}</label>`;
       panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm"><input type="checkbox" class="hwfit-sf" data-field="auto_tool"${sv('auto_tool',false)?' checked':''} /> Auto Tool Choice${_h('Enable function/tool calling for agent mode')}</label>`;
+      if (_rp_name) panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm"><input type="checkbox" class="hwfit-sf" data-field="reasoning_parser" data-parser="${_rp_name}" /> Reasoning Parser <span class="hwfit-parser-tag">${_rp_name}</span></label>`;
+      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="enforce_eager"${sv('enforce_eager',false)?' checked':''} /> Enforce Eager${_h('Disable CUDA graphs. Slower but uses less memory')}</label>`;
+      panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="prefix_cache"${sv('prefix_cache',false)?' checked':''} /> Prefix Caching${_h('Cache shared prompt prefixes across requests')}</label>`;
+      // Inline the previously-second vLLM checks row so Expert Parallel /
+      // Speculative / MoE Env sit next to Prefix Caching with no gap. All
+      // three are vLLM-only — class-gated so they hide on SGLang.
+      if (_opts2_row3.flags.includes('--enable-expert-parallel')) panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm"><input type="checkbox" class="hwfit-sf" data-field="expert_parallel" /> Expert Parallel</label>`;
+      {
+        const _specDef = _opts2_row3.spec || { method: 'mtp', tokens: 3 };
+        const _specMethod = sv('spec_method', _specDef.method);
+        const _specTokens = sv('spec_tokens', String(_specDef.tokens));
+        const _specMethods = ['mtp', 'qwen3_next_mtp', 'eagle', 'medusa', 'ngram'];
+        if (!_specMethods.includes(_specMethod)) _specMethods.unshift(_specMethod);
+        const _specOpts = _specMethods.map(m =>
+          `<option value="${m}"${m === _specMethod ? ' selected' : ''}>${m}</option>`).join('');
+        panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm hwfit-spec-group"><input type="checkbox" class="hwfit-sf" data-field="speculative" /> Speculative <select class="hwfit-sf hwfit-spec-method" data-field="spec_method" title="vLLM --speculative-config method">${_specOpts}</select><input type="number" class="hwfit-sf hwfit-spec-tokens hwfit-spec-tokens-bare" data-field="spec_tokens" value="${esc(_specTokens)}" min="1" max="10" title="num_speculative_tokens" style="width:44px;" /><span class="hwfit-help-chip hwfit-help-chip-inline" title="MTP / speculative decoding is supported on a few model families only — turn it on when the model card explicitly recommends it. On supported models it can boost inference throughput up to ~3×; on unsupported models it will either be ignored or fail to launch." style="margin-left:6px;">?</span></label>`;
+      }
+      if (_opts2_row3.envVars.length) panelHtml += `<label class="hwfit-sf-cb hwfit-backend-vllm"><input type="checkbox" class="hwfit-sf" data-field="moe_env" /> MoE Env Vars</label>`;
       panelHtml += `</div>`;
       // Row 2c: llama.cpp fit/perf flags (set by Auto profiles, editable by hand)
       const _kvOpts = ['', 'q4_0', 'q8_0', 'f16'].map(k => `<option value="${k}"${sv('cache_type','')===k?' selected':''}>${k||'default'}</option>`).join('');
@@ -739,33 +816,16 @@ function _rerenderCachedModels() {
       panelHtml += `</div><div class="hwfit-serve-row hwfit-backend-diffusers">`;
       panelHtml += `<label>Harmonize GPU${_h('Separate GPU for img2img/harmonize. Leave empty to use same GPU')}<input type="text" class="hwfit-sf" data-field="diff_harmonize_gpu" value="${esc(sv('diff_harmonize_gpu', ''))}" placeholder="auto" style="width:50px;" /></label>`;
       panelHtml += `</div>`;
-      // Row 4: Extra args
-      panelHtml += `<div class="hwfit-serve-extra">`;
-      panelHtml += `<label>Extra args<input type="text" class="hwfit-sf" data-field="extra" value="${esc(sv('extra', ''))}" placeholder="--flag value" /></label>`;
-      panelHtml += `</div>`;
       // Model-specific optimizations. The checks row always renders for the
       // vLLM backend so the Speculative (MTP) control is ALWAYS reachable —
       // even for models the auto-detector doesn't recognize. Expert-parallel,
       // reasoning-parser and MoE-env still only appear when auto-detected.
-      const _opts2 = _detectModelOptimizations(repo);
-      panelHtml += `<div class="hwfit-serve-checks hwfit-backend-vllm">`;
-      if (_opts2.flags.includes('--enable-expert-parallel')) panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="expert_parallel" /> Expert Parallel</label>`;
-      if (_opts2.flags.some(f => f.includes('--reasoning-parser'))) { const rp = _opts2.flags.find(f => f.includes('--reasoning-parser')).split(' ')[1]; panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="reasoning_parser" data-parser="${rp}" /> Reasoning Parser <span class="hwfit-parser-tag">${rp}</span></label>`; }
-      {
-        // Speculative decoding (vLLM --speculative-config). Default OFF; the
-        // method/token defaults come from auto-detection when available,
-        // else fall back to MTP/3. Toggling the checkbox is what actually
-        // adds the flag at launch (see cookbook.js command builder).
-        const _specDef = _opts2.spec || { method: 'mtp', tokens: 3 };
-        const _specMethod = sv('spec_method', _specDef.method);
-        const _specTokens = sv('spec_tokens', String(_specDef.tokens));
-        const _specMethods = ['mtp', 'qwen3_next_mtp', 'eagle', 'medusa', 'ngram'];
-        if (!_specMethods.includes(_specMethod)) _specMethods.unshift(_specMethod);
-        const _specOpts = _specMethods.map(m =>
-          `<option value="${m}"${m === _specMethod ? ' selected' : ''}>${m}</option>`).join('');
-        panelHtml += `<label class="hwfit-sf-cb hwfit-spec-group"><input type="checkbox" class="hwfit-sf" data-field="speculative" /> Speculative <select class="hwfit-sf hwfit-spec-method" data-field="spec_method" title="vLLM --speculative-config method">${_specOpts}</select><span class="hwfit-numstep"><button type="button" class="hwfit-numstep-btn" data-step="-1" tabindex="-1" aria-label="Decrease">‹</button><input type="number" class="hwfit-sf hwfit-spec-tokens" data-field="spec_tokens" value="${esc(_specTokens)}" min="1" max="10" title="num_speculative_tokens" /><button type="button" class="hwfit-numstep-btn" data-step="1" tabindex="-1" aria-label="Increase">›</button></span><span class="hwfit-help-chip hwfit-help-chip-inline" title="MTP / speculative decoding is supported on a few model families only — turn it on when the model card explicitly recommends it. On supported models it can boost inference throughput up to ~3×; on unsupported models it will either be ignored or fail to launch." style="margin-left:6px;">?</span></label>`;
-      }
-      if (_opts2.envVars.length) panelHtml += `<label class="hwfit-sf-cb"><input type="checkbox" class="hwfit-sf" data-field="moe_env" /> MoE Env Vars</label>`;
+      // Expert Parallel / Speculative / MoE Env moved into Row 3 above so
+      // the vLLM-only toggles sit next to Prefix Caching with no gap.
+      // Extra args sits below the vLLM checks (Reasoning Parser + Spec)
+      // so it reads as "after the advanced toggles, any other flags".
+      panelHtml += `<div class="hwfit-serve-extra">`;
+      panelHtml += `<label>Extra args<input type="text" class="hwfit-sf" data-field="extra" value="${esc(sv('extra', ''))}" placeholder="--flag value" /></label>`;
       panelHtml += `</div>`;
       // ── End Advanced fold ──
       panelHtml += `</details>`;
@@ -958,37 +1018,183 @@ function _rerenderCachedModels() {
         if (ok === false) clearInterval(_vramTimer);
       }, 4000);
 
-      // Show/hide backend-specific sections
+      // Backend icons — accent color, rendered via currentColor. vLLM gets
+      // a stylized double-V mark, the others fall back to a recognizable
+      // glyph for the engine family. Shown beside each option in the
+      // custom picker so the dropdown lists "[V] vLLM", "[⚡] SGLang", etc.
+      const _BACKEND_GLYPHS = {
+        vllm:   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4l7 16 7-16"/><path d="M14 4l4 9 3-9"/></svg>',
+        sglang: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+        llamacpp: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg>',
+        ollama: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 10a6 6 0 0 1 12 0v4a4 4 0 0 1-8 0v-1"/><circle cx="10" cy="9" r="1"/><circle cx="14" cy="9" r="1"/></svg>',
+        diffusers: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>',
+      };
+
+      // ── Custom Backend picker wiring ────────────────────────────────
+      // Reads the option list from the hidden <select.hwfit-backend-source>
+      // so the canonical (value, label) pairs come from one place.
+      const _backendPicker = panel.querySelector('[data-backend-picker]');
+      const _backendSource = panel.querySelector('.hwfit-backend-source');
+      const _backendBtn = panel.querySelector('[data-backend-btn]');
+      const _backendMenu = panel.querySelector('[data-backend-menu]');
+      const _backendBtnLabel = panel.querySelector('[data-backend-label]');
+      const _backendBtnIconSlot = _backendBtn?.querySelector('[data-backend-icon-slot]');
+
+      function _setBackendBtnState(v) {
+        if (!_backendBtn) return;
+        const opt = _backendSource?.querySelector(`option[value="${CSS.escape(v)}"]`);
+        const label = opt ? opt.textContent : v;
+        if (_backendBtnLabel) _backendBtnLabel.textContent = label;
+        if (_backendBtnIconSlot) _backendBtnIconSlot.innerHTML = _BACKEND_GLYPHS[v] || _BACKEND_GLYPHS.vllm;
+      }
+
+      function _renderBackendMenu() {
+        if (!_backendMenu || !_backendSource) return;
+        const items = Array.from(_backendSource.options).map(o => ({ value: o.value, label: o.textContent }));
+        _backendMenu.innerHTML = items.map(it => `
+          <button type="button" role="option" class="hwfit-backend-item" data-value="${it.value}" style="all:unset;display:flex;align-items:center;gap:8px;width:100%;padding:6px 9px;border-radius:5px;font-size:12px;cursor:pointer;color:var(--fg);box-sizing:border-box;">
+            <span class="hwfit-backend-item-icon" style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;color:var(--accent, var(--red));flex-shrink:0;">${_BACKEND_GLYPHS[it.value] || _BACKEND_GLYPHS.vllm}</span>
+            <span class="hwfit-backend-item-label" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${it.label}</span>
+          </button>
+        `).join('');
+        // Hover styling (no global CSS rule — keep it self-contained).
+        _backendMenu.querySelectorAll('.hwfit-backend-item').forEach(btn => {
+          btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
+          btn.addEventListener('mouseleave', () => { btn.style.background = ''; });
+          btn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const v = btn.dataset.value;
+            if (_backendSource && _backendSource.value !== v) {
+              _backendSource.value = v;
+              _backendSource.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            _setBackendBtnState(v);
+            _closeBackendMenu();
+          });
+        });
+      }
+
+      function _openBackendMenu() {
+        if (!_backendMenu || !_backendBtn) return;
+        _backendMenu.hidden = false;
+        _backendBtn.setAttribute('aria-expanded', 'true');
+      }
+      function _closeBackendMenu() {
+        if (!_backendMenu || !_backendBtn) return;
+        _backendMenu.hidden = true;
+        _backendBtn.setAttribute('aria-expanded', 'false');
+      }
+      if (_backendBtn) {
+        _backendBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (_backendMenu.hidden) _openBackendMenu();
+          else _closeBackendMenu();
+        });
+        document.addEventListener('click', (ev) => {
+          if (!_backendMenu.hidden && !_backendPicker?.contains(ev.target)) _closeBackendMenu();
+        });
+        document.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape' && !_backendMenu.hidden) {
+            ev.stopPropagation();
+            _closeBackendMenu();
+          }
+        }, { capture: true });
+      }
+      _renderBackendMenu();
+      _setBackendBtnState(_backendSource?.value || defaultBackend);
+
       function updateBackendVisibility() {
         const b = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
         panel.querySelectorAll('[class*="hwfit-backend-"]').forEach(el => {
+          // Skip the entire backend-picker subtree — the picker's own
+          // classes (`hwfit-backend-picker`, `-btn`, `-menu`, `-item`,
+          // `-btn-icon`, `-btn-label`, `-item-icon`, `-item-label`) all
+          // match the wildcard and would get hidden as if they were
+          // "backend-specific form sections", which left the dropdown
+          // looking empty / collapsed.
+          if (el.closest('.hwfit-backend-picker')) return;
           const show = el.classList.contains(`hwfit-backend-${b}`);
           el.style.display = show ? '' : 'none';
         });
+        _setBackendBtnState(b);
       }
       updateBackendVisibility();
 
       async function updateRuntimeReadinessNote() {
         const note = panel.querySelector('.hwfit-serve-runtime-note');
         if (!note) return;
+        // Mirror the message into a small chip next to the model title at
+        // the top of the card, so the readiness state is visible without
+        // having to look down into the panel body.
+        // Clean up any title chip from previous versions — the readiness
+        // text now lives inside the panel at the top, not in the card title.
+        const card = panel.closest('.doclib-card, .memory-item');
+        const titleEl = card ? card.querySelector('.memory-item-title') : null;
+        const titleChip = titleEl ? titleEl.querySelector('.hwfit-serve-runtime-chip') : null;
+        if (titleChip) titleChip.remove();
         const backend = panel.querySelector('[data-field="backend"]')?.value || 'vllm';
+        const noteText = note.querySelector('.hwfit-serve-runtime-text');
+        const _writeNote = (s) => { if (noteText) noteText.textContent = s; else note.textContent = s; };
         if (!['vllm', 'sglang', 'llamacpp', 'diffusers'].includes(backend)) {
           note.style.display = 'none';
-          note.textContent = '';
+          _writeNote('');
           return;
         }
+        // Wire dismiss once per note element.
+        const _closeBtn = note.querySelector('.hwfit-serve-runtime-close');
+        if (_closeBtn && !_closeBtn._wired) {
+          _closeBtn._wired = true;
+          _closeBtn.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            note.style.display = 'none';
+            panel._runtimeNoteDismissed = true;
+          });
+        }
+        // If the user dismissed it earlier on this panel, don't re-show.
+        if (panel._runtimeNoteDismissed) return;
         const seq = (panel._runtimeReadinessSeq || 0) + 1;
         panel._runtimeReadinessSeq = seq;
         note.style.display = '';
-        note.textContent = 'Checking runtime on selected server...';
+        _writeNote('Checking runtime on selected server…');
+        note.style.borderColor = '';
+        note.style.color = 'var(--fg-muted)';
         try {
           const { pkg, target } = await _fetchServeRuntimePackage(panel, backend);
           if (panel._runtimeReadinessSeq !== seq) return;
-          note.textContent = _runtimeNoteText(backend, pkg, target);
-          note.style.color = pkg?.installed ? 'var(--fg-muted)' : 'var(--red)';
+          _writeNote(_runtimeNoteText(backend, pkg, target));
+          if (!pkg?.installed) {
+            note.style.color = 'var(--red)';
+            note.style.borderColor = 'color-mix(in srgb, var(--red) 40%, transparent)';
+            note.style.background = 'color-mix(in srgb, var(--red) 8%, transparent)';
+            // Append an accent-color link straight to the Dependencies
+            // recipe panel for this backend so the user has one click
+            // to the fix instead of hunting for the right row.
+            if (noteText) {
+              const pkgName = pkg?.name || ({ vllm: 'vllm', sglang: 'sglang', llamacpp: 'llama_cpp', diffusers: 'diffusers' }[backend]);
+              const repo = (panel.closest('.doclib-card, .memory-item')?.dataset?.repo) || '';
+              const link = document.createElement('a');
+              link.href = '#';
+              link.textContent = ' Install in Dependencies →';
+              link.style.cssText = 'color:var(--accent, var(--red));text-decoration:underline;font-weight:600;margin-left:4px;';
+              link.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                if (pkgName) openCookbookDependencies(pkgName, { expandRecipe: pkgName, model: repo });
+              });
+              noteText.appendChild(link);
+            }
+          } else {
+            // Healthy / ready → green so the user reads "good to go" at a
+            // glance instead of scanning fg-muted for a state.
+            note.style.color = 'var(--green, #4caf50)';
+            note.style.borderColor = 'color-mix(in srgb, var(--green, #4caf50) 40%, transparent)';
+            note.style.background = 'color-mix(in srgb, var(--green, #4caf50) 8%, transparent)';
+          }
         } catch (err) {
           if (panel._runtimeReadinessSeq !== seq) return;
-          note.textContent = `Runtime readiness unavailable: ${err?.message || err}`;
+          _writeNote(`Runtime readiness unavailable: ${err?.message || err}`);
           note.style.color = 'var(--fg-muted)';
         }
       }
@@ -1688,15 +1894,39 @@ function _rerenderCachedModels() {
       // Cancel button — collapses the serve config panel (same effect as
       // tapping the row to toggle it shut). Mobile users wanted an explicit
       // "back out" affordance next to Launch.
-      panel.querySelector('.hwfit-serve-cancel')?.addEventListener('click', (ev) => {
-        ev.stopPropagation();
+      const _collapsePanel = () => {
         panel._cleanupRuntimeReadiness?.();
         panel.remove();
         item.classList.remove('doclib-card-expanded');
         item.style.flexDirection = '';
         item.style.alignItems = '';
         if (list) { list.style.minHeight = ''; list.style.maxHeight = ''; }
+      };
+      panel.querySelector('.hwfit-serve-cancel')?.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        _collapsePanel();
       });
+      // Esc anywhere on the page closes the open serve panel. Skips when
+      // the user is typing in a field — they want Esc to deselect / blur
+      // those, not collapse the form they're configuring.
+      const _onEscClose = (ev) => {
+        if (ev.key !== 'Escape') return;
+        if (!panel.isConnected) {
+          document.removeEventListener('keydown', _onEscClose, true);
+          return;
+        }
+        const t = ev.target;
+        const inField = t && (
+          t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable
+        );
+        if (inField) return;
+        // Skip when one of the dropdown/menu popovers is open — the
+        // popovers handle their own Esc and use stopPropagation, so any
+        // Esc that bubbles here means nothing else claimed it.
+        ev.stopPropagation();
+        _collapsePanel();
+      };
+      document.addEventListener('keydown', _onEscClose, true);
 
       // Launch button
       panel.querySelector('.hwfit-serve-launch').addEventListener('click', async (ev) => {
@@ -1751,6 +1981,56 @@ function _rerenderCachedModels() {
           else serveState[el.dataset.field] = el.value;
         });
         serveState.backend = serveState.backend || (_detectBackend(m).backend) || 'vllm';
+        const launchTarget = _selectedServeTarget(panel);
+        if (serveState.backend === 'diffusers' && _remoteWindowsDiffusersUnsupported(launchTarget)) {
+          _restoreLaunchBtn();
+          uiModule.showToast('Diffusers serving is not supported on remote Windows servers yet. Use local Windows or a Linux server.', 9000);
+          return;
+        }
+
+        // Pre-launch: check our own task list for a serve already running
+        // on this host. Offer to stop+launch as the default action — the
+        // SSH-based port probe below is more thorough but it can miss
+        // when SSH glitches or `ss` isn't installed. This catches the
+        // common case instantly without waiting for a network round-trip.
+        try {
+          const _runningMod = await import('./cookbookRunning.js');
+          const _hostStr = launchTarget.host || '';
+          const _active = (_runningMod._loadTasks ? _runningMod._loadTasks() : []).filter(t =>
+            t && t.type === 'serve'
+            && (t.remoteHost || '') === _hostStr
+            && (t.status === 'running' || t.status === 'ready' || t._serveReady)
+          );
+          if (_active.length) {
+            const _names = _active.map(t => t.payload?.repo_id || t.repo || t.name || '?').filter(Boolean);
+            const _ok = await window.styledConfirm(
+              `${_active.length} model${_active.length === 1 ? '' : 's'} already serving on ${_hostStr || 'local'} (${_names.join(', ')}). Port 8000 will collide. Stop the running model and launch this one?`,
+              { title: 'Server already running', confirmText: 'Stop & launch', cancelText: 'Cancel' },
+            );
+            if (!_ok) { _restoreLaunchBtn(); return; }
+            // Kill each active serve; prefer the rendered Stop button so
+            // endpoint cleanup + Ollama unload run normally. Fall back to
+            // a raw tmux kill when the Active tab isn't in the DOM.
+            for (const t of _active) {
+              try {
+                const _el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
+                const _btn = _el?.querySelector('.cookbook-task-action-stop');
+                if (_btn) {
+                  _btn.click();
+                } else if (_runningMod._tmuxGracefulKill) {
+                  await fetch('/api/shell/exec', {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: _runningMod._tmuxGracefulKill(t) }),
+                  });
+                }
+              } catch (_killErr) { /* best-effort */ }
+            }
+            // Give the OS a beat to release port 8000.
+            await new Promise(r => setTimeout(r, 2500));
+          }
+        } catch (_e) { /* best-effort */ }
+
         const backendWarning = _serveBackendWarning(m, repo, serveState.backend, serveState);
         if (backendWarning) {
           _restoreLaunchBtn();
@@ -1769,12 +2049,11 @@ function _rerenderCachedModels() {
           || (serveState.backend === 'diffusers');
         if (_needsGpu) {
           try {
-            const _probeHost = (_envState.remoteHost || '').trim();
+            const _probeHost = (launchTarget.host || '').trim();
             const _probeParams = new URLSearchParams();
             if (_probeHost) {
               _probeParams.set('host', _probeHost);
-              const _sp = (_serverByVal?.(_envState.remoteServerKey || _probeHost) || {}).port;
-              if (_sp) _probeParams.set('ssh_port', _sp);
+              if (launchTarget.port) _probeParams.set('ssh_port', launchTarget.port);
             }
             const _probeRes = await fetch('/api/cookbook/gpus' + (_probeParams.toString() ? '?' + _probeParams : ''), { credentials: 'same-origin' });
             const _probeData = await _probeRes.json();
@@ -1807,10 +2086,10 @@ function _rerenderCachedModels() {
             || launchCmd.match(/OLLAMA_HOST=[^:\s]+:(\d{2,5})\b/);
           const _port = _portMatch ? _portMatch[1] : '';
           if (_port) {
-            const _portHost = (_envState.remoteHost || '').trim();
+            const _portHost = (launchTarget.host || '').trim();
             const _checkInner = `ss -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}' || netstat -tlnp 2>/dev/null | awk '$4 ~ /:${_port}$/ {print; exit}'`;
             const _cmd = _portHost
-              ? `ss h ${_portHost} <<<"" 2>/dev/null; ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_portHost} ${JSON.stringify(_checkInner)}`
+              ? `ssh -o ConnectTimeout=4 -o StrictHostKeyChecking=no ${_sshPrefix(launchTarget.port)}${_portHost} ${JSON.stringify(_checkInner)}`
               : _checkInner;
             const _res = await fetch('/api/shell/exec', {
               method: 'POST', credentials: 'same-origin',
@@ -1867,20 +2146,8 @@ function _rerenderCachedModels() {
         // Resolve the target host from the visible Server dropdown — the reliable
         // source. Relying on _envState.remoteHost silently sent serves to Local
         // when that value was stale/empty. Pass it explicitly to the launcher.
-        let serveHost = _envState.remoteHost || '';
-        let _srvEnv = '', _srvEnvPath = '';
-        const _ssEl = document.getElementById('hwfit-server-select') || document.getElementById('hwfit-dl-server');
-        if (_ssEl && _ssEl.value != null) {
-          if (_ssEl.value === 'local') serveHost = '';
-          else {
-            const _srv = _serverByVal?.(_ssEl.value) || _envState.servers[parseInt(_ssEl.value)];
-            if (_srv) {
-              serveHost = _srv.host;
-              _srvEnv = _srv.env || '';
-              _srvEnvPath = _srv.envPath || '';
-            }
-          }
-        }
+        let serveHost = launchTarget.host || '';
+        let _srvEnv = launchTarget.env || '', _srvEnvPath = launchTarget.venv || '';
         // The venv field wins; otherwise fall back to the env configured for the
         // selected server in Settings, so the activation isn't silently dropped
         // when the field is left blank (the per-server venv wasn't being applied).

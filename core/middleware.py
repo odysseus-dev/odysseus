@@ -15,6 +15,8 @@ from starlette.responses import Response
 # same value from this module. Never persisted or exposed externally.
 INTERNAL_TOOL_TOKEN = os.environ.get("ODYSSEUS_INTERNAL_TOKEN") or secrets.token_hex(32)
 INTERNAL_TOOL_HEADER = "X-Odysseus-Internal-Token"
+# Pseudo-username on in-process tool-loopback requests; require_admin trusts it and it is reserved.
+INTERNAL_TOOL_USER = "internal-tool"
 
 
 def is_cors_preflight(method: str, headers) -> bool:
@@ -39,7 +41,7 @@ def require_admin(request: Request):
         hdr = request.headers.get(INTERNAL_TOOL_HEADER)
         if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
             return
-        if getattr(request.state, "current_user", None) == "internal-tool":
+        if getattr(request.state, "current_user", None) == INTERNAL_TOOL_USER:
             return
     except Exception:
         pass
@@ -65,10 +67,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         path = request.url.path
 
-        # Tool render endpoints are served inside iframes — allow framing by self
+        # Tool render endpoints
         is_tool_render = path.startswith("/api/tools/") and path.endswith("/render")
-        # PDF previews are embedded by the in-app document library. Keep the
-        # exception route-scoped so normal app pages remain unframeable.
+        # Document library PDF preview endpoint
         is_document_pdf_preview = path.startswith("/api/document/") and path.endswith("/render-pdf")
         # Visual report pages are self-contained HTML — need inline scripts + external images
         is_report = path.startswith("/api/research/report/")
@@ -95,9 +96,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'none'"
             )
         elif is_tool_render:
-            # Tool iframe content: skip all framing headers — the iframe's
-            # sandbox="allow-scripts" attribute provides isolation.
-            # Don't overwrite the route's own restrictive CSP either.
+            # Skip framing headers for tools.
             pass
         elif is_document_pdf_preview:
             response.headers["X-Frame-Options"] = "SAMEORIGIN"

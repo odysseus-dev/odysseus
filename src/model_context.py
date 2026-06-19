@@ -17,10 +17,11 @@ import httpx
 logger = logging.getLogger(__name__)
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
-_PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
-                     "172.20.", "172.21.", "172.22.", "172.23.", "172.24.",
-                     "172.25.", "172.26.", "172.27.", "172.28.", "172.29.",
-                     "172.30.", "172.31.", "192.168.")
+_PRIVATE_NETWORKS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
 
 # Tailscale uses the CGNAT range 100.64.0.0/10, NOT all of 100.0.0.0/8.
 # A bare "100." prefix would classify public addresses (e.g. AWS ranges
@@ -34,6 +35,14 @@ def _in_tailscale_range(host: str) -> bool:
         return ipaddress.ip_address(host) in _TAILSCALE_CGNAT
     except ValueError:
         return False
+
+
+def _is_private_ip_literal(host: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(ip in network for network in _PRIVATE_NETWORKS)
 
 
 def _normalize_base_for_compare(url: str) -> str:
@@ -87,7 +96,7 @@ def is_local_endpoint(url: str) -> bool:
         return True
     try:
         host = urlparse(url).hostname or ""
-        return host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES) or _in_tailscale_range(host)
+        return host in _LOCAL_HOSTS or _is_private_ip_literal(host) or _in_tailscale_range(host)
     except Exception:
         return False
 
@@ -222,16 +231,12 @@ KNOWN_CONTEXT_WINDOWS = {
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
-_context_cache: Dict[Tuple[str, str], int] = {}
+_context_cache: Dict[Tuple[str, str], Tuple[int, bool]] = {}
 
 
-def get_context_length(endpoint_url: str, model: str) -> int:
-    """Get the context window size for a model.
-
-    Queries /v1/models on the endpoint and looks for context_length
-    or context_window fields. Caches result per (endpoint, model).
-    Falls back to DEFAULT_CONTEXT if unavailable.
-    """
+def _get_context_length_cached(endpoint_url: str, model: str) -> Tuple[int, bool]:
+    """Return (context_length, known). ``known`` is False only when the value is a
+    bare DEFAULT_CONTEXT fallback (no endpoint report and not in the known table)."""
     configured_kind = _configured_endpoint_kind(endpoint_url)
     is_local = is_local_endpoint(endpoint_url)
     # Key on (endpoint_url, model): the same model id can be served by two
@@ -242,14 +247,50 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     if not is_local and cache_key in _context_cache:
         return _context_cache[cache_key]
 
-    ctx = _query_context_length(endpoint_url, model)
+    ctx, known = _query_context_length(endpoint_url, model)
     # Only cache non-default values to allow retry on next request.
     # Local endpoints can restart with a different --max-model-len while keeping
     # the same model id, so always re-query them instead of serving stale cache.
     if not is_local and (ctx != DEFAULT_CONTEXT or configured_kind in ("api", "proxy")):
-        _context_cache[cache_key] = ctx
+        _context_cache[cache_key] = (ctx, known)
     logger.info(f"Context length for {model}: {ctx}")
-    return ctx
+    return ctx, known
+
+
+def get_context_length(endpoint_url: str, model: str) -> int:
+    """Get the context window size for a model.
+
+    Queries /v1/models on the endpoint and looks for context_length
+    or context_window fields. Caches result per (endpoint, model).
+    Falls back to DEFAULT_CONTEXT if unavailable.
+    """
+    return _get_context_length_cached(endpoint_url, model)[0]
+
+
+def get_context_length_known(endpoint_url: str, model: str) -> Tuple[int, bool]:
+    """Like ``get_context_length`` but also returns whether the window was actually
+    discovered (endpoint-reported or in the known-models table) rather than the bare
+    DEFAULT_CONTEXT fallback. Callers that *scale* a budget off the window must not
+    trust an unknown value — a fallback 128K isn't proof the model holds 128K
+    (review on #4122)."""
+    return _get_context_length_cached(endpoint_url, model)
+
+
+def budget_context_for_model(endpoint_url: str, model: str, *, fallback: int = 0) -> int:
+    """Context window to scale the agent input budget against.
+
+    Returns the *freshly discovered* window when it was actually proven
+    (endpoint-reported / known table), else 0 so auto-scaling stays conservative.
+    Crucially this binds the ``known`` flag to the value it proves — callers must
+    not pair this flag with a context length from a *different* lookup (a stale
+    local re-query, or a caller that didn't pass one), which would budget off an
+    unproven number (review on #4122). On probe error, returns ``fallback`` (the
+    caller's best-known value) to preserve prior behaviour."""
+    try:
+        ctx, known = get_context_length_known(endpoint_url, model)
+        return ctx if known else 0
+    except Exception:
+        return fallback
 
 
 def _lookup_known(model: str) -> Optional[int]:
@@ -271,8 +312,9 @@ def _lookup_known(model: str) -> Optional[int]:
     return best_ctx
 
 
-def _query_context_length(endpoint_url: str, model: str) -> int:
-    """Query the model API for context length."""
+def _query_context_length(endpoint_url: str, model: str) -> Tuple[int, bool]:
+    """Query the model API for context length. Returns (context_length, known) where
+    ``known`` is False only for the bare DEFAULT_CONTEXT fallback."""
     known = _lookup_known(model)
     api_ctx = None
     configured_kind = _configured_endpoint_kind(endpoint_url)
@@ -283,8 +325,8 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     if configured_kind in ("api", "proxy"):
         if known:
             logger.info(f"Using known context window for {model}: {known}")
-            return known
-        return DEFAULT_CONTEXT
+            return known, True
+        return DEFAULT_CONTEXT, False
 
     # Try llama.cpp /slots endpoint first — reports actual serving context
     if is_local_endpoint(endpoint_url):
@@ -297,7 +339,7 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                     n_ctx = slots[0].get("n_ctx")
                     if n_ctx and isinstance(n_ctx, int) and n_ctx > 0:
                         logger.info(f"llama.cpp /slots reports n_ctx={n_ctx} for {model}")
-                        return n_ctx
+                        return n_ctx, True
         except Exception:
             pass
 
@@ -309,7 +351,8 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
     if is_copilot_base(endpoint_url):
         if known:
             logger.info(f"Using known context window for {model}: {known}")
-        return known or DEFAULT_CONTEXT
+            return known, True
+        return DEFAULT_CONTEXT, False
 
     from src.endpoint_resolver import build_models_url
 
@@ -354,18 +397,18 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
         _is_local = is_local_endpoint(endpoint_url)
         if _is_local and api_ctx < known:
             logger.info(f"Local endpoint reports {api_ctx} for {model} (known max: {known}) — using API value")
-            return api_ctx
+            return api_ctx, True
         result = max(api_ctx, known)
         if api_ctx < known:
             logger.info(f"API reported {api_ctx} for {model}, using known {known} instead")
-        return result
+        return result, True
     if api_ctx:
-        return api_ctx
+        return api_ctx, True
     if known:
         logger.info(f"Using known context window for {model}: {known}")
-        return known
+        return known, True
 
-    return DEFAULT_CONTEXT
+    return DEFAULT_CONTEXT, False
 
 
 def estimate_tokens(messages: List[Dict]) -> int:
