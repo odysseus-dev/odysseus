@@ -2037,6 +2037,13 @@ body.bg-pattern-sparkles {
       vertical-align: -0.15em;
       color: var(--brand-color, var(--red));
     }
+    .welcome-logo {
+      width: 28px;
+      height: 28px;
+      margin-right: 6px;
+      vertical-align: middle;
+      object-fit: contain;
+    }
     #welcome-screen .welcome-sub {
       font-size:0.85rem;
       color:color-mix(in srgb, var(--fg) 60%, transparent);

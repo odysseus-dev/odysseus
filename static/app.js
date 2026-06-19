@@ -749,11 +749,16 @@ function initializeEventListeners() {
     const welcomeName = document.querySelector('.welcome-name');
     const welcomeSub = el('welcome-sub');
     const tipEl = el('welcome-tip');
-    const _resIco = '<svg class="welcome-boat" style="position:relative;top:0.5px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
     if (active) {
       if (welcomeName) {
-        if (!welcomeName.dataset.researchOrigHtml) welcomeName.dataset.researchOrigHtml = welcomeName.innerHTML;
-        welcomeName.innerHTML = _resIco + 'Deep Research';
+        const wl = document.getElementById('welcome-logo');
+        const wn = document.getElementById('welcome-brand-name');
+        if (!welcomeName.dataset.researchOrigLogo) {
+          welcomeName.dataset.researchOrigLogo = wl ? getComputedStyle(wl).display : '';
+          welcomeName.dataset.researchOrigName = wn ? wn.textContent : '';
+        }
+        if (wl) wl.style.display = 'none';
+        if (wn) wn.textContent = 'Deep Research';
       }
       if (welcomeSub) {
         if (!welcomeSub.dataset.researchOrigText) welcomeSub.dataset.researchOrigText = welcomeSub.textContent;
@@ -772,9 +777,13 @@ function initializeEventListeners() {
         window.documentModule.closePanel();
       }
     } else {
-      if (welcomeName && welcomeName.dataset.researchOrigHtml) {
-        welcomeName.innerHTML = welcomeName.dataset.researchOrigHtml;
-        delete welcomeName.dataset.researchOrigHtml;
+      if (welcomeName && welcomeName.dataset.researchOrigLogo !== undefined) {
+        const wl = document.getElementById('welcome-logo');
+        const wn = document.getElementById('welcome-brand-name');
+        if (wl) wl.style.display = welcomeName.dataset.researchOrigLogo;
+        if (wn) wn.textContent = welcomeName.dataset.researchOrigName;
+        delete welcomeName.dataset.researchOrigLogo;
+        delete welcomeName.dataset.researchOrigName;
       }
       if (welcomeSub && welcomeSub.dataset.researchOrigText) {
         welcomeSub.textContent = welcomeSub.dataset.researchOrigText;
@@ -2285,8 +2294,12 @@ function initializeEventListeners() {
       if (chk.checked) {
         incognitoBtn.innerHTML = INCOGNITO_EYE_CLOSED + '<span class="incognito-label">Nobody</span>';
         if (welcomeName) {
-          welcomeName.dataset.originalHtml = welcomeName.innerHTML;
-          welcomeName.innerHTML = '<svg class="welcome-boat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg>Nobody';
+          const wl = document.getElementById('welcome-logo');
+          const wn = document.getElementById('welcome-brand-name');
+          welcomeName.dataset.origLogoDisplay = wl ? wl.style.display : '';
+          welcomeName.dataset.origBrandName = wn ? wn.textContent : '';
+          if (wl) wl.style.display = 'none';
+          if (wn) wn.textContent = 'Nobody';
           // Restart the L→R clip-wipe reveal on the new label
           welcomeName.style.animation = 'none';
           welcomeName.offsetHeight;
@@ -2315,8 +2328,13 @@ function initializeEventListeners() {
         Storage.setJSON(Storage.KEYS.TOGGLES, ts);
       } else {
         incognitoBtn.innerHTML = INCOGNITO_EYE_OPEN + '<span class="incognito-label">Nobody</span>';
-        if (welcomeName && welcomeName.dataset.originalHtml) {
-          welcomeName.innerHTML = welcomeName.dataset.originalHtml;
+        if (welcomeName && welcomeName.dataset.origLogoDisplay !== undefined) {
+          const wl = document.getElementById('welcome-logo');
+          const wn = document.getElementById('welcome-brand-name');
+          if (wl) wl.style.display = welcomeName.dataset.origLogoDisplay;
+          if (wn) wn.textContent = welcomeName.dataset.origBrandName;
+          delete welcomeName.dataset.origLogoDisplay;
+          delete welcomeName.dataset.origBrandName;
           // Restart the L→R clip-wipe reveal on the restored label
           welcomeName.style.animation = 'none';
           welcomeName.offsetHeight;
