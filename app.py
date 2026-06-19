@@ -1,6 +1,7 @@
 # app.py — slim orchestrator
 import mimetypes
 import os
+import sys
 
 
 def register_static_mime_types() -> None:
@@ -34,12 +35,11 @@ from dotenv import load_dotenv
 # is silently ignored and the user is unexpectedly forced to log in (issue #142).
 # utf-8-sig reads plain UTF-8 (no BOM) identically, so this is safe everywhere.
 load_dotenv(encoding="utf-8-sig")
-import uuid
 
 import asyncio
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict
 
 from contextlib import asynccontextmanager
@@ -48,15 +48,16 @@ from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 # Core imports
 from core.constants import (
     BASE_DIR, STATIC_DIR, SESSIONS_FILE,
-    REQUEST_TIMEOUT, OPENAI_API_KEY,
+    REQUEST_TIMEOUT, OPENAI_API_KEY, AUTH_FILE,
 )
 from core.database import SessionLocal, ApiToken
-from core.middleware import SecurityHeadersMiddleware
-from core.auth import AuthManager
+from core.middleware import SecurityHeadersMiddleware, is_cors_preflight
+from core.auth import AuthManager, normalize_known_username
 from core.exceptions import (
     SessionNotFoundError, InvalidFileUploadError,
     LLMServiceError, WebSearchError,
@@ -65,13 +66,41 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.generated_images import GENERATED_IMAGE_HEADERS, resolve_generated_image_path
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-)
+import logging.handlers
+from core.constants import DATA_DIR
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+# Clear existing handlers to avoid duplicates
+for _h in list(_root_logger.handlers):
+    _root_logger.removeHandler(_h)
+
+_console_h = logging.StreamHandler()
+_console_h.setFormatter(_formatter)
+_root_logger.addHandler(_console_h)
+
+try:
+    _log_dir = os.path.join(DATA_DIR, "logs")
+    os.makedirs(_log_dir, exist_ok=True)
+    _log_file = os.path.join(_log_dir, "app.log")
+
+    # RotatingFileHandler is not multi-process safe (e.g. if uvicorn is run with --workers N).
+    # Odysseus is single-process by convention, so this is acceptable, but be aware that
+    # concurrent log rotation issues can arise if multiple workers are configured.
+    _file_h = logging.handlers.RotatingFileHandler(
+        _log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    _file_h.setFormatter(_formatter)
+    _root_logger.addHandler(_file_h)
+except Exception as e:
+    _root_logger.warning(f"Failed to initialize file logging handler (falling back to console-only): {e}")
+
 logger = logging.getLogger(__name__)
 
 # ========= APP =========
@@ -85,12 +114,13 @@ app = FastAPI(
 )
 
 # ========= CORS =========
+CORS_ALLOW_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost,http://127.0.0.1").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=CORS_ALLOW_METHODS,
     allow_headers=[
         "Accept",
         "Authorization",
@@ -103,6 +133,16 @@ app.add_middleware(
         "X-TZ-Offset",
     ],
 )
+
+# ========= RESPONSE COMPRESSION (gzip) =========
+# The frontend's text assets (style.css, index.html, the JS bundles) shipped
+# uncompressed on every cold load. gzip cuts CSS/JS/HTML by ~75-85% on the wire
+# with no behavioural change. Starlette's GZipMiddleware excludes
+# `text/event-stream` by default, so the SSE streams (chat, shell, research,
+# model-probe — all served with media_type="text/event-stream") are never
+# compressed or buffered; only complete bodies over minimum_size are. The
+# security-header middleware composes cleanly on top.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # ========= SECURITY HEADERS MIDDLEWARE =========
 app.add_middleware(SecurityHeadersMiddleware)
@@ -129,6 +169,7 @@ _TIMEOUT_EXEMPT_PREFIXES = (
     "/api/cookbook/setup",  # remote pacman/apt installs
     "/api/upload",          # large files
     "/api/image",           # diffusion proxies (inpaint/harmonize/upscale/etc.) — own 120s httpx timeout
+    "/api/memory/audit",    # retains own 120s LLM inactivity timeout
 )
 
 
@@ -217,8 +258,16 @@ if AUTH_ENABLED:
         try:
             rows = db.query(ApiToken).filter(ApiToken.is_active == True).all()
             for r in rows:
+                owner_key = normalize_known_username(auth_manager.users, getattr(r, "owner", None))
+                if not owner_key:
+                    logger.warning(
+                        "Ignoring active API token '%s' for unknown auth user '%s'",
+                        getattr(r, "id", ""),
+                        getattr(r, "owner", None),
+                    )
+                    continue
                 scopes = [s.strip() for s in (getattr(r, "scopes", "") or "chat").split(",") if s.strip()]
-                new_map[r.token_prefix].append((r.id, r.token_hash, getattr(r, "owner", None), scopes))
+                new_map[r.token_prefix].append((r.id, r.token_hash, owner_key, scopes))
         finally:
             db.close()
         _token_cache.clear()
@@ -253,6 +302,15 @@ if AUTH_ENABLED:
     class AuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next):
             path = request.url.path
+            # A genuine CORS preflight (OPTIONS + Access-Control-Request-Method)
+            # carries no credentials by design and must reach CORSMiddleware to be
+            # answered. AuthMiddleware is the outermost middleware, so gating the
+            # preflight on auth 401s it before CORS can respond -- which blocks
+            # every cross-origin browser/WebView client before the real request
+            # is sent. Let real preflights through (only OPTIONS w/ the ACRM
+            # header; never a credentialed request).
+            if is_cors_preflight(request.method, request.headers):
+                return await call_next(request)
             if _is_auth_exempt(path):
                 return await call_next(request)
             # In-process internal-tool token bypass. Used by the agent
@@ -260,7 +318,7 @@ if AUTH_ENABLED:
             # (no admin cookie available in that context). Restricted to
             # loopback clients + matching token to keep it locked down.
             try:
-                from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
+                from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT, INTERNAL_TOOL_USER
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
@@ -272,11 +330,11 @@ if AUTH_ENABLED:
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
                     else:
-                        request.state.current_user = "internal-tool"
+                        request.state.current_user = INTERNAL_TOOL_USER
                     request.state.api_token = False
                     return await call_next(request)
-            except Exception:
-                pass
+            except Exception as _e:
+                logger.warning("Internal tool auth header check failed", exc_info=_e)
             # Allow DIRECT localhost requests (internal service calls from
             # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
@@ -329,11 +387,10 @@ if AUTH_ENABLED:
                                     _db.close()
                             try:
                                 await _asyncio.to_thread(_do)
-                            except Exception:
-                                pass
+                            except Exception as _e:
+                                logger.debug("Failed to update token last_used_at", exc_info=_e)
                         _asyncio.create_task(_touch_last_used(matched_id))
                         # Keep bearer-token callers out of normal cookie/user
-                        # routes. API-aware routes can read api_token_owner.
                         request.state.current_user = "api"
                         request.state.api_token = True
                         request.state.api_token_id = matched_id
@@ -382,19 +439,13 @@ class _RevalidatingStatic(StaticFiles):
         return resp
 
 
-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+app.mount("/static", _RevalidatingStatic(directory=STATIC_DIR), name="static")
 
 # ========= GENERATED IMAGES =========
 @app.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
-    from pathlib import Path
-    import re
-    if not re.match(r'^[a-f0-9]{8,64}\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv|m4v)$', filename):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    img_path = Path("data/generated_images") / filename
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+    img_path = resolve_generated_image_path(filename)
     # SECURITY: filename is the only key, so anyone who knows / guesses a
     # 12-hex content hash could pull another user's image bytes. Require
     # auth and verify ownership via the gallery row (when one exists).
@@ -414,8 +465,8 @@ async def serve_generated_image(filename: str, request: Request):
                 _db.close()
     except HTTPException:
         raise
-    except Exception:
-        pass
+    except Exception as _e:
+        logger.warning("Image ownership verification failed for %r", filename, exc_info=_e)
     ext = filename.rsplit('.', 1)[-1].lower()
     mime = {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -430,7 +481,7 @@ async def serve_generated_image(filename: str, request: Request):
     return FileResponse(
         str(img_path),
         media_type=mime,
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers=GENERATED_IMAGE_HEADERS,
     )
 
 # ========= YOUTUBE INIT =========
@@ -469,14 +520,21 @@ components = initialize_managers(BASE_DIR, rag_manager)
 session_manager   = components["session_manager"]
 from src.assistant_log import set_session_manager as _set_asst_sm
 _set_asst_sm(session_manager)
+# Set the global session manager singleton (used by core.models.Session.add_message)
+from core.models import set_session_manager_instance
+set_session_manager_instance(session_manager)
+app.state.session_manager = session_manager
 memory_manager    = components["memory_manager"]
 memory_vector     = components.get("memory_vector")
 upload_handler    = components["upload_handler"]
+app.state.upload_handler = upload_handler
 personal_docs_mgr = components["personal_docs_manager"]
+app.state.personal_docs_manager = personal_docs_mgr
 api_key_manager   = components["api_key_manager"]
 preset_manager    = components["preset_manager"]
 chat_processor    = components["chat_processor"]
 research_handler  = components["research_handler"]
+app.state.research_handler = research_handler
 chat_handler      = components["chat_handler"]
 model_discovery   = components["model_discovery"]
 skills_manager    = components["skills_manager"]
@@ -537,7 +595,8 @@ app.include_router(setup_admin_wipe_routes(session_manager))
 
 # Memory
 from routes.memory_routes import setup_memory_routes
-app.include_router(setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector))
+memory_router = setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector)
+app.include_router(memory_router)
 from routes.skills_routes import setup_skills_routes
 app.include_router(setup_skills_routes(skills_manager))
 
@@ -569,7 +628,7 @@ app.include_router(setup_preset_routes(preset_manager))
 
 # Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
+app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler, memory_vector))
 
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
@@ -587,6 +646,14 @@ app.include_router(setup_embedding_routes())
 from routes.model_routes import setup_model_routes
 app.include_router(setup_model_routes(model_discovery))
 
+# GitHub Copilot device-flow login
+from routes.copilot_routes import setup_copilot_routes
+app.include_router(setup_copilot_routes())
+
+# ChatGPT Subscription device-flow login
+from routes.chatgpt_subscription_routes import setup_chatgpt_subscription_routes
+app.include_router(setup_chatgpt_subscription_routes())
+
 # TTS
 from routes.tts_routes import setup_tts_routes
 app.include_router(setup_tts_routes(tts_service))
@@ -600,7 +667,8 @@ logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
 from routes.document_routes import setup_document_routes
-app.include_router(setup_document_routes(session_manager, upload_handler))
+document_router = setup_document_routes(session_manager, upload_handler)
+app.include_router(document_router)
 
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
@@ -627,7 +695,8 @@ app.include_router(setup_assistant_routes(task_scheduler))
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-app.include_router(setup_calendar_routes())
+calendar_router = setup_calendar_routes()
+app.include_router(calendar_router)
 
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
@@ -636,6 +705,9 @@ app.include_router(setup_shell_routes())
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
 app.include_router(setup_cookbook_routes())
+
+from routes.workspace_routes import setup_workspace_routes
+app.include_router(setup_workspace_routes())
 
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
@@ -690,7 +762,22 @@ app.include_router(setup_note_routes(task_scheduler))
 
 # Email
 from routes.email_routes import setup_email_routes
-app.include_router(setup_email_routes())
+email_router = setup_email_routes()
+app.include_router(email_router)
+
+# Codex integration — HTTP surface for the Codex plugin/MCP bridge. Reuses
+# api_token scopes (todos:read|write, email:read|draft|send) so external
+# Codex sessions can only touch the data the user explicitly allowed. Mounted
+# AFTER email so the codex_routes can borrow the email router for shared
+# search/threading helpers.
+from routes.codex_routes import setup_codex_routes, setup_claude_routes
+app.include_router(setup_codex_routes(
+    email_router=email_router,
+    memory_router=memory_router,
+    calendar_router=calendar_router,
+    document_router=document_router,
+))
+app.include_router(setup_claude_routes())
 
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
@@ -765,6 +852,8 @@ async def serve_backgrounds(request: Request):
 
 @app.get("/login")
 async def serve_login(request: Request):
+    if not AUTH_ENABLED:
+        return RedirectResponse(url="/", status_code=302)
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
 
 @app.get("/api/version")
@@ -774,7 +863,7 @@ async def get_version():
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:
@@ -892,16 +981,21 @@ async def _startup_event():
     async def _warmup_endpoints():
         try:
             import httpx
-            endpoints = model_discovery.get_endpoints() if model_discovery else []
-            for ep in endpoints[:5]:
-                url = ep.get("url", "").replace("/chat/completions", "/models")
-                if url:
-                    try:
-                        async with httpx.AsyncClient(timeout=5.0) as client:
-                            await client.get(url)
-                        logger.info(f"Warmup ping OK: {url}")
-                    except Exception as e:
-                        logger.debug(f"Warmup ping failed for endpoint: {e}")
+            # model_discovery has no get_endpoints(); that call raised
+            # AttributeError every run and silently disabled warmup/keepalive.
+            # Resolve the /models probe URLs via the real discovery API, off the
+            # event loop since discovery does a blocking port scan.
+            urls = (
+                await asyncio.to_thread(model_discovery.warmup_ping_urls)
+                if model_discovery else []
+            )
+            for url in urls:
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        await client.get(url)
+                    logger.info(f"Warmup ping OK: {url}")
+                except Exception as e:
+                    logger.debug(f"Warmup ping failed for endpoint: {e}")
         except Exception as e:
             logger.debug(f"Warmup ping skipped: {e}")
 
@@ -924,7 +1018,7 @@ async def _startup_event():
         owners = set()
         try:
             import json as _json
-            auth_path = "data/auth.json"
+            auth_path = AUTH_FILE
             with open(auth_path, encoding="utf-8") as f:
                 users = _json.load(f).get("users", {})
             owners.update(users.keys())
@@ -971,7 +1065,7 @@ async def _startup_event():
     # does not make an existing library look empty after auth/account changes.
     try:
         import json as _json
-        auth_path = "data/auth.json"
+        auth_path = AUTH_FILE
         with open(auth_path, encoding="utf-8") as f:
             users = _json.load(f).get("users", {})
         primary_owner = None
@@ -1043,6 +1137,16 @@ async def _startup_event():
                 logger.warning(f"Nightly skill audit failed: {e}")
 
     _startup_tasks.append(asyncio.create_task(_skill_audit_nightly_loop()))
+
+    # Cookbook serve lifecycle — kills scheduler-launched serves whose
+    # window-end has passed. Paired with the cookbook_serve builtin
+    # action; both are no-ops unless a scheduled task actually launches
+    # something with end_after_min set. Removing this line + the
+    # cookbook_serve entry in BUILTIN_ACTIONS + src/cookbook_serve_lifecycle.py
+    # removes the feature.
+    from src.cookbook_serve_lifecycle import cookbook_serve_lifecycle_loop
+    _startup_tasks.append(asyncio.create_task(cookbook_serve_lifecycle_loop()))
+
     logger.info("Application startup complete")
 
 async def _shutdown_event():
@@ -1069,3 +1173,12 @@ async def _shutdown_event():
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
     logger.info("Application shutdown complete")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    bind_host = os.getenv("APP_BIND", "127.0.0.1")
+    bind_port = int(os.getenv("APP_PORT", "7000"))
+
+    uvicorn.run(app, host=bind_host, port=bind_port, log_level="info")

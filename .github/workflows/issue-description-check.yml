@@ -1,0 +1,24 @@
+name: ci / issue description check
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    name: Check issue description
+    runs-on: ubuntu-latest
+    # Skip bots (Dependabot, release-drafter, etc.)
+    if: ${{ github.event.issue.user.type != 'Bot' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        with:
+          script: return require('./.github/scripts/check-issue-description.js')({github, context, core})

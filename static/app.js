@@ -4,6 +4,7 @@
 // ============================================
 import Storage from './js/storage.js';
 import uiModule from './js/ui.js';
+import workspaceModule from './js/workspace.js';
 import fileHandlerModule from './js/fileHandler.js';
 import modelsModule from './js/models.js';
 import ragModule from './js/rag.js';
@@ -13,6 +14,7 @@ import chatModule from './js/chat.js';
 import compareModule from './js/compare/index.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
+import { makeWindowDraggable } from './js/windowDrag.js';
 import markdownModule from './js/markdown.js';
 import chatRenderer from './js/chatRenderer.js';
 import sessionModule from './js/sessions.js';
@@ -1158,7 +1160,7 @@ function initializeEventListeners() {
         if (!p.can_use_bash) {
           const bashToggle = document.getElementById('bash-toggle');
           if (bashToggle) bashToggle.closest('.chat-input-toggle')?.style.setProperty('display', 'none');
-          const bashBtn = document.getElementById('tool-bash-btn');
+          const bashBtn = document.getElementById('bash-toggle-btn');
           if (bashBtn) bashBtn.style.display = 'none';
         }
         // Hide document button
@@ -1175,11 +1177,7 @@ function initializeEventListeners() {
           const resOverflow = document.getElementById('overflow-research-btn');
           if (resOverflow) resOverflow.style.display = 'none';
         }
-        // Hide image generation options
-        if (!p.can_generate_images) {
-          const imgBtn = document.getElementById('tool-image-btn');
-          if (imgBtn) imgBtn.style.display = 'none';
-        }
+
       }
     })
     .catch(() => {});
@@ -1220,7 +1218,7 @@ function initializeEventListeners() {
       sortDropdown.querySelectorAll('.sort-option').forEach(o => {
         const check = o.querySelector('.sort-check') || document.createElement('span');
         check.className = 'sort-check';
-        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:3px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
+        check.style.cssText = 'float:right;font-size:20px;line-height:1;position:relative;top:1px;color:var(--accent, var(--red));opacity:' + (o.dataset.sort === current ? '1' : '0');
         check.textContent = '\u2022';
         if (!o.querySelector('.sort-check')) o.appendChild(check);
       });
@@ -1264,9 +1262,9 @@ function initializeEventListeners() {
             let msg;
             if (data.updated > 0) {
               msg = `Sorted ${data.updated} into ${data.folders.length} folder${data.folders.length === 1 ? '' : 's'}`;
-              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Tidy again`;
+              if (remaining > 0) msg += ` — ${remaining} unfiled left, hit Group again`;
             } else if (remaining > 0) {
-              msg = `${remaining} unfiled chats — hit Tidy again`;
+              msg = `${remaining} unfiled chats — hit Group again`;
             } else {
               msg = 'All sorted';
             }
@@ -1287,17 +1285,6 @@ function initializeEventListeners() {
 
     const autoSortBtn = el('auto-sort-sessions-btn');
     if (autoSortBtn) autoSortBtn.addEventListener('click', () => _runTidy(false));
-
-    // Chevron next to the Tidy row toggles the no-AI sub-item.
-    const autoSortMoreBtn = el('auto-sort-sessions-more');
-    const autoSortNoaiBtn = el('auto-sort-sessions-noai-btn');
-    if (autoSortMoreBtn && autoSortNoaiBtn) {
-      autoSortMoreBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        autoSortNoaiBtn.style.display = autoSortNoaiBtn.style.display === 'none' ? 'block' : 'none';
-      });
-      autoSortNoaiBtn.addEventListener('click', () => _runTidy(true));
-    }
   }
 
   // Model sort dropdown
@@ -1584,7 +1571,15 @@ function initializeEventListeners() {
   function applyModeToToggles(mode) {
     MODE_TOOLS.forEach(({ btnId, checkboxId, stateKey }) => {
       const btn = el(btnId);
-      if (!btn || btn.style.display === 'none') return;
+      if (!btn) return;
+      // Hide bash button in chat mode
+      if (mode === 'chat' && stateKey === 'bash') {
+        btn.style.display = 'none';
+        return;
+      }
+      // Show buttons in agent mode (or for web toggle in any mode)
+      btn.style.display = '';
+      if (btn.style.display === 'none') return;
       const on = loadToolPref(stateKey, mode);
       btn.classList.toggle('active', on);
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
@@ -1599,6 +1594,12 @@ function initializeEventListeners() {
     const state = loadToggleState();
     let currentMode = state.mode || 'chat';
 
+    // Immediately hide bash button in chat mode on page load
+    if (currentMode === 'chat') {
+      const bashBtn = el('bash-toggle-btn');
+      if (bashBtn) bashBtn.style.display = 'none';
+    }
+
     function setMode(mode) {
       currentMode = mode;
       const st = loadToggleState();
@@ -1611,6 +1612,8 @@ function initializeEventListeners() {
       // Slide the pill to the active button
       const toggle = agentBtn.closest('.mode-toggle');
       if (toggle) toggle.classList.toggle('mode-chat', mode === 'chat');
+      // Workspace pill + overflow entry are agent-only - hide immediately (no flash).
+      try { workspaceModule.applyMode(mode); } catch (_) {}
       // Delay tool glow-up for a staggered effect
       setTimeout(() => applyModeToToggles(mode), 500);
     }
@@ -1686,6 +1689,7 @@ function initializeEventListeners() {
   }
   setupToggle('web-toggle-btn', 'web-toggle', 'web');
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
+  try { workspaceModule.initWorkspace(); } catch (_) {}
 
   // Document editor toggle (special: uses module panel, not a checkbox)
   const overflowDocBtn = el('overflow-doc-btn');
@@ -2414,7 +2418,7 @@ function initializeEventListeners() {
   };
 
   // Keys hidden by default on first run (no localStorage yet)
-  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn']);
+  const UI_VIS_DEFAULT_OFF = new Set(['models-section', 'rag-toggle-btn', 'text-emojis']);
 
   // Keys that need admin to toggle off (reserved for future use)
   const UI_VIS_ADMIN_ONLY = new Set([]);
@@ -2442,11 +2446,9 @@ function initializeEventListeners() {
     document.querySelectorAll('.section[draggable]').forEach(el => {
       el.setAttribute('draggable', dragEnabled ? 'true' : 'false');
     });
-    // Text-only emojis toggle. Default is ON (the checkbox defaults to
-    // checked because text-emojis isn't in UI_VIS_DEFAULT_OFF), so treat
-    // an absent value as enabled — otherwise the toggle looked on at
-    // startup but the effect only activated after the user flipped it.
-    applyTextEmojis(state['text-emojis'] !== false);
+    // Text-only emojis toggle. Default is OFF so model-emitted shortcodes
+    // like `:blush:` render through the normal monochrome emoji path.
+    applyTextEmojis(state['text-emojis'] === true);
     // Hide thinking sections toggle (show-thinking: checked=show, unchecked=hide)
     document.body.classList.toggle('hide-thinking', state['show-thinking'] === false);
   }
@@ -2683,82 +2685,38 @@ function initializeEventListeners() {
     // Apply saved visibility on load
     applyUIVis(loadUIVis());
 
-    // Generic draggable for all .modal elements
-    const _sharedDragModalIds = new Set(['settings-modal']);
-    try { document.querySelectorAll('.modal').forEach(m => {
-      if (_sharedDragModalIds.has(m.id)) return;
-      const content = m.querySelector('.modal-content');
-      const header = m.querySelector('.modal-header');
-      if (!content || !header) return;
-      let dragX, dragY, startLeft, startTop, dragging = false;
-
-      // Reset to flex-centered position each time modal opens
-      new MutationObserver(() => {
-        if (!m.classList.contains('hidden')) {
-          content.style.position = '';
-          content.style.left = '';
-          content.style.top = '';
-          content.style.right = '';
-          content.style.bottom = '';
-          content.style.margin = '';
-        }
-      }).observe(m, { attributes: true, attributeFilter: ['class'] });
-
-      function startDrag(clientX, clientY) {
-        dragging = true;
-        const rect = content.getBoundingClientRect();
-        dragX = clientX; dragY = clientY;
-        startLeft = rect.left; startTop = rect.top;
-        // Switch to fixed so it can be freely positioned
-        content.style.position = 'fixed';
-        content.style.left = startLeft + 'px';
-        content.style.top = startTop + 'px';
-        content.style.margin = '0';
-      }
-
-      header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.close-btn')) return;
-        e.preventDefault();
-        startDrag(e.clientX, e.clientY);
-        document.addEventListener('mousemove', onDrag);
-        document.addEventListener('mouseup', stopDrag);
-      });
-      function onDrag(e) {
-        if (!dragging) return;
-        content.style.left = (startLeft + e.clientX - dragX) + 'px';
-        content.style.top = (startTop + e.clientY - dragY) + 'px';
-      }
-      function stopDrag() {
-        dragging = false;
-        document.removeEventListener('mousemove', onDrag);
-        document.removeEventListener('mouseup', stopDrag);
-      }
-
-      // Touch drag is desktop-only — on mobile, modals are bottom sheets and
-      // ui.js handles swipe-down-to-dismiss. Attaching this listener fights
-      // the swipe-dismiss gesture.
-      if (window.innerWidth > 768) {
-        header.addEventListener('touchstart', (e) => {
-          if (e.target.closest('.close-btn')) return;
-          const t = e.touches[0];
-          startDrag(t.clientX, t.clientY);
-          document.addEventListener('touchmove', onTouchDrag, { passive: false });
-          document.addEventListener('touchend', stopTouchDrag);
+    // The only two modals without a per-module makeWindowDraggable call. Wire
+    // them onto the shared helper, drag-only, to match their old behavior.
+    try {
+      ['custom-preset-modal', 'rename-session-modal'].forEach((id) => {
+        const m = document.getElementById(id);
+        if (!m) return;
+        const content = m.querySelector('.modal-content');
+        const header = m.querySelector('.modal-header');
+        if (!content || !header) return;
+        makeWindowDraggable(m, {
+          content, header,
+          skipSelector: '.close-btn',
+          enableDock: false,
+          enableResize: false,
         });
-      }
-      function onTouchDrag(e) {
-        if (!dragging) return;
-        e.preventDefault();
-        const t = e.touches[0];
-        content.style.left = (startLeft + t.clientX - dragX) + 'px';
-        content.style.top = (startTop + t.clientY - dragY) + 'px';
-      }
-      function stopTouchDrag() {
-        dragging = false;
-        document.removeEventListener('touchmove', onTouchDrag);
-        document.removeEventListener('touchend', stopTouchDrag);
-      }
-    }); } catch(e) { console.error('Modal drag init error:', e); }
+        // Re-center on open (these persist in the DOM). Guard on the
+        // hidden→visible edge so it never fires mid-drag.
+        let wasHidden = m.classList.contains('hidden');
+        new MutationObserver(() => {
+          const isHidden = m.classList.contains('hidden');
+          if (wasHidden && !isHidden) {
+            content.style.position = '';
+            content.style.left = '';
+            content.style.top = '';
+            content.style.right = '';
+            content.style.bottom = '';
+            content.style.margin = '';
+          }
+          wasHidden = isHidden;
+        }).observe(m, { attributes: true, attributeFilter: ['class'] });
+      });
+    } catch (e) { console.error('Dialog drag init error:', e); }
   })();
 
   // ── Modal minimize → dock ──
@@ -3166,7 +3124,9 @@ function initializeEventListeners() {
       setTimeout(() => uiModule.autoResize(textarea), 1);
     });
     textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         // If ghost autocomplete is active, accept the suggestion instead of submitting
         if (window._ghostAutocomplete && window._ghostAutocomplete.isActive()) {
           e.preventDefault();
@@ -3739,7 +3699,9 @@ function startOdysseusApp() {
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
     messageInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      const isMobile = window.innerWidth <= 768
+
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !isMobile) {
         e.preventDefault();
         // Flush the debounced icon update so dataset.mode reflects the current
         // text state. Without this, a fast type-and-Enter would still see the

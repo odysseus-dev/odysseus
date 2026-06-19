@@ -10,6 +10,7 @@ import { attachColorPicker } from './colorPicker.js';
 import { makeWindowDraggable } from './windowDrag.js';
 import { snapModalToZone } from './tileManager.js';
 import { applyEdgeDock, clearDockSide } from './modalSnap.js';
+import { topToolWindowZ } from './toolWindowZOrder.js';
 
 const API_BASE = window.location.origin;
 let _open = false;
@@ -31,6 +32,9 @@ let _reminderTimer = null;
 // (previously leaked one per openPanel; on multi-open sessions this
 // stacked dozens of identical handlers).
 let _notesKeydownHandler = null;
+// Capture-phase "Esc cancels select mode" listener on document — tracked so it
+// is removed on close instead of leaking +1 per panel open/close cycle.
+let _notesSelectEscHandler = null;
 const REMINDER_FIRED_KEY = 'odysseus-notes-reminder-fired';
 // Note IDs already shown with the entry-glow once. Re-set when the user
 // reschedules the reminder so the new firing glows again on next open.
@@ -53,6 +57,10 @@ function _forceCloseNotesPanel() {
   if (_notesKeydownHandler) {
     document.removeEventListener('keydown', _notesKeydownHandler);
     _notesKeydownHandler = null;
+  }
+  if (_notesSelectEscHandler) {
+    document.removeEventListener('keydown', _notesSelectEscHandler, true);
+    _notesSelectEscHandler = null;
   }
   if (_reminderTimer) {
     clearInterval(_reminderTimer);
@@ -191,6 +199,23 @@ function _restoreNotesSidebarDock(pane) {
   _clearNotesSnapStyles(pane);
   if (!pane.isConnected) return;
   applyEdgeDock(pane, 'right');
+}
+
+// Notes is not a `.modal`; its backdrop is the top-level stacking surface.
+function _topToolWindowZ(exclude = null) {
+  return topToolWindowZ({ exclude });
+}
+
+function _bringNotesToFront(pane = document.getElementById('notes-pane')) {
+  if (!pane) return;
+  const backdrop = document.getElementById('notes-pane-backdrop') || pane.parentElement;
+  const z = _topToolWindowZ(backdrop) + 1;
+  if (backdrop) backdrop.style.setProperty('z-index', String(z), 'important');
+  try {
+    window.dispatchEvent(new CustomEvent('odysseus:modal-opened', {
+      detail: { id: 'notes-panel', modal: pane },
+    }));
+  } catch (_) {}
 }
 
 function _loadPendingHighlights() {
@@ -438,13 +463,22 @@ async function _patchNote(id, patch) {
 // ---- Helpers ----
 
 function _esc(s) { return uiModule.esc ? uiModule.esc(s || '') : (s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-// Image src guard — reject anything that isn't a relative path or http(s)/data URL
-// so an AI-saved note can't slip a `javascript:` URL into the rendered <img>.
+function _attrEsc(s) {
+  return String(s || '')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/`/g, '&#96;');
+}
+// Image src guard — reject anything that isn't a relative path, http(s), or
+// raster data URL so an AI-saved note can't slip script-capable media into the
+// rendered <img>.
 function _safeImgSrc(s) {
   const v = (s || '').trim();
   if (!v) return '';
   if (v.startsWith('/') || v.startsWith('./') || v.startsWith('../')) return v;
-  if (/^https?:\/\//i.test(v) || /^data:image\//i.test(v)) return v;
+  if (/^https?:\/\//i.test(v) || /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(v)) return v;
   return '';
 }
 
@@ -461,7 +495,7 @@ function _linkify(s) {
       url = url.slice(0, -1);
     }
     const href = url.startsWith('www.') ? `https://${url}` : url;
-    return `<a href="${href}" class="note-link" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${url}</a>` + (url !== m ? m.slice(url.length) : '');
+    return `<a href="${_attrEsc(href)}" class="note-link" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">${url}</a>` + (url !== m ? m.slice(url.length) : '');
   });
 }
 function _uid() { return Math.random().toString(36).slice(2, 10); }
@@ -1080,9 +1114,15 @@ export async function refreshDueBadge(opts = {}) {
 // ---- Panel ----
 
 export function openPanel() {
-  if (_open) return;
+  if (_open) {
+    _bringNotesToFront();
+    return;
+  }
   _open = true;
   _editingId = null;
+  // Reset the search filter — the rebuilt pane's search input renders empty, so a
+  // stale _searchQuery would silently hide non-matching notes after a reopen.
+  _searchQuery = '';
   _clearViewedReminderGlows();
   _firedDotDismissedAt = Date.now();
   try { localStorage.setItem(REMINDER_DISMISSED_AT_KEY, String(_firedDotDismissedAt)); } catch {}
@@ -1173,6 +1213,7 @@ export function openPanel() {
   document.body.appendChild(backdrop);
   _wireNotesWindow(pane);
   _restoreNotesSidebarDock(pane);
+  _bringNotesToFront(pane);
 
   // Events
   // (Close chevron removed — swipe down on mobile, tool-rail toggle on desktop.)
@@ -1182,6 +1223,9 @@ export function openPanel() {
   // dismiss, rubber-band on up-drag, spring snap-back.
   _wireNotesSwipeDismiss(pane.querySelector('.notes-mobile-grabber'), pane);
   _wireNotesSwipeDismiss(pane.querySelector('.notes-pane-header'), pane);
+
+  pane.addEventListener('pointerdown', () => _bringNotesToFront(pane), true);
+  pane.addEventListener('focusin', () => _bringNotesToFront(pane), true);
 
   const minBtn = document.getElementById('notes-minimize-btn');
   if (minBtn) minBtn.addEventListener('click', (e) => {
@@ -1261,13 +1305,17 @@ export function openPanel() {
   // than a *-bulk-cancel button, so the global Esc-cancel handler in
   // keyboard-shortcuts.js can't reach it — handle it here. Capture phase
   // + stopPropagation so Esc cancels select instead of closing the panel.
-  document.addEventListener('keydown', (e) => {
+  if (_notesSelectEscHandler) {
+    document.removeEventListener('keydown', _notesSelectEscHandler, true);
+  }
+  _notesSelectEscHandler = (e) => {
     if (e.key === 'Escape' && _selectMode) {
       e.preventDefault();
       e.stopPropagation();
       _exitSelectMode();
     }
-  }, true);
+  };
+  document.addEventListener('keydown', _notesSelectEscHandler, true);
   document.getElementById('notes-select-all').addEventListener('change', (e) => {
     if (e.target.checked) _notes.forEach(n => _selectedIds.add(n.id));
     else _selectedIds.clear();
@@ -1570,6 +1618,10 @@ export function closePanel(direction) {
   if (_notesKeydownHandler) {
     document.removeEventListener('keydown', _notesKeydownHandler);
     _notesKeydownHandler = null;
+  }
+  if (_notesSelectEscHandler) {
+    document.removeEventListener('keydown', _notesSelectEscHandler, true);
+    _notesSelectEscHandler = null;
   }
   if (_reminderTimer) {
     clearInterval(_reminderTimer);
@@ -2140,6 +2192,21 @@ function _bindCardEvents(body) {
     body.querySelectorAll('.note-card').forEach(card => {
       card.addEventListener('click', (e) => {
         if (e.target.closest('.note-card-cb')) return; // checkbox handles itself
+        e.stopPropagation();
+        tapToEditOrSelect(card);
+      });
+    });
+  }
+  // Mobile, non-select: tapping anywhere on the card body (not on an
+  // interactive child — buttons, pin, checkbox, color dot, reminder pill,
+  // agent tag, links) opens the fullscreen editor. Previously only the
+  // title / content preview triggered edit, so padding + empty gutters were
+  // dead zones that felt broken on mobile.
+  if (_isNotesMobileMode() && !_selectMode) {
+    const _INTERACTIVE = 'button, a, input, label, .note-card-color-dot, .note-checkbox, .note-checkbox-rm, .note-cl-quickadd, .note-agent-tag, .note-card-pin, .note-card-corner-trash, .note-card-corner-menu, .note-card-corner-unarchive, .note-card-edit-corner, .note-card-reminder, .note-card-cb';
+    body.querySelectorAll('.note-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest(_INTERACTIVE)) return;
         e.stopPropagation();
         tapToEditOrSelect(card);
       });
@@ -2764,7 +2831,7 @@ function _buildForm(note = null) {
   form.className = 'note-form';
   if (color && !_isBgImage(color)) form.classList.add('note-color-' + color);
   if (_isBgImage(color)) form.setAttribute('style', _customColorStyle(color));
-  let currentImageUrl = note?.image_url || '';
+  let currentImageUrl = _safeImgSrc(note?.image_url || '');
   form.innerHTML = `
     <div class="note-form-header">
       <input type="text" class="note-form-title" placeholder="Title" value="${_esc(note?.title || '')}" />
@@ -2846,7 +2913,7 @@ function _buildForm(note = null) {
   let _stashedGoalItems = (type === 'goal' && Array.isArray(note?.items)) ? note.items.slice() : null;
 
   // Drawing also stashes the saved image URL so it survives Note↔Draw flips.
-  let _stashedDrawUrl = (type === 'draw') ? (note?.image_url || null) : null;
+  let _stashedDrawUrl = (type === 'draw') ? (_safeImgSrc(note?.image_url) || null) : null;
   const _refreshFormLayout = () => {
     const body = form.closest('.notes-pane-body');
     if (!body) return;
@@ -2898,7 +2965,7 @@ function _buildForm(note = null) {
         // toggled to Draw, paint that photo onto the canvas so they can draw
         // on top of it. _stashedDrawUrl wins if they were drawing earlier in
         // the same edit session.
-        _wireCanvas(bodyEl, _stashedDrawUrl || currentImageUrl || note?.image_url || null);
+        _wireCanvas(bodyEl, _stashedDrawUrl || currentImageUrl || _safeImgSrc(note?.image_url) || null);
       } else {
         const text = (_stashedNoteText !== null && _stashedNoteText !== undefined && _stashedNoteText !== '')
           ? _stashedNoteText
@@ -2988,7 +3055,7 @@ function _buildForm(note = null) {
   if (currentType === 'todo') _wireChecklist(form.querySelector('.note-form-body'));
   if (currentType === 'goal') _wireGoalForm(form, form.querySelector('.note-form-body'));
   if (currentType === 'draw') {
-    _wireCanvas(form.querySelector('.note-form-body'), note?.image_url || null);
+    _wireCanvas(form.querySelector('.note-form-body'), _safeImgSrc(note?.image_url) || null);
     // Same hides we apply on type-switch — keep them consistent on initial open.
     const _ip = form.querySelector('.note-form-image-wrap'); if (_ip) _ip.style.display = 'none';
     const _cp = form.querySelector('.note-color-picker'); if (_cp) _cp.style.display = 'none';
@@ -3456,6 +3523,14 @@ function _buildForm(note = null) {
     // let repeated clicks create duplicate notes.
     const _saveBtn = form.querySelector('.note-form-save');
     if (_saveBtn._saving) return;
+    // Mobile: when an existing note is opened and closed without edits, the
+    // Update (✓) button morphs into Archive (set up below). Route the click
+    // to the hidden archive button so the existing archive flow + undo toast
+    // run unchanged.
+    if (_saveBtn.classList.contains('archive-mode')) {
+      form.querySelector('.note-form-archive-btn')?.click();
+      return;
+    }
     _saveBtn._saving = true; _saveBtn.disabled = true; _saveBtn.style.opacity = '0.5';
     try {
     const title = form.querySelector('.note-form-title').value.trim();
@@ -3549,6 +3624,28 @@ function _buildForm(note = null) {
       _saveBtn._saving = false; _saveBtn.disabled = false; _saveBtn.style.opacity = '';
     }
   });
+
+  // Mobile-only: when editing an existing note, the Update (✓) button starts in
+  // archive-mode (visually + behaviorally) and flips to Update on the first
+  // edit. Lets the user tap a note to skim, then tap ✓ to archive without ever
+  // touching a separate Archive button.
+  if (isEdit && window.innerWidth <= 768) {
+    const _saveLabelEl = _saveBtnEl0.querySelector('.nft-label');
+    const _enterArchive = () => {
+      _saveBtnEl0.classList.add('archive-mode');
+      if (_saveLabelEl) _saveLabelEl.textContent = 'Archive';
+      _saveBtnEl0.title = 'Archive';
+    };
+    const _enterUpdate = () => {
+      if (!_saveBtnEl0.classList.contains('archive-mode')) return;
+      _saveBtnEl0.classList.remove('archive-mode');
+      if (_saveLabelEl) _saveLabelEl.textContent = 'Update';
+      _saveBtnEl0.title = 'Update';
+    };
+    _enterArchive();
+    form.addEventListener('input', _enterUpdate, true);
+    form.addEventListener('change', _enterUpdate, true);
+  }
 
   // Cancel
   form.querySelector('.note-form-cancel').addEventListener('click', () => { _clearDraft(isEdit ? note.id : '__new__'); _editingId = null; _renderNotes(); });
@@ -3849,11 +3946,12 @@ function _wireCanvas(container, initialImageUrl) {
   ctx.lineJoin = 'round';
 
   // Load prior drawing as starting point so consecutive edits compose.
-  if (initialImageUrl) {
+  const safeInitialImageUrl = _safeImgSrc(initialImageUrl);
+  if (safeInitialImageUrl) {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => { try { ctx.drawImage(img, 0, 0, cssW, cssH); } catch {} };
-    img.src = initialImageUrl;
+    img.src = safeInitialImageUrl;
     // Float an X over the canvas so the user can blank it out and go back to
     // a clean draw surface. Removes itself once clicked.
     const wrap = container.querySelector('.note-form-draw-wrap');
@@ -4998,9 +5096,54 @@ async function _initReminders() {
   } catch {}
 }
 
-const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge };
+// Open the notes panel and scroll/flash the matching note card. Used
+// by chatRenderer.js when the user clicks a [View note](#note-<id>)
+// link the agent emits after a manage_notes create. Falls back to
+// just opening the panel when the card isn't found (panel still
+// loading, note in a different filter, etc.).
+async function openNote(noteId) {
+  // If the panel is already open, openPanel() short-circuits and does
+  // nothing — including no re-fetch — so a freshly-created note added
+  // server-side never shows up. Force a refresh by closing first when
+  // open, then re-opening. Clicking the sidebar Notes button as a
+  // last resort keeps this working even if the module state got out
+  // of sync (rare but seen during HMR or after a stuck modal).
+  try {
+    if (isPanelOpen && isPanelOpen()) {
+      closePanel();
+      // give the close animation a frame to settle
+      await new Promise(r => setTimeout(r, 30));
+    }
+  } catch (_) {}
+  openPanel();
+  // openPanel() kicks off _fetchNotes() asynchronously, so the cards
+  // for newly-created notes may not be in the DOM yet. Also poll the
+  // _notes module array directly — if the note IS loaded but the
+  // active filter (e.g. archive view) is hiding it, we can still
+  // surface a confirmation toast.
+  if (!noteId) return;
+  let tries = 0;
+  const findAndFlash = () => {
+    const card = document.querySelector(`.note-card[data-note-id="${noteId}"]`)
+      || document.querySelector(`.note-card[data-note-id^="${noteId.slice(0, 8)}"]`);
+    if (card) {
+      try { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+      card.classList.add('note-card-flash');
+      setTimeout(() => card.classList.remove('note-card-flash'), 1600);
+      return true;
+    }
+    return false;
+  };
+  const tryNext = () => {
+    if (findAndFlash()) return;
+    if (++tries < 20) setTimeout(tryNext, 200);
+  };
+  setTimeout(tryNext, 120);
+}
+
+const notesModule = { openPanel, closePanel, togglePanel, isPanelOpen, openNote, openNotes: openPanel, closeNotes: closePanel, isNotesOpen: isPanelOpen, refreshDueBadge };
 export default notesModule;
-export { openPanel as openNotes, closePanel as closeNotes, isPanelOpen as isNotesOpen };
+export { openPanel as openNotes, closePanel as closeNotes, isPanelOpen as isNotesOpen, openNote };
 window.notesModule = notesModule;
 
 // Start reminder loop on module load (after a short delay so app loads first)

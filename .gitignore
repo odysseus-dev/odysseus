@@ -14,6 +14,15 @@ venv/
 .env
 .env.bak.*
 !.env.example
+# Local uv lockfile (optional, per-platform — see "Faster installs with uv" in README)
+requirements.lock
+
+# SOPS workflow — encrypted `secrets.env` is intentionally committable,
+# but every variant (plaintext, manual decrypt copy, editor backup)
+# must stay out of git. Mirrored in .dockerignore so the same artifacts
+# also cannot enter image build layers.
+secrets.env.*
+!secrets.env.example
 
 # Data — all user data stays local
 data/
@@ -61,6 +70,9 @@ output.txt.txt
 *.tiff
 *.pdf
 
+# …except shipped static assets
+!static/icons/*.png
+
 # …except shipped demo assets in docs/ that the README links to.
 !docs/*.jpg
 !docs/*.jpeg
@@ -89,3 +101,4 @@ docs/windows-port/
 compound.config.json
 *.error.log
 _scratch/
+/odysseus/

@@ -28,6 +28,7 @@
 import { previewZoneAt, clearPreview, snapModalToZone } from './tileManager.js';
 import { suspendDock, resumeDock, clearRightDock, applyEdgeDock } from './modalSnap.js';
 import { dismissOrRemove } from './escMenuStack.js';
+import { nextToolWindowZ } from './toolWindowZOrder.js';
 
 const _state = new Map(); // id -> { restoreFn, closeFn, railBtnId, isMinimized, restoreMinHeight }
 
@@ -63,7 +64,14 @@ function _applyRememberedDock(id) {
 // those statics and bump on every bring-to-front.
 let _modalTopZ = 300;
 function _bringToFront(modal) {
-  if (modal) modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+  if (!modal) return;
+  const z = nextToolWindowZ({
+    exclude: modal,
+    current: getComputedStyle(modal).zIndex,
+    floor: _modalTopZ,
+  });
+  _modalTopZ = Math.max(_modalTopZ, z);
+  modal.style.setProperty('z-index', String(z), 'important');
 }
 
 function _emitModalOpened(id, modal) {
@@ -938,6 +946,7 @@ function _wireChipDrag(chip, dock) {
           if (tz) {
             const dx = (tz.left + tz.width / 2) - (l.x + l.width / 2);
             const dy = (tz.top + tz.height / 2) - (l.y + l.height / 2);
+            l.chip.classList.add('chip-trashing');
             l.chip.style.transition = 'transform 0.32s cubic-bezier(0.45, 0, 0.25, 1), opacity 0.3s ease-in, left 0.32s cubic-bezier(0.45, 0, 0.25, 1), top 0.32s cubic-bezier(0.45, 0, 0.25, 1)';
             // Whirlpool: spin + shrink so the chip swirls into the X.
             l.chip.style.transform = 'scale(0.15) rotate(720deg)';
@@ -1001,6 +1010,7 @@ function _wireChipDrag(chip, dock) {
         // `!important`, so the close animation needs setProperty(...important)
         // too or the styles don't apply and the chip just snaps.
         const cur = chip.style.transform || 'translate(0,0)';
+        chip.classList.add('chip-trashing');
         chip.style.setProperty('transition', 'transform 0.32s cubic-bezier(0.45, 0, 0.25, 1), opacity 0.3s ease-in', 'important');
         // Whirlpool: spin + shrink as the chip swirls into the X.
         chip.style.setProperty('transform', `${cur} scale(0.15) rotate(720deg)`, 'important');

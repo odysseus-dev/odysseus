@@ -65,7 +65,13 @@ import spinnerModule from './spinner.js';
 
 // ── Error diagnosis ──
 
-function _openCookbookDependencies(pkgName = '') {
+// Re-exported so callers (Launch-tab pre-flight) can deep-link into the
+// Dependencies tab + auto-expand a specific backend's recipe panel and
+// pre-select the model they were trying to launch.
+export function openCookbookDependencies(pkgName = '', opts = {}) {
+  _openCookbookDependencies(pkgName, opts);
+}
+function _openCookbookDependencies(pkgName = '', opts = {}) {
   const cookbook = window.cookbookModule;
   if (cookbook && typeof cookbook.open === 'function') {
     cookbook.open({ tab: 'Dependencies' });
@@ -94,6 +100,34 @@ function _openCookbookDependencies(pkgName = '') {
       row.scrollIntoView({ block: 'center' });
       row.classList.add('cookbook-pkg-flash');
       setTimeout(() => row.classList.remove('cookbook-pkg-flash'), 1800);
+      // Pre-flight deep link: auto-expand the recipe panel + pre-select
+      // the model the user was trying to launch. The dropdown values are
+      // now full model ids (sourced from _cachedModelIds), so we match by
+      // exact value first, then fall back to a substring match.
+      if (opts.expandRecipe) {
+        const caret = row.querySelector('[data-dep-recipe-toggle]');
+        if (caret && caret.getAttribute('aria-expanded') !== 'true') caret.click();
+        if (opts.model) {
+          const sel = document.querySelector(`[data-dep-recipe-pick="${CSS.escape(opts.expandRecipe)}"]`);
+          if (sel) {
+            const wanted = String(opts.model);
+            let matched = false;
+            for (let i = 0; i < sel.options.length; i++) {
+              if (sel.options[i].value === wanted) {
+                sel.value = wanted; matched = true; break;
+              }
+            }
+            if (!matched) {
+              for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value && wanted.includes(sel.options[i].value)) {
+                  sel.value = sel.options[i].value; matched = true; break;
+                }
+              }
+            }
+            if (matched) sel.dispatchEvent(new Event('change'));
+          }
+        }
+      }
     }
   };
   tryHighlight();
@@ -164,6 +198,18 @@ export const ERROR_PATTERNS = [
       { label: 'Retry with TP=4', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '4') },
       { label: 'Retry with TP=2', action: (panel) => _serveAutoRetryReplace(panel, '--tensor-parallel-size', '2') },
       { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
+    ],
+  },
+  {
+    pattern: /There is no module or parameter named ['"]lm_head\.input_scale['"]|lm_head\.input_scale|weight_scale_2/i,
+    message: 'vLLM cannot load this ModelOpt LM-head quantized checkpoint with the current runtime.',
+    suggestion: 'Suggested action: upgrade vLLM through the environment that provides this CLI (package manager, venv, Docker image, or source checkout), or choose a compatible checkpoint.',
+    fixes: [
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('vllm') },
+      {
+        label: 'Copy upgrade hint',
+        action: () => _copyText('Upgrade the vLLM environment that provides the selected vllm CLI, or use a compatible checkpoint. Do not assume Odysseus owns PATH/system/source/Docker installs.'),
+      },
     ],
   },
   {
@@ -309,6 +355,15 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
+    pattern: /sgl_kernel[\s\S]*(Python\.h|libnuma\.so\.1|common_ops)|(Python\.h|libnuma\.so\.1|common_ops)[\s\S]*sgl_kernel|Please ensure sgl_kernel is properly installed/i,
+    message: 'SGLang native dependencies are missing on this server.',
+    fixes: [
+      { label: 'Copy OS package command', action: () => _copyText('sudo apt-get install -y libnuma-dev python3.12-dev build-essential') },
+      { label: 'Copy kernel upgrade', action: () => _copyText('python3 -m pip install --upgrade sglang-kernel') },
+      { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
+    ],
+  },
+  {
     pattern: /sglang.*command not found|No module named sglang|SGLang is not installed/i,
     message: 'SGLang is not installed or not in PATH.',
     fixes: [
@@ -378,16 +433,12 @@ export const ERROR_PATTERNS = [
     message: 'Model architecture too new for installed vLLM/transformers.',
     fixes: [
       { label: 'Try --trust-remote-code', action: (panel) => _serveAutoRetry(panel, '--trust-remote-code'), autofix: true },
-      { label: 'Update vLLM on server', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U vllm transformers' : 'pip install -U vllm transformers';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        // Run in tmux so it doesn't timeout
-        const name = 'update-vllm';
-        _launchServeTask(name, 'pip-update', cmd);
+      { label: 'Update vLLM on server', action: () => {
+        // Use the venv's python3 by absolute path when configured (SSH non-
+        // interactive sessions often pick user-site Python over the venv).
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('update-vllm', 'pip-update', `${_vp} -m pip install -U vllm transformers`);
       }},
     ],
   },
@@ -395,16 +446,10 @@ export const ERROR_PATTERNS = [
     pattern: /Either a revision or a version must be specified|transformers\.integrations\.hub_kernels|kernels\/layer/i,
     message: 'Transformers/kernels package mismatch.',
     fixes: [
-      { label: 'Repair kernel package', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix
-          ? prefix + ' python3 -m pip install --user --break-system-packages "kernels<0.15"'
-          : 'python3 -m pip install --user --break-system-packages "kernels<0.15"';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        _launchServeTask('repair-kernels', 'pip-update', cmd);
+      { label: 'Repair kernel package', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('repair-kernels', 'pip-update', `${_vp} -m pip install --user --break-system-packages "kernels<0.15"`);
       }},
       { label: 'Open Dependencies', action: () => _openCookbookDependencies('sglang') },
     ],
@@ -422,6 +467,15 @@ export const ERROR_PATTERNS = [
     fixes: [
       { label: 'Open Dependencies', action: () => _openCookbookDependencies('llama_cpp') },
       { label: 'Copy install command', action: () => _copyText('pip install "llama-cpp-python[server]"') },
+    ],
+  },
+  {
+    pattern: /Windows Error 0xc000001d|Illegal instruction|0xc000001d/i,
+    message: 'AVX2 Instruction Set Mismatch: the precompiled llama-cpp-python wheel requires CPU features (AVX2/FMA) that your processor or virtual machine lacks.',
+    suggestion: 'Suggested action: switch this serve config to Ollama (highly recommended, has dynamic CPU fallbacks), or choose a remote Linux GPU server.',
+    fixes: [
+      { label: 'Switch to Ollama', action: (panel) => _openServeEditFromDiagnosis(panel, { backend: 'ollama' }) },
+      { label: 'Choose remote server', action: (panel) => _openServeEditFromDiagnosis(panel) },
     ],
   },
   {
@@ -445,14 +499,10 @@ export const ERROR_PATTERNS = [
     pattern: /Triton kernels.*Failed to import|cannot import name '\w+' from 'triton_kernels/i,
     message: 'Triton kernels version mismatch. Non-fatal warning — model will still run, just without optimized MoE kernels.',
     fixes: [
-      { label: 'Update triton on server', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U triton triton-kernels' : 'pip install -U triton triton-kernels';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        _launchServeTask('update-triton', 'pip-update', cmd);
+      { label: 'Update triton on server', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('update-triton', 'pip-update', `${_vp} -m pip install -U triton triton-kernels`);
       }},
     ],
   },
@@ -474,35 +524,103 @@ export const ERROR_PATTERNS = [
     pattern: /attention_sink|sliding.window.*not supported|sliding_window.*incompatible/i,
     message: 'Model uses attention features unsupported in this vLLM version.',
     fixes: [
-      { label: 'Update vLLM on server', action: (panel) => {
-        const taskEl = panel.closest('.cookbook-task');
-        const task = taskEl ? _loadTasks().find(t => t.sessionId === taskEl.dataset.taskId) : null;
-        const host = task?.remoteHost || '';
-        const prefix = _buildEnvPrefix();
-        const pipCmd = prefix ? prefix + ' pip install -U vllm' : 'pip install -U vllm';
-        const cmd = host ? _sshCmd(host, pipCmd) : pipCmd;
-        _launchServeTask('update-vllm', 'pip-update', cmd);
+      { label: 'Update vLLM on server', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('update-vllm', 'pip-update', `${_vp} -m pip install -U vllm`);
       }},
     ],
   },
   {
-    // Tail-only + healthy-server suppression. tmux capture-pane returns the
-    // entire scrollback every poll, so a one-shot startup traceback would
-    // otherwise stick on the panel forever even while the server happily
-    // serves /v1/models. Only fire if the traceback is in recent output AND
-    // the server isn't currently logging healthy traffic.
+    // FlashInfer JIT-compiles attention kernels for the host GPU on first
+    // use. If the system /usr/bin/nvcc is older than CUDA 11.8 it can't
+    // target sm_89/sm_90 (Ada/Hopper), and the engine workers die before
+    // they can report a useful traceback. Two quick paths out: pick a
+    // non-flashinfer attention backend, or set CUDACXX to a newer nvcc
+    // (vLLM installs nvidia-cuda-nvcc into the venv — point at that).
+    pattern: /nvcc fatal\s+:\s+Unsupported gpu architecture 'compute_\d+'/i,
+    message: 'FlashInfer is JIT-compiling sampling kernels with an nvcc too old for this GPU (no sm_89 / sm_90 support — pre-CUDA 11.8). Changing the attention backend does not help — flashinfer JITs the SAMPLER too. The clean fix is to set VLLM_USE_FLASHINFER_SAMPLER=0 so vLLM uses its native sampler instead.',
+    suggestion: 'Suggested action: relaunch with VLLM_USE_FLASHINFER_SAMPLER=0 prepended. (Confirmed on the QuantTrio/Qwen3.5 model card as the canonical workaround.)',
+    fixes: [
+      { label: 'Retry with VLLM_USE_FLASHINFER_SAMPLER=0', action: (panel) => _serveAutoRetryReplace(panel, '', 'VLLM_USE_FLASHINFER_SAMPLER=0 ', { prepend: true }) },
+      { label: 'Uninstall flashinfer-python', action: () => {
+        // Hard fallback: vLLM 0.22 reaches into flashinfer for sampling kernels
+        // even with VLLM_USE_FLASHINFER_SAMPLER=0 in some configs. Removing
+        // the package forces it onto the native sampler.
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('uninstall-flashinfer', 'pip-update', `${_vp} -m pip uninstall flashinfer-python -y`);
+      }},
+      { label: 'Edit serve', action: (panel) => _openServeEditFromDiagnosis(panel) },
+    ],
+  },
+  {
+    // vLLM <-> torch ABI mismatch: vLLM imports torch.library helpers
+    // (`infer_schema`, `register_fake`, etc.) that only exist on newer torch
+    // versions. When the installed torch is older, the import fails before
+    // any server code runs. Fix is to reinstall vllm (which pulls a matching
+    // torch) or upgrade torch directly.
+    pattern: /ImportError: cannot import name '[^']+' from 'torch(\.\w+)+'/i,
+    message: 'vLLM was built against a newer torch than what is installed. Reinstall vLLM so pip pulls a compatible torch (or upgrade torch directly).',
+    fixes: [
+      { label: 'Reinstall vLLM (pulls matching torch)', action: () => {
+        // Absolute path to the venv's python3 — bare `python3` lands in the
+        // wrong site-packages over SSH when ~/.local/bin precedes the venv.
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('reinstall-vllm', 'pip-reinstall', `${_vp} -m pip install --force-reinstall vllm`);
+      }},
+      { label: 'Upgrade torch only', action: () => {
+        const _vp = (_envState.env === 'venv' && _envState.envPath)
+          ? `${_envState.envPath.replace(/\/+$/, '')}/bin/python3` : 'python3';
+        _launchServeTask('upgrade-torch', 'pip-update', `${_vp} -m pip install -U torch`);
+      }},
+    ],
+  },
+  {
+    // Dependency-install (pip) build failure — a required package failed to
+    // build its wheel (common when an old sdist's setup.py breaks on a newer
+    // Python, e.g. basicsr on 3.13). This is an install problem, NOT a serve
+    // problem, so it must never suggest killing vLLM.
+    match: (text) => {
+      const TAIL = text.slice(-6000);
+      // A serve script can run a fallback build and then start serving fine —
+      // don't flag a stale build error once the server is up.
+      if (/Application startup complete|"(?:GET|POST)\s+\/v1\/[^"]+ HTTP\/[\d.]+"\s*2\d\d|Uvicorn running on|server is listening on https?:\/\//i.test(TAIL)) return false;
+      return /Failed to build\b|subprocess-exited-with-error|Could not build wheels|metadata-generation-failed/i.test(TAIL);
+    },
+    message: 'A dependency failed to build during install — usually an older package whose build breaks on this Python version, not a server problem. The install did not finish.',
+    suggestion: 'Suggested action: check the captured output for the package that failed to build; it may need a newer release or a patch to install on this Python version.',
+    fixes: [],
+  },
+  {
+    // vLLM-specific traceback: only offer the kill-processes recovery when the
+    // output is actually about vLLM. Tail-only + healthy-server suppression so
+    // a one-shot startup traceback doesn't stick on the panel forever while
+    // the server happily serves /v1/models.
     match: (text) => {
       const TAIL = text.slice(-4096);
       if (!/Traceback \(most recent call last\)/i.test(TAIL)) return false;
-      // Healthy markers in the tail mean whatever blew up has been recovered
-      // from — the server is up and answering requests.
       if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
-      return true;
+      return /vllm/i.test(TAIL);
     },
-    message: 'Python traceback detected — may be a handled error, check logs.',
+    message: 'A vLLM process hit a Python traceback and may be wedged.',
     fixes: [
       { label: 'Kill vLLM processes', action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
     ],
+  },
+  {
+    // Generic traceback (not vLLM, not a pip build): surface it without
+    // suggesting an unrelated vLLM kill. Same tail-only + healthy suppression.
+    match: (text) => {
+      const TAIL = text.slice(-4096);
+      if (!/Traceback \(most recent call last\)/i.test(TAIL)) return false;
+      if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
+      return true;
+    },
+    message: 'Python traceback detected — check the captured output below for the underlying error.',
+    suggestion: 'Suggested action: read the captured output for the failing step; copy the troubleshooting bundle if you need help.',
+    fixes: [],
   },
 ];
 
@@ -561,23 +679,63 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
     ? `Suggested action: ${fixes[0].label}.`
     : 'Suggested action: copy the error and adjust the serve settings.');
 
-  // Simplified diagnosis card: just the error message + suggestion + fix
-  // button(s). Removed the fold toggle, copy button, and × dismiss — they
-  // made the card noisy without earning their keep. _diagCollapsed is kept
-  // as a stub so callers don't have to change.
   panel._diagCollapsed = false;
 
-  const body = document.createElement('div');
-  body.className = 'cookbook-diag-body';
+  // Top-right toolbar: Copy bundle + × dismiss. Restored after user feedback
+  // — without them there's no way to quietly close a stale diagnosis or grab
+  // the full error+context for a forum/discord paste.
+  const toolbar = document.createElement('div');
+  toolbar.className = 'cookbook-diag-toolbar';
+  // Left side carries the diagnosis text (message + suggestion); buttons
+  // stay on the right. Was a separate body row below the toolbar, but
+  // the message reads more like "this is what the toolbar is for" when
+  // it sits inline with Copy / × Dismiss.
+  toolbar.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-bottom:-2px;';
+
+  const textWrap = document.createElement('div');
+  textWrap.style.cssText = 'flex:1;min-width:0;font-size:11px;line-height:1.35;';
   const msg = document.createElement('div');
   msg.className = 'cookbook-diag-message';
   msg.textContent = diagnosis.message;
-  body.appendChild(msg);
+  textWrap.appendChild(msg);
   const suggestion = document.createElement('div');
   suggestion.className = 'cookbook-diag-suggestion';
   suggestion.textContent = suggestionText;
-  body.appendChild(suggestion);
-  diag.appendChild(body);
+  suggestion.style.cssText = 'opacity:0.75;margin-top:1px;';
+  textWrap.appendChild(suggestion);
+  toolbar.appendChild(textWrap);
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'cookbook-diag-copy';
+  copyBtn.title = 'Copy diagnosis details';
+  copyBtn.setAttribute('aria-label', 'Copy diagnosis');
+  copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const bundle = _diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText);
+    try {
+      await navigator.clipboard.writeText(bundle);
+      copyBtn.classList.add('copied');
+      setTimeout(() => { if (copyBtn.isConnected) copyBtn.classList.remove('copied'); }, 1200);
+    } catch (_) {}
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.className = 'cookbook-diag-dismiss';
+  dismissBtn.title = 'Dismiss diagnosis';
+  dismissBtn.setAttribute('aria-label', 'Dismiss');
+  dismissBtn.textContent = '×';
+  dismissBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    panel._diagDismissed = diagnosis.message;
+    _clearDiagnosis(panel);
+  });
+
+  toolbar.appendChild(copyBtn);
+  toolbar.appendChild(dismissBtn);
+  diag.appendChild(toolbar);
 
   const runFix = async (fix, button, busyLabel = fix.label, onStart = null, onDone = null) => {
     if (!fix || !button || button.dataset.busy) return;
@@ -607,60 +765,25 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   };
 
   if (fixes.length) {
+    // Always render fixes as inline buttons. The old "Actions ▾" dropdown
+    // (for >3 fixes) was broken — the menu wouldn't open in some panels and
+    // hid useful actions behind a non-working affordance. Inline buttons wrap
+    // naturally in `.cookbook-diag-fixes` (flex-wrap) so a long list reflows
+    // onto multiple rows instead of getting collapsed.
     const row = document.createElement('div');
     row.className = 'cookbook-diag-fixes';
-
-    if (fixes.length <= 3) {
-      for (const fix of fixes) {
-        const btn = document.createElement('button');
-        btn.className = 'cookbook-btn cookbook-diag-btn';
-        btn.type = 'button';
-        btn.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          runFix(fix, btn);
-        });
-        row.appendChild(btn);
-      }
-      body.appendChild(row);
-      return;
-    }
-
-    const wrap = document.createElement('div');
-    wrap.className = 'cookbook-diag-actions';
-
-    const trigger = document.createElement('button');
-    trigger.className = 'cookbook-btn cookbook-diag-action-trigger';
-    trigger.type = 'button';
-    trigger.textContent = 'Actions';
-    trigger.appendChild(document.createTextNode(' ▾'));
-    wrap.appendChild(trigger);
-
-    const menu = document.createElement('div');
-    menu.className = 'dropdown cookbook-diag-menu hidden';
     for (const fix of fixes) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
-      item.addEventListener('click', async (e) => {
+      const btn = document.createElement('button');
+      btn.className = 'cookbook-btn cookbook-diag-btn';
+      btn.type = 'button';
+      btn.innerHTML = _diagFixIcon(fix.label) + '<span class="cookbook-diag-btn-label">' + _diagEsc(fix.label) + '</span>';
+      btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (item.dataset.busy || trigger.dataset.busy) return;
-        item.dataset.busy = '1';
-        await runFix(fix, trigger, fix.label, () => menu.classList.add('hidden'), () => delete item.dataset.busy);
+        runFix(fix, btn);
       });
-      menu.appendChild(item);
+      row.appendChild(btn);
     }
-    wrap.appendChild(menu);
-    trigger.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (trigger.dataset.busy) return;
-      document.querySelectorAll('.cookbook-diag-menu').forEach(m => {
-        if (m !== menu) m.classList.add('hidden');
-      });
-      menu.classList.toggle('hidden');
-    });
-    row.appendChild(wrap);
-    body.appendChild(row);
+    diag.appendChild(row);
   }
 }
 

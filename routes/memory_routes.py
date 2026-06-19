@@ -29,8 +29,11 @@ from src.llm_core import llm_call_async
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
+from src.task_endpoint import resolve_task_endpoint
+from src.upload_limits import read_upload_limited, MEMORY_IMPORT_MAX_BYTES
 
 logger = logging.getLogger(__name__)
+
 
 def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionManager, memory_vector=None):
     """Set up memory-related routes."""
@@ -38,6 +41,18 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
     def _owner(request: Request) -> Optional[str]:
         return get_current_user(request)
+
+    def _assert_session_owner(session_obj, user):
+        """SECURITY: 404 if the caller does not own this session.
+
+        SessionManager.get_session is NOT owner-scoped — it returns any
+        session by id. These routes accept a caller-supplied session id, so
+        without this gate a user could target another tenant's session and
+        leak their chat history, their session-scoped LLM credentials, or the
+        session title. Mirrors session_routes / webhook_routes ownership.
+        """
+        if user is not None and getattr(session_obj, "owner", None) != user:
+            raise HTTPException(404, "Session not found")
 
     def _verify_memory_owner(memory: dict, user: Optional[str]):
         """Raise 404 if user doesn't own this memory.
@@ -90,6 +105,13 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         user_mem = memory_manager.load(owner=user)
         if memory_manager.find_duplicates(text, user_mem):
             return {"ok": True, "count": len(user_mem), "message": "Memory already exists"}
+
+        if memory_data.session_id:
+            try:
+                session_obj = session_manager.get_session(memory_data.session_id)
+            except KeyError:
+                raise HTTPException(404, "Session not found")
+            _assert_session_owner(session_obj, user)
 
         new_entry = memory_manager.add_entry(text, memory_data.source, memory_data.category, owner=user)
         if memory_data.session_id:
@@ -149,8 +171,17 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
 
             session_id = memory.get("session_id")
             if session_id and session_id in session_manager.sessions:
-                session = session_manager.get_session(session_id)
-                memory["session_name"] = session.name if session else f"Session {session_id[:6]}"
+                try:
+                    session = session_manager.get_session(session_id)
+                    if session:
+                        _assert_session_owner(session, user)
+                    memory["session_name"] = session.name if session else f"Session {session_id[:6]}"
+                except KeyError:
+                    memory["session_name"] = "Unknown"
+                except HTTPException as exc:
+                    if exc.status_code != 404:
+                        raise
+                    memory["session_name"] = "Unknown"
             else:
                 memory["session_name"] = "Unknown"
 
@@ -161,12 +192,12 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.get("/by-session/{session_id}")
     def get_memory_by_session(request: Request, session_id: str):
         """Get all memories associated with a specific session."""
+        user = _owner(request)
         try:
-            session_manager.get_session(session_id)
+            _session_obj = session_manager.get_session(session_id)
         except KeyError:
             raise HTTPException(404, f"Session {session_id} not found")
-
-        user = _owner(request)
+        _assert_session_owner(_session_obj, user)
         memories = memory_manager.load(owner=user)
         session_memories = [m for m in memories if m.get("session_id") == session_id]
 
@@ -196,6 +227,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             sess = session_manager.get_session(session)
         except KeyError:
             raise HTTPException(404, "Session not found")
+        _assert_session_owner(sess, _owner(request))
 
         system_msg = {
             "role": "system",
@@ -209,14 +241,18 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         }
         messages = [system_msg] + sess.get_context_messages()
 
+        t_url, t_model, t_headers = resolve_task_endpoint(
+            sess.endpoint_url, sess.model, sess.headers, owner=_owner(request)
+        )
+
         try:
             suggestion_text = await llm_call_async(
-                sess.endpoint_url,
-                sess.model,
+                t_url,
+                t_model,
                 messages,
                 temperature=0.2,
                 max_tokens=500,
-                headers=sess.headers,
+                headers=t_headers,
             )
             try:
                 suggestions = json.loads(suggestion_text)
@@ -237,56 +273,30 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     async def api_audit_memories(request: Request, session: str = Form(None)):
         """Deduplicate and consolidate memories via LLM.
 
-        Uses the default model from settings, or falls back to a session's model.
+        Uses task/utility/default settings through the shared resolver, with
+        the active session as fallback when no task or utility model is set.
         Returns before and after memory counts.
         """
-        from routes.model_routes import _load_settings, _normalize_base, build_chat_url
-        from core.database import ModelEndpoint
-        import json as _json
-
-        endpoint_url = model = None
-        headers = {}
-
-        # Try default model from settings first
-        settings = _load_settings()
-        ep_id = settings.get("default_endpoint_id", "")
-        default_model = settings.get("default_model", "")
-        if ep_id:
-            db = SessionLocal()
-            try:
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.id == ep_id, ModelEndpoint.is_enabled == True
-                ).first()
-                if ep:
-                    base = _normalize_base(ep.base_url)
-                    endpoint_url = build_chat_url(base)
-                    model = default_model
-                    if not model and ep.models:
-                        try:
-                            models = _json.loads(ep.models) if isinstance(ep.models, str) else ep.models
-                            if models:
-                                model = models[0]
-                        except Exception:
-                            pass
-                    if ep.api_key:
-                        headers = {"Authorization": f"Bearer {ep.api_key}"}
-            finally:
-                db.close()
-
-        # Fall back to session model if no default configured
-        if not endpoint_url and session:
+        user = _owner(request)
+        fallback_url = fallback_model = None
+        fallback_headers = None
+        if session:
             try:
                 sess = session_manager.get_session(session)
-                endpoint_url = sess.endpoint_url
-                model = sess.model
-                headers = sess.headers
+                _assert_session_owner(sess, user)
+                fallback_url = sess.endpoint_url
+                fallback_model = sess.model
+                fallback_headers = sess.headers
             except KeyError:
                 pass
+
+        endpoint_url, model, headers = resolve_task_endpoint(
+            fallback_url, fallback_model, fallback_headers, owner=user
+        )
 
         if not endpoint_url or not model:
             raise HTTPException(400, "No default model configured — set one in Settings")
 
-        user = _owner(request)
         result = await audit_memories(
             memory_manager,
             memory_vector,
@@ -324,22 +334,33 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         model = None
         headers = {}
 
+        user = _owner(request)
+
         if session:
             try:
                 sess = session_manager.get_session(session)
-                endpoint_url = sess.endpoint_url
-                model = sess.model
-                headers = sess.headers
+                _assert_session_owner(sess, user)
             except KeyError:
-                 raise HTTPException(404, "Session not found — needed for LLM config")
+                sess = None
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                sess = None
+
+            if sess is None:
+                logger.warning("Session %s not found or inaccessible, falling back to utility endpoint", session)
+                endpoint_url, model, headers = resolve_endpoint("utility", owner=user)
+            else:
+                endpoint_url, model, headers = resolve_task_endpoint(
+                    sess.endpoint_url, sess.model, sess.headers, owner=user
+                )
         else:
-            endpoint_url, model, headers = resolve_endpoint("utility", owner=_owner(request))
+            endpoint_url, model, headers = resolve_task_endpoint(owner=user)
     
         if not endpoint_url or not model:
             raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
 
-        # Read file content
-        content = await file.read()
+        content = await read_upload_limited(file, MEMORY_IMPORT_MAX_BYTES, "Memory import")
         filename = file.filename or "upload"
         _, ext = os.path.splitext(filename.lower())
 
@@ -354,7 +375,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 tmp.write(content)
                 tmp_path = tmp.name
             try:
-                text = _process_pdf(tmp_path)
+                text = _process_pdf(tmp_path, owner=_owner(request))
             finally:
                 os.unlink(tmp_path)
         else:
