@@ -65,7 +65,13 @@ import spinnerModule from './spinner.js';
 
 // ── Error diagnosis ──
 
-function _openCookbookDependencies(pkgName = '') {
+// Re-exported so callers (Launch-tab pre-flight) can deep-link into the
+// Dependencies tab + auto-expand a specific backend's recipe panel and
+// pre-select the model they were trying to launch.
+export function openCookbookDependencies(pkgName = '', opts = {}) {
+  _openCookbookDependencies(pkgName, opts);
+}
+function _openCookbookDependencies(pkgName = '', opts = {}) {
   const cookbook = window.cookbookModule;
   if (cookbook && typeof cookbook.open === 'function') {
     cookbook.open({ tab: 'Dependencies' });
@@ -94,6 +100,34 @@ function _openCookbookDependencies(pkgName = '') {
       row.scrollIntoView({ block: 'center' });
       row.classList.add('cookbook-pkg-flash');
       setTimeout(() => row.classList.remove('cookbook-pkg-flash'), 1800);
+      // Pre-flight deep link: auto-expand the recipe panel + pre-select
+      // the model the user was trying to launch. The dropdown values are
+      // now full model ids (sourced from _cachedModelIds), so we match by
+      // exact value first, then fall back to a substring match.
+      if (opts.expandRecipe) {
+        const caret = row.querySelector('[data-dep-recipe-toggle]');
+        if (caret && caret.getAttribute('aria-expanded') !== 'true') caret.click();
+        if (opts.model) {
+          const sel = document.querySelector(`[data-dep-recipe-pick="${CSS.escape(opts.expandRecipe)}"]`);
+          if (sel) {
+            const wanted = String(opts.model);
+            let matched = false;
+            for (let i = 0; i < sel.options.length; i++) {
+              if (sel.options[i].value === wanted) {
+                sel.value = wanted; matched = true; break;
+              }
+            }
+            if (!matched) {
+              for (let i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value && wanted.includes(sel.options[i].value)) {
+                  sel.value = sel.options[i].value; matched = true; break;
+                }
+              }
+            }
+            if (matched) sel.dispatchEvent(new Event('change'));
+          }
+        }
+      }
     }
   };
   tryHighlight();
@@ -544,23 +578,49 @@ export const ERROR_PATTERNS = [
     ],
   },
   {
-    // Tail-only + healthy-server suppression. tmux capture-pane returns the
-    // entire scrollback every poll, so a one-shot startup traceback would
-    // otherwise stick on the panel forever even while the server happily
-    // serves /v1/models. Only fire if the traceback is in recent output AND
-    // the server isn't currently logging healthy traffic.
+    // Dependency-install (pip) build failure — a required package failed to
+    // build its wheel (common when an old sdist's setup.py breaks on a newer
+    // Python, e.g. basicsr on 3.13). This is an install problem, NOT a serve
+    // problem, so it must never suggest killing vLLM.
+    match: (text) => {
+      const TAIL = text.slice(-6000);
+      // A serve script can run a fallback build and then start serving fine —
+      // don't flag a stale build error once the server is up.
+      if (/Application startup complete|"(?:GET|POST)\s+\/v1\/[^"]+ HTTP\/[\d.]+"\s*2\d\d|Uvicorn running on|server is listening on https?:\/\//i.test(TAIL)) return false;
+      return /Failed to build\b|subprocess-exited-with-error|Could not build wheels|metadata-generation-failed/i.test(TAIL);
+    },
+    message: 'A dependency failed to build during install — usually an older package whose build breaks on this Python version, not a server problem. The install did not finish.',
+    suggestion: 'Suggested action: check the captured output for the package that failed to build; it may need a newer release or a patch to install on this Python version.',
+    fixes: [],
+  },
+  {
+    // vLLM-specific traceback: only offer the kill-processes recovery when the
+    // output is actually about vLLM. Tail-only + healthy-server suppression so
+    // a one-shot startup traceback doesn't stick on the panel forever while
+    // the server happily serves /v1/models.
     match: (text) => {
       const TAIL = text.slice(-4096);
       if (!/Traceback \(most recent call last\)/i.test(TAIL)) return false;
-      // Healthy markers in the tail mean whatever blew up has been recovered
-      // from — the server is up and answering requests.
       if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
-      return true;
+      return /vllm/i.test(TAIL);
     },
-    message: 'Python traceback detected — may be a handled error, check logs.',
+    message: 'A vLLM process hit a Python traceback and may be wedged.',
     fixes: [
       { label: 'Kill vLLM processes', action: (panel) => _runQuickCmd(panel, 'pkill -f vllm') },
     ],
+  },
+  {
+    // Generic traceback (not vLLM, not a pip build): surface it without
+    // suggesting an unrelated vLLM kill. Same tail-only + healthy suppression.
+    match: (text) => {
+      const TAIL = text.slice(-4096);
+      if (!/Traceback \(most recent call last\)/i.test(TAIL)) return false;
+      if (/Application startup complete|"GET \/v1\/[^"]+ HTTP\/[\d.]+" 2\d\d|Uvicorn running on/i.test(TAIL)) return false;
+      return true;
+    },
+    message: 'Python traceback detected — check the captured output below for the underlying error.',
+    suggestion: 'Suggested action: read the captured output for the failing step; copy the troubleshooting bundle if you need help.',
+    fixes: [],
   },
 ];
 
@@ -626,7 +686,24 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   // the full error+context for a forum/discord paste.
   const toolbar = document.createElement('div');
   toolbar.className = 'cookbook-diag-toolbar';
-  toolbar.style.cssText = 'display:flex;justify-content:flex-end;align-items:center;gap:4px;margin-bottom:-2px;';
+  // Left side carries the diagnosis text (message + suggestion); buttons
+  // stay on the right. Was a separate body row below the toolbar, but
+  // the message reads more like "this is what the toolbar is for" when
+  // it sits inline with Copy / × Dismiss.
+  toolbar.style.cssText = 'display:flex;align-items:flex-start;gap:8px;margin-bottom:-2px;';
+
+  const textWrap = document.createElement('div');
+  textWrap.style.cssText = 'flex:1;min-width:0;font-size:11px;line-height:1.35;';
+  const msg = document.createElement('div');
+  msg.className = 'cookbook-diag-message';
+  msg.textContent = diagnosis.message;
+  textWrap.appendChild(msg);
+  const suggestion = document.createElement('div');
+  suggestion.className = 'cookbook-diag-suggestion';
+  suggestion.textContent = suggestionText;
+  suggestion.style.cssText = 'opacity:0.75;margin-top:1px;';
+  textWrap.appendChild(suggestion);
+  toolbar.appendChild(textWrap);
 
   const copyBtn = document.createElement('button');
   copyBtn.type = 'button';
@@ -659,18 +736,6 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
   toolbar.appendChild(copyBtn);
   toolbar.appendChild(dismissBtn);
   diag.appendChild(toolbar);
-
-  const body = document.createElement('div');
-  body.className = 'cookbook-diag-body';
-  const msg = document.createElement('div');
-  msg.className = 'cookbook-diag-message';
-  msg.textContent = diagnosis.message;
-  body.appendChild(msg);
-  const suggestion = document.createElement('div');
-  suggestion.className = 'cookbook-diag-suggestion';
-  suggestion.textContent = suggestionText;
-  body.appendChild(suggestion);
-  diag.appendChild(body);
 
   const runFix = async (fix, button, busyLabel = fix.label, onStart = null, onDone = null) => {
     if (!fix || !button || button.dataset.busy) return;
@@ -718,7 +783,7 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
       });
       row.appendChild(btn);
     }
-    body.appendChild(row);
+    diag.appendChild(row);
   }
 }
 

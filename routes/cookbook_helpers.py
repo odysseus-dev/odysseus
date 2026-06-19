@@ -362,7 +362,12 @@ def _user_shell_path_bootstrap() -> list[str]:
         '  ODYSSEUS_USER_PATH="$("$ODYSSEUS_USER_SHELL" -ic \'printf "__ODYSSEUS_PATH__%s\\n" "$PATH"\' 2>/dev/null | sed -n \'s/^__ODYSSEUS_PATH__//p\' | tail -n 1 || true)"',
         '  if [ -n "$ODYSSEUS_USER_PATH" ]; then export PATH="$ODYSSEUS_USER_PATH:$PATH"; fi',
         'fi',
-        'command -v python3 >/dev/null 2>&1 || python3() { python "$@"; }',
+        # Windows can expose python3 as a Microsoft Store App Execution Alias
+        # under WindowsApps. Git Bash sees that stub as present, but it exits
+        # before running Python. A Windows venv usually has python.exe, not
+        # python3.exe, so treat a missing or WindowsApps python3 as absent.
+        '_odys_py3="$(command -v python3 2>/dev/null || true)"',
+        'case "$_odys_py3" in ""|*[Ww]indows[Aa]pps*) python3() { python "$@"; } ;; esac',
         'command -v python >/dev/null 2>&1 || python() { python3 "$@"; }',
     ]
 
@@ -500,6 +505,8 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "    if u.startswith('KB'): return int(n * 1024)",
         "    return int(n)",
         "def scan_ollama():",
+        "    if any(m.get('is_ollama') for m in models): return",
+        "    if os.name == 'nt' and not os.environ.get('ODYSSEUS_ALLOW_OLLAMA_CLI_SCAN'): return",
         "    if not shutil.which('ollama'): return",
         "    try:",
         "        p = subprocess.run(['ollama', 'list'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=6)",
@@ -530,8 +537,8 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "            models.append({'repo_id':name,'size_bytes':size_bytes,'nb_files':1,'has_incomplete':False,'path':'ollama','backend':'ollama','is_ollama':True})",
         "        return",
         "for _hf_cache in hf_cache_paths(): scan_hf(_hf_cache)",
-        "scan_ollama()",
         "scan_ollama_api()",
+        "scan_ollama()",
     ]
     for model_dir in model_dirs or []:
         lines.append(f"scan_dir(os.path.expanduser({model_dir!r}))")
