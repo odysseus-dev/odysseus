@@ -3,10 +3,28 @@
 
 import os
 import secrets
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
+
+def clawagent_frame_origin() -> str:
+    """scheme://host[:port] of the configured clawagent app, or "".
+
+    Derived from the CLAWAGENT_URL env var so the embedded clawagent tab
+    (/clawagent) can relax `frame-src` for exactly that one origin without
+    widening the CSP for the rest of the app. Returns "" when unset or not
+    an http(s) URL, in which case no relaxation is applied.
+    """
+    raw = (os.environ.get("CLAWAGENT_URL") or "").strip()
+    if not raw:
+        return ""
+    parts = urlsplit(raw)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        return ""
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 # Per-process token that lets the in-app tool layer hit admin-gated
@@ -103,6 +121,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Content-Security-Policy"] = (
                 "default-src 'none'; "
                 "frame-ancestors 'self'"
+            )
+        elif path == "/clawagent" and clawagent_frame_origin():
+            # The embedded clawagent tab frames an external Railway app. The
+            # default policy below pins `frame-src 'self'`, which would block
+            # that iframe, so this single route additionally allows the one
+            # configured clawagent origin. Everything else stays identical to
+            # the default policy, and no X-Frame-Options: DENY is set here so
+            # this page itself remains framable only per `frame-ancestors`.
+            origin = clawagent_frame_origin()
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; "
+                f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+                "font-src 'self' https://cdn.jsdelivr.net; "
+                "img-src 'self' data: blob:; "
+                "media-src 'self' blob:; "
+                "connect-src 'self'; "
+                f"frame-src 'self' {origin}; "
+                "frame-ancestors 'none'"
             )
         else:
             response.headers["X-Frame-Options"] = "DENY"

@@ -47,4 +47,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 EXPOSE 7000
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7000"]
+# Bind 0.0.0.0 and honor an injected $PORT when present (e.g. Railway/Heroku
+# style platforms that route to a dynamic port), defaulting to 7000 for
+# docker compose and bare `docker run`. Shell form is required for ${PORT}
+# expansion; `exec` keeps uvicorn as PID-of-CMD so SIGTERM still reaches it.
+CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-7000}"]

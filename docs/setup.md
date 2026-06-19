@@ -378,6 +378,7 @@ Key settings:
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `ALLOWED_ORIGINS` | `http://localhost,http://127.0.0.1` | Comma-separated exact permitted origins for cross-origin browser/API clients. |
+| `CLAWAGENT_URL` | -- | If set to an `http(s)` URL, enables the sidebar **clawagent** tab, which frames that app at `/clawagent`. Only this origin is allowed in that page's CSP `frame-src`; the framed app must also send `Content-Security-Policy: frame-ancestors <your-odysseus-origin>`. |
 | `SECURE_COOKIES` | `false` | Set true when serving Odysseus through HTTPS at a trusted proxy or private access gateway. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
 | `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |

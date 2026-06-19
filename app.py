@@ -850,6 +850,51 @@ async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
     return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
 
+@app.get("/clawagent")
+async def serve_clawagent(request: Request):
+    """Embedded clawagent Mission Control tab.
+
+    Standalone page that frames the external clawagent app. The framed origin
+    is whitelisted in this one route's CSP `frame-src` (see
+    SecurityHeadersMiddleware) so the rest of the app keeps `frame-src 'self'`.
+    The URL comes from the CLAWAGENT_URL env var — nothing is hard-coded into
+    the image, and when it is unset the page shows a setup notice instead.
+    """
+    import html as _html
+    from core.middleware import clawagent_frame_origin
+
+    template_path = abs_join(BASE_DIR, "static/clawagent.html")
+    if not os.path.exists(template_path):
+        raise HTTPException(404, "clawagent.html not found")
+    with open(template_path, "r", encoding="utf-8") as f:
+        page = f.read()
+
+    url = (os.environ.get("CLAWAGENT_URL") or "").strip()
+    if url and clawagent_frame_origin():
+        safe_url = _html.escape(url, quote=True)
+        body = (
+            f'<iframe class="claw-frame" src="{safe_url}" '
+            'title="clawagent Mission Control" '
+            'allow="clipboard-read; clipboard-write" '
+            'referrerpolicy="no-referrer"></iframe>'
+        )
+    else:
+        body = (
+            '<div class="claw-empty">'
+            "<h1>clawagent isn't configured yet</h1>"
+            "<p>Set the <code>CLAWAGENT_URL</code> environment variable to the "
+            "live clawagent Mission Control URL (for example "
+            "<code>https://clawagent.up.railway.app</code>) and redeploy.</p>"
+            "<p>The value must be an <code>http(s)</code> URL. It is framed only "
+            "on this page, so the rest of the app keeps its strict frame policy.</p>"
+            "</div>"
+        )
+
+    page = page.replace("{{CLAWAGENT_BODY}}", body)
+    nonce = getattr(request.state, "csp_nonce", "")
+    page = page.replace("{{CSP_NONCE}}", nonce)
+    return HTMLResponse(page)
+
 @app.get("/login")
 async def serve_login(request: Request):
     if not AUTH_ENABLED:
