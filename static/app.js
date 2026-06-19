@@ -120,6 +120,105 @@ async function _createDirectChatFromPreferredModel() {
   return false;
 }
 
+async function parseEventFiles(eventItems) {
+  const files = [];
+
+  for (const item of Array.from(eventItems || [])) {
+    if (item.kind !== 'file') {
+      continue;
+    }
+
+    // 1. Modern File System Access API
+    try {
+      const handle = await item.getAsFileSystemHandle?.();
+      if (handle) {
+        const entries = await readHandleRecursive(handle);
+        files.push(...entries);
+        continue;
+      }
+    } catch { }
+
+    // 2. Legacy Chromium/WebKit API
+    try {
+      const entry = item.webkitGetAsEntry?.();
+      if (entry) {
+        const entries = await readEntryRecursive(entry);
+        files.push(...entries);
+        continue;
+      }
+    } catch { }
+
+    // 3. Plain file fallback (no directory support)
+    const file = item.getAsFile?.();
+    if (file) {
+      files.push(file);
+    }
+  }
+
+  return files;
+}
+
+async function readHandleRecursive(handle) {
+  if (handle.kind === 'file') {
+    const file = await handle.getFile();
+    return [file];
+  }
+
+  if (handle.kind === 'directory') {
+    const files = [];
+
+    for await (const child of handle.values()) {
+      const childFiles = await readHandleRecursive(child);
+      files.push(...childFiles);
+    }
+
+    return files;
+  }
+
+  return [];
+}
+
+async function readEntryRecursive(entry) {
+  if (entry.isFile) {
+    return new Promise((resolve) => {
+      entry.file((file) => {
+        resolve([file]);
+      });
+    });
+  }
+
+  if (entry.isDirectory) {
+    const dirReader = entry.createReader();
+    const entries = await readAllDirectoryEntries(dirReader);
+
+    const files = await Promise.all(
+      entries.map((ent) => readEntryRecursive(ent))
+    );
+
+    return files.flat();
+  }
+
+  return [];
+}
+
+async function readAllDirectoryEntries(dirReader) {
+  const entries = [];
+
+  while (true) {
+    const batch = await new Promise((resolve, reject) => {
+      dirReader.readEntries(resolve, reject);
+    });
+
+    if (batch.length === 0) {
+      break;
+    }
+
+    entries.push(...batch);
+  }
+
+  return entries;
+}
+
 // ============================================
 // EVENT LISTENERS INITIALIZATION
 // ============================================
@@ -142,15 +241,13 @@ function initializeEventListeners() {
   window.addEventListener('paste', async (e)=>{
     if (!e.clipboardData) return;
     let changed = false;
-    for (const item of e.clipboardData.items){
-      if (item.kind === 'file'){
-        const f = item.getAsFile();
-        if (f) {
-          fileHandlerModule.addFiles([f]);
-          changed = true;
-        }
-      }
+
+    const files = await parseEventFiles(e.clipboardData.items);
+    if (files && files.length > 0) {
+      changed = true;
     }
+
+    fileHandlerModule.addFiles(files);
     if (changed) fileHandlerModule.renderAttachStrip();
   });
 
@@ -3786,11 +3883,11 @@ function startOdysseusApp() {
     _showDropHighlight();
   });
 
-  chatContainer.addEventListener('drop', (e) => {
+  chatContainer.addEventListener('drop', async (e) => {
     e.preventDefault();
     e.stopPropagation();
     _hideDropHighlight();
-    const files = Array.from(e.dataTransfer.files);
+    const files = await parseEventFiles(e.dataTransfer.items);
     if (files.length === 0) return;
     fileHandlerModule.addFiles(files);
     fileHandlerModule.renderAttachStrip();
@@ -3810,11 +3907,11 @@ function startOdysseusApp() {
     attachStrip.style.borderRadius = '4px';
   });
   
-  attachStrip.addEventListener('drop', (e) => {
+  attachStrip.addEventListener('drop', async (e) => {
     e.preventDefault();
     attachStrip.style.backgroundColor = '';
     
-    const files = Array.from(e.dataTransfer.files);
+    const files = await parseEventFiles(e.dataTransfer.items);
     if (files.length === 0) return;
 
     uiModule.showToast(`Added ${files.length} file${files.length > 1 ? 's' : ''} to chat`);
@@ -3883,11 +3980,11 @@ function startOdysseusApp() {
     if (_compareActive() && !e.relatedTarget) _hideCmpShield();
   }, true);
   window.addEventListener('dragend', _hideCmpShield, true);
-  window.addEventListener('drop', (e) => {
+  window.addEventListener('drop', async (e) => {
     if (!_isFileDrag(e) || !_compareActive()) return;
     e.preventDefault();
     _hideCmpShield();
-    const files = Array.from(e.dataTransfer.files || []);
+    const files = await parseEventFiles(e.dataTransfer.items);
     if (!files.length) return;
     fileHandlerModule.addFiles(files);
     fileHandlerModule.renderAttachStrip();
