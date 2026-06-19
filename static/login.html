@@ -183,6 +183,17 @@
   .toggle { text-align: center; margin-top: calc(1rem + 4px); font-size: 0.85rem; color: color-mix(in srgb, var(--fg) 50%, transparent); }
   .toggle a { color: var(--red); cursor: pointer; text-decoration: none; }
   .toggle a:hover { text-decoration: underline; }
+  .forgot { text-align: center; margin-top: 0.85rem; font-size: 0.8rem; }
+  .forgot a { color: color-mix(in srgb, var(--fg) 70%, transparent); cursor: pointer; text-decoration: none; }
+  .forgot a:hover { color: var(--red); text-decoration: underline; }
+  .reset-help {
+    display: none; margin-top: 1rem; padding: 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, var(--red));
+    border-radius: 8px; background: color-mix(in srgb, var(--bg) 86%, var(--panel));
+    color: color-mix(in srgb, var(--fg) 78%, transparent);
+    font-size: 0.78rem; line-height: 1.45;
+  }
+  .reset-help strong { color: var(--fg); }
   .pw-wrapper { position: relative; margin-bottom: 1rem; }
   .pw-wrapper input:not(.remember-check) { padding-right: 2.5rem; margin-bottom: 0; }
   .pw-toggle {
@@ -290,9 +301,17 @@
     <button type="submit" id="submitBtn">Sign In</button>
   </form>
 
+  <div class="forgot" id="forgotArea">
+    <a id="forgotLink" href="#" aria-expanded="false" aria-controls="resetHelp">Forgot password?</a>
+  </div>
+
   <div class="toggle" id="toggleArea" style="display:none">
     <span id="toggleText">Don't have an account? </span>
     <a id="toggleLink" href="#">Sign up</a>
+  </div>
+
+  <div class="reset-help" id="resetHelp" role="status" aria-live="polite">
+    <strong>Password reset help:</strong> Odysseus is self-hosted, so password resets are handled by an administrator. Ask an admin to reset your password from Settings → Admin → Users. On a brand-new instance, the initial admin password is printed in the server logs.
   </div>
 </main>
 
@@ -325,6 +344,9 @@
   const toggleArea = document.getElementById('toggleArea');
   const toggleLink = document.getElementById('toggleLink');
   const toggleText = document.getElementById('toggleText');
+  const forgotArea = document.getElementById('forgotArea');
+  const forgotLink = document.getElementById('forgotLink');
+  const resetHelp = document.getElementById('resetHelp');
 
   let mode = 'login'; // 'login' | 'signup' | 'setup'
   let signupAllowed = false;
@@ -341,12 +363,16 @@
       confirmGroup.style.display = 'block';
       submitBtn.textContent = 'Create Admin Account';
       toggleArea.style.display = 'none';
+      forgotArea.style.display = 'none';
+      resetHelp.style.display = 'none';
       rememberToggle.style.display = 'none';
     } else if (m === 'signup') {
       setupNote.style.display = 'none';
       confirmGroup.style.display = 'block';
       submitBtn.innerHTML = '<span style="position:relative;top:1px;">Create Account</span>';
       toggleArea.style.display = 'block';
+      forgotArea.style.display = 'none';
+      resetHelp.style.display = 'none';
       toggleText.textContent = 'Already have an account? ';
       toggleLink.textContent = 'Sign in';
       rememberToggle.style.display = 'none';
@@ -355,6 +381,7 @@
       confirmGroup.style.display = 'none';
       submitBtn.textContent = 'Sign In';
       toggleArea.style.display = signupAllowed ? 'block' : 'none';
+      forgotArea.style.display = 'block';
       toggleText.textContent = "Don't have an account? ";
       toggleLink.textContent = 'Sign up';
       rememberToggle.style.display = '';
@@ -388,6 +415,13 @@
   toggleLink.addEventListener('click', (e) => {
     e.preventDefault();
     setMode(mode === 'login' ? 'signup' : 'login');
+  });
+
+  forgotLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    const showing = resetHelp.style.display === 'block';
+    resetHelp.style.display = showing ? 'none' : 'block';
+    forgotLink.setAttribute('aria-expanded', String(!showing));
   });
 
   form.addEventListener('submit', async (e) => {
