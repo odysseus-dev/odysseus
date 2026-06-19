@@ -63,6 +63,10 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Opt-in repair for existing nested bind-mounted runtime files. Normal
+      # startup only chowns mount roots so large data/model caches do not block
+      # uvicorn from starting.
+      - ODYSSEUS_CHOWN_BIND_RECURSIVE=${ODYSSEUS_CHOWN_BIND_RECURSIVE:-0}
     depends_on:
       searxng:
         condition: service_healthy

@@ -34,17 +34,32 @@ fi
 #   - services/tts cache, etc.
 # These dirs were created as root during `docker build`, so dropping
 # to PUID:PGID would otherwise crash on the first import that tries
-# to mkdir them. Chown the whole /app tree — fast (<1s on this size)
-# and idempotent via the `-not -uid` filter so we only touch files
-# that need fixing.
-for dir in /app /app/data /app/logs; do
+# to mkdir them. Repair the image tree while pruning bind-mounted runtime
+# caches; those can be large and can block startup before uvicorn starts.
+if [ -d /app ]; then
+    find /app -xdev \
+        \( -path /app/data -o -path /app/logs -o -path /app/.ssh -o -path /app/.local -o -path /app/.cache \) -prune \
+        -o -not -uid "$PUID" -print0 2>/dev/null \
+        | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
+fi
+
+# Repair the mount roots themselves so the app can create new children. Leave
+# existing nested bind-mounted content alone unless explicitly requested.
+for dir in /app/data /app/logs /app/.ssh /app/.local /app/.cache; do
     if [ -d "$dir" ]; then
-        # `find ... -not -uid` keeps this O(touched-files), not
-        # O(everything), so terabyte-sized maildirs don't slow startup.
-        find "$dir" -not -uid "$PUID" -print0 2>/dev/null \
+        find "$dir" -maxdepth 1 -not -uid "$PUID" -print0 2>/dev/null \
             | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
     fi
 done
+
+if [ "${ODYSSEUS_CHOWN_BIND_RECURSIVE:-0}" = "1" ]; then
+    for dir in /app/data /app/logs /app/.ssh; do
+        if [ -d "$dir" ]; then
+            find "$dir" -not -uid "$PUID" -print0 2>/dev/null \
+                | xargs -0 -r chown "$PUID:$PGID" 2>/dev/null || true
+        fi
+    done
+fi
 
 # Cookbook installs vllm/etc. via `pip install --user`, which pulls
 # nvidia-cuda-* wheels into /app/.local but does not set CUDA_HOME or
