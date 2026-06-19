@@ -118,6 +118,11 @@ export PATH="/app/.local/bin:$PATH"
 # || true so a setup failure never prevents the container from starting.
 "$GOSU_BIN" "$PUID:$PGID" "$PYTHON_BIN" /app/setup.py || true
 
+# If a deployment provides an OpenAI-compatible model endpoint via env, persist
+# it as a ModelEndpoint before the UI starts so modelPicker has cached models on
+# first load. The bootstrap itself is guarded by env detection and is idempotent.
+"$GOSU_BIN" "$PUID:$PGID" "$PYTHON_BIN" -m src.env_model_endpoint_bootstrap || true
+
 # Drop root and run the actual app. `gosu` is preferred over `su` /
 # `sudo` because it cleans up the process tree (no extra shell layer)
 # so signals (SIGTERM from `docker stop`) reach uvicorn directly.
