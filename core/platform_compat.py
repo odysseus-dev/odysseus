@@ -55,6 +55,20 @@ def safe_chmod(path, mode: int) -> bool:
 
 
 # ── Process detach / liveness / teardown ────────────────────────────────────
+def _get_gpu_env() -> dict:
+    """Return environment variables needed for GPU access in subprocesses.
+
+    Checks common Nvidia Docker variables and ensures CUDA_VISIBLE_DEVICES is set
+    if a GPU is available (via nvidia-smi existence). This is a workaround for
+    cases where the container has GPU access but llama.cpp doesn't inherit it.
+    """
+    env = os.environ.copy()
+    # If nvidia-smi is present and CUDA_VISIBLE_DEVICES is not set, set it to all GPUs
+    if shutil.which("nvidia-smi") and "CUDA_VISIBLE_DEVICES" not in env:
+        env["CUDA_VISIBLE_DEVICES"] = env.get("NVIDIA_VISIBLE_DEVICES", "all")
+    return env
+
+
 def detached_popen_kwargs() -> dict:
     """Keyword args for :class:`subprocess.Popen` that fully detach a child so
     it outlives the request/stream that launched it.
@@ -68,8 +82,8 @@ def detached_popen_kwargs() -> dict:
         flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) | getattr(
             subprocess, "DETACHED_PROCESS", 0x00000008
         )
-        return {"creationflags": flags}
-    return {"start_new_session": True}
+        return {"creationflags": flags, "env": _get_gpu_env()}
+    return {"start_new_session": True, "env": _get_gpu_env()}
 
 
 def pid_alive(pid: Optional[int]) -> bool:
