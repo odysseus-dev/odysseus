@@ -320,7 +320,7 @@ def _detect_apple_silicon():
 
     # Only Apple Silicon (arm64) has a Metal GPU worth serving LLMs on; Intel
     # Macs fall through to the CPU path.
-    if "arm" not in arch and "aarch64" not in arch:
+    if _canonical_cpu_arch(arch) != "arm64":
         return None
 
     # Chip name, e.g. "Apple M4 Max" — carries the Pro/Max/Ultra variant that
@@ -503,6 +503,25 @@ def _get_cpu_count():
     return os.cpu_count() or 1
 
 
+def _canonical_cpu_arch(value):
+    arch = str(value or "").lower().strip().replace("-", "_")
+    if arch in ("x86_64", "amd64", "x64"):
+        return "x86_64"
+    if arch in ("i386", "i686", "x86"):
+        return "x86"
+    if arch in ("arm64", "aarch64"):
+        return "arm64"
+    if arch == "arm" or arch.startswith("armv"):
+        return "arm"
+    return arch
+
+
+def _get_cpu_arch():
+    if _remote_host:
+        return _canonical_cpu_arch(_run(["uname", "-m"]) or "")
+    return _canonical_cpu_arch(platform.machine())
+
+
 def _powershell_exe():
     """Pick the best PowerShell executable for LOCAL execution: prefer pwsh
     (PowerShell 7+), fall back to Windows PowerShell 5.1. Returns an absolute
@@ -528,6 +547,7 @@ def _detect_windows():
         $r.cpu_name = $cpu.Name
         $r.cpu_cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum
         $r.arch = $cpu.AddressWidth
+        $r.cpu_arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
         # GPU detection via nvidia-smi (fastest) or WMI fallback
         try { 
             $nv = nvidia-smi --query-gpu=memory.total,name --format=csv,noheader,nounits 2>$null
@@ -599,6 +619,7 @@ def _detect_windows():
             "available_ram_gb": d.get("avail_gb", 0),
             "cpu_cores": _as_int(d.get("cpu_cores"), 1),
             "cpu_name": _cpu_name,
+            "cpu_arch": _canonical_cpu_arch(d.get("cpu_arch")),
             "has_gpu": bool(d.get("gpu_name")),
             "gpu_name": d.get("gpu_name"),
             "gpu_vram_gb": d.get("gpu_vram_gb"),
@@ -794,6 +815,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
     available_ram = round(_get_available_ram_gb(), 1)
     cpu_cores = _get_cpu_count()
     cpu_name = _get_cpu_name()
+    cpu_arch = _get_cpu_arch()
 
     gpu_info = _detect_apple_silicon() or _detect_nvidia() or _detect_amd()
 
@@ -803,6 +825,7 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "available_ram_gb": available_ram,
             "cpu_cores": cpu_cores,
             "cpu_name": cpu_name,
+            "cpu_arch": cpu_arch,
             "has_gpu": True,
             "gpu_name": gpu_info["gpu_name"],
             "gpu_vram_gb": gpu_info["gpu_vram_gb"],
@@ -817,17 +840,13 @@ def detect_system(host="", ssh_port="", platform="", fresh=False):
             "unified_memory": gpu_info.get("unified_memory", False),
         }
     else:
-        if _remote_host:
-            arch_out = _run(["uname", "-m"]) or ""
-        else:
-            import platform as _platform
-            arch_out = _platform.machine().lower()
-        backend = "cpu_arm" if "aarch64" in arch_out or "arm" in arch_out else "cpu_x86"
+        backend = "cpu_arm" if cpu_arch == "arm64" else "cpu_x86"
         result = {
             "total_ram_gb": total_ram,
             "available_ram_gb": available_ram,
             "cpu_cores": cpu_cores,
             "cpu_name": cpu_name,
+            "cpu_arch": cpu_arch,
             "has_gpu": False,
             "gpu_name": None,
             "gpu_vram_gb": None,

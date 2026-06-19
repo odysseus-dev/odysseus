@@ -175,6 +175,9 @@ _TOOL_NAME_MAP = {
     "notes": "manage_notes",
     "todo": "manage_notes",
     "todos": "manage_notes",
+    "manage_bg_jobs": "manage_bg_jobs",
+    "bg_jobs": "manage_bg_jobs",
+    "background_jobs": "manage_bg_jobs",
 }
 
 _MISFENCED_WEB_TOOL_NAMES = {
