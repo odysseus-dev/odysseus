@@ -447,6 +447,20 @@ body.bg-pattern-sparkles {
       justify-content: space-between;
       padding: 12px 12px;
       flex-shrink: 0;
+    .sidebar-footer {
+      padding: 8px 12px;
+      font-size: 0.75em;
+      opacity: 0.4;
+      text-align: center;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .sidebar.hidden .sidebar-footer {
+      display: none;
+    }
       gap: 4px;
       min-height: 48px;
     }
@@ -571,6 +585,130 @@ body.bg-pattern-sparkles {
       top: 0;
       left: -10px;
     }
+    .sidebar-logo {
+      width: 24px;
+      height: 24px;
+      object-fit: contain;
+      flex-shrink: 0;
+      border-radius: 4px;
+    }
+
+/* ── Branding form (theme popup) ── */
+.branding-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.branding-field {
+  display: flex;
+  flex-direction: column;
+}
+.branding-field label {
+  display: block;
+  font-size: 0.85em;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.branding-field input[type="text"],
+.branding-field input[type="url"] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 0.9em;
+}
+.brand-preview {
+  margin-top: 6px;
+  display: none;
+}
+.brand-preview img {
+  max-height: 48px;
+  max-width: 200px;
+  border-radius: 4px;
+}
+.brand-preview.icon-preview img {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+}
+.brand-upload-area {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+.brand-upload-btn {
+  padding: 6px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 0.8em;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+.brand-upload-btn:hover {
+  opacity: 1;
+}
+/* ── Icon gallery ── */
+.icon-gallery {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary, var(--bg));
+}
+.icon-gallery-item {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+  padding: 4px;
+  background: var(--bg);
+}
+.icon-gallery-item:hover {
+  transform: scale(1.1);
+}
+.icon-gallery-item.selected {
+  border-color: var(--accent, var(--red));
+  transform: scale(1.1);
+}
+.icon-gallery-item img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  border-radius: 3px;
+}
+.icon-gallery-item .icon-placeholder {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--brand-color, var(--red));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brand-color, var(--red)) 15%, transparent);
+}
+.icon-gallery-label {
+  display: block;
+  font-size: 0.8em;
+  opacity: 0.5;
+  margin-top: 4px;
+}
     .sidebar-sep {
       display: none;
     }

@@ -189,6 +189,15 @@ DEFAULT_SETTINGS = {
         "admin_panel": "ctrl+shift+u",
         "cancel": "escape",
     },
+    # ── Whitelabel Branding ──────────────────────────────────────────────
+    # Global Branding-Einstellungen für Kunden-Whitelabel.
+    # Überschreiben statische Werte (App-Name, Logo, Icon) dynamisch.
+    "app_name": "Odysseus",
+    "app_logo": "",          # URL oder Data-URI des Logos (sidebar/header)
+    "app_icon": "",          # URL oder Data-URI des Favicons
+    "app_footer": "",        # Footer-Text ("Powered by ...")
+    "brand_color": "",       # Primäre Markenfarbe (Hex, z.B. "#ff6b35")
+
 }
 
 DEFAULT_FEATURES = {

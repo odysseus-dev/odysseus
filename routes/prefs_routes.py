@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from src.auth_helpers import get_current_user
 from src.constants import USER_PREFS_FILE
+from src.settings import get_setting
 
 PREFS_FILE = USER_PREFS_FILE
 
@@ -87,5 +88,22 @@ def setup_prefs_routes():
         prefs[key] = body.get("value")
         _save_for_user(user, prefs)
         return {"key": key, "value": prefs[key]}
+
+    # ── Branding endpoint ──
+    _BRANDING_KEYS = ["app_name", "app_logo", "app_icon", "app_footer", "brand_color"]
+
+    @router.get("/branding")
+    async def get_branding(request: Request):
+        """Return merged branding config: user prefs override server defaults."""
+        user = get_current_user(request)
+        prefs = _load_for_user(user)
+        merged = {}
+        for key in _BRANDING_KEYS:
+            # User pref wins if set, otherwise server default
+            if key in prefs and prefs[key]:
+                merged[key] = prefs[key]
+            else:
+                merged[key] = get_setting(key, "")
+        return merged
 
     return router
