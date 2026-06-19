@@ -22,7 +22,7 @@ const FOLDER_MAX_VISIBLE = 5;
 let _showAllSessions = false;
 let _expandedFolders = {};  // folderName -> true if "show more" clicked
 let _sortMode = Storage.get('odysseus-session-sort') || 'active'; // default to last active
-  let _activeLens = Storage.get('session-lens') || 'chats';
+let _activeLens = Storage.get('session-lens') || 'chats';
 let _autoCreateInProgress = false; // guard against recursive auto-create
 const _INCOGNITO_SESSIONS_KEY = 'ody-incognito-sessions'; // sessionStorage key for incognito session IDs
 const _isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -1387,9 +1387,8 @@ export async function loadSessions() {
       fetched = await res.json();
     }
     sessions = _normalizeSessionsList(fetched);
-    _initLensTabs();
     // Update task count badge on Tasks lens tab
-    const _taskCount = (fetched || []).filter(s => !s.archived && s.folder === 'Tasks').length;
+    const _taskCount = sessions.filter(s => !s.archived && s.folder === 'Tasks').length;
     const _tasksTab = document.getElementById('lens-tasks');
     if (_tasksTab) {
       const _existingBadge = _tasksTab.querySelector('.lens-badge');
@@ -2274,6 +2273,7 @@ function _initAllDropdowns() {
   });
   _initDropdownDismiss();
   _initBulkSelect();
+  _initLensTabs();
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', _initAllDropdowns);
