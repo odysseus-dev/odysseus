@@ -146,17 +146,18 @@ def _canonical_cpu_backend(system):
     if backend in ("cpu_x86", "cpu_arm"):
         return backend
 
-    # Raw CPU-architecture aliases
+    # Raw CPU-architecture aliases. Treat plain "arm" as 32-bit ARM, not the
+    # ARM64-class CPU fallback used for Apple Silicon/aarch64 machines.
     if backend in ("x86_64", "amd64", "i386", "i686"):
         return "cpu_x86"
-    if backend in ("arm64", "aarch64", "arm"):
+    if backend in ("arm64", "aarch64"):
         return "cpu_arm"
 
     # Prefer an explicit CPU architecture field when present
     if cpu_arch:
         if cpu_arch in ("x86_64", "amd64", "x86", "i386", "i686"):
             return "cpu_x86"
-        if cpu_arch in ("arm64", "aarch64", "arm"):
+        if cpu_arch in ("arm64", "aarch64"):
             return "cpu_arm"
 
     # Apple Silicon enters ranking as backend="metal"; its CPU path is ARM.
