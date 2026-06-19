@@ -10,6 +10,7 @@ Covers: the resolver helper, the central binding (the safety net), end-to-end
 confinement of read/write/edit/grep/ls + subprocess cwd via execute_tool_block,
 the get_workspace tool, no-leak across calls, and the admin-gated browse route.
 """
+import asyncio
 import json
 import os
 import tempfile
@@ -363,6 +364,105 @@ def test_agent_limits_include_workspace_label(monkeypatch):
     assert limits["workspace_bound"] is True
     assert limits["workspace_path"] == "/workspace"
     assert limits["workspace_label"] == r"D:\Odysseus_Workspace (mounted as /workspace)"
+
+
+def test_blocked_workspace_shell_write_forces_file_tool_recovery(monkeypatch):
+    import src.agent_loop as al
+
+    monkeypatch.setattr(al, "get_setting", lambda key, default=None: default, raising=False)
+    monkeypatch.setattr(al, "get_mcp_manager", lambda: None, raising=False)
+    monkeypatch.setattr(al, "estimate_tokens", lambda *a, **k: 10, raising=False)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set(), raising=False)
+
+    calls = []
+    stream_rounds = []
+
+    async def _fake_stream(_candidates, messages, **kwargs):
+        stream_rounds.append(messages)
+        round_idx = len(stream_rounds)
+        if round_idx == 1:
+            text = (
+                "```bash\n"
+                "cp README.txt agent-smoke-copy-20260619.txt\n"
+                "printf 'Agent smoke test copy\\n' >> agent-smoke-copy-20260619.txt\n"
+                "```"
+            )
+        elif round_idx == 2:
+            text = (
+                "I can do this via the workspace file tools immediately.\n\n"
+                "I'll read `README.txt`, write the copy, append the line, and verify it."
+            )
+        elif round_idx == 3:
+            text = (
+                "```read_file\nREADME.txt\n```\n"
+                "```write_file\n"
+                "agent-smoke-copy-20260619.txt\n"
+                "README text\n\nAgent smoke test copy\n"
+                "```"
+            )
+        else:
+            text = "Created and verified `agent-smoke-copy-20260619.txt`."
+        yield "data: " + json.dumps({"delta": text}) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    async def _fake_exec(block, *args, **kwargs):
+        calls.append(block.tool_type)
+        if block.tool_type == "bash":
+            return ("bash: BLOCKED", {
+                "error": (
+                    "Workspace file changes must use `write_file` for creates/full rewrites "
+                    "or `edit_file` for targeted edits. Shell is still available for "
+                    "read-only diagnostics, but redirection/heredocs/tee/cp/mv/touch/"
+                    "in-place edits are blocked while a workspace is active."
+                ),
+                "exit_code": 1,
+            })
+        if block.tool_type == "read_file":
+            return ("read_file: README.txt", {
+                "output": "README text",
+                "exit_code": 0,
+            })
+        if block.tool_type == "write_file":
+            return ("write_file: agent-smoke-copy-20260619.txt", {
+                "output": "Wrote 34 bytes to /workspace/agent-smoke-copy-20260619.txt",
+                "exit_code": 0,
+                "diff": {
+                    "file": "agent-smoke-copy-20260619.txt",
+                    "text": "+README text\n+\n+Agent smoke test copy",
+                    "new_file": True,
+                },
+            })
+        raise AssertionError(f"unexpected tool call: {block.tool_type}")
+
+    monkeypatch.setattr(al, "stream_llm_with_fallback", _fake_stream, raising=False)
+    monkeypatch.setattr(al, "execute_tool_block", _fake_exec, raising=False)
+
+    async def _run():
+        gen = al.stream_agent_loop(
+            "http://local.test/v1",
+            "local-model",
+            [{"role": "user", "content": (
+                "Copy README.txt to agent-smoke-copy-20260619.txt in the mounted "
+                "workspace, then append a final line that says \"Agent smoke test copy\". "
+                "Verify by reading the new file before answering."
+            )}],
+            max_rounds=4,
+            relevant_tools={"bash", "read_file", "write_file", "edit_file", "get_workspace"},
+            owner="admin",
+            workspace="/workspace",
+        )
+        return [chunk async for chunk in gen]
+
+    events = _events_from_chunks(asyncio.run(_run()))
+
+    assert calls == ["bash", "read_file", "write_file"]
+    assert len(stream_rounds) == 4
+    assert any(event.get("type") == "agent_step" and event.get("round") == 3 for event in events)
+    metrics = next(event["data"] for event in events if event.get("type") == "metrics")
+    recovery = metrics["agent_workspace_shell_write_recovery"]
+    assert recovery["blocked_shell_write"] is True
+    assert recovery["nudges"] == 1
+    assert recovery["pending"] is False
 
 
 def test_final_answer_contract_prompt_is_injected(monkeypatch):

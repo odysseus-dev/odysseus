@@ -1807,6 +1807,45 @@ def _detect_runaway_call(call_freq, threshold=15):
     return sig.split(":", 1)[0] if sig else None
 
 
+_WORKSPACE_FILE_TOOL_RECOVERY_TOOLS = {
+    "get_workspace", "ls", "glob", "grep", "read_file", "write_file", "edit_file",
+}
+_MAX_WORKSPACE_SHELL_WRITE_RECOVERY_NUDGES = 2
+
+
+def _tool_schema_name(schema: dict) -> str:
+    if not isinstance(schema, dict):
+        return ""
+    fn = schema.get("function")
+    if isinstance(fn, dict):
+        return str(fn.get("name") or "")
+    return str(schema.get("name") or "")
+
+
+def _is_workspace_shell_write_block_event(event: dict) -> bool:
+    """True for the deliberate active-workspace shell-write policy block."""
+    if not isinstance(event, dict):
+        return False
+    if str(event.get("tool") or "").lower() != "bash":
+        return False
+    if event.get("exit_code") != 1:
+        return False
+    text = f"{event.get('output') or ''}\n{event.get('command') or ''}"
+    return (
+        "Workspace file changes must use" in text
+        and "write_file" in text
+        and "edit_file" in text
+    )
+
+
+def _is_successful_file_mutation_event(event: dict) -> bool:
+    if not isinstance(event, dict):
+        return False
+    if event.get("exit_code") not in (None, 0):
+        return False
+    return str(event.get("tool") or "").lower() in {"write_file", "edit_file"}
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -2197,6 +2236,9 @@ async def stream_agent_loop(
     # that *can't* call the tool from looping forever.
     _intent_nudge_count = 0
     _MAX_INTENT_NUDGES = 2
+    _workspace_shell_write_recovery_pending = False
+    _workspace_shell_write_blocked_seen = False
+    _workspace_shell_write_recovery_nudges = 0
 
     # "I said I would, then didn't" detector. The pattern that breaks debug
     # loops on weak models (deepseek-v4-flash mid-2026): the model writes
@@ -2272,6 +2314,11 @@ async def stream_agent_loop(
                     t for t in all_tool_schemas
                     if t.get("function", {}).get("name") not in disabled_tools
                     and t.get("name") not in disabled_tools
+                ]
+            if _workspace_shell_write_recovery_pending:
+                all_tool_schemas = [
+                    t for t in all_tool_schemas
+                    if _tool_schema_name(t) in _WORKSPACE_FILE_TOOL_RECOVERY_TOOLS
                 ]
         else:
             # Local: only MCP schemas when message suggests MCP tool usage
@@ -2554,6 +2601,36 @@ async def stream_agent_loop(
             # to re-trigger). Skipped on force-answer rounds (no tools to
             # fix with), pure Q&A, and when the toggle is off.
             _claimed_done = bool(_THINK_RE.sub("", cleaned_round).strip())
+            if (
+                _workspace_shell_write_recovery_pending
+                and not _force_answer
+                and not guide_only
+                and _workspace_shell_write_recovery_nudges < _MAX_WORKSPACE_SHELL_WRITE_RECOVERY_NUDGES
+            ):
+                _workspace_shell_write_recovery_nudges += 1
+                logger.info(
+                    "[agent] workspace shell-write recovery nudge #%d on round %d",
+                    _workspace_shell_write_recovery_nudges,
+                    round_num,
+                )
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "The previous `bash` command was blocked because an active "
+                        "workspace requires file changes through `read_file`, "
+                        "`write_file`, or `edit_file`. The user's workspace file "
+                        "request is NOT complete yet. Do not answer with a plan, "
+                        "promise, or instructions for the user to run. In this next "
+                        "round, either call the file tools to complete and verify the "
+                        "requested file change, or if a file tool fails, report that "
+                        "exact file-tool failure. For copy/create/append requests: "
+                        "read the source file if needed, write the target file with "
+                        "the full desired contents, then read the target before the "
+                        "final answer."
+                    ),
+                })
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
             if (_effectful_used and not _force_answer
                     and _claimed_done
                     and _verifier_rounds < _VERIFIER_MAX_ROUNDS
@@ -2986,6 +3063,14 @@ async def stream_agent_loop(
             if result.get("diff"):
                 tool_event["diff"] = result["diff"]
             tool_events.append(tool_event)
+            if _is_workspace_shell_write_block_event(tool_event):
+                _workspace_shell_write_recovery_pending = True
+                _workspace_shell_write_blocked_seen = True
+            elif (
+                _workspace_shell_write_recovery_pending
+                and _is_successful_file_mutation_event(tool_event)
+            ):
+                _workspace_shell_write_recovery_pending = False
             if block.tool_type in _VERIFIER_EFFECTFUL_TOOLS:
                 _effectful_used = True
 
@@ -3063,6 +3148,12 @@ async def stream_agent_loop(
         "workspace_label": _workspace_display_label(workspace),
         "workspace_shell_writes_blocked": bool(workspace),
     }
+    if _workspace_shell_write_blocked_seen:
+        metrics["agent_workspace_shell_write_recovery"] = {
+            "blocked_shell_write": True,
+            "nudges": _workspace_shell_write_recovery_nudges,
+            "pending": _workspace_shell_write_recovery_pending,
+        }
     yield f"data: {json.dumps({'type': 'metrics', 'data': metrics})}\n\n"
 
     # Teacher-escalation: inline takeover visible in the chat stream.
