@@ -369,6 +369,18 @@ Edit an EXISTING file by exact string replacement. PREFER this over bash (sed/ec
 ```
 Return the absolute path of the active workspace folder. File tools are CONFINED to it (paths can be RELATIVE to it); the shell starts there (cwd) but is NOT sandboxed. Call this first when the user says "the project"/"the code"/"this folder" without a path, instead of asking them. No arguments.""",
 
+    "git": """\
+```git
+<git subcommand>
+```
+Run git in the active workspace repo (status, diff, log, show, branch, add, commit, checkout/switch, restore, stash, merge, rebase, push, pull, fetch). Prefer this over `bash git`: confined to the workspace and structured; commits get an agent identity automatically. Narrow safety boundary: remote is read-only (`remote`/`-v`/`show`/`get-url`); no config/clone; the only network-mutating form is `push [-u] origin <branch>`, plus flag-light `fetch`/`pull` from plain `origin` (no force/delete/refspec/`--all`/URL). Anything outside that is rejected with a message.""",
+
+    "forge": """\
+```forge
+<gh/glab subcommand>
+```
+Read-only GitHub/GitLab query in the active workspace (auto-detects `gh`/`glab`; say `pr ...` either way). Allowed: list, view, status, diff, checks - e.g. `pr list`, `pr view 12`, `issue view 5`, `repo view`. Mutating actions (create/comment/close/edit/review/merge/delete) are not available yet.""",
+
     "create_document": """\
 ```create_document
 <title>

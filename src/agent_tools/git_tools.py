@@ -29,12 +29,18 @@ _GIT_BLOCKED = frozenset({
     "config", "clone", "daemon", "gc", "submodule", "credential",
     "remote-add", "filter-branch", "update-ref", "fast-import",
 })
-# Path-redirecting global options that would escape the workspace.
-_GIT_BANNED_ARGS = frozenset({"-C", "--git-dir", "--work-tree", "--exec-path"})
+# Options that redirect git's working/output paths outside the workspace, on
+# ANY subcommand: -C/--git-dir/--work-tree/--exec-path (operate elsewhere),
+# --separate-git-dir (init the gitdir elsewhere), --output/--output-directory
+# (write elsewhere, e.g. diff/format-patch), --no-index (diff arbitrary paths).
+_GIT_BANNED_ARGS = frozenset({
+    "-C", "--git-dir", "--work-tree", "--exec-path",
+    "--separate-git-dir", "--output", "--output-directory", "--no-index",
+})
 # Flags accepted on fetch/pull. Anything else (incl. --upload-pack=...,
-# --receive-pack, --exec, -c) is rejected.
+# --receive-pack, --exec, -c, --all) is rejected.
 _FETCH_PULL_SAFE_FLAGS = frozenset({
-    "--ff-only", "--prune", "-p", "--tags", "--no-tags", "-t", "--all",
+    "--ff-only", "--prune", "-p", "--tags", "--no-tags", "-t",
 })
 _GIT_TIMEOUT = 60
 
@@ -42,9 +48,10 @@ _GIT_TIMEOUT = 60
 _FORGE_ALLOWED = frozenset({
     "pr", "mr", "issue", "repo", "release", "label", "milestone",
 })
-_FORGE_BLOCKED_SUBVERBS = frozenset({
-    "delete", "merge", "transfer", "archive", "rename", "fork", "sync",
-})
+# Read-only for now: the forge tool is deliberately narrow until a
+# confirmation/intent gate exists. Mutating verbs (create/comment/close/edit/
+# review/merge/delete/...) are rejected by construction (default-deny).
+_FORGE_READONLY_SUBVERBS = frozenset({"list", "view", "status", "diff", "checks"})
 _FORGE_TIMEOUT = 90
 
 
@@ -104,8 +111,14 @@ def _validate_fetch_pull(sub: str, rest: list) -> Optional[str]:
         elif _looks_like_url(tok):
             return f"git {sub}: URL targets are not allowed - use the configured 'origin'."
     positionals = [t for t in rest if not t.startswith("-")]
-    if positionals and positionals[0] != "origin":
-        return f"git {sub}: only the 'origin' remote is allowed."
+    if positionals:
+        if positionals[0] != "origin":
+            return f"git {sub}: only the 'origin' remote is allowed."
+        for ref in positionals[1:]:
+            # Plain branch names are fine (pull origin main); reject refspec
+            # forms that delete (:dst), force, or rewrite (+src:dst).
+            if ":" in ref or ref.startswith("+"):
+                return f"git {sub}: refspec forms (':' / '+') are not allowed - use a plain branch name."
     return None
 
 
@@ -119,10 +132,19 @@ def validate_git_argv(argv: list) -> Optional[str]:
         return f"git: subcommand '{sub}' is not allowed."
     rest = argv[1:]
     if any(a in _GIT_BANNED_ARGS or a.split("=", 1)[0] in _GIT_BANNED_ARGS for a in rest):
-        return "git: path-redirecting options (-C/--git-dir/--work-tree) are not allowed."
-    if sub == "remote" and rest and rest[0] not in ("-v", "--verbose", "show", "get-url"):
-        return ("git remote: only read-only forms allowed (remote, -v, show, get-url) - "
-                "mutating the remote is blocked.")
+        return ("git: path-redirecting options (-C/--git-dir/--work-tree/--separate-git-dir/"
+                "--output/--no-index) are not allowed - they can read or write outside the workspace.")
+    if sub == "remote":
+        # Read-only only. Check the SUBVERB (first non-flag token), not just
+        # rest[0], so a leading -v can't smuggle a mutating subverb
+        # (remote -v set-url origin URL). `show`/`get-url <name>` are allowed.
+        for a in rest:
+            if a.startswith("-") and a not in ("-v", "--verbose"):
+                return "git remote: only -v/--verbose is allowed with read-only remote forms."
+        subverbs = [a for a in rest if not a.startswith("-")]
+        if subverbs and subverbs[0] not in ("show", "get-url"):
+            return ("git remote: only read-only forms allowed (remote, -v, show, get-url); "
+                    "mutating the remote (add/set-url/remove/rename) is blocked.")
     if sub == "init" and any(not a.startswith("-") for a in rest):
         return "git init: a target path is not allowed - init operates on the workspace."
     if sub == "push":
@@ -218,8 +240,11 @@ async def run_forge(content: str, workspace: Optional[str], *, progress_cb=None,
     if top not in _FORGE_ALLOWED:
         return {"error": f"forge: '{top}' is not allowed (use pr/mr, issue, repo, release, label).", "exit_code": 1}
     subverb = argv[1].lower() if len(argv) > 1 else ""
-    if subverb in _FORGE_BLOCKED_SUBVERBS:
-        return {"error": f"forge: '{top} {subverb}' is not allowed (destructive). Use read/create forms (list, view, create, comment).", "exit_code": 1}
+    if subverb not in _FORGE_READONLY_SUBVERBS:
+        return {"error": (f"forge: '{top} {subverb or '(none)'}' is not allowed - the forge tool is "
+                          "read-only for now (list, view, status, diff, checks). Mutating actions "
+                          "(create, comment, close, edit, review, merge, delete) will return behind "
+                          "the confirmation/intent gate."), "exit_code": 1}
     return await _run_capped([cli_path, *argv], cwd=base, timeout=_FORGE_TIMEOUT,
                              progress_cb=progress_cb, subproc_env=subproc_env,
                              not_found_msg=f"forge: `{cli}` is not installed on the server.",
