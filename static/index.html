@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Odysseus Chat</title>
+  <title id="app-title">Odysseus</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="manifest" href="/static/manifest.json">
   <meta name="theme-color" content="#282c34">
@@ -656,6 +656,55 @@
 
     <!-- Tab: Branding -->
     <div id="theme-tab-branding" class="theme-tab-panel" style="display:none">
+      <div class="admin-card">
+        <h2><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15l-5-5L5 21"/></svg>Branding</h2>
+        <p style="opacity:0.6;font-size:0.85em;margin:-8px 0 16px;">Customize the app name, logo, icon and colors — perfect for whitelabel deployments.</p>
+        <div class="branding-form" style="display:flex;flex-direction:column;gap:14px;">
+          <div class="branding-field">
+            <label for="brand-app-name" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">App Name</label>
+            <input type="text" id="brand-app-name" placeholder="My App" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;">
+          </div>
+          <div class="branding-field">
+            <label for="brand-logo-url" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">Logo URL</label>
+            <input type="text" id="brand-logo-url" placeholder="https://example.com/logo.png or data:image/..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;">
+            <div class="brand-preview" id="brand-logo-preview" style="margin-top:6px;display:none;"><img src="" alt="Logo preview" style="max-height:48px;max-width:200px;border-radius:4px;"></div>
+            <div class="brand-upload-area">
+              <input type="file" id="brand-logo-upload" accept="image/png,image/jpeg,image/svg+xml,image/webp" style="display:none;">
+              <button type="button" id="brand-logo-upload-btn" class="brand-upload-btn" title="Upload logo from your device">📁 Upload Logo</button>
+              <span style="font-size:0.75em;opacity:0.4;">or paste URL above</span>
+            </div>
+          </div>
+          <div class="branding-field">
+            <label for="brand-icon-url" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">Favicon URL</label>
+            <input type="text" id="brand-icon-url" placeholder="https://example.com/favicon.ico" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;">
+            <div class="brand-preview" id="brand-icon-preview" style="margin-top:6px;display:none;"><img src="" alt="Icon preview" style="width:24px;height:24px;border-radius:3px;"></div>
+            <div class="brand-upload-area">
+              <input type="file" id="brand-icon-upload" accept="image/png,image/x-icon,image/svg+xml,image/vnd.microsoft.icon" style="display:none;">
+              <button type="button" id="brand-icon-upload-btn" class="brand-upload-btn" title="Upload icon from your device">📁 Upload Icon</button>
+              <span style="font-size:0.75em;opacity:0.4;">or paste URL above</span>
+            </div>
+            <div class="icon-gallery" id="brand-icon-gallery">
+              <span class="icon-gallery-label">Quick select:</span>
+            </div>
+          </div>
+          <div class="branding-field">
+            <label for="brand-footer" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">Footer Text <span style="opacity:0.5;">(e.g. "Powered by ...")</span></label>
+            <input type="text" id="brand-footer" placeholder="Powered by Odysseus" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;">
+          </div>
+          <div class="branding-field">
+            <label for="brand-color" style="display:block;font-size:0.85em;opacity:0.7;margin-bottom:4px;">Brand Color</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="color" id="brand-color-picker" value="#e06c75" style="width:40px;height:36px;padding:2px;border:1px solid var(--border);border-radius:6px;background:var(--bg);cursor:pointer;">
+              <input type="text" id="brand-color-text" placeholder="#e06c75" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.9em;font-family:monospace;">
+              <button class="color-reset-btn" id="brand-color-reset" title="Reset brand color" aria-label="Reset brand color">&#x21BA;</button>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <button id="branding-save-btn" style="flex:1;padding:10px;border:none;border-radius:8px;background:var(--accent,var(--red));color:var(--bg);font-weight:600;cursor:pointer;font-size:0.9em;">Save Branding</button>
+            <button id="branding-reset-btn" style="padding:10px 16px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--fg);cursor:pointer;font-size:0.9em;opacity:0.6;">Reset</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   </div>
@@ -697,6 +746,7 @@
     <div class="sidebar-header">
       <button class="sidebar-hamburger" id="sidebar-toggle-btn" title="Toggle sidebar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
       <div class="sidebar-brand" id="sidebar-brand-btn" style="cursor:pointer;" title="New chat">
+        <img id="sidebar-logo" class="sidebar-logo" src="" alt="" style="display:none;width:24px;height:24px;object-fit:contain;margin-right:6px;flex-shrink:0;">
         <span class="sidebar-brand-title">Vita Machina</span>
       </div>
     </div>
@@ -937,6 +987,7 @@
       </div>
     </div>
   </nav>
+    <div class="sidebar-footer" id="sidebar-footer" style="padding:8px 12px;font-size:0.75em;opacity:0.4;text-align:center;border-top:1px solid var(--border);margin-top:auto;"></div>
 
   <main class="chat-container welcome-active" id="chat-container" aria-label="Chat area" aria-busy="false">
     <!-- Persistent page heading for assistive tech. Visually hidden so it
@@ -948,7 +999,7 @@
       <button type="button" class="incognito-indicator" id="incognito-indicator" title="Nobody mode active — click to deactivate" style="display:none;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><line x1="8" y1="16" x2="16" y2="8"/><line x1="8" y1="8" x2="16" y2="16"/></svg></button>
       <div class="chat-meta-overlay"><span id="current-meta">Odysseus Chat</span><span id="current-meta-count" class="chat-meta-count" aria-hidden="true"></span><span id="session-cost-display" class="session-cost-display" style="display:none;"></span><span class="export-dropdown-wrap" id="export-dropdown-wrap"><button type="button" class="export-dl-btn" id="export-dl-btn" title="More"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button><div class="export-dropdown-menu" id="export-dropdown-menu"><div class="export-dropdown-item" id="export-rename-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span><span>Rename</span></div><div class="export-dropdown-item" id="export-copy-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span><span>Copy Chat</span></div><div class="export-dropdown-item" id="export-pdf-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2a1.5 1.5 0 0 1 0 3H9z"/></svg></span><span>PDF</span></div><div class="export-dropdown-item" id="export-doc-btn"><span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><span>Save to Documents</span></div></div></span></div>    </div>
     <div id="welcome-screen">
-      <div class="welcome-name"><svg class="welcome-boat" viewBox="0 0 32 32"><path d="M16 4L16 22L6 22Z" fill="currentColor"/><path d="M16 8L16 22L24 22Z" fill="currentColor" opacity="0.6"/><path d="M4 24Q10 20 16 24Q22 28 28 24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>Odysseus</div>
+      <div class="welcome-name"><img id="welcome-logo" class="welcome-logo" src="" alt="" style="display:none;width:28px;height:28px;vertical-align:middle;margin-right:6px;"><span id="welcome-brand-name">Odysseus</span></div>
       <div class="welcome-sub" id="welcome-sub">Welcome, <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">type /setup</span> to get started.</div>
       <div class="welcome-tip" id="welcome-tip"></div>
       <button type="button" class="incognito-btn" id="incognito-btn" title="Enable Nobody mode — no memory, no history saved">
@@ -2463,5 +2514,280 @@
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>
 <script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
+
+<!-- ── Branding loader ── -->
+<script nonce="{{CSP_NONCE}}">
+(async function() {
+  const ATTR = 'data-branding-loaded';
+  if (document.documentElement.getAttribute(ATTR)) return; // already loaded
+  document.documentElement.setAttribute(ATTR, 'true');
+
+  function applyBranding(cfg) {
+    // Title
+    const titleEl = document.getElementById('app-title');
+    if (titleEl && cfg.app_name) titleEl.textContent = cfg.app_name;
+
+    // Sidebar brand name
+    const brandTitle = document.querySelector('.sidebar-brand-title');
+    if (brandTitle && cfg.app_name) brandTitle.textContent = cfg.app_name;
+
+    // Sidebar logo
+    const logoEl = document.getElementById('sidebar-logo');
+    if (logoEl) {
+      if (cfg.app_logo) {
+        logoEl.src = cfg.app_logo;
+        logoEl.alt = (cfg.app_name || 'Logo') + ' logo';
+        logoEl.style.display = '';
+      } else {
+        logoEl.src = '';
+        logoEl.style.display = 'none';
+      }
+    }
+
+    // Favicon
+    if (cfg.app_icon) {
+      let fav = document.querySelector("link[rel='icon']");
+      if (fav) fav.href = cfg.app_icon;
+      let appleTouch = document.querySelector("link[rel='apple-touch-icon']");
+      if (appleTouch) appleTouch.href = cfg.app_icon;
+    }
+
+    // Welcome screen logo
+    const welcomeLogo = document.getElementById('welcome-logo');
+    if (welcomeLogo) {
+      if (cfg.app_logo) {
+        welcomeLogo.src = cfg.app_logo;
+        welcomeLogo.alt = (cfg.app_name || 'Logo') + ' logo';
+        welcomeLogo.style.display = 'inline-block';
+      } else {
+        welcomeLogo.src = '';
+        welcomeLogo.style.display = 'none';
+      }
+    }
+
+    // Welcome screen brand name
+    const welcomeName = document.getElementById('welcome-brand-name');
+    if (welcomeName && cfg.app_name) {
+      welcomeName.textContent = cfg.app_name;
+    }
+
+    // Footer
+    if (cfg.app_footer) {
+      let footerEl = document.getElementById("sidebar-footer");
+      if (footerEl) footerEl.textContent = cfg.app_footer;
+    }
+
+    // Brand color
+    if (cfg.brand_color) {
+      document.documentElement.style.setProperty('--brand-color', cfg.brand_color);
+    }
+
+    // Populate form fields if they exist
+    const nameInput = document.getElementById('brand-app-name');
+    const logoInput = document.getElementById('brand-logo-url');
+    const iconInput = document.getElementById('brand-icon-url');
+    const footerInput = document.getElementById('brand-footer');
+    const colorPicker = document.getElementById('brand-color-picker');
+    const colorText = document.getElementById('brand-color-text');
+    if (nameInput) nameInput.value = cfg.app_name || '';
+    if (logoInput) logoInput.value = cfg.app_logo || '';
+    if (iconInput) iconInput.value = cfg.app_icon || '';
+    if (footerInput) footerInput.value = cfg.app_footer || '';
+    if (colorPicker && cfg.brand_color) colorPicker.value = cfg.brand_color;
+    if (colorText) colorText.value = cfg.brand_color || '';
+  }
+
+  try {
+    const res = await fetch('/api/prefs/branding');
+    if (res.ok) {
+      const cfg = await res.json();
+      applyBranding(cfg);
+    }
+  } catch (e) {
+    console.warn('Branding load failed:', e);
+  }
+
+  // ── Wire up save/reset ──
+  const saveBtn = document.getElementById('branding-save-btn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async function() {
+      const data = {
+        app_name: document.getElementById('brand-app-name')?.value || '',
+        app_logo: document.getElementById('brand-logo-url')?.value || '',
+        app_icon: document.getElementById('brand-icon-url')?.value || '',
+        app_footer: document.getElementById('brand-footer')?.value || '',
+        brand_color: document.getElementById('brand-color-picker')?.value || '',
+      };
+      // Save each key individually via PUT
+      const keys = ['app_name', 'app_logo', 'app_icon', 'app_footer', 'brand_color'];
+      try {
+        for (const key of keys) {
+          await fetch('/api/prefs/' + key, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({value: data[key] || ''}),
+          });
+        }
+        applyBranding(data);
+        saveBtn.textContent = '✓ Saved!';
+        setTimeout(() => { saveBtn.textContent = 'Save Branding'; }, 2000);
+      } catch (e) {
+        console.error('Branding save failed:', e);
+        saveBtn.textContent = '✗ Failed';
+        setTimeout(() => { saveBtn.textContent = 'Save Branding'; }, 3000);
+      }
+    });
+  }
+
+  // Reset button
+  const resetBtn = document.getElementById('branding-reset-btn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', async function() {
+      try {
+        const keys = ['app_name', 'app_logo', 'app_icon', 'app_footer', 'brand_color'];
+        for (const key of keys) {
+          await fetch('/api/prefs/' + key, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({value: ''}),
+          });
+        }
+        // Reload branding from server defaults
+        const res = await fetch('/api/prefs/branding');
+        if (res.ok) {
+          const cfg = await res.json();
+          applyBranding(cfg);
+        }
+        resetBtn.textContent = '✓ Reset';
+        setTimeout(() => { resetBtn.textContent = 'Reset'; }, 2000);
+      } catch (e) {
+        console.error('Branding reset failed:', e);
+      }
+    });
+  }
+
+  // Live preview for logo URL
+  const logoInput = document.getElementById('brand-logo-url');
+  const logoPreview = document.getElementById('brand-logo-preview');
+  if (logoInput && logoPreview) {
+    logoInput.addEventListener('input', function() {
+      const url = this.value.trim();
+      if (url) {
+        logoPreview.querySelector('img').src = url;
+        logoPreview.style.display = '';
+      } else {
+        logoPreview.style.display = 'none';
+      }
+    });
+  }
+
+  // ── Logo upload (file → data URI) ──
+  const logoUploadBtn = document.getElementById("brand-logo-upload-btn");
+  const logoUploadInput = document.getElementById("brand-logo-upload");
+  if (logoUploadBtn && logoUploadInput) {
+    logoUploadBtn.addEventListener("click", function() { logoUploadInput.click(); });
+    logoUploadInput.addEventListener("change", function() {
+      const file = this.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const dataUri = e.target.result;
+        document.getElementById("brand-logo-url").value = dataUri;
+        document.getElementById("brand-logo-preview").querySelector("img").src = dataUri;
+        document.getElementById("brand-logo-preview").style.display = "";
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Live preview for icon URL
+  const iconInput = document.getElementById('brand-icon-url');
+  const iconPreview = document.getElementById('brand-icon-preview');
+  if (iconInput && iconPreview) {
+    iconInput.addEventListener('input', function() {
+      const url = this.value.trim();
+      if (url) {
+        iconPreview.querySelector('img').src = url;
+        iconPreview.style.display = '';
+      } else {
+        iconPreview.style.display = 'none';
+      }
+    });
+
+  // ── Icon upload (file → data URI) ──
+  const iconUploadBtn = document.getElementById("brand-icon-upload-btn");
+  const iconUploadInput = document.getElementById("brand-icon-upload");
+  if (iconUploadBtn && iconUploadInput) {
+    iconUploadBtn.addEventListener("click", function() { iconUploadInput.click(); });
+    iconUploadInput.addEventListener("change", function() {
+      const file = this.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const dataUri = e.target.result;
+        document.getElementById("brand-icon-url").value = dataUri;
+        document.getElementById("brand-icon-preview").querySelector("img").src = dataUri;
+        document.getElementById("brand-icon-preview").style.display = "";
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ── Icon gallery ──
+  (function() {
+    const gallery = document.getElementById("brand-icon-gallery");
+    if (!gallery) return;
+    const icons = [
+      { name: "Default",  url: "" },
+      { name: "V",        url: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23e06c75%22/%3E%3Ctext x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2240%22 font-weight=%22bold%22 font-family=%22sans-serif%22%3EV%3C/text%3E%3C/svg%3E" },
+      { name: "M",        url: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%2361afef%22/%3E%3Ctext x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2240%22 font-weight=%22bold%22 font-family=%22sans-serif%22%3EM%3C/text%3E%3C/svg%3E" },
+      { name: "Star",     url: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23e5c07b%22/%3E%3Ctext x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2240%22%3E%E2%98%85%3C/text%3E%3C/svg%3E" },
+      { name: "Bot",      url: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%2356b6c2%22/%3E%3Ctext x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2235%22%3E%E2%99%AF%3C/text%3E%3C/svg%3E" },
+      { name: "Brain",    url: "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2245%22 fill=%22%23c678dd%22/%3E%3Ctext x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22white%22 font-size=%2235%22%3E%E2%A7%AE%3C/text%3E%3C/svg%3E" },
+    ];
+    icons.forEach(function(icon) {
+      const item = document.createElement("div");
+      item.className = "icon-gallery-item";
+      if (icon.url) {
+        item.innerHTML = "<img src=\"" + icon.url + "\" alt=\"" + icon.name + "\" title=\"" + icon.name + "\">";
+      } else {
+        item.innerHTML = "<div class=\"icon-placeholder\" title=\"No icon\">" + icon.name[0] + "</div>";
+      }
+      item.addEventListener("click", function() {
+        gallery.querySelectorAll(".icon-gallery-item").forEach(function(el) { el.classList.remove("selected"); });
+        item.classList.add("selected");
+        document.getElementById("brand-icon-url").value = icon.url;
+        var prev = document.getElementById("brand-icon-preview");
+        if (icon.url) {
+          prev.querySelector("img").src = icon.url;
+          prev.style.display = "";
+        } else {
+          prev.style.display = "none";
+        }
+      });
+      if (!icon.url) item.classList.add("selected");
+      gallery.appendChild(item);
+    });
+  })();
+  }
+
+  // Sync color picker <-> text
+  const colorPicker = document.getElementById('brand-color-picker');
+  const colorText = document.getElementById('brand-color-text');
+  const colorReset = document.getElementById('brand-color-reset');
+  if (colorPicker && colorText) {
+    colorPicker.addEventListener('input', function() { colorText.value = this.value; });
+    colorText.addEventListener('input', function() {
+      if (/^#[0-9a-f]{6}$/i.test(this.value)) colorPicker.value = this.value;
+    });
+    if (colorReset) {
+      colorReset.addEventListener('click', function() {
+        colorPicker.value = '#e06c75';
+        colorText.value = '#e06c75';
+      });
+    }
+  }
+})();
+</script>
 </body>
 </html>
