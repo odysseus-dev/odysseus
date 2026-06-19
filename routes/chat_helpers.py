@@ -912,6 +912,63 @@ def prepare_agent_response_for_save(
     )
 
 
+def prepare_stopped_agent_response_for_save(
+    full_response: str,
+    last_metrics: dict | None = None,
+    *,
+    observed_round_texts: list | None = None,
+    observed_tool_events: list | None = None,
+    final_response: str = "",
+    stop_reason: str = "",
+    model: str = "",
+    requested_model: str = "",
+) -> tuple[str, dict]:
+    """Return display content + metadata for an interrupted agent turn.
+
+    Agent partial text is often process chatter rather than an answer. When an
+    agent is stopped before an `agent_final` event, save an empty visible
+    placeholder and preserve process details in metadata for the collapsed
+    Process panel instead of promoting the partial process text to the reply.
+    """
+    metadata = dict(last_metrics) if isinstance(last_metrics, dict) else {}
+
+    if observed_round_texts and not isinstance(metadata.get("round_texts"), list):
+        metadata["round_texts"] = [
+            text for text in observed_round_texts
+            if isinstance(text, str)
+        ]
+    if observed_tool_events and not isinstance(metadata.get("tool_events"), list):
+        metadata["tool_events"] = [
+            dict(event) for event in observed_tool_events
+            if isinstance(event, dict)
+        ]
+
+    metadata["stopped"] = True
+    reason = str(stop_reason or "").strip()
+    if reason:
+        metadata["stop_reason"] = reason
+        if reason in {"idle_timeout", "wall_clock_timeout"}:
+            metadata["timed_out"] = True
+        if reason == "user_stop":
+            metadata["cancelled"] = True
+    if model and not metadata.get("model"):
+        metadata["model"] = model
+    if requested_model and not metadata.get("requested_model"):
+        metadata["requested_model"] = requested_model
+
+    visible_final = str(final_response or "").strip()
+    if visible_final:
+        metadata["agent_final_response"] = visible_final
+        return visible_final, metadata
+
+    raw_partial = str(full_response or "")
+    metadata["agent_stopped_before_final"] = True
+    if raw_partial.strip():
+        metadata["agent_partial_response_hidden"] = True
+        metadata["agent_accumulated_response_chars"] = len(raw_partial)
+    return "", metadata
+
+
 _FILE_MUTATION_REQUEST_RE = re.compile(
     r"\b(copy|create|write|append|edit|modify|replace|rename|move|save|"
     r"update|change|delete)\b",

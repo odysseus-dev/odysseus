@@ -448,6 +448,20 @@ def test_timeout_stopped_bubble_does_not_offer_continue():
     assert "if (!metadata.cancelled && !timedOut && !lostAfterRestart && !runFailed)" in src
 
 
+def test_stopped_agent_placeholder_hides_process_as_final_answer():
+    renderer = (Path(__file__).resolve().parents[1] / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")
+    routes = (Path(__file__).resolve().parents[1] / "routes" / "chat_routes.py").read_text(encoding="utf-8")
+
+    assert "prepare_stopped_agent_response_for_save" in routes
+    assert "_agent_round_texts.append" in routes
+    assert "_agent_tool_events.append" in routes
+    assert "_agent_final_text = str(data.get(\"text\") or \"\")" in routes
+    assert "metadata?.agent_stopped_before_final) return ''" in renderer
+    assert "metadata?.agent_stopped_before_final && !metadata?.agent_final_response" in renderer
+    assert "[Agent stopped before final answer]" in renderer
+    assert "Continue the interrupted agent task from the existing process state" in renderer
+
+
 def test_durable_terminal_run_status_renders_on_session_reload():
     sessions = (Path(__file__).resolve().parents[1] / "static" / "js" / "sessions.js").read_text(encoding="utf-8")
     renderer = (Path(__file__).resolve().parents[1] / "static" / "js" / "chatRenderer.js").read_text(encoding="utf-8")

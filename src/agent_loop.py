@@ -3018,7 +3018,7 @@ async def stream_agent_loop(
                 output_text = _truncate(result["error"])
 
             # Emit tool_output (include ui_event data if present)
-            tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code")}
+            tool_output_data = {"type": "tool_output", "tool": block.tool_type, "command": cmd_display, "output": output_text, "exit_code": result.get("exit_code"), "round": round_num}
             if "ui_event" in result:
                 tool_output_data["ui_event"] = result["ui_event"]
                 for k in ("toggle_name", "state", "mode", "model", "endpoint_url", "theme_name", "colors"):

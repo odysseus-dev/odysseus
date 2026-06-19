@@ -38,6 +38,7 @@ from routes.chat_helpers import (
     run_post_response_tasks,
     clean_thinking_for_save,
     prepare_agent_response_for_save,
+    prepare_stopped_agent_response_for_save,
     _enforce_chat_privileges,
 )
 from src.action_intents import classify_tool_intent as _classify_tool_intent
@@ -1267,6 +1268,9 @@ def setup_chat_routes(
                 _answered_by = None  # set if the selected model failed and a fallback answered
                 _requested_model = sess.model
                 _actual_model = None
+                _agent_round_texts = []
+                _agent_tool_events = []
+                _agent_final_text = ""
                 try:
                     from src.settings import get_setting
                     from src.agent_tools import MAX_AGENT_ROUNDS as _DEFAULT_ROUNDS
@@ -1327,6 +1331,17 @@ def setup_chat_routes(
                                         _agent_rounds = max(_agent_rounds, data.get("round", 1))
                                     elif data.get("type") == "tool_start":
                                         _agent_tool_calls += 1
+                                    elif data.get("type") == "agent_process":
+                                        _agent_round_texts.append(str(data.get("text") or ""))
+                                    elif data.get("type") == "agent_final":
+                                        _agent_final_text = str(data.get("text") or "")
+                                        _agent_round_texts.append(_agent_final_text)
+                                    elif data.get("type") == "tool_output":
+                                        _tool_event = {
+                                            key: value for key, value in data.items()
+                                            if key not in {"type", "ui_event"}
+                                        }
+                                        _agent_tool_events.append(_tool_event)
                                     yield chunk
                                 elif data.get("type") == "fallback":
                                     # Selected model failed; a fallback answered.
@@ -1391,21 +1406,23 @@ def setup_chat_routes(
                     # outer finally from running and left _active_streams
                     # with a stale entry).
                     try:
-                        if full_response:
-                            logger.info("Client disconnected mid-stream for session %s, saving partial response (%d chars)", session, len(full_response))
-                            _stopped_content2, _stopped_md2 = clean_thinking_for_save(
+                        _stop_reason2 = agent_runs.get_stop_reason(session)
+                        if full_response or _agent_round_texts or _agent_tool_events:
+                            logger.info("Client disconnected mid-agent-stream for session %s, saving stopped placeholder (%d chars hidden)", session, len(full_response))
+                            _stopped_content2, _stopped_md2 = prepare_stopped_agent_response_for_save(
                                 full_response,
-                                {
-                                    "stopped": True,
-                                    "model": _actual_model or _answered_by or _requested_model,
-                                    "requested_model": _requested_model,
-                                },
+                                last_metrics,
+                                observed_round_texts=_agent_round_texts,
+                                observed_tool_events=_agent_tool_events,
+                                final_response=_agent_final_text,
+                                stop_reason=_stop_reason2,
+                                model=_actual_model or _answered_by or _requested_model,
+                                requested_model=_requested_model,
                             )
                             sess.add_message(ChatMessage("assistant", _stopped_content2, metadata=_stopped_md2))
                             if not incognito:
                                 session_manager.save_sessions()
                         else:
-                            _stop_reason2 = agent_runs.get_stop_reason(session)
                             if _stop_reason2:
                                 _save_cancelled_stream_placeholder(
                                     session_manager,

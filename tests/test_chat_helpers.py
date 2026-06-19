@@ -6,6 +6,7 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     needs_auto_name,
     prepare_agent_response_for_save,
+    prepare_stopped_agent_response_for_save,
     save_assistant_response,
 )
 
@@ -417,6 +418,52 @@ def test_prepare_agent_response_for_save_keeps_honest_blocked_file_answer():
 
     assert content == "I couldn't create README_copy.txt because write_file failed."
     assert "agent_file_mutation_verification_failed" not in metadata
+
+
+def test_prepare_stopped_agent_response_hides_process_without_final():
+    content, metadata = prepare_stopped_agent_response_for_save(
+        "I will inspect the workspace.\nRunning ls...",
+        None,
+        observed_round_texts=["I will inspect the workspace."],
+        observed_tool_events=[{
+            "round": 1,
+            "tool": "ls",
+            "command": ".",
+            "output": "README.txt",
+            "exit_code": 0,
+        }],
+        stop_reason="idle_timeout",
+        model="actual-model",
+        requested_model="requested-model",
+    )
+
+    assert content == ""
+    assert metadata["stopped"] is True
+    assert metadata["timed_out"] is True
+    assert metadata["stop_reason"] == "idle_timeout"
+    assert metadata["agent_stopped_before_final"] is True
+    assert metadata["agent_partial_response_hidden"] is True
+    assert metadata["agent_accumulated_response_chars"] == len("I will inspect the workspace.\nRunning ls...")
+    assert metadata["round_texts"] == ["I will inspect the workspace."]
+    assert metadata["tool_events"][0]["round"] == 1
+    assert metadata["model"] == "actual-model"
+    assert metadata["requested_model"] == "requested-model"
+    assert "agent_final_response" not in metadata
+
+
+def test_prepare_stopped_agent_response_preserves_seen_final():
+    content, metadata = prepare_stopped_agent_response_for_save(
+        "process text\nFinal answer.",
+        {"tool_events": [{"tool": "bash"}], "round_texts": ["process text", "Final answer."]},
+        final_response="Final answer.",
+        stop_reason="user_stop",
+    )
+
+    assert content == "Final answer."
+    assert metadata["agent_final_response"] == "Final answer."
+    assert metadata["stopped"] is True
+    assert metadata["cancelled"] is True
+    assert "agent_stopped_before_final" not in metadata
 
 
 def test_save_assistant_response_preserves_actual_and_requested_model():

@@ -1987,6 +1987,7 @@ export function getAgentFinalResponse(fallbackContent, metadata) {
     ? metadata.agent_final_response.trim()
     : '';
   if (explicit) return explicit;
+  if (metadata?.agent_stopped_before_final) return '';
 
   const roundTexts = Array.isArray(metadata?.round_texts) ? metadata.round_texts : [];
   for (let i = roundTexts.length - 1; i >= 0; i--) {
@@ -1997,6 +1998,7 @@ export function getAgentFinalResponse(fallbackContent, metadata) {
 }
 
 function _agentFinalRoundIndex(metadata) {
+  if (metadata?.agent_stopped_before_final && !metadata?.agent_final_response) return -1;
   const roundTexts = Array.isArray(metadata?.round_texts) ? metadata.round_texts : [];
   const finalText = getAgentFinalResponse('', metadata).trim();
   for (let i = roundTexts.length - 1; i >= 0; i--) {
@@ -2514,6 +2516,7 @@ export function addMessage(role, content, modelName, metadata) {
         metadata.stop_reason === 'server_restart';
       const runFailed = metadata.run_status === 'error' ||
         metadata.stop_reason === 'error';
+      const stoppedBeforeFinal = !!metadata.agent_stopped_before_final;
       // Differentiate between "stopped mid-stream" (had content, can continue)
       // and "cancelled before any content" — the latter has no Continue affordance.
       stoppedLabel.textContent = timedOut
@@ -2522,6 +2525,8 @@ export function addMessage(role, content, modelName, metadata) {
         ? '[Agent stopped after server restart]'
         : runFailed
         ? '[Agent run failed]'
+        : stoppedBeforeFinal
+        ? '[Agent stopped before final answer]'
         : metadata.cancelled
         ? '[Cancelled by user]'
         : '[Message interrupted]';
@@ -2542,7 +2547,9 @@ export function addMessage(role, content, modelName, metadata) {
             const cutoff = rawText;
             const msgInput = document.getElementById('message');
             if (msgInput) {
-              msgInput.value = 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
+              msgInput.value = stoppedBeforeFinal
+                ? 'Continue the interrupted agent task from the existing process state. Do not repeat completed tool work; finish the task and provide the final answer.'
+                : 'Your previous response was interrupted. It ended with:\n\n' + cutoff.slice(-500) + '\n\nDo NOT repeat what you already said. Continue exactly from where you were cut off.';
               const sb = document.querySelector('.send-btn');
               if (sb) sb.click();
             }
