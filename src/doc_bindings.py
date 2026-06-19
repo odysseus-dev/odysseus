@@ -211,6 +211,15 @@ def sync_doc_bindings(auth_manager: Any, rag_manager: Any, personal_docs_manager
         return []
 
     if rag_manager is None:
+        try:
+            from src.rag_singleton import get_rag_manager
+            rag_manager = get_rag_manager()
+            if rag_manager is not None and personal_docs_manager is not None:
+                setattr(personal_docs_manager, "rag_manager", rag_manager)
+        except Exception as exc:
+            logger.warning("Document binding RAG retry failed: %s", exc)
+
+    if rag_manager is None:
         logger.warning("Document bindings configured but RAG manager is not available")
         return bindings
 
