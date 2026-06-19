@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-visual">
+<title>clawagent — Odysseus</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 4L16 22L6 22Z' fill='%23e06c75'/%3E%3Cpath d='M16 8L16 22L24 22Z' fill='%23e06c75' opacity='0.6'/%3E%3Cpath d='M4 24Q10 20 16 24Q22 28 28 24' stroke='%23e06c75' stroke-width='2.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column;
+    background: var(--bg, #1a1b1e);
+    color: var(--fg, #e6e6e6);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .claw-bar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 14px; flex-shrink: 0;
+    background: var(--sidebar-bg, rgba(30, 31, 34, 0.7));
+    border-bottom: 1px solid var(--bubble-border, rgba(255, 255, 255, 0.08));
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  }
+  .claw-back {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: inherit; text-decoration: none;
+    padding: 5px 11px; border-radius: 9px;
+    border: 1px solid var(--bubble-border, rgba(255, 255, 255, 0.12));
+    background: var(--input-bg, rgba(255, 255, 255, 0.04));
+    font-size: 13px; line-height: 1; transition: background 0.15s ease;
+  }
+  .claw-back:hover { background: var(--send-btn-hover, rgba(255, 255, 255, 0.1)); }
+  .claw-title {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.3px;
+    opacity: 0.85; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .claw-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--section-accent, #e06c75);
+    box-shadow: 0 0 8px var(--section-accent, #e06c75);
+  }
+  .claw-frame-wrap { flex: 1; min-height: 0; position: relative; }
+  .claw-frame { width: 100%; height: 100%; border: 0; display: block; }
+  .claw-empty {
+    margin: auto; max-width: 460px; padding: 40px 28px; text-align: center;
+  }
+  .claw-empty h1 { font-size: 18px; margin: 0 0 10px; }
+  .claw-empty p { font-size: 13.5px; line-height: 1.6; opacity: 0.75; margin: 8px 0; }
+  .claw-empty code {
+    background: var(--code-bg, rgba(255, 255, 255, 0.08));
+    padding: 2px 6px; border-radius: 5px; font-size: 12.5px;
+  }
+</style>
+</head>
+<body>
+  <div class="claw-bar">
+    <a class="claw-back" href="/" title="Back to Odysseus">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      Odysseus
+    </a>
+    <span class="claw-title"><span class="claw-dot"></span>clawagent — Mission Control</span>
+  </div>
+  <div class="claw-frame-wrap">
+    {{CLAWAGENT_BODY}}
+  </div>
+</body>
+</html>
