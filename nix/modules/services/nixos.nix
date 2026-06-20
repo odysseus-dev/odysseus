@@ -20,12 +20,26 @@ let
     curl
     git
   ];
-  inherit (lib) mkIf mkOption types optionalAttrs;
+  inherit (lib)
+    mkIf
+    mkOption
+    types
+    optionalAttrs
+    ;
 in
 {
-  options.services.odysseus = import ./options.nix { inherit src config lib pkgs; } // {
-    openFirewall = lib.mkEnableOption "opening the firewall for the Odysseus app port";
-  };
+  options.services.odysseus =
+    import ./options.nix {
+      inherit
+        src
+        config
+        lib
+        pkgs
+        ;
+    }
+    // {
+      openFirewall = lib.mkEnableOption "opening the firewall for the Odysseus app port";
+    };
 
   config = mkIf cfg.enable {
     users.users.${cfg.user} = {
@@ -33,9 +47,25 @@ in
       group = cfg.group;
       home = cfg.dataDir;
       createHome = true;
+      # tmux spawns pane processes via the user's login shell (getpwnam),
+      # and Cookbook runs its download/serve jobs in tmux panes. NixOS
+      # defaults the shell to nologin for system users, which kills every
+      # pane immediately ("This account is currently not available."),
+      # so set an interactive shell explicitly.
+      shell = pkgs.bashInteractive;
       description = "Odysseus service user";
     };
     users.groups.${cfg.group} = { };
+
+    # The Cookbook download/serve wrappers are generated with a
+    # `#!/bin/bash` shebang (routes/cookbook_routes.py), but NixOS only
+    # ships /bin/sh — no /bin/bash — so the kernel rejects the shebang
+    # and the wrapper exits before running. Symlink /bin/bash to the
+    # nixpkgs binary so those scripts work until they move to
+    # `#!/usr/bin/env bash` (a separate, app-side change).
+    systemd.tmpfiles.rules = [
+      "L+ /bin/bash - - - - ${pkgs.bash}/bin/bash"
+    ];
 
     assertions = [
       {
