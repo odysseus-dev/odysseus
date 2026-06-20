@@ -23343,7 +23343,7 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   background: var(--panel) !important;
   border: 1px solid var(--border) !important;
   border-radius: 8px !important;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.3) !important;
   backdrop-filter: none !important;
 }
 .sort-dropdown-item {

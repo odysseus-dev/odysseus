@@ -861,12 +861,18 @@ export function renderMemoryList() {
         // Close any other open dropdowns
         document.querySelectorAll('.memory-item-dropdown').forEach(d => d.remove());
         const rect = menuBtn.getBoundingClientRect();
-        dropdown.style.position = 'fixed';
-        dropdown.style.top = rect.bottom + 2 + 'px';
-        dropdown.style.right = (window.innerWidth - rect.right) + 'px';
-        dropdown.style.left = 'auto';
-        dropdown.style.zIndex = '10001';
-        dropdown.style.display = 'block';
+        const modal = document.getElementById('memory-modal');
+        const modalZIndex = modal ? window.getComputedStyle(modal).zIndex : '999999';
+
+        Object.assign(dropdown.style, {
+          position: 'fixed',
+          top: `${rect.bottom + 2}px`,
+          right: `${window.innerWidth - rect.right}px`,
+          left: 'auto',
+          zIndex: modalZIndex,
+          display: 'block'
+        });
+        
         document.body.appendChild(dropdown);
         // Keep on-screen (mobile): flip above the button if it overflows the
         // bottom, clamp the left edge, cap height as a last resort.

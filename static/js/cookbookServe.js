@@ -467,8 +467,25 @@ function _rerenderCachedModels() {
       cancelDiv.innerHTML = _di(_cancelIco) + '<span>Cancel</span>';
       cancelDiv.addEventListener('click', () => { closeDropdown(); });
       dropdown.appendChild(cancelDiv);
+
       const rect = btn.getBoundingClientRect();
-      dropdown.style.cssText = `position:fixed;z-index:10001;visibility:hidden;top:0;right:${window.innerWidth-rect.right}px;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 8px 24px rgba(0,0,0,0.3);font-size:12px;`;
+      const cookbookModal = document.getElementById('cookbook-modal');
+      const modalZIndex = cookbookModal ? window.getComputedStyle(cookbookModal).zIndex : '999999';
+
+      Object.assign(dropdown.style, {
+        position: 'fixed',
+        zIndex: modalZIndex,
+        visibility: 'hidden',
+        top: '0',
+        right: `${window.innerWidth - rect.right}px`,
+        background: 'var(--panel)',
+        border: '1px solid var(--border)',
+        borderRadius: '8px',
+        padding: '4px',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+        fontSize: '12px'
+      });
+      
       document.body.appendChild(dropdown);
       // Clamp into the VISIBLE area (visualViewport, not innerHeight — they differ
       // on mobile under the dynamic toolbar). Flip above the button if there's no

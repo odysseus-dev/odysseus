@@ -195,8 +195,8 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
   function _showLibDropdown(anchor, items, opts) {
     opts = opts || {};
     document.querySelectorAll('._lib-dd').forEach(dismissOrRemove);
-    const dd = document.createElement('div');
-    dd.className = 'dropdown session-dropdown-menu _lib-dd';
+    const dropdown = document.createElement('div');
+    dropdown.className = 'dropdown session-dropdown-menu _lib-dd';
     for (const item of items) {
       const row = document.createElement('div');
       row.className = 'dropdown-item-compact' + (item.danger ? ' dropdown-item-danger' : '');
@@ -204,7 +204,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       const iconSvg = _LIB_DD_ICONS[iconKey] || '';
       row.innerHTML = (iconSvg ? '<span class="dropdown-icon">' + iconSvg + '</span>' : '') + '<span>' + item.label + '</span>';
       row.addEventListener('click', (e) => { e.stopPropagation(); teardown(); item.action(); });
-      dd.appendChild(row);
+      dropdown.appendChild(row);
     }
     if (typeof opts.onSelect === 'function') {
       const sel = document.createElement('div');
@@ -213,7 +213,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         '<span class="dropdown-icon"><span style="font-size:16px;line-height:1;position:relative;top:-2px;">●</span></span>'
         + '<span>Select</span>';
       sel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); opts.onSelect(); });
-      dd.appendChild(sel);
+      dropdown.appendChild(sel);
     }
     const cancel = document.createElement('div');
     cancel.className = 'dropdown-item-compact dropdown-cancel-mobile';
@@ -221,19 +221,21 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
       '<span class="dropdown-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>'
       + '<span>Cancel</span>';
     cancel.addEventListener('click', (e) => { e.stopPropagation(); teardown(); if (typeof opts.onCancel === 'function') opts.onCancel(); });
-    dd.appendChild(cancel);
-    document.body.appendChild(dd);
+    dropdown.appendChild(cancel);
+    document.body.appendChild(dropdown);
     const rect = anchor.getBoundingClientRect();
-    dd.style.right = (window.innerWidth - rect.right) + 'px';
-    dd.style.top = (rect.bottom + 2) + 'px';
-    dd.style.display = 'block';
-    dd.style.zIndex = '100000';
+    const doclibModal = document.getElementById('doclib-modal');
+    dropdown.style.right = `${window.innerWidth - rect.right}px`;
+    dropdown.style.top = `${rect.bottom + 2}px`;
+    dropdown.style.display = 'block';
+    dropdown.style.zIndex = doclibModal ? window.getComputedStyle(doclibModal).zIndex : '999999';
+    
     requestAnimationFrame(() => {
-      const mr = dd.getBoundingClientRect();
+      const mr = dropdown.getBoundingClientRect();
       if (mr.bottom > window.innerHeight - 8) {
-        dd.style.top = (rect.top - mr.height - 2) + 'px';
+        dropdown.style.top = (rect.top - mr.height - 2) + 'px';
       }
-      if (mr.left < 8) { dd.style.left = '8px'; dd.style.right = 'auto'; }
+      if (mr.left < 8) { dropdown.style.left = '8px'; dropdown.style.right = 'auto'; }
     });
     // Single idempotent teardown shared by every dismissal path (item click,
     // outside click, swipe, and the Escape arbiter via registerMenuDismiss).
@@ -241,51 +243,51 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     const teardown = () => {
       _unreg(); _unreg = () => {};
       document.removeEventListener('click', close);
-      dd.remove();
+      dropdown.remove();
     };
-    const close = (e) => { if (!dd.contains(e.target)) teardown(); };
+    const close = (e) => { if (!dropdown.contains(e.target)) teardown(); };
     setTimeout(() => document.addEventListener('click', close), 0);
     _unreg = registerMenuDismiss(teardown);
-    dd._dismiss = teardown;   // let bulk removers (reopen sweep) tear down cleanly
+    dropdown._dismiss = teardown;   // let bulk removers (reopen sweep) tear down cleanly
 
     // Swipe-down-to-dismiss (mobile). Mirrors the bottom-sheet feel — drag the
     // popup down and release past the threshold to close. Below threshold,
     // snap back. Vertical-only; horizontal flicks fall through to scrolling.
     let _swipeStart = null;
     let _swipeDy = 0;
-    dd.addEventListener('touchstart', (e) => {
+    dropdown.addEventListener('touchstart', (e) => {
       if (e.touches.length !== 1) return;
       _swipeStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
       _swipeDy = 0;
-      dd.style.transition = '';
+      dropdown.style.transition = '';
     }, { passive: true });
-    dd.addEventListener('touchmove', (e) => {
+    dropdown.addEventListener('touchmove', (e) => {
       if (!_swipeStart || e.touches.length !== 1) return;
       const dx = e.touches[0].clientX - _swipeStart.x;
       const dy = e.touches[0].clientY - _swipeStart.y;
       if (Math.abs(dy) < Math.abs(dx)) { _swipeStart = null; return; }
       if (dy > 0) {
         _swipeDy = dy;
-        dd.style.transform = 'translateY(' + dy + 'px)';
-        dd.style.opacity = String(Math.max(0.3, 1 - dy / 240));
+        dropdown.style.transform = 'translateY(' + dy + 'px)';
+        dropdown.style.opacity = String(Math.max(0.3, 1 - dy / 240));
       }
     }, { passive: true });
-    dd.addEventListener('touchend', () => {
+    dropdown.addEventListener('touchend', () => {
       if (!_swipeStart) return;
       _swipeStart = null;
       if (_swipeDy > 60) {
-        dd.style.transition = 'transform 0.15s ease, opacity 0.15s ease';
-        dd.style.transform = 'translateY(120px)';
-        dd.style.opacity = '0';
+        dropdown.style.transition = 'transform 0.15s ease, opacity 0.15s ease';
+        dropdown.style.transform = 'translateY(120px)';
+        dropdown.style.opacity = '0';
         // Unregister + drop the outside-click listener now; defer the DOM
         // removal so the slide-out animation can play.
         _unreg(); _unreg = () => {};
         document.removeEventListener('click', close);
-        setTimeout(() => dd.remove(), 160);
+        setTimeout(() => dropdown.remove(), 160);
       } else {
-        dd.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
-        dd.style.transform = '';
-        dd.style.opacity = '';
+        dropdown.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
+        dropdown.style.transform = '';
+        dropdown.style.opacity = '';
       }
     });
   }
@@ -627,12 +629,29 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         } else {
           // Position fixed on body to escape overflow clipping
           const rect = menuBtn.getBoundingClientRect();
+          const doclibModal = document.getElementById('doclib-modal');
+          const modalZIndex = doclibModal ? window.getComputedStyle(doclibModal).zIndex : '999999';
           document.body.appendChild(dropdown);
           dropdown.dataset.owner = doc.id;
-          dropdown.style.cssText = 'position:fixed;z-index:10000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;display:block;';
-          dropdown.style.top = (rect.bottom + 4) + 'px';
-          dropdown.style.left = 'auto';
-          dropdown.style.right = (window.innerWidth - rect.right) + 'px';
+          
+          Object.assign(dropdown.style, {
+            position: 'fixed',
+            zIndex: modalZIndex,
+            minWidth: '0',
+            width: 'max-content',
+            padding: '4px',
+            background: 'var(--panel)',
+            border: '1px solid var(--border)',
+            borderRadius: '8px',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+            backdropFilter: 'blur(12px)',
+            fontSize: '12px',
+            display: 'block',
+            top: `${rect.bottom + 4}px`,
+            left: 'auto',
+            right: `${window.innerWidth - rect.right}px`
+          });
+          
           // Clamp to viewport
           requestAnimationFrame(() => {
             const mr = dropdown.getBoundingClientRect();
@@ -652,8 +671,26 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
 
     // Dropdown menu
     const dropdown = document.createElement('div');
+    const doclib = document.getElementById('doclib-modal');
+    const modalZIndex = doclib ? window.getComputedStyle(doclib).zIndex : '999999';
     dropdown.className = 'doclib-card-dropdown';
-    dropdown.style.cssText = 'display:none;position:absolute;top:100%;right:0;z-index:1000;min-width:0;width:max-content;padding:4px;background:var(--panel);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);backdrop-filter:blur(12px);font-size:12px;';
+    
+    Object.assign(dropdown.style, {
+      display: 'none',
+      position: 'absolute',
+      top: '100%',
+      right: '0',
+      zIndex: modalZIndex,
+      minWidth: '0',
+      width: 'max-content',
+      padding: '4px',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: '8px',
+      boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+      backdropFilter: 'blur(12px)',
+      fontSize: '12px'
+    });
 
     // Single close path for the card action dropdown, shared by the toggle
     // button, the outside-click listener, every menu item, and the Escape

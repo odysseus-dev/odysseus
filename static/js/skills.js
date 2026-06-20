@@ -436,6 +436,7 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   menu.appendChild(cancelItem);
 
   document.body.appendChild(menu);
+  
   const r = btn.getBoundingClientRect();
   menu.style.top = (r.bottom + 4) + 'px';
   menu.style.right = Math.max(6, window.innerWidth - r.right) + 'px';
@@ -448,11 +449,16 @@ function _openSkillMenu(btn, card, sk, name, isPublished) {
   if (mr.left < 6) {
     menu.style.right = Math.max(6, window.innerWidth - 6 - mr.width) + 'px';
   }
+  
   const mr2 = menu.getBoundingClientRect();
   if (mr2.bottom > window.innerHeight - 6) {
     menu.style.maxHeight = Math.max(80, window.innerHeight - 12 - mr2.top) + 'px';
     menu.style.overflowY = 'auto';
   }
+  
+  const memoryModal = document.getElementById('memory-modal');
+  menu.style.zIndex = memoryModal ? window.getComputedStyle(memoryModal).zIndex : '999999';
+  
   const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('click', close, true); } };
   setTimeout(() => document.addEventListener('click', close, true), 0);
 }

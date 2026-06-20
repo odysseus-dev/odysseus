@@ -893,9 +893,22 @@ function _attachTaskLongPress(card, menuBtn) {
 function _showTaskDropdown(anchor, items) {
   // Remove any existing dropdown
   document.querySelectorAll('.task-dropdown').forEach(d => d.remove());
-  const dd = document.createElement('div');
-  dd.className = 'task-dropdown';
-  dd.style.cssText = 'position:fixed;z-index:100000;background:var(--panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.3);padding:4px;min-width:120px;';
+  const dropdown = document.createElement('div');
+  const tasksModal = document.getElementById('tasks-modal');
+  const modalZIndex = tasksModal ? window.getComputedStyle(tasksModal).zIndex : '999999';
+  dropdown.className = 'task-dropdown';
+
+  Object.assign(dropdown.style, {
+    position: 'fixed',
+    zIndex: modalZIndex,
+    background: 'var(--panel)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+    padding: '4px',
+    minWidth: '120px'
+  });
+  
   items.forEach(item => {
     const btn = document.createElement('button');
     btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 10px;border:none;background:none;color:var(--fg);font-size:11px;font-family:inherit;cursor:pointer;border-radius:4px;transition:background 0.1s;';
@@ -907,24 +920,24 @@ function _showTaskDropdown(anchor, items) {
     }
     btn.addEventListener('mouseenter', () => { btn.style.background = 'color-mix(in srgb, var(--fg) 8%, transparent)'; });
     btn.addEventListener('mouseleave', () => { btn.style.background = 'none'; });
-    btn.addEventListener('click', (e) => { e.stopPropagation(); dd.remove(); item.action(); });
-    dd.appendChild(btn);
+    btn.addEventListener('click', (e) => { e.stopPropagation(); dropdown.remove(); item.action(); });
+    dropdown.appendChild(btn);
   });
-  document.body.appendChild(dd);
+  document.body.appendChild(dropdown);
   const rect = anchor.getBoundingClientRect();
   let top = rect.bottom + 4;
-  let left = rect.right - dd.offsetWidth;
+  let left = rect.right - dropdown.offsetWidth;
   if (left < 8) left = 8;
-  if (top + dd.offsetHeight > window.innerHeight - 8) top = rect.top - dd.offsetHeight - 4;
-  dd.style.top = top + 'px';
-  dd.style.left = left + 'px';
+  if (top + dropdown.offsetHeight > window.innerHeight - 8) top = rect.top - dropdown.offsetHeight - 4;
+  dropdown.style.top = top + 'px';
+  dropdown.style.left = left + 'px';
   const openedAt = performance.now();
   const close = (e) => {
     // Ignore any clicks that occur within 250ms of the open (covers touch
     // "ghost click" duplicates that were firing right after pointerup and
     // removing the dropdown before the user could see it).
     if (performance.now() - openedAt < 250) return;
-    if (!dd.contains(e.target)) { dd.remove(); document.removeEventListener('click', close); }
+    if (!dropdown.contains(e.target)) { dropdown.remove(); document.removeEventListener('click', close); }
   };
   // requestAnimationFrame so the listener is registered AFTER the current
   // pointer/click event cycle has finished bubbling.

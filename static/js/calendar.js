@@ -470,7 +470,24 @@ function _showEventMoreMenu(ev, anchor) {
   dropdown.className = 'cal-event-dropdown';
   let closeMenu = () => dropdown.remove();
   const rect = anchor.getBoundingClientRect();
-  dropdown.style.cssText = `position:fixed;z-index:10001;min-width:180px;background:var(--panel,var(--bg));border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.3);padding:4px;font-size:12px;top:${rect.bottom + 4}px;left:0px;visibility:hidden;`;
+  
+  const calendarModal = document.getElementById('calendar-modal');
+  const modalZIndex = calendarModal ? window.getComputedStyle(calendarModal).zIndex : '999999';
+  
+  Object.assign(dropdown.style, {
+    position: 'fixed',
+    zIndex: modalZIndex,
+    minWidth: '180px',
+    background: 'var(--panel,var(--bg))',
+    border: '1px solid var(--border)',
+    borderRadius: '8px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+    padding: '4px',
+    fontSize: '12px',
+    top: `${rect.bottom + 4}px`,
+    left: '0px',
+    visibility: 'hidden',
+  });
 
   const _item = (icon, label, onClick, danger) => {
     const it = document.createElement('div');

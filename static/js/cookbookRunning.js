@@ -2343,9 +2343,11 @@ export function _renderRunningTab() {
         }
 
         const rect = menuBtn.getBoundingClientRect();
+        const modal = document.getElementById('cookbook-modal');
         dropdown.style.position = 'fixed';
         dropdown.style.top = rect.bottom + 2 + 'px';
         dropdown.style.right = (window.innerWidth - rect.right) + 'px';
+        dropdown.style.zIndex = modal ? window.getComputedStyle(modal).zIndex : '999999';
         document.body.appendChild(dropdown);
         // Clamp into the *visible* area. On mobile (esp. Firefox) window.innerHeight
         // includes the strip hidden under the dynamic toolbar, so a menu that "fits"
