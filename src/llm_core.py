@@ -638,7 +638,11 @@ def _is_self_hosted_openai_compatible(url: str) -> bool:
     loses the affinity hint unless its endpoint kind is set to "local" -
     a lost perf hint, versus a hard 4xx on every request the other way.
     """
-    if _detect_provider(url) != "openai" or _host_match(url, "openai.com"):
+    if (
+        _detect_provider(url) != "openai"
+        or _host_match(url, "openai.com")
+        or _host_match(url, "cerebras.ai")
+    ):
         return False
     from src.model_context import is_local_endpoint
     return is_local_endpoint(url)

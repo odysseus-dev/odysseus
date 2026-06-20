@@ -20,7 +20,9 @@ real module is side-effect free.
 import pytest
 
 from src.llm_core import (
+    _apply_local_cache_affinity,
     _detect_provider,
+    _is_self_hosted_openai_compatible,
     _provider_label,
 )
 
@@ -68,6 +70,35 @@ class TestDetectProvider:
     @pytest.mark.parametrize("url", ["", None, "not a url", "://broken"])
     def test_unidentifiable_falls_back_to_openai(self, url):
         assert _detect_provider(url) == "openai"
+
+
+# ── local cache affinity ──
+
+class TestLocalCacheAffinity:
+    def test_cerebras_cloud_never_receives_llamacpp_cache_fields(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.model_context.is_local_endpoint",
+            lambda _url: True,
+        )
+
+        payload = {}
+        _apply_local_cache_affinity(
+            payload,
+            "https://api.cerebras.ai/v1",
+            "session-1",
+        )
+
+        assert payload == {}
+
+    def test_cerebras_lookalike_host_is_not_excluded(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.model_context.is_local_endpoint",
+            lambda _url: True,
+        )
+
+        assert _is_self_hosted_openai_compatible(
+            "https://cerebras.ai.evil.example/v1"
+        ) is True
 
 
 # ── _provider_label ──
