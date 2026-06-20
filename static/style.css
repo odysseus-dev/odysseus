@@ -2054,6 +2054,8 @@ body.bg-pattern-sparkles {
       overflow-wrap: break-word;
       overflow: hidden;
       animation: msg-enter 0.3s ease-out both;
+      content-visibility: auto;
+      contain-intrinsic-size: auto 120px;
     }
     .msg-user {
       align-items: flex-end;
@@ -2085,6 +2087,33 @@ body.bg-pattern-sparkles {
       overflow-wrap: break-word;
       overflow: hidden;
       transition: min-height 0.25s ease-out;
+    }
+    /* "Load older messages" bar — click to fetch the next page from the server.
+       Replaces the old per-message collapse approach. */
+    .load-older-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      margin: 6px 0;
+      font-size: 12px;
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 8%, transparent);
+      border: 1px dashed color-mix(in srgb, var(--accent) 25%, transparent);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      user-select: none;
+    }
+    .load-older-bar:hover {
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+    }
+    /* Keep old collapsed class for any legacy elements still in the DOM */
+    .msg-collapsed {
+      min-height: unset !important;
+      padding: 4px 10px !important;
+      opacity: 0.45;
+      animation: none !important;
     }
     .msg .role {
       font-weight: 600;
@@ -9019,6 +9048,8 @@ body.fullwidth-chat .chat-history {
   overflow: hidden;
   transition: max-height 0.3s ease, padding 0.3s ease;
   padding: 0 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px;
 }
 
 .thinking-content.expanded {
@@ -9276,6 +9307,16 @@ body.fullwidth-chat .chat-history {
   padding: 4px 0 4px 22px;
   max-width: calc(85% - 20px);
   box-sizing: border-box;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
+}
+.agent-thread.msg-collapsed {
+  padding: 2px 0 2px 22px;
+  opacity: 0.35;
+  min-height: unset;
+}
+.agent-thread.msg-collapsed::before {
+  opacity: 0.3;
 }
 .agent-thread::before {
   content: '';

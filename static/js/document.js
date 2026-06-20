@@ -10314,6 +10314,7 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
 
   /** Append streaming content to the currently-streaming doc */
   let _streamHlDebounce = null;
+  let _streamDeltaPending = null;  // throttled content for next rAF
   export function streamDocDelta(content) {
     if (!_streamDocId) return;
     const doc = docs.get(_streamDocId);
@@ -10324,27 +10325,37 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
         _syncStreamingEmailFields(doc);
         return;
       }
-      const textarea = document.getElementById('doc-editor-textarea');
-      if (textarea) {
-        textarea.value = content;
-        // Auto-scroll to bottom as content streams in
-        textarea.scrollTop = textarea.scrollHeight;
+      // Throttle DOM updates to once per animation frame. The full content
+      // is always stored in doc.content; we just avoid thrashing the textarea
+      // and code element (and their line-number layouts) on every SSE delta.
+      if (!_streamDeltaPending) {
+        _streamDeltaPending = requestAnimationFrame(function() {
+          _streamDeltaPending = null;
+          var latest = doc.content;
+          var textarea = document.getElementById('doc-editor-textarea');
+          if (textarea) {
+            textarea.value = latest;
+            textarea.scrollTop = textarea.scrollHeight;
+          }
+          var codeEl = document.getElementById('doc-editor-code');
+          if (codeEl) {
+            codeEl.textContent = latest + '\n';
+            var pre = document.getElementById('doc-editor-highlight');
+            if (pre) pre.scrollTop = textarea ? textarea.scrollHeight : pre.scrollHeight;
+          }
+          // Show blinking cursor at end of content
+          var cursor = document.getElementById('doc-stream-cursor');
+          if (!cursor) {
+            cursor = document.createElement('span');
+            cursor.id = 'doc-stream-cursor';
+            cursor.className = 'doc-stream-cursor';
+            cursor.textContent = '\u258F';
+          }
+          if (codeEl && codeEl.parentElement && cursor) {
+            codeEl.parentElement.appendChild(cursor);
+          }
+        });
       }
-      // Update text and line numbers immediately, debounce expensive highlighting
-      const codeEl = document.getElementById('doc-editor-code');
-      if (codeEl) codeEl.textContent = content + '\n';
-      updateLineNumbers(content);
-      // Show blinking cursor at end of content
-      let cursor = document.getElementById('doc-stream-cursor');
-      if (!cursor) {
-        cursor = document.createElement('span');
-        cursor.id = 'doc-stream-cursor';
-        cursor.className = 'doc-stream-cursor';
-        cursor.textContent = '\u258F';
-      }
-      if (codeEl && codeEl.parentElement) codeEl.parentElement.appendChild(cursor);
-      clearTimeout(_streamHlDebounce);
-      _streamHlDebounce = setTimeout(syncHighlighting, 150);
     }
   }
 
@@ -10358,14 +10369,35 @@ import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
       _renderStreamingEmailBody(fields.body || '', { immediate: true });
     }
     _streamDocId = null;
+    // Cancel any pending throttled update and flush final content
+    if (_streamDeltaPending) {
+      cancelAnimationFrame(_streamDeltaPending);
+      _streamDeltaPending = null;
+    }
+    // Flush final content to textarea and code element
+    var textarea = document.getElementById('doc-editor-textarea');
+    var codeEl = document.getElementById('doc-editor-code');
+    if (textarea && codeEl) {
+      var finalContent = docs.get(oldId)?.content || '';
+      textarea.value = finalContent;
+      codeEl.textContent = finalContent + '\n';
+    }
     // Hide streaming indicator + cursor
-    const indicator = document.getElementById('doc-stream-indicator');
+    var indicator = document.getElementById('doc-stream-indicator');
     if (indicator) indicator.style.display = 'none';
-    const cursor = document.getElementById('doc-stream-cursor');
+    var cursor = document.getElementById('doc-stream-cursor');
     if (cursor) cursor.remove();
-    // Final highlighting pass + auto-detect language
+    // Reset placeholder to default
+    if (textarea) textarea.placeholder = 'Document content…';
+    // Final highlighting pass + line numbers + auto-detect language
     clearTimeout(_streamHlDebounce);
     syncHighlighting();
+    // Scroll to bottom
+    if (textarea) {
+      textarea.scrollTop = textarea.scrollHeight;
+      var pre = document.getElementById('doc-editor-highlight');
+      if (pre) pre.scrollTop = textarea.scrollHeight;
+    }
     attemptAutoDetect();
     return oldId;
   }

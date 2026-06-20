@@ -1981,6 +1981,12 @@ export async function selectSession(id, { keepSidebar = false, showLoading = tru
       _installHistoryPager(id, pageInfo, modelName);
     }
 
+    // Trim DOM after bulk history render — long sessions can have hundreds
+    // of messages that would otherwise never trigger the streaming-only guard.
+    if (window.chatModule && window.chatModule.trimChatHistoryDOM) {
+      window.chatModule.trimChatHistoryDOM();
+    }
+
     // Fade in and re-enable message animations
     if (chatHistory) {
       chatHistory.style.transition = 'opacity 0.15s ease-in';
@@ -2705,7 +2711,7 @@ async function _arcPeekOpen(sid) {
     _peekingSessionId = sid;
     closeArchive();
     // Load history directly without unarchiving
-    const res = await fetch(`${API_BASE}/api/history/${sid}`);
+    const res = await fetch(`${API_BASE}/api/history/${sid}?limit=400`);
     const data = await res.json();
     const history = data.history || [];
 
@@ -2733,6 +2739,9 @@ async function _arcPeekOpen(sid) {
       }
     }
     if (window.uiModule) window.uiModule.scrollHistory();
+    if (window.chatModule && window.chatModule.trimChatHistoryDOM) {
+      window.chatModule.trimChatHistoryDOM();
+    }
   } catch (e) {
     console.error('Peek open failed:', e);
     uiModule.showError('Failed to open archived session');

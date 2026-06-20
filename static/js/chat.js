@@ -28,6 +28,114 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
 
+  // ── DOM memory guard ──
+  // Long agent runs can create thousands of DOM nodes (one per tool call +
+  // text bubble). Without a cap the browser tab bloats to multiple GB and
+  // freezes. Instead of deleting old messages (which erases the visual
+  // timeline), we collapse them into lightweight placeholders that preserve
+  // the conversation shape while freeing 95%+ of the DOM memory. The full
+  // history lives on the server and is re-fetched on session switch.
+  const MAX_CHAT_DOM_NODES = 150;
+  var _unloadedMsgCount = 0; // how many messages have been offloaded from the top
+
+  function _trimChatHistoryDOM() {
+    var box = document.getElementById('chat-history');
+    if (!box) return;
+    var children = box.children;
+    if (children.length <= MAX_CHAT_DOM_NODES) return;
+    var keepFloor = Math.min(20, Math.floor(MAX_CHAT_DOM_NODES / 4));
+
+    // Phase 1: remove any existing "load older" bars from the top (they'll
+    // be recreated with an updated count).
+    var existingBar = box.querySelector('.load-older-bar');
+    if (existingBar) {
+      existingBar.remove();
+    }
+
+    // Phase 2: remove the oldest children until we're under the cap,
+    // counting how many .msg elements we offload.
+    var offloaded = 0;
+    var maxIdx = Math.max(0, children.length - keepFloor);
+    for (var i = 0; i < maxIdx && children.length > MAX_CHAT_DOM_NODES; i++) {
+      var el = children[i];
+      if (!el) break;
+
+      // Tear down any per-node intervals
+      if (el._waveInterval) { clearInterval(el._waveInterval); el._waveInterval = null; }
+      if (el._elapsedTicker) { clearInterval(el._elapsedTicker); el._elapsedTicker = null; }
+      if (el._spinner) { try { el._spinner.destroy(); } catch (_) {} }
+      el.querySelectorAll('.agent-thread-node').forEach(function(n) {
+        if (n._waveInterval) { clearInterval(n._waveInterval); n._waveInterval = null; }
+        if (n._elapsedTicker) { clearInterval(n._elapsedTicker); n._elapsedTicker = null; }
+      });
+      el.querySelectorAll('img[src^="data:"]').forEach(function(img) {
+        img.src = '';
+      });
+
+      if (el.classList.contains('msg') || el.classList.contains('agent-thread')) {
+        offloaded++;
+      }
+      el.remove();
+      i--; // children shifted, re-check this index
+    }
+
+    // Phase 3: insert a "Load older messages" bar at the top if we offloaded any
+    if (offloaded > 0) {
+      _unloadedMsgCount += offloaded;
+      var bar = document.createElement('div');
+      bar.className = 'load-older-bar';
+      bar.textContent = 'Show ' + _unloadedMsgCount + ' older messages';
+      bar.addEventListener('click', function() {
+        _loadOlderMessages(box, bar);
+      });
+      box.insertBefore(bar, box.firstChild);
+    }
+  }
+
+  /** Fetch and render the next page of older messages from the server. */
+  async function _loadOlderMessages(box, bar) {
+    if (bar._loading) return;
+    bar._loading = true;
+    bar.textContent = 'Loading…';
+    bar.style.pointerEvents = 'none';
+    var sessionId = null;
+    try { sessionId = sessionModule.getCurrentSessionId(); } catch (_) {}
+    if (!sessionId) { bar.textContent = 'No session'; return; }
+    try {
+      var res = await fetch(API_BASE + '/api/history/' + sessionId + '?limit=50&offset=' + Math.max(0, _unloadedMsgCount - 50));
+      var data = await res.json();
+      var msgs = data.history || [];
+      if (msgs.length === 0) {
+        bar.textContent = 'No older messages';
+        return;
+      }
+      // Render messages before the bar
+      var modelName = data.model || null;
+      for (var i = 0; i < msgs.length; i++) {
+        var msg = msgs[i];
+        var content = typeof msg.content === 'string' ? msg.content : '';
+        if (!content && Array.isArray(msg.content)) {
+          content = msg.content.filter(function(p) { return p.type === 'text'; }).map(function(p) { return p.text; }).join('\n').trim();
+        }
+        if (!content) continue;
+        var el = chatRenderer.addMessage(msg.role, content, modelName, msg.metadata || null);
+        if (el) box.insertBefore(el, bar);
+      }
+      _unloadedMsgCount = Math.max(0, _unloadedMsgCount - msgs.length);
+      if (_unloadedMsgCount <= 0) {
+        bar.remove();
+      } else {
+        bar.textContent = 'Show ' + _unloadedMsgCount + ' older messages';
+        bar._loading = false;
+        bar.style.pointerEvents = '';
+      }
+    } catch (e) {
+      bar.textContent = 'Failed to load — tap to retry';
+      bar._loading = false;
+      bar.style.pointerEvents = '';
+    }
+  }
+
   let API_BASE = '';
   let currentAbort = null;
   let isStreaming = false;
@@ -275,6 +383,18 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
   function hasActiveStream(sessionId) {
     return _streamSessionId === sessionId || _backgroundStreams.has(sessionId) ||
            _resumingStreams.has(sessionId);
+  }
+
+  /** Purge completed/error background stream entries that are no longer needed. */
+  function _purgeStaleBackgroundStreams() {
+    _backgroundStreams.forEach(function(entry, sid) {
+      if (entry.status === 'completed' || entry.status === 'error') {
+        // Release any held resources before deleting
+        if (entry.abortCtrl) { entry.abortCtrl = null; }
+        entry.accumulated = '';
+        _backgroundStreams.delete(sid);
+      }
+    });
   }
 
   // Sources box builder and toggleSources are now in chatRenderer.js
@@ -579,6 +699,8 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
    */
   export async function handleChatSubmit(e) {
     e.preventDefault();
+    // Purge stale background stream entries to free accumulated text
+    _purgeStaleBackgroundStreams();
     // Cancel research clarification timeout if active
     if (window._researchTimeoutTimer) {
       clearTimeout(window._researchTimeoutTimer);
@@ -1327,6 +1449,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         researchBtn.classList.remove('active');
       }
       box.appendChild(holder);
+      _trimChatHistoryDOM();
       uiModule.scrollHistory();
 
       const enableResearchBtn = () => {
@@ -1537,6 +1660,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
         _thinkMsg._spinner = _ts;
         _thinkMsg.appendChild(_thinkBody);
         document.getElementById('chat-history').appendChild(_thinkMsg);
+        _trimChatHistoryDOM();
         uiModule.scrollHistory();
       }
 
@@ -1755,6 +1879,10 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   } catch (toastErr) {
                     console.warn('[bg-stream] Toast/notification error:', toastErr);
                   }
+                  // Free the large accumulated text — only the status and query
+                  // are needed now; checkBackgroundStream reloads from the DB.
+                  bgDone.accumulated = '';
+                  bgDone.abortCtrl = null;
                 }
                 // CRITICAL: always mark stream complete for the sidebar dot
                 try {
@@ -2010,12 +2138,12 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                       .replace(/<\|channel>response\s*\n?/gi, '')
                       .replace(/<channel\|>/gi, '');
                     thinkText = thinkText.replace(/^\s*Thinking(?:\s+Process)?:\s*/i, '');
-                    _liveThinkTokenCount = _estimateThinkingTokens(thinkText);
-                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(thinkText);
-                    if (_liveThinkTimerEl) {
-                      var _elapsedLive = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : '';
-                      _liveThinkTimerEl.textContent = _formatThinkStats(_elapsedLive, _liveThinkTokenCount);
-                    }
+                    // Render as plain text during streaming — avoids O(n^2)
+                    // markdown-to-HTML on every token. A single rich render
+                    // happens when the thinking block closes.
+                    _liveThinkInner.textContent = thinkText;
+                    _liveThinkInner.style.whiteSpace = 'pre-wrap';
+                    _liveThinkInner.style.fontFamily = 'inherit';
                     // Keep thinking box scrolled to bottom, but let user scroll up
                     var _followThinking = true;
                     var thinkBox = _liveThinkInner.closest('.thinking-content');
@@ -2054,6 +2182,14 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                   // Thinking ended — smooth transition: update header, pause, then collapse
                   // Stop live timer and spinner
                   cancelAnimationFrame(_thinkTimerRAF);
+                  // Replace plain-text with a single rich markdown render now that
+                  // the thinking block is complete.
+                  if (_liveThinkInner) {
+                    var _finalThinkText = _liveThinkInner.textContent;
+                    _liveThinkInner.style.whiteSpace = '';
+                    _liveThinkInner.style.fontFamily = '';
+                    _liveThinkInner.innerHTML = markdownModule.mdToHtml(_finalThinkText);
+                  }
                   var elapsed = thinkingStartTime ? ((Date.now() - thinkingStartTime) / 1000).toFixed(1) : null;
                   // Embed thinking time in the <think> tag for persistence on reload
                   if (elapsed) {
@@ -2538,6 +2674,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                     threadWrap.classList.add('has-top');
                   }
                   chatBox.appendChild(threadWrap);
+                  _trimChatHistoryDOM();
                 }
                 threadWrap.classList.add('streaming');
                 lastToolThread = threadWrap;
@@ -2830,6 +2967,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
                 newBody.className = 'body';
                 newWrap.appendChild(newBody);
                 box.appendChild(newWrap);
+                _trimChatHistoryDOM();
                 roundHolder = newWrap;
                 roundText = '';
                 // Destroy any previous spinner before creating new one
@@ -5410,6 +5548,7 @@ import { wireArrowUpRecall, getLastUserMessageFromChatHistory } from './composer
     continueFrom,
     _appendViewReportLink,
     hasActiveStream,
+    trimChatHistoryDOM: _trimChatHistoryDOM,
   };
 
   // Single delegated handler for tool-call fold/expand. One listener on
