@@ -34,3 +34,7 @@ PyMuPDF
 # [all]/Azure/audio extras (cloud + heavy). Pinned to a release >30 days old per
 # the dependency-age discussion in issue #485.
 markitdown[docx,pptx,xlsx,xls]==0.1.5
+ollama
+pydantic
+fastmcp
+pydantic_ai
