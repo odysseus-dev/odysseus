@@ -101,6 +101,7 @@ export function saveCustomTheme(name, colors, opts) {
     if (opts.bgEffectColor) entry.bgEffectColor = opts.bgEffectColor;
     if (opts.bgEffectIntensity !== undefined) entry.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined) entry.bgEffectSize = opts.bgEffectSize;
+    if (opts.sidebarFontScale !== undefined) entry.sidebarFontScale = opts.sidebarFontScale;
     if (opts.frosted !== undefined) entry.frosted = !!opts.frosted;
   }
   ct[name] = entry;
@@ -409,6 +410,14 @@ export function applyBgEffectSize(v) {
   document.documentElement.style.setProperty('--bg-effect-size', String(n));
 }
 
+/** Scale the sidebar text independently of the rest of the UI. v is a
+ *  multiplier (1 = default). Drives the `--sidebar-font-scale` CSS var that
+ *  every sidebar font-size is expressed against via calc(). */
+export function applySidebarFontScale(v) {
+  const n = (v === undefined || v === null || isNaN(v)) ? 1 : Math.max(0.85, Math.min(2, Number(v)));
+  document.documentElement.style.setProperty('--sidebar-font-scale', String(n));
+}
+
 /** Toggle the global "frosted glass" look — applies a translucent + blurred
  *  treatment to every panel, sidebar, modal, dropdown, and popover via CSS
  *  rules scoped to `body.theme-frosted`. */
@@ -458,6 +467,7 @@ export function save(name, colors, opts) {
     if (opts.bgEffectColor) obj.bgEffectColor = opts.bgEffectColor;
     if (opts.bgEffectIntensity !== undefined && opts.bgEffectIntensity !== 1) obj.bgEffectIntensity = opts.bgEffectIntensity;
     if (opts.bgEffectSize !== undefined && opts.bgEffectSize !== 1) obj.bgEffectSize = opts.bgEffectSize;
+    if (opts.sidebarFontScale !== undefined && opts.sidebarFontScale !== 1) obj.sidebarFontScale = opts.sidebarFontScale;
     if (opts.frosted) obj.frosted = true;
   }
   Storage.setJSON(LS_KEY, obj);
@@ -665,12 +675,14 @@ export function initThemeUI() {
     const ec = document.getElementById('theme-bg-effect-color');
     const es = document.getElementById('theme-bg-intensity');
     const sz = document.getElementById('theme-bg-size');
+    const sf = document.getElementById('theme-sidebar-fontsize');
     if (fs) opts.font = fs.value;
     if (ds) opts.density = ds.value;
     if (ps) opts.bgPattern = ps.value;
     if (ec) opts.bgEffectColor = ec.value;
     if (es) opts.bgEffectIntensity = parseFloat(es.value) / 100;
     if (sz) opts.bgEffectSize = parseFloat(sz.value) / 100;
+    if (sf) opts.sidebarFontScale = parseFloat(sf.value) / 100;
     const fr = document.getElementById('theme-frosted-toggle');
     if (fr) opts.frosted = !!fr.checked;
     return opts;
@@ -698,6 +710,7 @@ export function initThemeUI() {
         const ec = ct && ct.bgEffectColor ? ct.bgEffectColor : (THEME_DEFAULT_EFFECT_COLOR[name] || '');
         const ei = (ct && ct.bgEffectIntensity !== undefined) ? ct.bgEffectIntensity : (THEME_DEFAULT_INTENSITY[name] !== undefined ? THEME_DEFAULT_INTENSITY[name] : 1);
         const sz = (ct && ct.bgEffectSize !== undefined) ? ct.bgEffectSize : 1;
+        const sfs = (ct && ct.sidebarFontScale !== undefined) ? ct.sidebarFontScale : 1;
         const fr = (ct && ct.frosted !== undefined)
           ? !!ct.frosted
           : (THEME_DEFAULT_FROSTED[name] === true);
@@ -705,6 +718,7 @@ export function initThemeUI() {
         applyBgEffectColor(ec);
         applyBgEffectIntensity(ei);
         applyBgEffectSize(sz);
+        applySidebarFontScale(sfs);
         applyFrostedGlass(fr);
         applyBgPattern(p);
         const fs = document.getElementById('theme-font-select');
@@ -713,6 +727,7 @@ export function initThemeUI() {
         const ecs = document.getElementById('theme-bg-effect-color');
         const eis = document.getElementById('theme-bg-intensity');
         const szs = document.getElementById('theme-bg-size');
+        const sfse = document.getElementById('theme-sidebar-fontsize');
         const frs = document.getElementById('theme-frosted-toggle');
         if (fs) fs.value = f;
         if (ds) ds.value = d;
@@ -720,8 +735,9 @@ export function initThemeUI() {
         if (ecs) ecs.value = ec || colors.fg || '#9cdef2';
         if (eis) eis.value = String(Math.round(ei * 100));
         if (szs) szs.value = String(Math.round(sz * 100));
+        if (sfse) sfse.value = String(Math.round(sfs * 100));
         if (frs) frs.checked = fr;
-        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, frosted: fr });
+        save(name, colors, { font: f, density: d, bgPattern: p, bgEffectColor: ec, bgEffectIntensity: ei, bgEffectSize: sz, sidebarFontScale: sfs, frosted: fr });
       });
     });
     g.querySelectorAll('.theme-delete-btn').forEach(btn => {
@@ -854,6 +870,7 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          sidebarFontScale: _activeSaved.sidebarFontScale,
         });
         _saveFull(_activeName, colors);
       } else {
@@ -1002,6 +1019,7 @@ export function initThemeUI() {
           bgPattern: _activeSaved.bgPattern, bgEffectColor: _activeSaved.bgEffectColor,
           bgEffectIntensity: _activeSaved.bgEffectIntensity,
           bgEffectSize: _activeSaved.bgEffectSize,
+          sidebarFontScale: _activeSaved.sidebarFontScale,
         });
         _saveFull(_activeName, base);
       } else {
@@ -1083,6 +1101,7 @@ export function initThemeUI() {
     ? saved.bgEffectIntensity
     : (saved && THEME_DEFAULT_INTENSITY[saved.name] !== undefined ? THEME_DEFAULT_INTENSITY[saved.name] : 1);
   const _initEffectSize = (saved && saved.bgEffectSize !== undefined) ? saved.bgEffectSize : 1;
+  const _initSidebarScale = (saved && saved.sidebarFontScale !== undefined) ? saved.sidebarFontScale : 1;
   const _initFrosted = (saved && saved.frosted !== undefined)
     ? !!saved.frosted
     : (saved && THEME_DEFAULT_FROSTED[saved.name] === true);
@@ -1090,6 +1109,7 @@ export function initThemeUI() {
   applyBgEffectColor(_initEffectColor);
   applyBgEffectIntensity(_initEffectIntensity);
   applyBgEffectSize(_initEffectSize);
+  applySidebarFontScale(_initSidebarScale);
   applyFrostedGlass(_initFrosted);
   applyBgPattern(_initPattern);
 
@@ -1163,6 +1183,15 @@ export function initThemeUI() {
     sizeSlider.value = String(Math.round(_initEffectSize * 100));
     sizeSlider.addEventListener('input', () => {
       applyBgEffectSize(parseFloat(sizeSlider.value) / 100);
+      const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+
+  const sidebarFontSlider = document.getElementById('theme-sidebar-fontsize');
+  if (sidebarFontSlider) {
+    sidebarFontSlider.value = String(Math.round(_initSidebarScale * 100));
+    sidebarFontSlider.addEventListener('input', () => {
+      applySidebarFontScale(parseFloat(sidebarFontSlider.value) / 100);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
     });
   }
@@ -1253,6 +1282,7 @@ export function initThemeUI() {
       if (cur && cur.density) obj.density = cur.density;
       if (cur && cur.bgPattern) obj.bgPattern = cur.bgPattern;
       if (cur && cur.bgEffectColor) obj.bgEffectColor = cur.bgEffectColor;
+      if (cur && cur.sidebarFontScale !== undefined) obj.sidebarFontScale = cur.sidebarFontScale;
       const json = JSON.stringify(obj, null, 2);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1302,12 +1332,14 @@ export function initThemeUI() {
       if (parsed.density) opts.density = parsed.density;
       if (parsed.bgPattern) opts.bgPattern = parsed.bgPattern;
       if (parsed.bgEffectColor) opts.bgEffectColor = parsed.bgEffectColor;
+      if (parsed.sidebarFontScale !== undefined) opts.sidebarFontScale = parsed.sidebarFontScale;
       const result = saveCustomTheme(slug, colorData, opts);
       if (result === 'limit') { saveError.textContent = 'Max ' + MAX_CUSTOM_THEMES + ' custom themes. Delete one first.'; saveError.style.display = 'block'; return; }
       save(slug, colorData, opts);
       applyColors(colorData);
       applyFontDensity(opts.font || DEFAULT_FONT, opts.density || DEFAULT_DENSITY);
       applyBgEffectColor(opts.bgEffectColor || '');
+      applySidebarFontScale(opts.sidebarFontScale !== undefined ? opts.sidebarFontScale : 1);
       applyBgPattern(opts.bgPattern || 'none');
       importAreaEl.classList.add('hidden');
       importActionsEl.classList.add('hidden');
@@ -2045,7 +2077,7 @@ function _initEmbers() {
 const themeModule = { initThemeUI, togglePopup, closePopup, makeDraggable,
                        THEMES, applyColors, applyFontDensity, applyBgPattern,
                        applyBgEffectColor, applyBgEffectIntensity, applyBgEffectSize,
-                       applyFrostedGlass,
+                       applySidebarFontScale, applyFrostedGlass,
                        save, getSaved, saveCustomTheme, deleteCustomTheme,
                        getCustomThemes };
 

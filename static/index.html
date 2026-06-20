@@ -84,6 +84,10 @@
       if (t && t.density && t.density !== 'comfortable') {
         document.documentElement.classList.add('density-' + t.density);
       }
+      // Apply sidebar font scale early (avoid flash of old size on the sidebar)
+      if (t && t.sidebarFontScale) {
+        document.documentElement.style.setProperty('--sidebar-font-scale', String(t.sidebarFontScale));
+      }
       // Apply background pattern on body once available
       if (t && t.bgPattern && t.bgPattern !== 'none') {
         document.addEventListener('DOMContentLoaded', function() {
@@ -630,6 +634,12 @@
           <div class="theme-fd-group" id="theme-bg-size-group" style="flex:1 1 0;">
             <label class="theme-fd-label">Size</label>
             <input type="range" id="theme-bg-size" class="theme-fd-range" min="30" max="250" step="10" value="100">
+          </div>
+        </div>
+        <div class="theme-fd-row">
+          <div class="theme-fd-group" style="flex:1 1 0;">
+            <label class="theme-fd-label">Sidebar font</label>
+            <input type="range" id="theme-sidebar-fontsize" class="theme-fd-range" min="100" max="175" step="5" value="100" aria-label="Sidebar font size">
           </div>
         </div>
       </div>
