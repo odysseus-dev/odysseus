@@ -13,6 +13,11 @@
 # so rebuild if you move the repo. Override the port with ODYSSEUS_PORT.
 set -e
 
+if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
+  echo "build-macos-app.sh requires macOS 14+ on Apple Silicon (arm64)."
+  exit 1
+fi
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="Odysseus"
 INSTALL_DIR="$REPO_DIR"
@@ -59,7 +64,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleExecutable</key>      <string>$APP_NAME</string>
     <key>CFBundleIconFile</key>        <string>odysseus</string>
-    <key>LSMinimumSystemVersion</key>  <string>11.0</string>
+    <key>LSMinimumSystemVersion</key>  <string>14.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSUIElement</key>             <false/>
 </dict>

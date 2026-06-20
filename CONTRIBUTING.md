@@ -22,25 +22,23 @@ End-users cloning the repo will land on `dev` by default. To run the curated/sta
 
 ## Setup
 
-Docker is the recommended path for normal testing:
+This fork targets **macOS 14+ on Apple Silicon**. Use the native launcher for development and manual testing:
 
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-cp .env.example .env
-docker compose up -d --build
+cp .env.example .env   # optional
+./start-macos.sh
 ```
 
-Manual development uses Python 3.11+:
+Manual development (same venv the launcher creates):
 
 ```bash
-python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-python -m uvicorn app:app --host 127.0.0.1 --port 7000
+python -m uvicorn app:app --host 127.0.0.1 --port 7860
 ```
 
-Windows is not actively tested. Docker on Linux or a Linux/macOS manual install is the safer path for now.
+Optional CPU-only Docker testing: `docker compose up -d --build` (see [docs/setup.md](docs/setup.md)). Linux/Windows native paths and GPU Docker overlays remain in the upstream tree but are not maintained for this fork.
 
 ## Running Checks
 
@@ -110,7 +108,7 @@ If you need a value that has no constant or helper yet, add it to `src/constants
 
 For bugs, include:
 
-- Install method: Docker, manual Python, WSL, etc.
+- Install method: `./start-macos.sh`, manual venv, or Docker (CPU-only on Mac).
 - OS, browser, and device if relevant.
 - Exact steps to reproduce.
 - Expected behavior and actual behavior.

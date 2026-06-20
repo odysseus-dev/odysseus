@@ -16,6 +16,16 @@ set -e
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
+if [ "$(uname -s)" != "Darwin" ]; then
+    echo "✗ start-macos.sh requires macOS."
+    exit 1
+fi
+if [ "$(uname -m)" != "arm64" ]; then
+    echo "✗ This fork targets Apple Silicon (arm64) only. Detected: $(uname -m)"
+    echo "  Use an M-series Mac, or run manual setup with an arm64 Homebrew Python under /opt/homebrew."
+    exit 1
+fi
+
 # Load .env so APP_PORT and APP_BIND are available without re-typing them on
 # the command line every run — consistent with how app.py reads them via
 # python-dotenv. Variables already set in the shell take priority over .env.
@@ -62,20 +72,12 @@ if ! command -v brew >/dev/null 2>&1; then
     exit 1
 fi
 
-# 2. Find a Python 3.11+ to build the environment with.
-#    On Apple Silicon we require an *arm64* interpreter (Homebrew's, under
-#    /opt/homebrew). A universal2 or x86 Python — e.g. the python.org installer
-#    at /usr/local — produces a venv whose compiled extensions get loaded as the
-#    wrong architecture when launched from the .app bundle (Cookbook then dies
-#    with "incompatible architecture"). So on arm64 we only look under
-#    /opt/homebrew and install Homebrew's python@3.11 if it's missing. On Intel
-#    (or non-mac) we just use whatever Python 3.11+ is on PATH.
+# 2. Find an arm64 Python 3.11+ under Homebrew (/opt/homebrew). A universal2 or
+#    x86 Python — e.g. the python.org installer at /usr/local — produces a venv
+#    whose compiled extensions get loaded as the wrong architecture when launched
+#    from the .app bundle (Cookbook then dies with "incompatible architecture").
 PY=""
-if [ "$(uname -m)" = "arm64" ]; then
-    cands="/opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11"
-else
-    cands="python3 python3.13 python3.12 python3.11"
-fi
+cands="/opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11"
 for cand in $cands; do
     p="$(command -v "$cand" 2>/dev/null)" || continue
     if "$p" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)' 2>/dev/null; then
@@ -167,20 +169,15 @@ ODYSSEUS_SKIP_RUN_HINT=1 ./venv/bin/python setup.py
 #     On Apple Silicon macOS, Apfel is treated as a sibling local model server
 #     to Ollama: if Homebrew has it installed, we start its OpenAI-compatible
 #     server on the port next to Ollama, since the default port is 11434 and that's busy (because of ollama).
-MACHINE_ARCH="$(uname -m)"
 APFEL_PID=""
-if [ "$MACHINE_ARCH" = "arm64" ]; then
-    if command -v apfel >/dev/null 2>&1; then
-        APFEL_LOG="${TMPDIR:-/tmp}/odysseus-apfel.log"
-        echo "▶ Starting Apfel server in the background on port 11435…"
-        echo "  logging to $APFEL_LOG"
-        nohup apfel --serve --port 11435 >"$APFEL_LOG" 2>&1 &
-        APFEL_PID=$!
-    else
-        echo "▶ Apfel is not installed (brew formula missing); skipping Apfel server bootstrap."
-    fi
+if command -v apfel >/dev/null 2>&1; then
+    APFEL_LOG="${TMPDIR:-/tmp}/odysseus-apfel.log"
+    echo "▶ Starting Apfel server in the background on port 11435…"
+    echo "  logging to $APFEL_LOG"
+    nohup apfel --serve --port 11435 >"$APFEL_LOG" 2>&1 &
+    APFEL_PID=$!
 else
-    echo "▶ Non-ARM macOS detected; skipping Apfel server bootstrap."
+    echo "▶ Apfel is not installed (brew formula missing); skipping Apfel server bootstrap."
 fi
 
 # ChromaDB backs the tool index and vector RAG. chromadb ships in the venv, so

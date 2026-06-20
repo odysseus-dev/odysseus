@@ -25,18 +25,20 @@
 
 ## Quick Start
 
+> **Platform:** macOS 14+ on Apple Silicon (M-series). This fork targets native Metal GPU serving — not Linux, Windows, or Intel Macs.
+
 > `dev` is the default branch and gets the newest changes first. Use [`main`](https://github.com/pewdiepie-archdaemon/odysseus/tree/main) if you want the more curated branch.
 
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
 cd odysseus
-cp .env.example .env
-docker compose up -d --build
+cp .env.example .env   # optional — defaults work for local dev
+./start-macos.sh
 ```
 
-Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
+Opens at `http://127.0.0.1:7860` (port 7860 avoids macOS AirPlay on 7000). The first admin password is printed during setup.
 
-Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
+Optional CPU-only Docker, HTTPS, Tailscale, and full configuration: [setup guide](docs/setup.md).
 
 ## Features
 

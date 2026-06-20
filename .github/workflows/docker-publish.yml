@@ -1,11 +1,9 @@
 name: ci / docker publish
 
-# Build the Odysseus image and publish to GHCR.
-#   push to main -> :latest, :X.Y.Z            (curated release; main is fast-forwarded at releases)
-#   push to dev  -> :dev,    :X.Y.Z-dev.<sha>  (rolling dev + an immutable, traceable pin)
-# Multi-arch (linux/amd64 + linux/arm64): each arch builds on its own native
-# runner and pushes by digest, then a merge job stitches the digests into one
-# manifest list and applies the tags (faster + cleaner than QEMU emulation).
+# Build the Odysseus image and publish to GHCR (linux/arm64 only — matches
+# Docker Desktop on Apple Silicon and this fork's macOS-first scope).
+#   push to main -> :latest, :X.Y.Z
+#   push to dev  -> :dev,    :X.Y.Z-dev.<sha>
 # Registry: ghcr.io/<owner>/<repo>.
 
 on:
@@ -22,6 +20,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 env:
   REGISTRY: ghcr.io
@@ -29,62 +28,8 @@ env:
 
 jobs:
   build:
-    name: build (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            runner: ubuntu-latest
-          - platform: linux/arm64
-            arch: arm64
-            runner: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          persist-credentials: false
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
-      - name: Log in to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4.2.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
-        with:
-          context: .
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-      - name: Upload digest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: digest-${{ matrix.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  merge:
-    name: merge manifest + tag
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      contents: read
-      packages: write
+    name: build and push (linux/arm64)
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -96,12 +41,6 @@ jobs:
           [ -n "$v" ] || { echo "APP_VERSION not found"; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - name: Download digests
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
-        with:
-          path: /tmp/digests
-          pattern: digest-*
-          merge-multiple: true
       - name: Set up Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4.1.0
       - name: Log in to GHCR
@@ -120,17 +59,16 @@ jobs:
             type=raw,value=${{ steps.ver.outputs.version }},enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=raw,value=${{ steps.ver.outputs.version }}-dev.${{ steps.ver.outputs.short }},enable=${{ github.ref == 'refs/heads/dev' }}
-      - name: Create manifest list + push tags
-        working-directory: /tmp/digests
-        run: |
-          tags=$(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")
-          digests=$(printf "${REGISTRY}/${IMAGE_NAME}@sha256:%s " *)
-          # word-splitting is intended: $tags and $digests each expand to multiple args
-          # shellcheck disable=SC2086
-          docker buildx imagetools create $tags $digests
-        env:
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+      - name: Build and push
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7.2.0
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
       - name: Inspect
         run: |
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then ref=latest; else ref=dev; fi

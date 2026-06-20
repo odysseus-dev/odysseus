@@ -1,4 +1,5 @@
 #!/bin/bash
+# Linux systemd installer (upstream). Not used on macOS — use ./start-macos.sh or launchd instead.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
