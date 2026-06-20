@@ -87,9 +87,58 @@ async def _call(json_data, status=200):
         return await integrations.execute_api_call("test_integ", "GET", "/items")
 
 
+async def _call_with_integration(integration, path="/items"):
+    mock_resp = _make_response({"ok": True})
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.request = AsyncMock(return_value=mock_resp)
+
+    with (
+        patch.object(integrations, "_find_integration", return_value=integration),
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        result = await integrations.execute_api_call("test_integ", "GET", path)
+    return result, mock_client
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_api_call_rejects_stored_base_url_with_query_without_requesting():
+    integration = {**DUMMY_INTEGRATION, "base_url": "http://api.example.com/api?token=abc"}
+    result, mock_client = await _call_with_integration(integration)
+
+    assert result == {
+        "error": "Integration base URL must not include query or fragment",
+        "exit_code": 1,
+    }
+    mock_client.request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_api_call_joins_path_under_configured_base_path():
+    integration = {**DUMMY_INTEGRATION, "base_url": "http://api.example.com/root"}
+    result, mock_client = await _call_with_integration(integration, "/v1/items?limit=1")
+
+    assert result.get("exit_code") == 0
+    mock_client.request.assert_called_once()
+    assert mock_client.request.call_args.args[:2] == (
+        "GET",
+        "http://api.example.com/root/v1/items?limit=1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_api_call_rejects_path_fragment_without_requesting():
+    result, mock_client = await _call_with_integration(DUMMY_INTEGRATION, "/items#fragment")
+
+    assert result == {"error": "Path must not contain a fragment", "exit_code": 1}
+    mock_client.request.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -2258,8 +2258,8 @@ if (document.readyState === 'loading') {
 // Shared global listener to close all session dropdowns on click-away or Escape
 function _initDropdownDismiss() {
   document.addEventListener('click', (e) => {
-    if (e.target.closest('.session-dropdown-menu')) return;
-    document.querySelectorAll('.session-dropdown-menu').forEach(d => d.style.display = 'none');
+    if (e.target.closest('.session-dropdown-menu, .session-folder-submenu')) return;
+    document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
   });
   // Watch the sidebar — when it's hidden (any path: hamburger, swipe, mobile
   // collapse), close any open session dropdowns so they don't orphan over
@@ -2268,14 +2268,16 @@ function _initDropdownDismiss() {
   if (_sb) {
     new MutationObserver(() => {
       if (_sb.classList.contains('hidden')) {
-        document.querySelectorAll('.session-dropdown-menu, .folder-submenu').forEach(d => d.style.display = 'none');
+        document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
       }
     }).observe(_sb, { attributes: true, attributeFilter: ['class'] });
   }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      document.querySelectorAll('.session-dropdown-menu').forEach(d => d.style.display = 'none');
-    }
+    if (e.key !== 'Escape') return;
+    // Esc must dismiss both the parent dropdown AND the Move-to-folder
+    // submenu in one keypress — previously only the dropdown closed and
+    // the submenu was left orphaned on screen.
+    document.querySelectorAll('.session-dropdown-menu, .session-folder-submenu').forEach(d => d.style.display = 'none');
   });
 }
 
