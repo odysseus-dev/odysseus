@@ -1,5 +1,10 @@
 # Shared options for NixOS and nix-darwin Odysseus service modules.
-{ src, config, lib, pkgs }:
+{
+  src,
+  config,
+  lib,
+  pkgs,
+}:
 let
   cfg = config.services.odysseus;
   inherit (lib) mkEnableOption mkOption types;
@@ -22,10 +27,20 @@ in
 
   package = mkOption {
     type = types.package;
-    default = pkgs.callPackage ../../odysseus.nix {
-      inherit src;
-      extraPythonPackages = cfg.extraPythonPackages;
-    };
+    default =
+      let
+        # Apply the Darwin test-skip overlay locally so the module is
+        # self-contained — a downstream NixOS/nix-darwin config can just
+        # `imports = [ inputs.odysseus.nixosModules.default ]` without also
+        # having to wire nixpkgs.overlays. Without this, niquests (and caldav)
+        # build with doCheck=true on Darwin and their live test suites fail SSL
+        # verification in the build sandbox.
+        overlaidPkgs = pkgs.extend (import ../../overlay.nix);
+      in
+      overlaidPkgs.callPackage ../../odysseus.nix {
+        inherit src;
+        extraPythonPackages = cfg.extraPythonPackages;
+      };
     defaultText = lib.literalExpression "odysseus built with config.services.odysseus.extraPythonPackages";
     description = "The odysseus package to use.";
   };
