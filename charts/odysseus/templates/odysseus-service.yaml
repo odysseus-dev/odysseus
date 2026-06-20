@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "odysseus.app.fullname" . }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odysseus
+spec:
+  type: {{ .Values.odysseus.service.type }}
+  selector:
+    {{- include "odysseus.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: odysseus
+  ports:
+    - name: http
+      port: {{ .Values.odysseus.service.port }}
+      targetPort: http
+      protocol: TCP

@@ -1,0 +1,116 @@
+{{- if .Values.chromadb.enabled -}}
+{{- $name := include "odysseus.chromadb.fullname" . -}}
+{{- if and .Values.chromadb.persistence.enabled (not .Values.chromadb.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+spec:
+  accessModes:
+    - {{ .Values.chromadb.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.chromadb.persistence.size }}
+  {{- with .Values.chromadb.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "odysseus.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: chromadb
+  template:
+    metadata:
+      labels:
+        {{- include "odysseus.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: chromadb
+    spec:
+      serviceAccountName: {{ include "odysseus.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: chromadb
+          image: "{{ .Values.chromadb.image.repository }}:{{ .Values.chromadb.image.tag }}"
+          imagePullPolicy: {{ .Values.chromadb.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- range $k, $v := .Values.chromadb.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.chromadb.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /chroma/chroma
+      volumes:
+        - name: data
+          {{- if .Values.chromadb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.chromadb.persistence.existingClaim | default $name }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.chromadb.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.chromadb.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.chromadb.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "odysseus.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: chromadb
+  ports:
+    - name: http
+      port: {{ .Values.chromadb.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

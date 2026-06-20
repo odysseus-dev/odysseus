@@ -1,0 +1,94 @@
+# Helm chart publish (OCI -> GHCR)
+#
+# Package charts/odysseus and push it as an OCI artifact to GHCR, reusing the
+# same registry + GITHUB_TOKEN path as docker-publish.yml.
+#   push to main -> oci://ghcr.io/<owner>/charts/odysseus:X.Y.Z
+#   push to dev  -> oci://ghcr.io/<owner>/charts/odysseus:X.Y.Z-dev.<sha>
+# X.Y.Z is the chart `version:` in Chart.yaml — bump it when the chart changes,
+# otherwise main re-pushes the same tag. Consume with:
+#   helm install ody oci://ghcr.io/<owner>/charts/odysseus --version X.Y.Z
+#
+# helm is preinstalled on the ubuntu runner, so the only external action is the
+# pinned checkout — keeps the workflow-security (zizmor) audit clean.
+
+name: Helm publish
+
+on:
+  push:
+    branches: [dev, main]
+    paths:
+      - 'charts/**'
+      - '.github/workflows/helm-publish.yml'
+
+concurrency:
+  group: helm-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default-deny; the job below grants only what it needs.
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    name: package + push (OCI -> GHCR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # push the chart artifact to GHCR
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Lint chart
+        run: helm lint charts/odysseus
+
+      # main -> bare chart version; dev -> immutable, traceable prerelease pin.
+      - name: Compute chart version
+        id: ver
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          base=$(grep -E '^version:' charts/odysseus/Chart.yaml | head -1 | awk '{print $2}' | tr -d '"')
+          [ -n "$base" ] || { echo "chart version not found in Chart.yaml"; exit 1; }
+          if [ "$REF" = "refs/heads/main" ]; then
+            ver="$base"
+          else
+            ver="${base}-dev.${SHA::7}"
+          fi
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR (OCI)
+        env:
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$TOKEN" | helm registry login "$REGISTRY" -u "$ACTOR" --password-stdin
+
+      - name: Package chart
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          helm package charts/odysseus --version "$VERSION" --destination dist
+
+      - name: Push chart to GHCR
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # GHCR namespaces must be lowercase.
+          owner_lc=$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')
+          helm push "dist/odysseus-${VERSION}.tgz" "oci://${REGISTRY}/${owner_lc}/charts"
+
+      - name: Logout
+        if: always()
+        run: helm registry logout "$REGISTRY" || true

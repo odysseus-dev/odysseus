@@ -1,0 +1,190 @@
+{{- if .Values.searxng.enabled -}}
+{{- $name := include "odysseus.searxng.fullname" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-settings
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+data:
+  # Template rendered at boot by the entrypoint wrapper: __SEARXNG_SECRET__ is
+  # substituted with SEARXNG_SECRET (or an auto-generated value) and written to
+  # the persistent /etc/searxng/settings.yml. Mirrors config/searxng/settings.yml.
+  settings.yml.template: |
+    use_default_settings: true
+
+    server:
+      secret_key: "__SEARXNG_SECRET__"
+
+    search:
+      formats:
+        - html
+        - json
+---
+{{- if .Values.searxng.secretKey }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+type: Opaque
+stringData:
+  SEARXNG_SECRET: {{ .Values.searxng.secretKey | quote }}
+---
+{{- end }}
+{{- if and .Values.searxng.persistence.enabled (not .Values.searxng.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  accessModes:
+    - {{ .Values.searxng.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.searxng.persistence.size }}
+  {{- with .Values.searxng.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "odysseus.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: searxng
+  template:
+    metadata:
+      labels:
+        {{- include "odysseus.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: searxng
+    spec:
+      serviceAccountName: {{ include "odysseus.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: searxng
+          image: "{{ .Values.searxng.image.repository }}:{{ .Values.searxng.image.tag }}"
+          imagePullPolicy: {{ .Values.searxng.image.pullPolicy }}
+          # The official image runs as the non-root `searxng` user but still
+          # needs to chown /etc/searxng on first boot and drop privs via su-exec.
+          # Mirrors the cap set from the upstream searxng-docker compose file.
+          securityContext:
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - SETGID
+                - SETUID
+                - DAC_OVERRIDE
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              if [ ! -s /etc/searxng/settings.yml ] || grep -q '__SEARXNG_SECRET__' /etc/searxng/settings.yml; then
+                secret="${SEARXNG_SECRET:-}"
+                if [ -z "$secret" ]; then
+                  secret="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+                fi
+                sed "s|__SEARXNG_SECRET__|$secret|g" /tmp/searxng-settings.yml.template > /etc/searxng/settings.yml
+              fi
+              exec /usr/local/searxng/entrypoint.sh
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SEARXNG_BASE_URL
+              value: {{ printf "http://%s:%d/" $name (int .Values.searxng.service.port) | quote }}
+            {{- if .Values.searxng.secretKey }}
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}
+                  key: SEARXNG_SECRET
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.searxng.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/searxng
+            - name: settings-template
+              mountPath: /tmp/searxng-settings.yml.template
+              subPath: settings.yml.template
+              readOnly: true
+      volumes:
+        - name: config
+          {{- if .Values.searxng.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.searxng.persistence.existingClaim | default $name }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: settings-template
+          configMap:
+            name: {{ $name }}-settings
+      {{- with .Values.searxng.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.searxng.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.searxng.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "odysseus.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: searxng
+  ports:
+    - name: http
+      port: {{ .Values.searxng.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

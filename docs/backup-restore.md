@@ -99,7 +99,7 @@ nightly snapshot copied offsite:
 Swap the `--out` target for `scp`, `rclone`, `s3cmd`, or similar to push the
 snapshot to remote storage.
 
-## Docker vs native installs
+## Docker vs native vs Kubernetes installs
 
 The tool reads `data/` and writes `backups/` relative to the repository root, so
 where you run it matters:
@@ -112,13 +112,25 @@ where you run it matters:
   writes to `./backups` on the host. Running it *inside* the container is not
   recommended, because `backups/` is not a mounted volume and the tarball would
   be lost when the container is recreated.
+- **Kubernetes (Helm)** — `data/` lives in the `*-data` PersistentVolumeClaim, not
+  on a host path. Run the tool **inside the pod** and copy the tarball out, since
+  `backups/` is not a mounted volume:
+  ```bash
+  kubectl -n odysseus exec deploy/ody-odysseus -- \
+    python -m scripts.odysseus_backup snapshot
+  kubectl -n odysseus cp ody-odysseus-<pod>:/app/backups/<file>.tar.gz ./<file>.tar.gz
+  ```
+  Better, snapshot the PVC at the storage layer (e.g. a `VolumeSnapshot`). As in
+  Docker, ChromaDB runs as a separate service with its own PVC and is **not**
+  captured by `odysseus-backup` — see the caveat below.
 
-> **ChromaDB caveat (Docker only).** In the Docker setup, ChromaDB stores its
-> vectors in a separate Compose-managed volume (declared as `chromadb-data`),
-> **not** under `./data`. `odysseus-backup` therefore does not capture the Docker
-> ChromaDB store. Back it up separately if you need it. Compose prefixes the
-> volume with the project name, so find the real name first
-> (`docker volume ls | grep chromadb`), then archive it — for example:
+> **ChromaDB caveat (Docker & Kubernetes).** In both setups ChromaDB stores its
+> vectors in a separate volume — a Compose-managed volume (`chromadb-data`) under
+> Docker, or the `*-chromadb` PVC under Helm — **not** under `./data`.
+> `odysseus-backup` therefore does not capture it. Back it up separately if you
+> need it. On Docker, Compose prefixes the volume with the project name, so find
+> the real name first (`docker volume ls | grep chromadb`), then archive it — for
+> example:
 >
 > ```bash
 > docker run --rm -v <project>_chromadb-data:/data -v "$PWD":/backup \

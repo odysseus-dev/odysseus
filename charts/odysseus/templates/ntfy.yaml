@@ -1,0 +1,118 @@
+{{- if .Values.ntfy.enabled -}}
+{{- $name := include "odysseus.ntfy.fullname" . -}}
+{{- if and .Values.ntfy.persistence.enabled (not .Values.ntfy.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ntfy
+spec:
+  accessModes:
+    - {{ .Values.ntfy.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.ntfy.persistence.size }}
+  {{- with .Values.ntfy.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ntfy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "odysseus.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ntfy
+  template:
+    metadata:
+      labels:
+        {{- include "odysseus.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ntfy
+    spec:
+      serviceAccountName: {{ include "odysseus.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ntfy
+          image: "{{ .Values.ntfy.image.repository }}:{{ .Values.ntfy.image.tag }}"
+          imagePullPolicy: {{ .Values.ntfy.image.pullPolicy }}
+          args:
+            - serve
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: NTFY_BASE_URL
+              value: {{ .Values.ntfy.baseUrl | default (printf "http://%s" $name) | quote }}
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.ntfy.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/ntfy
+      volumes:
+        - name: cache
+          {{- if .Values.ntfy.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.ntfy.persistence.existingClaim | default $name }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.ntfy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ntfy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ntfy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ntfy
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "odysseus.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ntfy
+  ports:
+    - name: http
+      port: {{ .Values.ntfy.service.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

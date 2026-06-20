@@ -1,0 +1,20 @@
+apiVersion: v2
+name: odysseus
+description: Odysseus AI assistant — app plus its SearXNG, ChromaDB, and ntfy sidecars, for deployment into a single Kubernetes namespace.
+type: application
+# Chart version. Bump on any chart change.
+version: 0.1.0
+# Application version. Tracks the default odysseus.image.tag (the :latest image
+# published to GHCR by docker-publish.yml). Pin both together for a release.
+appVersion: "latest"
+keywords:
+  - odysseus
+  - llm
+  - ai-assistant
+  - searxng
+  - chromadb
+home: https://github.com/
+sources:
+  - https://github.com/
+maintainers:
+  - name: Lucas Golino

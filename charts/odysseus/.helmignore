@@ -1,0 +1,11 @@
+# Patterns to ignore when building Helm packages.
+.DS_Store
+.git/
+.gitignore
+*.tmproj
+.vscode/
+.idea/
+*.swp
+*.bak
+*.orig
+*~

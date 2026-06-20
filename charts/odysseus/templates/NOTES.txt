@@ -1,0 +1,32 @@
+Odysseus deployed to namespace "{{ .Release.Namespace }}" as release "{{ .Release.Name }}".
+
+Components:
+  - odysseus  (app)        Service {{ include "odysseus.app.fullname" . }}:{{ .Values.odysseus.service.port }}
+{{- if .Values.chromadb.enabled }}
+  - chromadb               Service {{ include "odysseus.chromadb.fullname" . }}:{{ .Values.chromadb.service.port }}
+{{- end }}
+{{- if .Values.searxng.enabled }}
+  - searxng                Service {{ include "odysseus.searxng.fullname" . }}:{{ .Values.searxng.service.port }}
+{{- end }}
+{{- if .Values.ntfy.enabled }}
+  - ntfy                   Service {{ include "odysseus.ntfy.fullname" . }}:{{ .Values.ntfy.service.port }}
+{{- end }}
+
+Reach the app:
+{{- if .Values.odysseus.ingress.enabled }}
+{{- range .Values.odysseus.ingress.hosts }}
+  http://{{ .host }}/
+{{- end }}
+{{- else }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "odysseus.app.fullname" . }} {{ .Values.odysseus.service.port }}:{{ .Values.odysseus.service.port }}
+  then open http://localhost:{{ .Values.odysseus.service.port }}
+{{- end }}
+
+{{- if not .Values.odysseus.secrets.existingSecret }}
+{{- if not .Values.odysseus.secrets.ODYSSEUS_ADMIN_PASSWORD }}
+
+WARNING: no ODYSSEUS_ADMIN_PASSWORD set. setup.py will generate one on first
+boot — read it from the app logs:
+  kubectl --namespace {{ .Release.Namespace }} logs deploy/{{ include "odysseus.app.fullname" . }}
+{{- end }}
+{{- end }}

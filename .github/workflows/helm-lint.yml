@@ -1,0 +1,52 @@
+# Helm chart lint (gate)
+#
+# Mirrors ci.yml for the chart: catches breakage in charts/odysseus before it
+# reaches a branch, without touching the repo. helm is preinstalled on the
+# GitHub-hosted ubuntu runner, so no third-party setup action is needed (and
+# nothing extra for the workflow-security audit to pin).
+
+name: Helm lint
+
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+      - '.github/workflows/helm-lint.yml'
+
+# Default-deny token; the one job only reads the code.
+permissions: {}
+
+concurrency:
+  group: helm-lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: helm lint + template
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: helm version
+        run: helm version
+
+      - name: Lint chart
+        run: helm lint charts/odysseus
+
+      # Render the manifests to catch template errors the linter misses.
+      # Default values first, then a few override paths the chart branches on.
+      - name: Render (default values)
+        run: helm template release charts/odysseus --namespace odysseus > /dev/null
+
+      - name: Render (overrides)
+        run: |
+          helm template release charts/odysseus --namespace odysseus \
+            --set odysseus.ingress.enabled=true \
+            --set searxng.secretKey=test \
+            --set chromadb.enabled=false \
+            --set ntfy.enabled=false > /dev/null

@@ -1,0 +1,39 @@
+{{- $data := .Values.odysseus.persistence.data -}}
+{{- if and $data.enabled (not $data.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "odysseus.app.fullname" . }}-data
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odysseus
+spec:
+  accessModes:
+    - {{ $data.accessMode }}
+  resources:
+    requests:
+      storage: {{ $data.size }}
+  {{- if $data.storageClass }}
+  storageClassName: {{ $data.storageClass }}
+  {{- end }}
+{{- end }}
+{{- $logs := .Values.odysseus.persistence.logs -}}
+{{- if and $logs.enabled (not $logs.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "odysseus.app.fullname" . }}-logs
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odysseus
+spec:
+  accessModes:
+    - {{ $logs.accessMode }}
+  resources:
+    requests:
+      storage: {{ $logs.size }}
+  {{- if $logs.storageClass }}
+  storageClassName: {{ $logs.storageClass }}
+  {{- end }}
+{{- end }}

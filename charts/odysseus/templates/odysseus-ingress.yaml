@@ -1,0 +1,38 @@
+{{- if .Values.odysseus.ingress.enabled -}}
+{{- $svc := include "odysseus.app.fullname" . -}}
+{{- $port := .Values.odysseus.service.port -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "odysseus.app.fullname" . }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odysseus
+  {{- with .Values.odysseus.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.odysseus.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.odysseus.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.odysseus.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $svc }}
+                port:
+                  number: {{ $port }}
+          {{- end }}
+    {{- end }}
+{{- end }}

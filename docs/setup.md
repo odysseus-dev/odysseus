@@ -36,6 +36,33 @@ only when you intentionally want LAN/reverse-proxy access.
 > Cookbook serves local models on CPU only. For GPU-accelerated model serving,
 > run natively instead — see [Apple Silicon](#apple-silicon) below.
 
+### Kubernetes (Helm)
+A Helm chart in [`charts/odysseus`](../charts/odysseus) deploys Odysseus and its
+bundled services (ChromaDB, SearXNG, ntfy) into a single namespace. It defaults
+to the GHCR image published by CI (`ghcr.io/pewdiepie-archdaemon/odysseus:latest`),
+so a basic install is just:
+
+```bash
+helm install ody charts/odysseus \
+  --namespace odysseus --create-namespace \
+  --set odysseus.secrets.ODYSSEUS_ADMIN_PASSWORD=<password>
+```
+
+For a fork, build and push your own image and override the repository/tag:
+
+```bash
+docker build -t <registry>/odysseus:<tag> .
+docker push <registry>/odysseus:<tag>
+# ...then add to the install:
+#   --set odysseus.image.repository=<registry>/odysseus --set odysseus.image.tag=<tag>
+```
+
+Reach the app with `kubectl -n odysseus port-forward svc/ody-odysseus 7000:7000`
+(then open `http://localhost:7000`), or enable an Ingress via `odysseus.ingress.*`.
+`.env` variables map to chart values — non-secret ones under `odysseus.config`,
+secrets under `odysseus.secrets`. See [`charts/odysseus/README.md`](../charts/odysseus/README.md)
+for the full values reference, persistence, and scaling notes.
+
 ### Native Linux / macOS
 ```bash
 git clone https://github.com/pewdiepie-archdaemon/odysseus.git
@@ -346,6 +373,8 @@ Odysseus serves plain HTTP on its app port. Docker Compose binds Odysseus and th
 4. Keep raw service and model ports internal-only.
 
 Cloudflare Access, Tailscale, Caddy, nginx, and Traefik can all fit this pattern; none are required by Odysseus. If your access layer reaches Odysseus on the same host, proxy to `http://127.0.0.1:7000` and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`, and `SECURE_COOKIES=true`.
+
+On Kubernetes (Helm), the chart keeps every Service `ClusterIP` (internal-only) by default; expose the app through an Ingress (`odysseus.ingress.*`) or `kubectl port-forward`, not the raw service/model ports. The same hardening applies — set `odysseus.config.SECURE_COOKIES=true` when terminating HTTPS at the ingress and keep `AUTH_ENABLED=true`, `LOCALHOST_BYPASS=false`.
 `ALLOWED_ORIGINS` lists exact permitted origins for cross-origin browser/API clients; ordinary same-origin reverse-proxy access usually does not need a special CORS entry.
 
 Common internal-only ports from the default docs/compose setup:
@@ -362,6 +391,10 @@ Common internal-only ports from the default docs/compose setup:
 ## Configuration
 Most setup is done inside the app with `/setup` or **Settings**. Use `.env`
 for deployment-level defaults and secrets you want present before first boot.
+On Kubernetes these same variables are set through the Helm chart instead of
+`.env` — non-secret ones under `odysseus.config`, secrets under
+`odysseus.secrets`. The chart auto-injects `SEARXNG_INSTANCE` and `CHROMADB_HOST`/`CHROMADB_PORT`
+from its in-cluster service names, so leave those unset there.
 Key settings:
 
 | Variable | Default | Description |

@@ -1,0 +1,243 @@
+# Default values for the odysseus chart.
+# Everything deploys into a single namespace (helm install -n <ns>).
+
+# -- Override the chart name portion of resource names.
+nameOverride: ""
+# -- Override the full resource name prefix.
+fullnameOverride: ""
+
+# Image pull secrets applied to every pod's ServiceAccount.
+imagePullSecrets: []
+
+serviceAccount:
+  # Create a dedicated ServiceAccount for the workloads.
+  create: true
+  name: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# odysseus — the main application (app.py / uvicorn on :7000)
+# ---------------------------------------------------------------------------
+odysseus:
+  image:
+    # Published by .github/workflows/docker-publish.yml:
+    #   ghcr.io/<owner>/<repo>  ->  :latest (main), :dev, :X.Y.Z
+    # Override repository for a fork, or pin tag to a release (e.g. 1.2.3).
+    repository: ghcr.io/pewdiepie-archdaemon/odysseus
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  # SQLite + local PVCs mean only one writer is safe. Keep at 1 unless you move
+  # DATABASE_URL to an external DB and the data dirs to RWX storage.
+  strategy:
+    type: Recreate
+
+  service:
+    type: ClusterIP
+    port: 7000
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 4Gi
+
+  # The container entrypoint drops privileges to PUID/PGID via gosu and chowns
+  # the mounted data/log dirs, so it must start as root (UID 0). Do not set a
+  # non-root runAsUser here unless you also rebuild the image without gosu.
+  podSecurityContext: {}
+  securityContext: {}
+
+  # PUID/PGID the entrypoint drops to before running uvicorn. Must own the PVC
+  # contents. 1000 matches the first user on most Linux hosts.
+  puid: 1000
+  pgid: 1000
+
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 30
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 6
+  readinessProbe:
+    enabled: true
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 6
+
+  persistence:
+    # /app/data — db (when sqlite), ssh keys, hf cache, pip --user installs.
+    data:
+      enabled: true
+      size: 10Gi
+      accessMode: ReadWriteOnce
+      storageClass: ""
+      # Bind to an existing PVC instead of creating one.
+      existingClaim: ""
+    # /app/logs
+    logs:
+      enabled: true
+      size: 1Gi
+      accessMode: ReadWriteOnce
+      storageClass: ""
+      existingClaim: ""
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  podAnnotations: {}
+
+  # Non-secret application config (mirrors docker-compose `environment:`).
+  # Service-discovery vars (SEARXNG_INSTANCE, CHROMADB_HOST/PORT) are injected
+  # automatically from the in-cluster service names — do not set them here.
+  config:
+    LLM_HOST: "localhost"
+    LLM_HOSTS: ""
+    OLLAMA_BASE_URL: ""
+    RESEARCH_LLM_ENDPOINT: ""
+    DATABASE_URL: "sqlite:///./data/app.db"
+    AUTH_ENABLED: "true"
+    LOCALHOST_BYPASS: "false"
+    ODYSSEUS_ADMIN_USER: "admin"
+    ALLOWED_ORIGINS: "http://localhost,http://127.0.0.1"
+    SECURE_COOKIES: "false"
+    EMBEDDING_URL: ""
+    EMBEDDING_MODEL: ""
+    FASTEMBED_MODEL: "sentence-transformers/all-MiniLM-L6-v2"
+    FASTEMBED_CACHE_PATH: ""
+    CLEANUP_INTERVAL_HOURS: "24"
+    ODYSSEUS_INPROCESS_POLLERS: "1"
+    ODYSSEUS_INPROCESS_TASKS: "1"
+    ODYSSEUS_SCRIPT_HOST: "localhost"
+    ODYSSEUS_CHAT_UPLOAD_MAX_BYTES: "10485760"
+    ODYSSEUS_GALLERY_UPLOAD_MAX_BYTES: "104857600"
+    ODYSSEUS_GALLERY_TRANSFORM_UPLOAD_MAX_BYTES: "26214400"
+    ODYSSEUS_MEMORY_IMPORT_MAX_BYTES: "10485760"
+    ODYSSEUS_PERSONAL_UPLOAD_MAX_BYTES: "26214400"
+    ODYSSEUS_EMAIL_COMPOSE_UPLOAD_MAX_BYTES: "26214400"
+    ODYSSEUS_STT_MAX_AUDIO_BYTES: "26214400"
+    ODYSSEUS_ICS_MAX_BYTES: "10485760"
+    GOOGLE_PSE_CX: ""
+
+  # Secret values (mirrors the sensitive parts of `environment:`). Empty values
+  # are omitted from the rendered Secret. Prefer --set or a values override file
+  # kept out of git; or set existingSecret to supply your own.
+  secrets:
+    existingSecret: ""
+    OPENAI_API_KEY: ""
+    HF_TOKEN: ""
+    HUGGING_FACE_HUB_TOKEN: ""
+    ODYSSEUS_ADMIN_PASSWORD: ""
+    EMBEDDING_API_KEY: ""
+    DATA_BRAVE_API_KEY: ""
+    GOOGLE_API_KEY: ""
+    TAVILY_API_KEY: ""
+    SERPER_API_KEY: ""
+
+  # Extra raw env vars (list of {name, value} / valueFrom maps) if you need more.
+  extraEnv: []
+
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: odysseus.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+# ---------------------------------------------------------------------------
+# chromadb — vector store
+# ---------------------------------------------------------------------------
+chromadb:
+  enabled: true
+  image:
+    repository: chromadb/chroma
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    port: 8000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 5Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+    existingClaim: ""
+  env:
+    ANONYMIZED_TELEMETRY: "FALSE"
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# searxng — metasearch backend
+# ---------------------------------------------------------------------------
+searxng:
+  enabled: true
+  image:
+    # Pinned, not :latest — odysseus depends on searxng being healthy and some
+    # upstream tags crash on boot. Bump deliberately after verifying a clean tag.
+    repository: searxng/searxng
+    tag: "2026.5.31-7159b8aed"
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  # Secret key for SearXNG. Leave empty to auto-generate one in the entrypoint
+  # (regenerated on pod restart unless persistence is enabled, which it is).
+  secretKey: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+    existingClaim: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ---------------------------------------------------------------------------
+# ntfy — push notifications
+# ---------------------------------------------------------------------------
+ntfy:
+  enabled: true
+  image:
+    repository: binwiederhier/ntfy
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    port: 80
+  # Public base URL clients use to subscribe. Service-internal by default.
+  baseUrl: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+    existingClaim: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}

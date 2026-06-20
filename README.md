@@ -36,6 +36,8 @@ docker compose up -d --build
 
 Open `http://localhost:7000` when the containers are healthy. The first admin password is printed in `docker compose logs odysseus`.
 
+Prefer Kubernetes? A Helm chart lives in [`charts/odysseus`](charts/odysseus) — see its [README](charts/odysseus/README.md) or the [setup guide](docs/setup.md#kubernetes-helm).
+
 Native installs, GPU notes, Windows/macOS instructions, HTTPS, and configuration live in the [setup guide](docs/setup.md).
 
 ## Features

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "odysseus.app.fullname" . }}-config
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odysseus
+data:
+  {{- range $k, $v := .Values.odysseus.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  # Service discovery — derived from in-cluster service names so they always
+  # match what this chart actually deploys.
+  {{- if .Values.searxng.enabled }}
+  SEARXNG_INSTANCE: {{ printf "http://%s:%d" (include "odysseus.searxng.fullname" .) (int .Values.searxng.service.port) | quote }}
+  {{- end }}
+  {{- if .Values.chromadb.enabled }}
+  CHROMADB_HOST: {{ include "odysseus.chromadb.fullname" . | quote }}
+  CHROMADB_PORT: {{ .Values.chromadb.service.port | quote }}
+  {{- end }}
+  PUID: {{ .Values.odysseus.puid | quote }}
+  PGID: {{ .Values.odysseus.pgid | quote }}

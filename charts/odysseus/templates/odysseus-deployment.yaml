@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "odysseus.app.fullname" . }}
+  labels:
+    {{- include "odysseus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: odysseus
+spec:
+  replicas: {{ .Values.odysseus.replicaCount }}
+  strategy:
+    {{- toYaml .Values.odysseus.strategy | nindent 4 }}
+  selector:
+    matchLabels:
+      {{- include "odysseus.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: odysseus
+  template:
+    metadata:
+      annotations:
+        # Roll the pod when config/secrets change.
+        checksum/config: {{ include (print $.Template.BasePath "/odysseus-configmap.yaml") . | sha256sum }}
+        {{- if not .Values.odysseus.secrets.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/odysseus-secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.odysseus.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "odysseus.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: odysseus
+    spec:
+      serviceAccountName: {{ include "odysseus.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.odysseus.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: odysseus
+          image: "{{ .Values.odysseus.image.repository }}:{{ .Values.odysseus.image.tag }}"
+          imagePullPolicy: {{ .Values.odysseus.image.pullPolicy }}
+          {{- with .Values.odysseus.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 7000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "odysseus.app.fullname" . }}-config
+            - secretRef:
+                name: {{ include "odysseus.app.secretName" . }}
+          {{- with .Values.odysseus.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.odysseus.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.odysseus.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.odysseus.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.odysseus.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.odysseus.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.odysseus.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.odysseus.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.odysseus.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.odysseus.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.odysseus.readinessProbe.failureThreshold }}
+          {{- end }}
+          {{- with .Values.odysseus.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: data
+              mountPath: /app/.ssh
+              subPath: ssh
+            - name: data
+              mountPath: /app/.cache/huggingface
+              subPath: huggingface
+            - name: data
+              mountPath: /app/.local
+              subPath: local
+            - name: logs
+              mountPath: /app/logs
+      volumes:
+        - name: data
+          {{- if .Values.odysseus.persistence.data.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.odysseus.persistence.data.existingClaim | default (printf "%s-data" (include "odysseus.app.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: logs
+          {{- if .Values.odysseus.persistence.logs.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.odysseus.persistence.logs.existingClaim | default (printf "%s-logs" (include "odysseus.app.fullname" .)) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.odysseus.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.odysseus.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.odysseus.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
