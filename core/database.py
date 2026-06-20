@@ -422,6 +422,7 @@ class McpServer(TimestampMixin, Base):
     oauth_config = Column(Text, nullable=True)   # JSON: provider, keys_file, token_file, scopes
     disabled_tools = Column(Text, nullable=True)  # JSON array of tool names to hide from LLM
     oauth_tokens = Column(EncryptedText, nullable=True)  # JSON {tokens, client_info} for generic MCP OAuth, encrypted at rest
+    headers = Column(Text, nullable=True)               # JSON object of HTTP headers (e.g. Authorization) for SSE/HTTP transport
 
 
 class Comparison(TimestampMixin, Base):
@@ -1514,6 +1515,18 @@ def _migrate_add_mcp_oauth_tokens_column():
     except Exception as e:
         logging.getLogger(__name__).warning(f"oauth_tokens migration: {e}")
 
+def _migrate_add_mcp_headers_column():
+    """Add headers column to mcp_servers table if missing."""
+    try:
+        with engine.connect() as conn:
+            cols = [r[1] for r in conn.execute(text("PRAGMA table_info(mcp_servers)"))]
+            if "headers" not in cols:
+                conn.execute(text("ALTER TABLE mcp_servers ADD COLUMN headers TEXT"))
+                conn.commit()
+                logging.getLogger(__name__).info("Added headers column to mcp_servers")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"headers migration: {e}")
+
 def _migrate_add_task_v2_columns():
     """Add cron_expression, then_task_id, webhook_token to scheduled_tasks."""
     new_cols = {
@@ -1821,6 +1834,7 @@ def init_db():
     _migrate_add_task_automation_columns()
     _migrate_add_disabled_tools()
     _migrate_add_mcp_oauth_tokens_column()
+    _migrate_add_mcp_headers_column()
     _migrate_add_task_v2_columns()
     _migrate_add_notifications_enabled()
     _migrate_drop_ping_notes_tasks()
