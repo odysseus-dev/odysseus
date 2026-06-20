@@ -2014,7 +2014,8 @@ async def _llm_classify_domains(query: str, owner: Optional[str] = None) -> Set[
         + ", ".join(valid_domains) + ".\n"
         "If none match, output exactly: none\n"
         "Do NOT translate, explain, or add any other text.\n\n"
-        f"Message: \"{query[:500]}\"\n"
+        f"Recent conversation:\n\"{query[:500]}\"\n\n"
+        "Classify the latest request.\n"
         "Categories:"
     )
 
@@ -3233,22 +3234,27 @@ async def stream_agent_loop(
             "mcp__email__list_emails", "mcp__email__read_email", "mcp__email__scan_email_unsubscribes",
         })
     _prompt_active_document = active_document if _active_document_relevant else None
-    if _use_llm_classifier and not _intent.get("continuation") and _last_user:
-        # Skip regex results entirely — the LLM owns classification.
+    if _use_llm_classifier and _last_user:
+        # LLM owns classification — always feed it conversation context
+        # so multi-language follow-ups ("Fai tutto tu", "Sì", "Fallo")
+        # inherit domain from prior turns.
+        _llm_query = _recent_context_for_retrieval(messages)
         try:
             _llm_domains = await asyncio.wait_for(
-                _llm_classify_domains(_last_user, owner=owner),
+                _llm_classify_domains(_llm_query, owner=owner),
                 timeout=5,
             )
         except (asyncio.TimeoutError, Exception):
             _llm_domains = set()
         _intent["domains"] = _llm_domains
         _intent["low_signal"] = not bool(_llm_domains)
+        _intent["retrieval_query"] = _llm_query
     elif not _intent.get("domains") and not _intent.get("continuation") and _last_user:
-        # Regex found nothing — try LLM as a fallback.
+        # Regex found nothing — try LLM as a fallback with context.
+        _llm_query = _recent_context_for_retrieval(messages)
         try:
             _llm_domains = await asyncio.wait_for(
-                _llm_classify_domains(_last_user, owner=owner),
+                _llm_classify_domains(_llm_query, owner=owner),
                 timeout=5,
             )
         except (asyncio.TimeoutError, Exception):
@@ -3256,6 +3262,7 @@ async def stream_agent_loop(
         if _llm_domains:
             _intent["domains"] = _llm_domains
             _intent["low_signal"] = False
+            _intent["retrieval_query"] = _llm_query
             logger.info(
                 "[agent-intent] LLM fallback added domains: %s",
                 sorted(_llm_domains),
