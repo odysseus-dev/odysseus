@@ -1079,12 +1079,12 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "manage_contact",
-            "description": "Create, update, delete, or list the user's CardDAV contacts. Use to save a new contact, update an existing one (email/phone/address), or remove one. Add does not require email: name + phone or name + address is valid. For update/delete you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI.",
+            "description": "Create, update, delete, view, or list the user's CardDAV contacts. Use to save a new contact, update an existing one (email/phone/address), view full details by uid, or remove one. For update/delete/view you need the contact's uid — call action='list' first to find it. Writes go through the same dedupe + validation as the Contacts UI. Update preserves existing emails/phones when they aren't passed — safe for partial edits like renaming.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["list", "add", "update", "delete"],
-                               "description": "list = show all contacts (with uids); add = create; update = edit by uid; delete = remove by uid."},
+                    "action": {"type": "string", "enum": ["list", "view", "add", "update", "delete"],
+                               "description": "list = show all contacts (with uids and phones); view = show full details of one contact by uid; add = create; update = edit by uid (preserves fields not passed); delete = remove by uid."},
                     "uid": {"type": "string", "description": "Contact UID (required for update/delete; get it from action=list)."},
                     "name": {"type": "string", "description": "Contact's display name (for add/update)."},
                     "email": {"type": "string", "description": "Single email address (convenience for add, or the primary email for update). Optional when phone or address is provided."},
