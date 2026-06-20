@@ -2144,6 +2144,8 @@ const SELF_TOKEN_SCOPES = [
   { key: 'calendar:write', label: 'Calendar write', detail: 'Create and update calendar events' },
   { key: 'memory:read', label: 'Memory', detail: 'Read memory' },
   { key: 'memory:write', label: 'Memory write', detail: 'Write memory' },
+  { key: 'cookbook:read', label: 'Cookbook', detail: 'Read model inventory and presets' },
+  { key: 'cookbook:launch', label: 'Cookbook launch', detail: 'Start and stop model servers' },
 ];
 
 function initSelfApiTokens() {
