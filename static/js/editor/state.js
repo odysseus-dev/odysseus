@@ -245,6 +245,12 @@ export const state = {
   // Loading-overlay element (whirlpool + label).
   editorLoadingEl: null,
 
+  // ── Ruler guides ──
+  // Array of {id, type:'h'|'v', pos} in image-space pixels.
+  guides: [],
+  selectedGuideId: null,
+  nextGuideId: 1,
+
   // ── Draft persistence ──
   draftId: null,
   draftName: '',

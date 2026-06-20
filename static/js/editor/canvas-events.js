@@ -80,6 +80,7 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
     const t = `translate3d(${x}px, ${y}px, 0)`;
     state.mainCanvas.style.transform = t;
     if (state.transformOverlay) state.transformOverlay.style.transform = t;
+    canvasArea._updateRulerGuides?.();
   };
   state.mainCanvas.addEventListener('touchstart', (e) => {
     e.preventDefault();
@@ -153,6 +154,7 @@ export function wireCanvasEvents({ canvasArea, beginDraw, continueDraw, endDraw,
     const t = `translate3d(${x}px, ${y}px, 0)`;
     state.mainCanvas.style.transform = t;
     if (state.transformOverlay) state.transformOverlay.style.transform = t;
+    canvasArea._updateRulerGuides?.();
   };
   canvasArea.addEventListener('pointerdown', (e) => {
     if (state.tool === 'lasso') return;

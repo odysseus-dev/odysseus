@@ -107,8 +107,11 @@ import { wireInpaintControls } from './editor/wire-inpaint-controls.js';
 import { wireTopbar, closeOtherTopbarMenus as _closeOtherTopbarMenus } from './editor/wire-topbar.js';
 import { wireTopbarOverflow } from './editor/wire-topbar-overflow.js';
 import { wireTopbarMenus } from './editor/wire-topbar-menus.js';
+import { createRulerGuides } from './editor/ruler-guides.js';
 
 const API_BASE = window.location.origin;
+// ── Ruler guides ──
+let _rulerGuides = null;
 // ── State ──
 // Transform-overlay canvas — sits over the main canvas with extra margin
 // so resize / rotation handles render OUTSIDE the image edges. Pointer
@@ -2228,6 +2231,8 @@ function _applyZoom() {
   _syncZoomControls();
   const area = state.container && state.container.querySelector('.ge-canvas-area');
   if (area && area._resetPan) area._resetPan();
+  // Rulers / guides reposition after the canvas CSS size changes.
+  requestAnimationFrame(() => _rulerGuides?.update());
 }
 
 function _syncZoomControls() {
@@ -2523,7 +2528,11 @@ function _buildEditor(container) {
   editorBody.className = 'ge-editor-body';
   editorBody.appendChild(toolbar);
 
-  // Canvas area (center)
+  // Canvas outer wrapper — houses rulers (non-scrolling) + canvas area.
+  const canvasOuter = document.createElement('div');
+  canvasOuter.className = 'ge-canvas-outer';
+
+  // Canvas area (center, inset by ruler strip)
   const canvasArea = document.createElement('div');
   canvasArea.className = 'ge-canvas-area';
   state.mainCanvas = document.createElement('canvas');
@@ -2556,6 +2565,7 @@ function _buildEditor(container) {
   // re-draw on scroll re-reads its position).
   canvasArea.addEventListener('scroll', () => {
     if (state.transformActive) _drawTransformHandles();
+    _rulerGuides?.update();
   }, { passive: true });
 
   // Canvas events (mouse + touch + pinch-zoom + pan) — full
@@ -2569,7 +2579,18 @@ function _buildEditor(container) {
     syncZoomControls: () => _syncZoomControls(),
   });
 
-  editorBody.appendChild(canvasArea);
+  // Expose ruler-guide update hook so canvas-events.js pan can trigger it
+  canvasArea._updateRulerGuides = () => _rulerGuides?.update();
+
+  canvasOuter.appendChild(canvasArea);
+  editorBody.appendChild(canvasOuter);
+
+  // Ruler guides — init after canvas area is in the DOM so getBoundingClientRect works.
+  _rulerGuides = createRulerGuides();
+  // Defer until after the layout settles (fitZoom runs in openEditor after _buildEditor)
+  requestAnimationFrame(() => {
+    if (_rulerGuides) _rulerGuides.init(canvasOuter, canvasArea);
+  });
 
   // Right panel (controls + layers + resize handle) — full
   // implementation in editor/build/right-panel.js.
@@ -3764,6 +3785,11 @@ export function closeEditor() {
       });
     }
   } catch {}
+  _rulerGuides?.destroy();
+  _rulerGuides = null;
+  state.guides = [];
+  state.selectedGuideId = null;
+  state.nextGuideId = 1;
   if (state.container) {
     state.container.style.display = 'none';
     state.container.innerHTML = '';

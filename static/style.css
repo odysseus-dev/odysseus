@@ -24798,20 +24798,122 @@ details.hwfit-serve-advanced > .hwfit-serve-checks:last-of-type {
   transform: translate(-50%, -50%);
   z-index: 1;
 }
-/* Canvas area (center) */
-.ge-canvas-area {
+/* Outer wrapper — holds rulers (fixed) + inset canvas area */
+.ge-canvas-outer {
+  position: relative;
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+/* Canvas area (center) — inset by ruler strip on top + left */
+.ge-canvas-area {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: auto;
   background: var(--bg);
-  position: relative;
   min-width: 0;
   /* Stop touch interactions inside the editor from dragging the whole
      page (or the gallery modal). Touches on the canvas are owned by the
      editor's drawing logic — no native pan/zoom. */
   overscroll-behavior: contain;
+}
+
+/* ── Ruler strips ────────────────────────────────────────────────────── */
+.ge-ruler-corner {
+  position: absolute;
+  top: 0; left: 0;
+  width: 20px; height: 20px;
+  z-index: 12;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ge-ruler-h {
+  position: absolute;
+  top: 0; left: 20px; right: 0;
+  height: 20px;
+  z-index: 11;
+  cursor: s-resize;
+  display: block;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.ge-ruler-v {
+  position: absolute;
+  top: 20px; left: 0;
+  width: 20px; bottom: 0;
+  z-index: 11;
+  cursor: e-resize;
+  display: block;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+/* ── Guide overlay & guide lines ─────────────────────────────────────── */
+.ge-guide-layer {
+  position: absolute;
+  top: 20px; left: 20px;
+  right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 10;
+  overflow: hidden;
+}
+/* Horizontal guide wrapper — spans full width, 1px tall */
+.ge-guide-h-wrap {
+  position: absolute;
+  left: -20px; right: 0;
+  height: 9px;              /* wider hit area */
+  margin-top: -4px;         /* center the hit area on the line */
+  pointer-events: auto;
+  cursor: ns-resize;
+  z-index: 10;
+}
+/* Vertical guide wrapper — spans full height, 1px wide */
+.ge-guide-v-wrap {
+  position: absolute;
+  top: -20px; bottom: 0;
+  width: 9px;
+  margin-left: -4px;
+  pointer-events: auto;
+  cursor: ew-resize;
+  z-index: 10;
+}
+/* The visible 1px line inside the wrapper */
+.ge-guide-h-wrap .ge-guide-line {
+  position: absolute;
+  left: 0; right: 0;
+  top: 4px;
+  height: 1px;
+  background: #00c8ff;
+  pointer-events: none;
+}
+.ge-guide-v-wrap .ge-guide-line {
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: #00c8ff;
+  pointer-events: none;
+}
+/* Selected state */
+.ge-guide-h-wrap.ge-guide-selected .ge-guide-line,
+.ge-guide-v-wrap.ge-guide-selected .ge-guide-line {
+  background: #ff4d4d;
+}
+/* Ghost guide shown while dragging from ruler */
+.ge-guide-ghost .ge-guide-line {
+  opacity: 0.6;
+}
+/* Ghost doesn't need the wider hit area */
+.ge-guide-ghost {
+  pointer-events: none;
 }
 .ge-main-canvas {
   touch-action: none;
@@ -27545,9 +27647,17 @@ button .spinner-whirlpool {
   /* Canvas is the main thing — give it as much vertical space as
      the editor body can spare. min-height keeps it visible even when
      the right panel is at its max. */
-  .ge-canvas-area {
+  .ge-canvas-outer {
     flex: 1 1 auto;
     min-height: 40vh;
+  }
+  /* Hide rulers on mobile — too small to be useful */
+  .ge-ruler-h, .ge-ruler-v, .ge-ruler-corner, .ge-guide-layer {
+    display: none;
+  }
+  .ge-canvas-area {
+    top: 0;
+    left: 0;
   }
   /* Right panel = layers list. Docked as a bottom sheet with a peek
      state: collapsed shows the header strip (and the active layer
