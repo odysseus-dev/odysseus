@@ -796,8 +796,11 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             html = f.read()
-    except OSError:
+    except FileNotFoundError:
         raise HTTPException(404, "Page not found")
+    except OSError:
+        logger.exception("Failed to read page %s", file_path)
+        raise HTTPException(500, "Internal server error")
     nonce = getattr(request.state, "csp_nonce", "")
     html = html.replace("{{CSP_NONCE}}", nonce)
     return HTMLResponse(html)
