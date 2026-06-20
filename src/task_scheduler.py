@@ -1391,18 +1391,14 @@ class TaskScheduler:
         # voice — it prepends to whichever base prompt we landed on so the
         # task still knows it's executing a scheduled task but in that
         # character's tone.
-        system_prompt = (
-            (crew.personality or "").strip()
-            if crew and crew.personality
-            else "You are a helpful assistant executing a scheduled task. Use available tools to complete the task thoroughly."
-        )
+        _crew_persona = (crew.personality or "").strip() if crew and crew.personality else ""
         char_id = (getattr(task, "character_id", None) or "").strip()
         if char_id:
             try:
                 from src.reminder_personas import PERSONAS as _PERSONAS
                 char_prompt = _PERSONAS.get(char_id.lower())
                 if char_prompt:
-                    system_prompt = f"{char_prompt}\n\n{system_prompt}"
+                    _crew_persona = f"{char_prompt}\n\n{_crew_persona}" if _crew_persona else char_prompt
             except Exception:
                 pass
         # Inject current time so the model knows what's past vs upcoming
@@ -1417,7 +1413,23 @@ class TaskScheduler:
                 time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         except Exception:
             time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
-        system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
+        if _crew_persona:
+            system_prompt = f"Current time: {time_str}\n\n{_crew_persona}"
+        else:
+            # Strong directive: force tool-calling behavior so the model does
+            # not respond with prose descriptions of what it plans to do.
+            # Smaller local models (qwen2.5-14b) would otherwise role-play
+            # tool use in prose instead of actually calling tools.
+            system_prompt = (
+                f"Current time: {time_str}\n\n"
+                "You are an automated background agent executing a scheduled task. "
+                "Rules:\n"
+                "1. Your ONLY valid first response is a tool call — do NOT write any text before calling a tool.\n"
+                "2. Never describe what you are about to do; just do it.\n"
+                "3. Execute every step in the task using tools. Do not summarise plans.\n"
+                "4. NEVER ask the user questions — this is an unattended background job.\n"
+                "5. After all steps are complete, write a brief completion report."
+            )
 
         # Compute the disabled-tools set: the crew's enabled_tools allowlist
         # (inverted) plus the operator's global disabled_tools setting. The
@@ -1426,7 +1438,10 @@ class TaskScheduler:
         # or AUTH_ENABLED=false scheduled task would still see and call shell/
         # file tools after the operator disabled them globally, because the
         # prompt/schema/execution gates only enforce what is passed in.
-        disabled_tools: set[str] = set()
+        # Always disable ask_user for scheduled tasks — they run unattended and
+        # must never block waiting for user input.
+        _TASK_DISABLED = {"ask_user"}
+        disabled_tools: set[str] = set(_TASK_DISABLED)
         if crew and crew.enabled_tools:
             try:
                 enabled = json.loads(crew.enabled_tools)
@@ -1445,17 +1460,30 @@ class TaskScheduler:
             pass
 
         # RAG-select relevant tools for this prompt + always-available assistant tools.
-        # Without this, all 40+ tools get sent and models hit their tool limit.
+        # Keep the set small — local models (qwen2.5-14b via LM Studio) lose
+        # native tool-calling and produce garbled text when sent too many schemas
+        # in streaming mode. The hard cap prioritises tools named in the task prompt.
         relevant_tools = None
         try:
             from src.tool_index import get_tool_index, ASSISTANT_ALWAYS_AVAILABLE
             tool_idx = get_tool_index()
             if tool_idx:
-                rag_tools = tool_idx.get_tools_for_query(task.prompt or "", k=8)
+                rag_tools = tool_idx.get_tools_for_query(task.prompt or "", k=4)
                 relevant_tools = compose_task_relevant_tools(
                     rag_tools, ASSISTANT_ALWAYS_AVAILABLE, disabled_tools
                 )
-                logger.info(f"[assistant] RAG selected {len(rag_tools)} tools + {len(ASSISTANT_ALWAYS_AVAILABLE)} always-available + shell/file defaults = {len(relevant_tools)} total for '{task.name}'")
+                # Hard cap: local models fall back to text-mode tool calls when
+                # sent >~10 schemas. Keep tools named in the task prompt first.
+                _MAX_TASK_TOOLS = 8
+                relevant_tools = set(relevant_tools)
+                if len(relevant_tools) > _MAX_TASK_TOOLS:
+                    _prompt_lc = (task.prompt or "").lower()
+                    _named = {t for t in relevant_tools if t.lower() in _prompt_lc}
+                    _rest = sorted(relevant_tools - _named)
+                    relevant_tools = set(
+                        list(_named) + _rest[:max(0, _MAX_TASK_TOOLS - len(_named))]
+                    )
+                logger.info(f"[assistant] RAG selected {len(rag_tools)} tools → capped at {len(relevant_tools)} total for '{task.name}'")
         except Exception as e:
             logger.warning(f"[assistant] RAG tool selection failed, using all: {e}")
 
