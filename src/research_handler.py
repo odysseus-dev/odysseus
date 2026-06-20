@@ -717,9 +717,10 @@ class ResearchHandler:
             return False
 
     @staticmethod
-    async def _probe_endpoint(endpoint: str, model: str, headers: dict = None):
+    async def _probe_endpoint(endpoint: str, model: str, headers: dict = None, timeout: int = 15):
         """Quick probe to verify the LLM endpoint/model responds before research."""
         from src.llm_core import llm_call_async
+        probe_timeout = _bounded_int(timeout, default=15, minimum=15, maximum=3600)
         try:
             logger.info(f"Probing {model} at {endpoint} (has_auth={bool(headers and 'Authorization' in (headers or {}))})")
             await llm_call_async(
@@ -729,7 +730,7 @@ class ResearchHandler:
                 temperature=0,
                 max_tokens=5,
                 headers=headers,
-                timeout=15,
+                timeout=probe_timeout,
                 max_retries=1,
             )
             logger.info(f"Endpoint probe OK: {model}")
@@ -780,14 +781,20 @@ class ResearchHandler:
             logger.info(f"Prior: {len(prior_findings or [])} findings, {len(prior_urls or set())} URLs")
 
         # Probe the endpoint before committing to a long research run
+        from src.settings import get_setting
+        _probe_timeout = _bounded_int(
+            get_setting("research_planning_timeout_seconds", 90),
+            default=90,
+            minimum=15,
+            maximum=3600,
+        )
         if progress_callback:
             progress_callback({"phase": "probing", "model": llm_model})
-        await self._probe_endpoint(llm_endpoint, llm_model, llm_headers)
+        await self._probe_endpoint(llm_endpoint, llm_model, llm_headers, timeout=_probe_timeout)
 
         try:
             from src.deep_research import DeepResearcher
 
-            from src.settings import get_setting
             _max_report_tokens = int(get_setting("research_max_tokens", 16384))
             _extraction_timeout = _bounded_int(
                 extraction_timeout if extraction_timeout is not None else get_setting("research_extraction_timeout_seconds", 90),

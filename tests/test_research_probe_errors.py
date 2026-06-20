@@ -59,3 +59,22 @@ async def test_probe_endpoint_surfaces_http_exception_detail(monkeypatch):
     assert "Model 'o3-mini' probe failed" in msg
     assert "max_tokens is not supported" in msg
     assert "Cannot reach model" not in msg
+
+
+@pytest.mark.asyncio
+async def test_probe_endpoint_uses_configured_timeout(monkeypatch):
+    captured = {}
+
+    async def _ok(*args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return "ok"
+
+    monkeypatch.setattr("src.llm_core.llm_call_async", _ok)
+
+    await ResearchHandler._probe_endpoint(
+        "http://local.test/v1/chat/completions",
+        "local-model",
+        timeout=123,
+    )
+
+    assert captured["timeout"] == 123
