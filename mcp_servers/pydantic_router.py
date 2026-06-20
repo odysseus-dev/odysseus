@@ -39,7 +39,7 @@ async def routeMCP(prompt, Agent_Hashmap:dict,AgentSystemPrompt, model, args:dic
     system=AgentSystemPrompt+f"""Names of Agent/s:{str(Agent_Hashmap['Agent'].keys()).split("dict_keys")[1]}.""",
      )
     AgentType = AgentRouter.model_validate_json(response['response']).Agent
-    Tool_Identification = await asyncio.to_thread(ollama.generate, model = model, prompt = f"Here is the prompt {prompt}:Here are the ToolNames:[{str(Agent_Hashmap["Tool"][AgentType].keys()).split("dict_keys")[1]}.].", format = AgentRouter.model_json_schema(), system = ToolSystemPrompt)
+    Tool_Identification = await asyncio.to_thread(ollama.generate, model = model, prompt = f"Here is the prompt {prompt}:Here are the ToolNames:[{str(Agent_Hashmap["Tool"][AgentType].keys()).split("dict_keys")[1]}.].", format = ToolRouter.model_json_schema(), system = ToolSystemPrompt)
     ToolType = ToolRouter.model_validate_json(Tool_Identification["response"]).Tool_To_Call
 
 
