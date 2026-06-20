@@ -52,6 +52,29 @@ class GatewayRunner:
         self.session_manager = session_manager
         # (platform, channel_id) -> odysseus session_id
         self._sessions: Dict[Tuple[str, str], str] = {}
+        # An external chat gateway must never expose admin/host-execution tools.
+        # If the resolved owner is an admin (or single-user mode is on), the agent
+        # would otherwise get the full toolset (bash/python/...). Force the
+        # public-user policy unless the operator explicitly opts in.
+        self._force_public = self._compute_force_public()
+
+    def _compute_force_public(self) -> bool:
+        try:
+            from src.tool_security import owner_is_admin_or_single_user
+            privileged = owner_is_admin_or_single_user(self.cfg.owner or None)
+        except Exception:
+            privileged = True  # fail closed
+        if privileged and not self.cfg.allow_privileged_owner:
+            logger.warning(
+                "chat_gateway: owner %r is an admin or single-user mode is active. "
+                "Forcing the public-user toolset (no bash/python/file/email/memory, "
+                "MCP off) so this external gateway cannot reach host execution. Use a "
+                "dedicated non-admin 'owner', or set 'allow_privileged_owner: true' to "
+                "override (NOT recommended for an externally reachable bot).",
+                self.cfg.owner,
+            )
+            return True
+        return False
 
     # ── public entrypoint handed to adapters via set_message_handler ────
     async def handle_message(self, msg: IncomingMessage) -> Optional[OutgoingMessage]:
@@ -151,17 +174,51 @@ class GatewayRunner:
         finally:
             db.close()
 
-    # ── per-platform toolset gating → disabled_tools / relevant_tools ────
-    def _tool_gate(self, pcfg: PlatformConfig) -> Tuple[Optional[Set[str]], Optional[Set[str]]]:
+    # ── enforced tool restrictions → (disabled_tools, disable_mcp) ───────
+    def _tool_restrictions(self, pcfg: PlatformConfig) -> Tuple[Set[str], bool]:
+        """Return the ENFORCED restrictions for a gateway agent run. These are
+        applied via disabled_tools + ToolPolicy (both honoured by the agent
+        loop), never as soft hints."""
+        from src.tool_security import NON_ADMIN_BLOCKED_TOOLS
+        disabled: Set[str] = set()
+        disable_mcp = False
+
+        # (1) Never expose admin/host-execution tools through an external gateway.
+        if self._force_public:
+            disabled |= set(NON_ADMIN_BLOCKED_TOOLS)
+            disable_mcp = True
+
         ts = pcfg.toolsets
         if ts.mode == "deny" and ts.deny:
-            return set(ts.deny), None
-        if ts.mode == "allow" and ts.allow:
-            # Hint the agent toward the allowed set. Hard allow-listing would
-            # require enumerating the full tool registry; deferred to a later
-            # slice. relevant_tools biases selection without breaking others.
-            return None, set(ts.allow)
-        return None, None
+            disabled |= set(ts.deny)
+        elif ts.mode == "allow":
+            # (3) Real allow-listing: disable every known tool NOT explicitly
+            # allowed (enforced, not a hint). Dynamic MCP tools can't be named in
+            # advance, so MCP is disabled unless an mcp__ tool is explicitly allowed.
+            allowed = {str(a) for a in (ts.allow or [])}
+            disabled |= (self._all_tool_names() - allowed)
+            if not any(a.startswith("mcp__") for a in allowed):
+                disable_mcp = True
+        return disabled, disable_mcp
+
+    @staticmethod
+    def _all_tool_names() -> Set[str]:
+        """Every known function-tool name, for inverting an allow-list into a
+        denylist (mirrors tool_security.plan_mode_disabled_tools). Fails closed:
+        on a schema-import failure, still returns the public block set."""
+        names: Set[str] = set()
+        try:
+            import src.agent_tools  # noqa: F401  (resolves the circular schema import)
+            from src.tool_schemas import FUNCTION_TOOL_SCHEMAS
+            for t in FUNCTION_TOOL_SCHEMAS:
+                n = (t.get("function") or {}).get("name")
+                if n:
+                    names.add(n)
+        except Exception as exc:
+            logger.warning("chat_gateway: tool-schema enumeration failed (%s); "
+                           "allow-mode falls back to the public block set", exc)
+        from src.tool_security import NON_ADMIN_BLOCKED_TOOLS
+        return names | set(NON_ADMIN_BLOCKED_TOOLS)
 
     # ── run the full agent and collect the reply ────────────────────────
     async def _run_agent(self, pcfg: PlatformConfig, msg: IncomingMessage) -> str:
@@ -178,7 +235,11 @@ class GatewayRunner:
         sess.add_message(ChatMessage("user", msg.text))
         messages = [{"role": m.role, "content": m.content} for m in sess.history]
 
-        disabled_tools, relevant_tools = self._tool_gate(pcfg)
+        disabled, disable_mcp = self._tool_restrictions(pcfg)
+        tool_policy = None
+        if disabled or disable_mcp:
+            from src.tool_policy import ToolPolicy
+            tool_policy = ToolPolicy(disabled_tools=frozenset(disabled), disable_mcp=disable_mcp)
 
         try:
             from src.endpoint_resolver import resolve_utility_fallback_candidates
@@ -197,8 +258,8 @@ class GatewayRunner:
                 max_rounds=_MAX_ROUNDS,
                 session_id=sid,
                 owner=self.cfg.owner or None,
-                disabled_tools=disabled_tools,
-                relevant_tools=relevant_tools,
+                disabled_tools=(disabled or None),
+                tool_policy=tool_policy,
                 fallbacks=fallbacks,
             ):
                 if not event_str.startswith("data: ") or event_str.startswith("data: [DONE]"):

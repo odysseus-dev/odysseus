@@ -1,0 +1,8 @@
+fix(chat): enforce gateway tool restrictions (review #1, #3)
+
+- Admin/single-user owner no longer exposes host-execution tools: the gateway
+  forces the public-user toolset (NON_ADMIN_BLOCKED_TOOLS) and disables MCP
+  unless `allow_privileged_owner: true`. Docs recommend a dedicated non-admin owner.
+- `toolsets.mode: allow` is now enforced (disable every known tool not in the
+  allow list, via schema inversion; MCP off unless an mcp__ tool is allowed),
+  instead of a soft selection hint.

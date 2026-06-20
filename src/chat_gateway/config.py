@@ -51,6 +51,11 @@ class PlatformConfig:
 class GatewayConfig:
     enabled: bool = False
     owner: str = ""                                       # Odysseus user the agent acts as
+    # Safety: if the owner is an admin (or single-user mode is on), the gateway
+    # forces the public-user toolset (no bash/python/file/email/memory, MCP off)
+    # so an externally reachable bot can't run host code. Set true ONLY if you
+    # really want the bot to wield full admin tools (strongly discouraged).
+    allow_privileged_owner: bool = False
     platforms: Dict[str, PlatformConfig] = field(default_factory=dict)
 
     def enabled_platforms(self) -> List[PlatformConfig]:
@@ -88,6 +93,7 @@ def load_gateway_config(path: str | None = None) -> GatewayConfig:
     cfg = GatewayConfig(
         enabled=bool(raw.get("enabled", False)),
         owner=str(raw.get("owner", "") or ""),
+        allow_privileged_owner=bool(raw.get("allow_privileged_owner", False)),
     )
     for name, block in (raw.get("platforms") or {}).items():
         block = block or {}

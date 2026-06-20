@@ -6,7 +6,15 @@ enabled: false
 
 # Which Odysseus user the agent acts as: owns the sessions, model endpoints,
 # memory, and tools the gateway agent uses. Must be an existing Odysseus user.
+# STRONGLY prefer a DEDICATED NON-ADMIN user: a non-admin owner is automatically
+# restricted to the public-user toolset (no bash/python/file/email/memory).
 owner: your-odysseus-username
+
+# Safety guard. If `owner` is an admin, or auth is disabled (single-user mode),
+# the gateway forces the public-user toolset (no host execution, MCP off) because
+# an externally reachable bot must not be able to run code on the host. Set this
+# to true ONLY if you deliberately want the bot to have full admin tools.
+allow_privileged_owner: false
 
 platforms:
   mattermost:
@@ -20,8 +28,9 @@ platforms:
     # model: ""                        # optional: pin a model; default = owner's first enabled endpoint
     toolsets:
       mode: all                        # all | allow | deny
-      allow: []                        # when mode=allow: bias the agent toward these tools
-      deny: []                         # when mode=deny: block these (e.g. ["terminal","code_execution"])
+      allow: []                        # mode=allow: ONLY these tools are callable; all others are
+                                       #   disabled and MCP is off unless an mcp__ tool is listed
+      deny: []                         # mode=deny: block these (e.g. ["bash","python"])
 
   # ── Matrix (self-hosted Synapse/Dendrite/Conduit) ──
   matrix:

@@ -41,6 +41,15 @@ DMs are always answered), an optional `channels` allowlist, optional
 toolset gating (`all` | `allow` | `deny`). Set `owner` to the Odysseus user the
 agent acts as.
 
+**Owner privilege (important).** The gateway is an external ingress, so it must
+not expose host-execution tools. Use a **dedicated non-admin `owner`**: a
+non-admin owner is automatically held to the public-user toolset (no
+`bash`/`python`/file/email/memory). If the owner resolves to an admin, or auth
+is disabled (single-user mode), the gateway forces that same public-user toolset
+and disables MCP, unless you set `allow_privileged_owner: true` (discouraged for
+anything externally reachable). `mode: allow` is enforced (every tool not in the
+list is disabled, MCP off unless an `mcp__` tool is allowed), not a hint.
+
 Credentials are read from config/env only and live in the gitignored
 `data/chat_gateway.yaml`; never commit them.
 
