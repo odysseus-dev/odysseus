@@ -1995,11 +1995,16 @@ def _normalize_stream_document_fences(text: str, target_tool: str = "create_docu
     )
 
 
-async def _llm_classify_domains(query: str, owner: Optional[str] = None) -> Set[str]:
+async def _llm_classify_domains(query: str, owner: Optional[str] = None, latest_msg: Optional[str] = None) -> Set[str]:
     """Use the utility model to classify a query into domains.
 
     Called when ODYSSEUS_DOMAIN_CLASSIFIER=llm or as a fallback when the
     regex-based classifier found no domains for a non-continuation query.
+
+    When latest_msg is provided, it is separated from the conversation
+    history so the LLM can weigh the current request against prior context
+    — prevents short keywords like "internet" from being drowned by
+    domain-heavy history.
     """
     from src.endpoint_resolver import resolve_endpoint
     from src.llm_core import llm_call_async
@@ -2009,15 +2014,28 @@ async def _llm_classify_domains(query: str, owner: Optional[str] = None) -> Set[
         return set()
 
     valid_domains = sorted(_DOMAIN_TOOL_MAP.keys())
-    prompt = (
-        "Output ONLY a comma-separated list from: "
-        + ", ".join(valid_domains) + ".\n"
-        "If none match, output exactly: none\n"
-        "Do NOT translate, explain, or add any other text.\n\n"
-        f"Recent conversation:\n\"{query[:500]}\"\n\n"
-        "Classify the latest request.\n"
-        "Categories:"
-    )
+    if latest_msg and latest_msg != query:
+        history = query[:400] if len(query) > 400 else query
+        prompt = (
+            "Output ONLY a comma-separated list from: "
+            + ", ".join(valid_domains) + ".\n"
+            "If none match, output exactly: none\n"
+            "Do NOT translate, explain, or add any other text.\n\n"
+            f"Conversation history:\n\"{history}\"\n\n"
+            f"Latest request:\n\"{latest_msg[:200]}\"\n\n"
+            "Classify the latest request.\n"
+            "Categories:"
+        )
+    else:
+        prompt = (
+            "Output ONLY a comma-separated list from: "
+            + ", ".join(valid_domains) + ".\n"
+            "If none match, output exactly: none\n"
+            "Do NOT translate, explain, or add any other text.\n\n"
+            f"Recent conversation:\n\"{query[:500]}\"\n\n"
+            "Classify the latest request.\n"
+            "Categories:"
+        )
 
     _DOMAIN_HINTS = (
         "Classify messages into domain categories. "
@@ -3241,7 +3259,7 @@ async def stream_agent_loop(
         _llm_query = _recent_context_for_retrieval(messages)
         try:
             _llm_domains = await asyncio.wait_for(
-                _llm_classify_domains(_llm_query, owner=owner),
+                _llm_classify_domains(_llm_query, owner=owner, latest_msg=_last_user),
                 timeout=5,
             )
         except (asyncio.TimeoutError, Exception):
@@ -3254,7 +3272,7 @@ async def stream_agent_loop(
         _llm_query = _recent_context_for_retrieval(messages)
         try:
             _llm_domains = await asyncio.wait_for(
-                _llm_classify_domains(_llm_query, owner=owner),
+                _llm_classify_domains(_llm_query, owner=owner, latest_msg=_last_user),
                 timeout=5,
             )
         except (asyncio.TimeoutError, Exception):
