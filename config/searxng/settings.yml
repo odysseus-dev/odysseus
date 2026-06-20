@@ -7,3 +7,26 @@ search:
   formats:
     - html
     - json
+
+engines:
+  - name: google
+    engine: google
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    disabled: true
+  - name: bing
+    engine: bing
+    disabled: true
+  - name: brave
+    engine: brave
+    disabled: true
+  - name: qwant
+    engine: qwant
+    disabled: true
+  - name: startpage
+    engine: startpage
+    disabled: true
+  - name: yahoo
+    engine: yahoo
+    disabled: true
