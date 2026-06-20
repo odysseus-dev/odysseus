@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  whatsapp-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: antigravity-whatsapp-bot:latest
+    container_name: antigravity-whatsapp-bot
+    ports:
+      - "8000:8000"
+    environment:
+      # These variables will be loaded from your environment or a .env file
+      - WHATSAPP_TOKEN=${WHATSAPP_TOKEN:-dummy_token}
+      - VERIFY_TOKEN=${VERIFY_TOKEN:-dummy_verify}
+      - PHONE_NUMBER_ID=${PHONE_NUMBER_ID:-dummy_id}
+    restart: unless-stopped

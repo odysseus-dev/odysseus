@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: antigravity-whatsapp-bot
+  labels:
+    app: whatsapp-bot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: whatsapp-bot
+  template:
+    metadata:
+      labels:
+        app: whatsapp-bot
+    spec:
+      containers:
+      - name: bot
+        image: antigravity-whatsapp-bot:latest
+        ports:
+        - containerPort: 8000
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        env:
+        - name: WHATSAPP_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: whatsapp-secrets
+              key: token
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: antigravity-whatsapp-bot-svc
+spec:
+  selector:
+    app: whatsapp-bot
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP

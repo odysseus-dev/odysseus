@@ -3435,10 +3435,11 @@ const INTG_TYPES = {
   mcp:     { label: 'MCP',     icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>' },
   codex:   { label: 'Codex',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 10.696.453a6.023 6.023 0 0 0-5.75 4.172 6.061 6.061 0 0 0-3.946 2.945 6.024 6.024 0 0 0 .742 7.099 5.98 5.98 0 0 0 .516 4.911 6.046 6.046 0 0 0 6.51 2.9A5.996 5.996 0 0 0 13.26 23.547a6.023 6.023 0 0 0 5.75-4.172 6.061 6.061 0 0 0 3.946-2.945 6.024 6.024 0 0 0-.674-6.609zM13.26 21.047a4.508 4.508 0 0 1-2.886-1.041l.143-.082 4.793-2.769a.777.777 0 0 0 .391-.676V10.34l2.026 1.17a.072.072 0 0 1 .039.061v5.596a4.532 4.532 0 0 1-4.506 4.48zM3.968 17.64a4.473 4.473 0 0 1-.537-3.018l.143.086 4.793 2.769a.79.79 0 0 0 .782 0l5.852-3.379v2.34a.072.072 0 0 1-.029.062l-4.845 2.796a4.532 4.532 0 0 1-6.159-1.656zM2.804 7.922a4.49 4.49 0 0 1 2.348-1.973V11.6a.778.778 0 0 0 .391.676l5.852 3.378-2.026 1.17a.072.072 0 0 1-.068 0L4.456 14.03a4.532 4.532 0 0 1-1.652-6.108zm16.423 3.823L13.375 8.367l2.026-1.17a.072.072 0 0 1 .068 0l4.845 2.796a4.525 4.525 0 0 1-.7 8.08V12.42a.778.778 0 0 0-.387-.676zm2.015-3.025l-.143-.086-4.793-2.769a.79.79 0 0 0-.782 0L9.672 9.243V6.903a.072.072 0 0 1 .029-.062l4.845-2.796a4.525 4.525 0 0 1 6.696 4.675zM8.598 12.66L6.57 11.49a.072.072 0 0 1-.039-.061V5.833a4.525 4.525 0 0 1 7.413-3.48l-.143.082-4.793 2.769a.777.777 0 0 0-.391.676l-.019 6.78zm1.1-2.379l2.607-1.505 2.607 1.505v3.01l-2.607 1.505-2.607-1.505z"/></svg>' },
   claude:  { label: 'Claude',  icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>' },
+  agy:     { label: 'Antigravity', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 22h20L12 2Z"/></svg>' },
   vault:   { label: 'Vault',   icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' },
 };
 
-// Config shared by the Codex Agent and Claude Agent forms. Both use the same
+// Config shared by the Codex Agent, Claude Agent, and Antigravity Agent forms. Both use the same
 // scope-gated /api/codex/* backend; this just parameterizes the UI label,
 // default token name, and the per-agent install commands.
 const AGENT_CONFIGS = {
@@ -3492,7 +3493,21 @@ export ODYSSEUS_API_TOKEN='${token}'
 mkdir -p ~/.claude
 curl -fsSL -H "Authorization: Bearer $ODYSSEUS_API_TOKEN" "$ODYSSEUS_URL/api/claude/plugin.zip" -o /tmp/odysseus-claude-skill.zip
 python3 -m zipfile -e /tmp/odysseus-claude-skill.zip ~/.claude/
-python3 ~/.claude/skills/odysseus/scripts/odysseus_api.py capabilities`,
+    python3 ~/.claude/skills/odysseus/scripts/odysseus_api.py capabilities`,
+  },
+  agy: {
+    label: 'Antigravity Agent',
+    word: 'Antigravity',
+    namePrefix: 'antigravity agent',
+    defaultName: 'Antigravity Agent',
+    pluginPath: '/api/agy/plugin.zip',
+    setupDescription: 'Downloads a plugin bundle and registers it.',
+    buildSetup: (origin, token) => `export ODYSSEUS_URL=${origin}
+export ODYSSEUS_API_TOKEN='${token}'
+mkdir -p ~/.gemini/config/skills/odysseus
+curl -fsSL -H "Authorization: Bearer $ODYSSEUS_API_TOKEN" "$ODYSSEUS_URL/api/agy/plugin.zip" -o /tmp/odysseus-agy-skill.zip
+python3 -m zipfile -e /tmp/odysseus-agy-skill.zip ~/.gemini/config/skills/
+python3 ~/.gemini/config/skills/odysseus/scripts/odysseus_api.py capabilities`,
   },
 };
 
@@ -3587,6 +3602,7 @@ async function initUnifiedIntegrations() {
       const lowerName = (tok.name || '').toLowerCase();
       let agentType = null;
       if (lowerName.startsWith('claude agent')) agentType = 'claude';
+      else if (lowerName.startsWith('antigravity agent')) agentType = 'agy';
       else if (lowerName.startsWith('codex agent')) agentType = 'codex';
       else if (scopes.some(s => String(s || '').startsWith('todos:') || String(s || '').startsWith('email:') || String(s || '').startsWith('documents:'))) {
         // Legacy / un-prefixed scoped tokens fall back to Codex for backwards compat.
@@ -3594,7 +3610,7 @@ async function initUnifiedIntegrations() {
       }
       if (!agentType) continue;
       const detail = `${tok.token_prefix || 'token'}... - ${scopes.join(', ') || 'chat'}`;
-      items.push({ type: agentType, id: tok.id, name: tok.name || (agentType === 'claude' ? 'Claude Agent' : 'Codex Agent'), detail, enabled: true, data: tok });
+      items.push({ type: agentType, id: tok.id, name: tok.name || (agentType === 'claude' ? 'Claude Agent' : (agentType === 'agy' ? 'Antigravity Agent' : 'Codex Agent')), detail, enabled: true, data: tok });
     }
     // Vaultwarden removed as an integration option.
     return items;
@@ -3670,7 +3686,7 @@ async function initUnifiedIntegrations() {
           }
           else if (type === 'email') await fetch(`/api/email/accounts/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'mcp') await fetch(`/api/mcp/servers/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-          else if (type === 'codex' || type === 'claude') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+          else if (type === 'codex' || type === 'claude' || type === 'agy') await fetch(`/api/tokens/${id}`, { method: 'DELETE', credentials: 'same-origin' });
           else if (type === 'vault') await fetch('/api/vault/logout', { method: 'POST', credentials: 'same-origin' });
         } catch (_) {}
         formEl.style.display = 'none';
@@ -3689,6 +3705,7 @@ async function initUnifiedIntegrations() {
     else if (type === 'mcp') showMcpForm(editId);
     else if (type === 'codex') showAgentForm('codex', editId);
     else if (type === 'claude') showAgentForm('claude', editId);
+    else if (type === 'agy') showAgentForm('agy', editId);
     else if (type === 'vault') showVaultForm();
   }
 
@@ -5540,6 +5557,7 @@ async function initUnifiedIntegrations() {
       ['api', 'API Service'],
       ['caldav', 'CalDAV Calendar'],
       ['claude', 'Claude Agent'],
+      ['agy', 'Antigravity Agent'],
       ['codex', 'Codex Agent'],
       ['carddav', 'Contacts (CardDAV)'],
       ['contacts', 'Contacts Import'],

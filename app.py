@@ -768,7 +768,7 @@ app.include_router(email_router)
 # Codex sessions can only touch the data the user explicitly allowed. Mounted
 # AFTER email so the codex_routes can borrow the email router for shared
 # search/threading helpers.
-from routes.codex_routes import setup_codex_routes, setup_claude_routes
+from routes.codex_routes import setup_codex_routes, setup_claude_routes, setup_agy_routes
 app.include_router(setup_codex_routes(
     email_router=email_router,
     memory_router=memory_router,
@@ -776,6 +776,7 @@ app.include_router(setup_codex_routes(
     document_router=document_router,
 ))
 app.include_router(setup_claude_routes())
+app.include_router(setup_agy_routes())
 
 from routes.vault_routes import setup_vault_routes
 app.include_router(setup_vault_routes())
