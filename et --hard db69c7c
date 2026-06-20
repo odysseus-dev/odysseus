@@ -1,0 +1,23 @@
+[33me1cada3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeature/pydantic-router[m[33m)[m HEAD@{0}: commit: Completed pewDiePie's feedback
+[33m28178c8[m[33m ([m[1;31morigin/feature/pydantic-router[m[33m)[m HEAD@{1}: checkout: moving from feature/pydantic-router to feature/pydantic-router
+[33m28178c8[m[33m ([m[1;31morigin/feature/pydantic-router[m[33m)[m HEAD@{2}: commit: Took out the builtin python modules out of requirements.txt
+[33me881725[m HEAD@{3}: checkout: moving from feature/pydantic-router to feature/pydantic-router
+[33me881725[m HEAD@{4}: commit: save: lock down new router files
+[33mdb69c7c[m HEAD@{5}: checkout: moving from feature/pydantic-router to feature/pydantic-router
+[33mdb69c7c[m HEAD@{6}: checkout: moving from feature/pydantic-router to feature/pydantic-router
+[33mdb69c7c[m HEAD@{7}: commit: feat: add isolated blind compare redaction tests
+[33m0cc46d0[m HEAD@{8}: commit: Tried to test my pydantic router locally
+[33m2ed567c[m HEAD@{9}: commit: Make file paths Docker-compliant and update requirements.txt
+[33m3fac4e2[m HEAD@{10}: commit: test: relocate test file to root tests directory
+[33m973c261[m HEAD@{11}: pull origin feature/pydantic-router: Fast-forward
+[33mb4e3844[m HEAD@{12}: pull --rebase origin feature/pydantic-router (finish): returning to refs/heads/feature/pydantic-router
+[33mb4e3844[m HEAD@{13}: pull --rebase origin feature/pydantic-router (pick): test: add unit tests for Pydantic MCP router
+[33m4fa1938[m HEAD@{14}: pull --rebase origin feature/pydantic-router (start): checkout 4fa1938596564d57b2b83fc54201c9276b4674ba
+[33m87cd0c5[m HEAD@{15}: commit: test: add unit tests for Pydantic MCP router
+[33m792dbd6[m HEAD@{16}: commit (merge): refactor(mcp): convert hardcoded routing variables to dynamic arguments
+[33m5d1db10[m HEAD@{17}: commit: refactor(mcp): convert hardcoded routing variables to dynamic arguments
+[33m737b40e[m HEAD@{18}: commit: feat: added a pydantic router with baseclass making the LLM provide strict results thanks to prompts and the format. Also added code to call the mcp agents based on the decision the router makes to call the AI
+[33mbfad212[m HEAD@{19}: commit: feat: added a pydantic router with baseclass making the LLM provide strict results thanks to prompts and the format. Also added code to call the mcp agents based on the decision the router makes to call the AI
+[33mac0746d[m[33m ([m[1;32mdev[m[33m)[m HEAD@{20}: checkout: moving from dev to feature/pydantic-router
+[33mac0746d[m[33m ([m[1;32mdev[m[33m)[m HEAD@{21}: commit: feat: added a pydantic router with baseclass making the LLM provide strict results thanks to prompts and the format. Also added code to call the mcp agents based on the decision the router makes to call the AI
+[33md5603ee[m[33m ([m[1;31morigin/dev[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{22}: clone: from https://github.com/vishywashy/odysseus

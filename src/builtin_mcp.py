@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 import asyncio
+from pathlib import Path
+import importlib
 
 from core.platform_compat import IS_WINDOWS, which_tool
 
@@ -231,3 +233,19 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
             pass
         return False
     return proc.returncode == 0 and bool(stdout.strip())
+
+
+def RouterInitialisation(prompt, Agent_Hashmap:dict, system_prompt, model, args:dict):
+   '''The tool names are provided to the agent by default.'''
+   try:
+    TARGET_DIR = (Path(__file__).parent / ".." / "mcp_servers"/'pydantic_router.py').resolve().as_posix()
+
+# 2. Tell Python to temporarily add that directory to its search path
+    spec = importlib.util.spec_from_file_location("pydantic_router", TARGET_DIR)
+    pydantic_router = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pydantic_router)
+    asyncio.run(pydantic_router.routeMCP(prompt, Agent_Hashmap, system_prompt, model, args))
+   except ImportError:
+       return 'packages for router have not been installed'
+   except Exception:
+       return 'Please ensure that the json for the Agent Hashmap is correct and all the arguments are passed in.'
