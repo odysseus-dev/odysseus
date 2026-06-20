@@ -19,6 +19,14 @@ async function api(path, method = 'GET') {
   return { ok: res.ok, status: res.status, data };
 }
 
+function httpHint(status, action) {
+  if (status === 404) return 'The updater isn\'t loaded yet — the backend is running older code. Quit Odysseus and reopen it from the app (this loads the new route), then try again.';
+  if (status === 401) return 'You\'re not signed in. Sign in as the admin user, then try again.';
+  if (status === 403) return 'This action requires the admin account.';
+  if (!status) return 'Could not reach the server (is it running?).';
+  return 'Could not ' + action + ' (server returned HTTP ' + status + ').';
+}
+
 function setStatus(html) { const e = $('sysupd-status'); if (e) e.innerHTML = html; }
 function show(id, html) { const e = $(id); if (!e) return; if (html !== undefined) e.innerHTML = html; e.classList.remove('hidden'); }
 function hide(id) { const e = $(id); if (e) e.classList.add('hidden'); }
@@ -34,9 +42,9 @@ async function doCheck() {
   hide('sysupd-apply-btn'); hide('sysupd-changelog'); hide('sysupd-conflicts'); hide('sysupd-result');
   setStatus('Checking the upstream project…');
   try {
-    const { ok, data } = await api('check');
+    const { ok, status, data } = await api('check');
     if (data && data.supported === false) { hideCard(); return; }
-    if (!ok) { setStatus('Could not check for updates. Are you signed in as admin?'); return; }
+    if (!ok) { setStatus(httpHint(status, 'check for updates')); return; }
     if (data.status === 'error') { setStatus('Update check failed: ' + esc(data.detail || 'unknown error')); return; }
     if (data.status === 'up_to_date') {
       const ahead = data.ahead ? `, ${data.ahead} local commit(s) ahead` : '';
@@ -80,8 +88,8 @@ async function doApply() {
   hide('sysupd-result');
   setStatus('Applying update… (this can take a minute if dependencies changed)');
   try {
-    const { ok, data } = await api('apply', 'POST');
-    if (!data || (!ok && !data.status)) { setStatus('Update failed (server error).'); return; }
+    const { ok, status, data } = await api('apply', 'POST');
+    if (!data || (!ok && !data.status)) { setStatus(httpHint(status, 'apply the update')); return; }
     switch (data.status) {
       case 'applied': {
         const deps = data.deps_reinstalled ? ' Dependencies were reinstalled.' : '';
