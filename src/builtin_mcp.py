@@ -161,12 +161,21 @@ async def register_builtin_servers(mcp_manager):
             args = cfg["args"]
             pkg_spec = _npx_package_from_args(args)
             if pkg_spec and not await _is_npx_package_cached(npx_path, pkg_spec):
+                # In the Nix devShell a helper script caches the package without
+                # touching the shell startup (kept out of shellHook so direnv
+                # isn't blocked). Mention it when it's on PATH.
+                nix_hint = (
+                    f"  Nix:    odysseus-cache-npx   (caches {pkg_spec} for the Nix devShell)\n"
+                    if shutil.which("odysseus-cache-npx")
+                    else ""
+                )
                 logger.warning(
                     f"{cfg['name']} is not available.\n"
                     f"  Reason: npm package {pkg_spec!r} is not installed in the npx cache.\n"
                     f"  Impact: tools provided by this MCP server will be unavailable.\n"
                     f"  Fix:    {os.path.basename(npx_path)} -y {pkg_spec} --version\n"
                     f"          (run once, then restart Odysseus)\n"
+                    f"{nix_hint}"
                     f"  Notes:  this server is optional; see README.md "
                     f"'Built-in MCP servers' for details."
                 )
