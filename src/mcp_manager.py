@@ -165,7 +165,7 @@ class McpManager:
             elif transport == "sse":
                 res = await self._connect_sse(server_id, name, url, headers=headers)
             elif transport == "http":
-                res = await self._start_http_connect(server_id, name, url)
+                res = await self._start_http_connect(server_id, name, url, headers=headers)
             else:
                 logger.error(f"Unknown MCP transport: {transport}")
                 res = False
@@ -296,13 +296,13 @@ class McpManager:
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
 
-    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0) -> bool:
+    async def _start_http_connect(self, server_id: str, name: str, url: str, wait: float = 8.0, headers: Optional[Dict[str, str]] = None) -> bool:
         """Begin a Streamable HTTP connect in the background. Returns within
         `wait` seconds: True if it connected (cached-token path), otherwise the
         flow is awaiting browser authorization and status becomes 'needs_auth'."""
         import asyncio
         self._connections[server_id] = {"status": "connecting", "name": name, "transport": "http"}
-        task = asyncio.create_task(self._connect_http(server_id, name, url))
+        task = asyncio.create_task(self._connect_http(server_id, name, url, headers=headers))
         self._connect_tasks[server_id] = task
         done, _ = await asyncio.wait({task}, timeout=wait)
         if task in done:
@@ -311,9 +311,8 @@ class McpManager:
             except Exception as e:
                 self._connections[server_id] = {"status": "error", "error": str(e), "name": name}
                 return False
-        # Still running → either awaiting authorization, or discovery/DCR is
-        # still in flight. If _on_redirect already published needs_auth+auth_url,
-        # leave it; otherwise mark needs_auth (auth_url filled in once it fires).
+        # Still running → awaiting OAuth authorization (only reached when no
+        # headers were supplied and the server requires browser-based auth).
         from src.mcp_oauth import pop_auth_url
         cur = self._connections.get(server_id, {})
         if cur.get("status") != "needs_auth":
@@ -323,25 +322,34 @@ class McpManager:
             }
         return False
 
-    async def _connect_http(self, server_id: str, name: str, url: str) -> bool:
-        """Connect to a Streamable HTTP MCP server (with automatic OAuth)."""
+    async def _connect_http(self, server_id: str, name: str, url: str, headers: Optional[Dict[str, str]] = None) -> bool:
+        """Connect to a Streamable HTTP MCP server.
+
+        When headers are provided (e.g. a Bearer token) OAuth is skipped and
+        the headers are forwarded directly. Without headers the full OAuth flow
+        runs as before.
+        """
         try:
             from mcp import ClientSession
             from mcp.client.streamable_http import streamablehttp_client
             from contextlib import AsyncExitStack
-            from src.mcp_oauth import build_provider, clear_auth_url
 
-            def _on_redirect(auth_url):
-                # Publish needs_auth the moment the URL is known, independent of
-                # how long discovery/DCR took (may exceed the bounded start wait).
-                self._connections[server_id] = {
-                    "status": "needs_auth", "name": name, "transport": "http",
-                    "auth_url": auth_url,
-                }
-
-            provider = build_provider(server_id, url, on_redirect=_on_redirect)
             stack = AsyncExitStack()
-            transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
+            if headers:
+                transport = await stack.enter_async_context(
+                    streamablehttp_client(url, headers=headers)
+                )
+            else:
+                from src.mcp_oauth import build_provider, clear_auth_url
+
+                def _on_redirect(auth_url):
+                    self._connections[server_id] = {
+                        "status": "needs_auth", "name": name, "transport": "http",
+                        "auth_url": auth_url,
+                    }
+
+                provider = build_provider(server_id, url, on_redirect=_on_redirect)
+                transport = await stack.enter_async_context(streamablehttp_client(url, auth=provider))
             read_stream, write_stream, _get_session_id = transport
             session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
@@ -362,7 +370,8 @@ class McpManager:
                 "status": "connected", "name": name, "transport": "http",
                 "tool_count": len(tools),
             }
-            clear_auth_url(server_id)
+            if not headers:
+                clear_auth_url(server_id)
             # Tools changed (this can complete after connect_server already
             # returned, via the background OAuth flow), so bump the generation
             # to invalidate the tool-prompt cache.
