@@ -188,6 +188,12 @@ html {
    zoom compensation applies. */
 #cookbook-modal .modal-content             { height: 94vh; max-height: 94vh; }
 :root.ui-scale-125 #cookbook-modal .modal-content { height: calc(94dvh / 1.25); max-height: calc(94dvh / 1.25); }
+/* PDF export modal also set its height inline (86vh) at v1.0; that inline cap
+   beat the .modal-content compensation above and shifted ~1vh at Default when
+   removed. Own its height here so Default is byte-for-byte 86vh and the same
+   1.25x compensation applies. */
+.pdf-export-overlay .modal-content { max-height: 86vh; }
+:root.ui-scale-125 .pdf-export-overlay .modal-content { max-height: calc(86dvh / 1.25); }
 
 /* ── Background Patterns ── */
 
