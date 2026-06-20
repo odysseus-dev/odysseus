@@ -59,7 +59,6 @@ async def routeMCP(prompt, Agent_Hashmap:dict,AgentSystemPrompt, model, args:dic
                     name=IdentifyingTool, 
                     arguments=args[ToolType]
                 )
-                print("Done Not Bye Bye")
                 if result and hasattr(result, 'content') and len(result.content) > 0:
                     return result.content
                 return result
