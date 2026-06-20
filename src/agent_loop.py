@@ -500,7 +500,7 @@ GENERIC LOOPBACK to allowed Odysseus internal endpoints. Use this whenever the u
 - Calendar: `/api/calendar/events`, `/api/calendar/calendars`, `/api/calendar/events/{uid}`
 - Cookbook: `/api/cookbook/gpus`, `/api/cookbook/state`, `/api/cookbook/setup`, `/api/cookbook/packages`, `/api/cookbook/hf-latest`, `/api/model/cached`. Do NOT use `app_api` for package installs, engine rebuilds, or PID signalling.
 - Gallery: `/api/gallery/list`, `/api/gallery/delete`, `/api/gallery/{id}`, `/api/gallery/albums`
-- Library / Documents: list all via `/api/documents/library`; docs in a session via `/api/documents/{session_id}`; a single doc via `/api/document/{id}` (singular) and its history via `/api/document/{id}/versions` (singular). Note the plural `/api/documents/...` vs singular `/api/document/{id}` split.
+- Library / Documents: **create** a doc with the `create_document` tool (preferred) or `POST /api/document` with `{title, content, language, session_id}` — NOT `/api/document/create` (that path does not exist). List all via `/api/documents/library`; docs in a session via `/api/documents/{session_id}`; a single doc via `/api/document/{id}` (singular) and its history via `/api/document/{id}/versions` (singular). Note the plural `/api/documents/...` vs singular `/api/document/{id}` split.
 - Memory: `/api/memory`, `/api/memory/{id}`, `/api/memory/search`
 - Notes: `/api/notes`, `/api/notes/{id}`
 - Tasks: `/api/tasks`, `/api/tasks/{id}/run`, `/api/tasks/notifications`
