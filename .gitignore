@@ -1,3 +1,7 @@
+# Generated service-worker build id (regenerated on each in-app update;
+# keeps CACHE_NAME out of version control so it never conflicts on merge).
+static/sw-build.js
+
 # Python
 __pycache__/
 *.pyc

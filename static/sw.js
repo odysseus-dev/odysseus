@@ -6,8 +6,14 @@
 //     (So code/style edits show up on a normal reload, no manual cache clear.)
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
-// Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v328';
+// CACHE_NAME derives from a generated build id (static/sw-build.js, gitignored)
+// that src/self_update.py regenerates on each in-app update — so the PWA cache
+// refreshes automatically without a committed version bump, which used to
+// conflict on every upstream merge. Falls back to a stable name when the build
+// file is absent (fresh checkout); JS/CSS are network-first anyway, so only the
+// precache list / SW logic itself needs the bump a real update provides.
+try { importScripts('/static/sw-build.js'); } catch (e) { /* no build id yet */ }
+const CACHE_NAME = self.SW_BUILD ? ('odysseus-' + self.SW_BUILD) : 'odysseus-dev';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -15,6 +21,7 @@ const CACHE_NAME = 'odysseus-v328';
 const PRECACHE = [
   '/',
   '/static/style.css',
+  '/static/custom.css',
   '/static/app.js',
   '/static/js/storage.js',
   '/static/js/ui.js',
@@ -60,6 +67,7 @@ const PRECACHE = [
   '/static/js/keyboard-shortcuts.js',
   '/static/js/sidebar-layout.js',
   '/static/js/section-management.js',
+  '/static/js/system-update.js',
   '/static/lib/highlight.min.js',
 ];
 

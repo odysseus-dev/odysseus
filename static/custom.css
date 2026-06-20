@@ -1,0 +1,55 @@
+/* static/custom.css — LOCAL overlay, loaded after style.css.
+ *
+ * Holds local customizations as ADDITIVE rules in a file upstream doesn't have,
+ * so `git merge upstream/...` never conflicts on them. Restoring a customization
+ * to upstream's stylesheet and re-expressing it here (instead of editing
+ * style.css in place) is the whole point — style.css stays byte-identical to
+ * upstream and stops being a merge magnet.
+ */
+
+/* ── Sidebar font scale ─────────────────────────────────────────────────
+ * Multiplier applied to every sidebar text size so the sidebar font scales
+ * independently of the rest of the UI (no browser zoom). Driven by the
+ * "Sidebar font" slider (Settings → Appearance), persisted on the theme as
+ * `sidebarFontScale` (static/js/theme.js applySidebarFontScale). `!important`
+ * + later source order than style.css guarantees these win over the upstream
+ * base sizes. */
+:root { --sidebar-font-scale: 1; }
+
+.user-bar-name { font-size: calc(12px * var(--sidebar-font-scale)) !important; }
+.section-header-flex h4,
+.section-header-flex .section-title { font-size: calc(10px * var(--sidebar-font-scale)) !important; }
+.list-item,
+.models-row { font-size: calc(13px * var(--sidebar-font-scale)) !important; }
+.list-item span { font-size: calc(12px * var(--sidebar-font-scale)) !important; }
+.models-row .grow,
+.models-row select { font-size: calc(12px * var(--sidebar-font-scale)) !important; }
+
+@media (max-width: 768px) {
+  .list-item { font-size: calc(14px * var(--sidebar-font-scale)) !important; }
+  .list-item .grow { font-size: calc(14px * var(--sidebar-font-scale)) !important; }
+}
+
+/* ── In-app update card (Settings → System) ─────────────────────────────
+ * Styling for the "App updates" card wired by static/js/system-update.js. */
+#settings-system-update-card .sysupd-status { font-size: 12px; opacity: 0.9; line-height: 1.5; }
+#settings-system-update-card .sysupd-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+#settings-system-update-card .sysupd-changelog {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px; line-height: 1.55;
+  max-height: 200px; overflow: auto;
+  margin-top: 8px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  white-space: pre-wrap; word-break: break-word;
+}
+#settings-system-update-card .sysupd-note {
+  margin-top: 8px; padding: 6px 10px; font-size: 12px; border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+}
+#settings-system-update-card .sysupd-warn {
+  margin-top: 8px; padding: 6px 10px; font-size: 12px; border-radius: 4px;
+  border-left: 3px solid var(--red, #e06c75);
+  background: color-mix(in srgb, var(--red, #e06c75) 9%, transparent);
+}
+#settings-system-update-card .sysupd-ok { color: color-mix(in srgb, var(--green, #98c379) 85%, var(--fg)); }

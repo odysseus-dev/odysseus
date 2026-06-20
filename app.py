@@ -789,6 +789,10 @@ app.include_router(setup_contacts_routes())
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
 
+# In-app self-update from the upstream project repo (admin-only).
+from routes.system_update_routes import setup_system_update_routes
+app.include_router(setup_system_update_routes())
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:

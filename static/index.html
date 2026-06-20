@@ -218,6 +218,8 @@
     })();
   </script>
   <link rel="stylesheet" href="/static/style.css">
+  <!-- Local overlay: must load after style.css so its rules win. -->
+  <link rel="stylesheet" href="/static/custom.css">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">
@@ -2268,6 +2270,24 @@
         <!-- ═══ SYSTEM TAB ═══ -->
         <div data-settings-panel="system" class="hidden">
 
+          <div class="admin-card" id="settings-system-update-card">
+            <h2>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px;opacity:0.6"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+              App updates
+            </h2>
+            <div class="admin-toggle-sub" style="margin-bottom:8px">Check the main project repository on GitHub and apply community/owner updates — using a conflict-safe merge that never discards your local customizations.</div>
+            <div class="settings-col">
+              <div id="sysupd-status" class="sysupd-status">Click "Check for updates" to compare your install with the upstream project.</div>
+              <div id="sysupd-changelog" class="sysupd-changelog hidden"></div>
+              <div id="sysupd-conflicts" class="sysupd-warn hidden"></div>
+              <div class="sysupd-actions">
+                <button type="button" class="admin-btn-sm" id="sysupd-check-btn">Check for updates</button>
+                <button type="button" class="admin-btn-add hidden" id="sysupd-apply-btn">Apply update</button>
+              </div>
+              <div id="sysupd-result" class="sysupd-note hidden"></div>
+            </div>
+          </div>
+
           <div class="admin-card" id="settings-system-logs-card">
             <h2>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="settings-system-logs-svg">
@@ -2463,6 +2483,7 @@
 <script type="module" src="/static/js/censor.js"></script>
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
+<script type="module" src="/static/js/system-update.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
