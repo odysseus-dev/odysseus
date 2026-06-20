@@ -5,17 +5,19 @@
 # Odysseus is a web application with a custom directory structure, not a standard
 # Python package. The setup.py is a first-time setup script, not a setuptools
 # build script. We manually create wrappers for the entry points.
-{ lib
-, stdenv
-, makeWrapper
-, python3
-, src
-, extraPythonPackages ? _ps: [ ]
+{
+  lib,
+  stdenv,
+  makeWrapper,
+  python3,
+  src,
+  extraPythonPackages ? _ps: [ ],
+  # Optional feature deps (requirements-optional.txt), selected by name so
+  # consumers opt in without hand-listing nixpkgs attrs:
+  #   odysseus.override { extras = [ "pdf" "stt" ]; }
+  extras ? [ ],
 }:
 let
-  # Python package overrides (test skips for Darwin, etc.)
-  pythonOverlay = import ./overlay.nix;
-
   # requirements name -> nixpkgs python3Packages attr, where they differ.
   reqRenames = {
     # The bundled odysseus-chroma needs the full ChromaDB server; the
@@ -54,18 +56,31 @@ let
     ps.pillow
   ];
 
+  # Optional feature deps, keyed by the `extras` list. nixpkgs' markitdown
+  # already bundles mammoth/lxml/python-pptx/pandas/openpyxl/xlrd, so the
+  # [docx,pptx,xlsx,xls] extras from requirements-optional.txt come for free.
+  optionalExtras = {
+    pdf = ps: [ ps.pymupdf ]; # PyMuPDF — PDF form-filling (AGPL-3.0)
+    stt = ps: [ ps.faster-whisper ]; # local speech-to-text (CTranslate2 backend)
+    ddg = ps: [ ps.ddgs ]; # DuckDuckGo as a search provider option
+    markitdown = ps: [ ps.markitdown ]; # Office/EPUB text extraction
+  };
+  extraFromExtras = ps: lib.concatMap (e: (optionalExtras.${e} or (_: [ ])) ps) extras;
+
   # The app's Python environment.
   #
   # The default package set is parsed from requirements.txt (the single source
-  # of truth) so the Nix env can't drift from the declared deps.
+  # of truth) so the Nix env can't drift from the declared deps. Darwin
+  # test-skips come from the overlay applied at the pkgs level (nix/overlay.nix,
+  # exported as overlays.default from the flake) — not a python3.override here,
+  # so the same overrides apply to any interpreter a consumer pulls in.
   #
   # `extraPythonPackages` is a withPackages-style function (ps: [ ... ]) merged
   # on top, so consumers can add deps the Cookbook would otherwise pip-install —
   # which fails on the read-only Nix store.
-  pythonEnv = (python3.override {
-    packageOverrides = pythonOverlay;
-  }).withPackages
-    (ps: (map (n: ps.${n}) reqNames) ++ extraDefault ps ++ extraPythonPackages ps);
+  pythonEnv = python3.withPackages (
+    ps: (map (n: ps.${n}) reqNames) ++ extraDefault ps ++ extraFromExtras ps ++ extraPythonPackages ps
+  );
 
   # Single source of truth for the version: src/constants.py's APP_VERSION
   # (the value the app serves at /version), parsed at eval time.
@@ -105,5 +120,13 @@ stdenv.mkDerivation {
     mainProgram = "odysseus";
     description = "Odysseus AI assistant";
     license = lib.licenses.agpl3Only;
+  };
+
+  # Exposed so the dev shell (nix/shell.nix) can put the full interpreter
+  # (`python`, `uvicorn`, `pip`, `chroma`) on PATH directly, giving an
+  # editable dev environment: PYTHONPATH="." in the shell makes the working
+  # tree win over this store copy, while the deps here stay importable.
+  passthru = {
+    inherit pythonEnv extras;
   };
 }

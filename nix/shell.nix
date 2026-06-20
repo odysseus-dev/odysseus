@@ -2,8 +2,10 @@
 #
 # flake.nix references this for devShells.default (passing its pinned pkgs);
 # a bare `nix-shell nix/shell.nix` falls back to your <nixpkgs> channel.
+# The Darwin test-skip overlay is applied in both paths so the interpreter the
+# shell sees matches the one the flake package uses.
 {
-  pkgs ? import <nixpkgs> { },
+  pkgs ? import <nixpkgs> { overlays = [ (import ./overlay.nix) ]; },
   extraInputs ? [ ],
 }:
 let
@@ -28,7 +30,10 @@ pkgs.mkShell {
   buildInputs =
     with pkgs;
     [
-      # System tools required for building and running the application
+      # System tools required for building and running the application.
+      # cmake is needed because Cookbook builds llama.cpp / llama-cpp-python
+      # from source (`cmake -B build ...`) when no native llama-server is found;
+      # in the isolated Nix shell it's only on PATH if we list it here.
       git
       cmake
       nodejs
@@ -37,6 +42,11 @@ pkgs.mkShell {
       curl
       pkg-config
       odysseus
+      # The full Python interpreter (python, uvicorn, pip, chroma) so the
+      # documented manual workflow (`uvicorn app:app ...`) works directly.
+      # PYTHONPATH="." below makes the working tree the source of truth, so
+      # this is the editable dev environment (cf. PR #2567 review feedback).
+      odysseus.passthru.pythonEnv
     ]
     ++ lib.optionals pkgs.stdenv.isLinux [
       gosu
