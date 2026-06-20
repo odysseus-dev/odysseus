@@ -18,7 +18,7 @@
       flake-utils,
     }@inputs:
     let
-      inherit (import ./nix/lib.nix) mkContainer mkRuntimeLibs;
+      inherit (import ./nix/lib.nix) mkContainer;
       # Standard nixpkgs overlay (Darwin test-skips via pythonPackagesExtensions).
       # Applied here so the package and dev shell see the same overridden
       # interpreter, and exported as overlays.default for downstream
