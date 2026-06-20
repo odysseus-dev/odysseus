@@ -38,6 +38,8 @@ def _install_httpx_client(monkeypatch, *, state=None, posts=None):
 
         async def post(self, url, json=None, **kwargs):
             posts.append((url, json, kwargs))
+            if "/api/cookbook/stop-session" in url:
+                return FakeResponse({"ok": True})
             return FakeResponse({"stdout": "", "stderr": "", "exit_code": 0})
 
     monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
@@ -116,10 +118,11 @@ async def test_stop_served_model_uses_validated_remote_target(monkeypatch):
 
     assert result["exit_code"] == 0
     assert len(posts) == 1
-    command = posts[0][1]["command"]
-    assert "ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no" in command
-    assert "-p 2222 user@gpu-box" in command
-    assert "tmux kill-session -t serve-abc123" in command
+    assert posts[0][0].endswith("/api/cookbook/stop-session")
+    body = posts[0][1]
+    assert body["session_id"] == "serve-abc123"
+    assert body["remote_host"] == "user@gpu-box"
+    assert body["ssh_port"] == "2222"
 
 
 @pytest.mark.asyncio

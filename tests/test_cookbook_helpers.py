@@ -716,10 +716,12 @@ def test_local_windows_download_pid_tracks_inner_bash_and_stop_kills_tree():
     routes_src = (Path(__file__).resolve().parents[1] / "routes" / "cookbook_routes.py").read_text(encoding="utf-8")
     running_src = (Path(__file__).resolve().parents[1] / "static" / "js" / "cookbookRunning.js").read_text(encoding="utf-8")
 
-    assert 'printf \'%s\\\\n\' \\"$$\\" > {pp}' in routes_src
+    assert "/api/cookbook/stop-session" in routes_src
+    assert "_scan_windows_session_pids" in routes_src
+    assert "kill_process_tree" in routes_src
     assert "function Stop-Tree([int]$Id)" in running_src
-    assert "ParentProcessId = $Id" in running_src
-    assert "Stop-Tree ([int]$p)" in running_src
+    assert "_stopCookbookSession" in running_src
+    assert "_winSessionStopTreePs" in running_src
 
 
 def test_llama_cpp_rebuild_cmd_runs_clean_on_a_fresh_home(tmp_path):

@@ -784,33 +784,62 @@ function _winSessionCmd(task, tmuxArgs) {
     const ps = host
       ? `Get-Content '${sd}\\${sid}.log' -Tail ${lines} -ErrorAction SilentlyContinue`
       : `Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.log') -Tail ${lines} -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('has-session')) {
     const ps = host
       ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`
       : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { Get-Process -Id $p -ErrorAction SilentlyContinue | Out-Null; if ($?) { exit 0 } else { exit 1 } } else { exit 1 }`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('kill-session')) {
-    // taskkill /T kills the whole process tree. Stop-Process -Id only killed
-    // the outer bash wrapper; the inner retry loop + hf/python children kept
-    // running invisibly and deadlocked later downloads of the same repo on
-    // the HF cache file locks ("Still waiting to acquire lock...").
-    const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    const ps = _winSessionStopTreePs(task);
+    return _winPowerShellCmd(task, ps);
   }
   if (tmuxArgs.includes('send-keys') && tmuxArgs.includes('C-c')) {
     // No cross-process Ctrl-C on Windows — tree-kill is the only reliable
     // interrupt. Downloads resume from the HF cache's .incomplete blobs.
-    const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
+    const ps = _winSessionStopTreeOnlyPs(task);
+    return _winPowerShellCmd(task, ps);
   }
   return host ? `ssh ${pf}${host} 'tmux ${tmuxArgs}' 2>/dev/null` : `tmux ${tmuxArgs} 2>/dev/null`;
+}
+
+function _winPowerShellCmd(task, ps) {
+  const command = `powershell -Command "${ps}"`;
+  if (!task.remoteHost) return command;
+  return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(command)}`;
+}
+
+function _winSessionStopTreePs(task) {
+  const host = task.remoteHost;
+  const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
+  const sid = task.sessionId;
+  const stopTree = `function Stop-Tree([int]$Id) { Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Stop-Tree ([int]$_.ProcessId) }; Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }`;
+  return host
+    ? `${stopTree}; $p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
+    : `${stopTree}; $p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
+}
+
+export function _tmuxGracefulKill(task) {
+  if (_isWindows(task)) {
+    const ps = _winSessionStopTreePs(task);
+    return _winPowerShellCmd(task, ps);
+  }
+  if (task.remoteHost) {
+    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
+  }
+  return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
+}
+
+function _winSessionStopTreeOnlyPs(task) {
+  const host = task.remoteHost;
+  const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
+  const sid = task.sessionId;
+  const stopTree = `function Stop-Tree([int]$Id) { Get-CimInstance Win32_Process -Filter ('ParentProcessId = ' + $Id) -ErrorAction SilentlyContinue | ForEach-Object { Stop-Tree ([int]$_.ProcessId) }; Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue }`;
+  return host
+    ? `${stopTree}; $p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }`
+    : `${stopTree}; $p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p -match '^\\d+$') { Stop-Tree ([int]$p) }`;
 }
 
 async function _stopCookbookSession(task) {
@@ -818,7 +847,7 @@ async function _stopCookbookSession(task) {
   const body = {
     session_id: task.sessionId,
     remote_host: task.remoteHost || '',
-    ssh_port: task.sshPort || '',
+    ssh_port: _getPort(task) || '',
     platform: task.platform || _getPlatform(task) || '',
   };
   if (repoId) body.repo_id = repoId;
@@ -834,25 +863,6 @@ async function _stopCookbookSession(task) {
   } catch {
     return { ok: false };
   }
-}
-
-export function _tmuxGracefulKill(task) {
-  if (_isWindows(task)) {
-    const host = task.remoteHost;
-    const sd = host ? '$env:TEMP\\odysseus-sessions' : '$env:TEMP\\odysseus-tmux';
-    const sid = task.sessionId;
-    const pf = _sshPrefix(_getPort(task));
-    // taskkill /T: see _winSessionCmd — must kill the whole tree, not just
-    // the outer bash wrapper, or orphaned hf/python downloaders linger.
-    const ps = host
-      ? `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`
-      : `$p = Get-Content (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.pid') -ErrorAction SilentlyContinue; if ($p) { taskkill /F /T /PID $p 2>$null | Out-Null }; Remove-Item (Join-Path $env:TEMP 'odysseus-tmux\\${sid}.*') -Force -ErrorAction SilentlyContinue`;
-    return host ? `ssh ${pf}${host} "powershell -Command \\"${ps}\\""` : `powershell -Command "${ps}"`;
-  }
-  if (task.remoteHost) {
-    return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} 'tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null'`;
-  }
-  return `tmux send-keys -t ${task.sessionId} C-c 2>/dev/null; sleep 2; tmux kill-session -t ${task.sessionId} 2>/dev/null`;
 }
 
 // Force-kill escalation: SIGKILL the tmux pane's owning PID and any children,

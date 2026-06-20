@@ -661,6 +661,19 @@ def setup_cookbook_routes() -> APIRouter:
             "detail": "; ".join(detail) or "session artifacts removed",
         }
 
+    def _tmux_stop_succeeded(returncode: int, stderr: bytes | str = b"") -> bool:
+        if returncode == 0:
+            return True
+        err = (
+            stderr.decode("utf-8", errors="replace")
+            if isinstance(stderr, bytes)
+            else str(stderr)
+        ).lower()
+        return any(
+            s in err
+            for s in ("no server running", "can't find session", "session not found")
+        )
+
     async def _stop_cookbook_session_impl(
         session_id: str,
         remote_host: str = "",
@@ -700,8 +713,9 @@ def setup_cookbook_routes() -> APIRouter:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await proc.wait()
-            return {"ok": proc.returncode == 0, "exit_code": proc.returncode}
+            _stdout, stderr = await proc.communicate()
+            ok = _tmux_stop_succeeded(proc.returncode, stderr)
+            return {"ok": ok, "exit_code": proc.returncode}
         if IS_WINDOWS:
             return await asyncio.to_thread(_stop_local_windows_session, session_id, repo_id)
         cmd = (
@@ -713,8 +727,9 @@ def setup_cookbook_routes() -> APIRouter:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        await proc.wait()
-        return {"ok": proc.returncode == 0, "exit_code": proc.returncode}
+        _stdout, stderr = await proc.communicate()
+        ok = _tmux_stop_succeeded(proc.returncode, stderr)
+        return {"ok": ok, "exit_code": proc.returncode}
 
     @router.post("/api/model/download")
     async def model_download(request: Request, req: ModelDownloadRequest):
@@ -2435,14 +2450,21 @@ def setup_cookbook_routes() -> APIRouter:
         require_admin(request)
         validate_remote_host(req.remote_host)
         sport = validate_ssh_port(req.ssh_port)
-        if req.repo_id:
-            _validate_repo_id(req.repo_id)
+        repo_id_raw = (req.repo_id or "").strip()
+        # repo_id is optional download metadata — only HF org/name ids are
+        # validated strictly; Ollama tags, local model ids, and setup tasks
+        # must not block the kill path with a 400.
+        repo_id_for_stop = None
+        if repo_id_raw:
+            if "/" in repo_id_raw:
+                _validate_repo_id(repo_id_raw)
+                repo_id_for_stop = repo_id_raw
         return await _stop_cookbook_session_impl(
             req.session_id.strip(),
             remote_host=req.remote_host or "",
             ssh_port=sport,
             platform=(req.platform or "").strip(),
-            repo_id=(req.repo_id or "").strip() or None,
+            repo_id=repo_id_for_stop,
         )
 
     @router.post("/api/cookbook/kill-pid")
@@ -3448,6 +3470,7 @@ def setup_cookbook_routes() -> APIRouter:
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
             # when the PID is gone instead of blindly reporting "stopped".
             download_zero_files = False
+            exit_code = None
             status = "unknown"
             download_has_ok = task_type == "download" and "DOWNLOAD_OK" in full_snapshot
             download_has_failed = task_type == "download" and "DOWNLOAD_FAILED" in full_snapshot
@@ -3529,7 +3552,7 @@ def setup_cookbook_routes() -> APIRouter:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
-            output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
+            output_tail = error_aware_output_tail(full_snapshot, status)
 
             results.append({
                 "session_id": session_id,
@@ -3540,6 +3563,7 @@ def setup_cookbook_routes() -> APIRouter:
                 "phase": serve_phase,
                 "diagnosis": diagnosis,
                 "output_tail": output_tail,
+                "exit_code": exit_code,
                 "cmd": _payload.get("_cmd") or "",
                 "tps": phase_info.get("tps"),
                 "reqs": phase_info.get("reqs"),
