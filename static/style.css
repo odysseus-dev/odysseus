@@ -311,7 +311,7 @@ body.bg-pattern-sparkles {
     }
     /* Offline badge next to endpoint name */
     .endpoint-offline-badge {
-      color: var(--danger, #f44);
+      color: var(--color-error);
       font-size: 0.8em;
       margin-left: 4px;
       opacity: 0.7;
@@ -3274,10 +3274,10 @@ body.bg-pattern-sparkles {
       opacity: 0.6;
       cursor: default;
       transition: opacity 0.15s;
-      --ctx-stroke: var(--color-muted, #888);
+      --ctx-stroke: var(--color-muted);
     }
     .ctx-ring .ctx-ring-pct {
-      color: var(--color-muted, #888);
+      color: var(--color-muted);
       transition: color 0.1s ease;
     }
     .ctx-ring svg circle {
@@ -11420,8 +11420,8 @@ textarea.memory-add-input {
   color: var(--red);
 }
 .memory-cat-task {
-  background: color-mix(in srgb, #d19a66 15%, transparent);
-  color: #d19a66;
+  background: color-mix(in srgb, var(--accent-warm) 15%, transparent);
+  color: var(--accent-warm);
 }
 .memory-cat-pinned {
   background: color-mix(in srgb, var(--red) 15%, transparent);
@@ -33575,7 +33575,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 
 /* Color classes — theme-aware via color-mix with --panel */
 .note-color-red    { background: color-mix(in srgb, var(--red) 18%, var(--panel)); border-color: color-mix(in srgb, var(--red) 30%, var(--border)); }
-.note-color-orange { background: color-mix(in srgb, #d19a66 18%, var(--panel)); border-color: color-mix(in srgb, #d19a66 30%, var(--border)); }
+.note-color-orange { background: color-mix(in srgb, var(--accent-warm) 18%, var(--panel)); border-color: color-mix(in srgb, var(--accent-warm) 30%, var(--border)); }
 .note-color-yellow { background: color-mix(in srgb, var(--hl-string) 18%, var(--panel)); border-color: color-mix(in srgb, var(--hl-string) 30%, var(--border)); }
 .note-color-green  { background: color-mix(in srgb, #98c379 18%, var(--panel)); border-color: color-mix(in srgb, #98c379 30%, var(--border)); }
 .note-color-blue   { background: color-mix(in srgb, var(--hl-function) 18%, var(--panel)); border-color: color-mix(in srgb, var(--hl-function) 30%, var(--border)); }
@@ -33586,7 +33586,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
    in its own hue so the colour reads even before you focus on the card. */
 .note-card { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--fg) 14%, transparent); }
 .note-color-red    { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--red) 55%, transparent); }
-.note-color-orange { box-shadow: inset 0 2px 0 0 color-mix(in srgb, #d19a66 60%, transparent); }
+.note-color-orange { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--accent-warm) 60%, transparent); }
 .note-color-yellow { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--hl-string) 60%, transparent); }
 .note-color-green  { box-shadow: inset 0 2px 0 0 color-mix(in srgb, #98c379 60%, transparent); }
 .note-color-blue   { box-shadow: inset 0 2px 0 0 color-mix(in srgb, var(--hl-function) 60%, transparent); }
@@ -33646,7 +33646,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   .note-form-collapsible { padding-left: 9px; padding-right: 9px; }
 }
 .note-form.note-color-red    { background: color-mix(in srgb, var(--red) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--red) 30%, var(--border)) !important; }
-.note-form.note-color-orange { background: color-mix(in srgb, #d19a66 18%, var(--panel)) !important; border-color: color-mix(in srgb, #d19a66 30%, var(--border)) !important; }
+.note-form.note-color-orange { background: color-mix(in srgb, var(--accent-warm) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--accent-warm) 30%, var(--border)) !important; }
 .note-form.note-color-yellow { background: color-mix(in srgb, var(--hl-string) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--hl-string) 30%, var(--border)) !important; }
 .note-form.note-color-green  { background: color-mix(in srgb, #98c379 18%, var(--panel)) !important; border-color: color-mix(in srgb, #98c379 30%, var(--border)) !important; }
 .note-form.note-color-blue   { background: color-mix(in srgb, var(--hl-function) 18%, var(--panel)) !important; border-color: color-mix(in srgb, var(--hl-function) 30%, var(--border)) !important; }
@@ -37668,7 +37668,7 @@ body.theme-frosted .modal {
   color: var(--red, #e06c75);
 }
 .log-line-debug {
-  color: var(--color-muted, #888);
+  color: var(--color-muted);
 }
 .log-line-default {
   color: var(--fg, #9cdef2);
