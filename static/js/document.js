@@ -8893,6 +8893,44 @@ import * as Modals from './modalManager.js';
     _syncHeaderActions();
   }
 
+
+  /**
+   * Inject a tiny same-document error reporter into rendered HTML previews.
+   *
+   * Sandboxed `srcdoc` previews otherwise surface many CDN/runtime failures as
+   * a generic "Script error." in the browser console. The overlay keeps the
+   * preview self-contained while exposing the actual message, source, line, and
+   * stack to the user (notably Babel Standalone transform errors).
+   */
+  function _withHtmlPreviewErrorReporter(html) {
+    const reporter = `<script>(function(){
+  function show(kind, message, source, line, col, stack){
+    try {
+      var box = document.getElementById('__odysseus_preview_error__');
+      if (!box) {
+        box = document.createElement('pre');
+        box.id = '__odysseus_preview_error__';
+        box.style.cssText = 'position:fixed;z-index:2147483647;left:12px;right:12px;bottom:12px;max-height:45vh;overflow:auto;margin:0;padding:12px;border-radius:10px;background:#2b0b0e;color:#ffd7dc;border:1px solid #ff8a9a;box-shadow:0 10px 30px rgba(0,0,0,.35);font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;';
+        (document.body || document.documentElement).appendChild(box);
+      }
+      var loc = source ? '\n' + source + (line ? ':' + line : '') + (col ? ':' + col : '') : '';
+      box.textContent = kind + ': ' + (message || 'Script error') + loc + (stack ? '\n\n' + stack : '');
+    } catch (_) {}
+  }
+  window.addEventListener('error', function(e){
+    show('Script error', e.message, e.filename, e.lineno, e.colno, e.error && e.error.stack);
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var r = e.reason;
+    show('Unhandled promise rejection', r && (r.message || String(r)), '', '', '', r && r.stack);
+  });
+})();<\/script>`;
+    const input = String(html || '');
+    if (/<head[\s>]/i.test(input)) return input.replace(/<head([^>]*)>/i, `<head$1>${reporter}`);
+    if (/<html[\s>]/i.test(input)) return input.replace(/<html([^>]*)>/i, `<html$1>${reporter}`);
+    return reporter + input;
+  }
+
   /** Toggle inline HTML preview (iframe) */
   function toggleHtmlPreview() {
     const iframe = document.getElementById('doc-html-preview');
@@ -8905,7 +8943,9 @@ import * as Modals from './modalManager.js';
       const mdPreview = document.getElementById('doc-md-preview');
       if (mdPreview) mdPreview.style.display = 'none';
       const code = textarea.value || '';
-      iframe.srcdoc = code;
+      const langSelect = document.getElementById('doc-language-select');
+      const lang = (langSelect ? langSelect.value : '').toLowerCase();
+      iframe.srcdoc = lang === 'html' ? _withHtmlPreviewErrorReporter(code) : code;
       iframe.style.display = '';
       wrap.style.display = 'none';
       _htmlPreviewActive = true;
