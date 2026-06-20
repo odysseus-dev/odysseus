@@ -2302,6 +2302,10 @@ body.bg-pattern-sparkles {
       font-size: 14px;
       line-height: 1.5;
       color: var(--fg);
+      -webkit-text-fill-color: var(--fg);
+      caret-color: var(--fg);
+      position: relative;
+      z-index: 2;
       min-height: 24px;
       max-height: 200px;
       padding: 0;
