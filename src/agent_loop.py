@@ -271,6 +271,10 @@ _DOMAIN_RULES = {
 - Use `resolve_contact` to look up a contact's email or phone number by name. Searches the CardDAV address book and sent email history.
 - Use `manage_contact` to list, add, update, or delete contacts in the address book.
 - Do NOT use `manage_memory` for contact lookups — contact details live in the address book, not memory.""",
+    "integrations": """\
+## Integration/API rules
+- To query or control a configured service integration (Home Assistant, Miniflux, Gitea, Linkding, Jellyfin, or any other registered service), use `api_call` with the integration name, HTTP method, path, and optional JSON body.
+- Do not use shell, curl, or `app_api` to reach a user's connected integration when `api_call` is available.""",
 }
 
 _DOMAIN_TOOL_MAP = {
@@ -281,9 +285,10 @@ _DOMAIN_TOOL_MAP = {
     "notes_calendar_tasks": {"manage_notes", "manage_calendar", "manage_tasks"},
     "ui": {"ui_control"},
     "sessions": {"create_session", "list_sessions", "manage_session", "send_to_session", "search_chats"},
-    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace"},
+    "files": {"bash", "python", "read_file", "write_file", "edit_file", "grep", "glob", "ls", "get_workspace", "manage_bg_jobs"},
     "settings": {"manage_settings", "manage_endpoints", "manage_mcp", "manage_webhooks", "manage_tokens", "app_api"},
     "contacts": {"resolve_contact", "manage_contact"},
+    "integrations": {"api_call"},
 }
 
 def _domain_rules_for_tools(tool_names: set) -> list[str]:
@@ -815,10 +820,25 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("sessions")
     if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash|python)\b"):
         domains.add("files")
+    # Managing detached bash jobs: "kill the background job", "stop the job",
+    # "kill that job", "check the job output", "is the bg job done".
+    if (has(r"\b(background|bg)\s+(jobs?|task)\b")
+            or has(r"\b(kill|stop|cancel|terminate|check|tail|show|list)\b.{0,16}\bjobs?\b")
+            or has(r"\bjobs?\b.{0,16}\b(output|status|done|finished|running)\b")):
+        domains.add("files")
     if has(r"\b(endpoint|api token|mcp|webhook|preference|configure|config|setting)\b"):
         domains.add("settings")
     if has(r"\b(contact|contacts|phone|phone number|address book|vcard)\b"):
         domains.add("contacts")
+    # API-integration intent — calling a configured service via the api_call
+    # tool. Without this the #3794 repro ("Use the api_call tool to call Home
+    # Assistant GET /api/states") matched no domain, classified as low-signal,
+    # and the tool never reached the schema filter. Detect it explicitly so the
+    # "integrations" domain seeds api_call deterministically (see
+    # _DOMAIN_TOOL_MAP), independent of embedding retrieval.
+    if has(r"\bapi[ _]call\b", r"\bintegrations?\b",
+           r"\b(?:home ?assistant|miniflux|gitea|linkding|jellyfin)\b"):
+        domains.add("integrations")
 
     low_signal = not continuation and not domains
     return {
@@ -847,8 +867,11 @@ def _recent_context_for_retrieval(messages: List[Dict], max_user: int = 3, max_c
         if isinstance(content, list):
             content = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
         content = (content or "").strip()
-        # Skip injected tool-result envelopes — role=user but not human intent.
-        if not content or content.startswith("[Tool execution results]"):
+        # Skip injected envelopes — role=user but not human intent. Tool results
+        # are now wrapped via untrusted_context_message (metadata.trusted=False);
+        # keep the legacy "[Tool execution results]" prefix for older histories.
+        meta = msg.get("metadata") or {}
+        if not content or meta.get("trusted") is False or content.startswith("[Tool execution results]"):
             continue
         collected.append(content)
         if len(collected) >= max_user:
@@ -1566,8 +1589,14 @@ def _append_tool_results(
         if round_reasoning:
             msg["reasoning_content"] = round_reasoning
         messages.append(msg)
+        # Tool output (shell/python stdout, file reads, fetched pages, email
+        # bodies, MCP results) is sourced from outside the server. Wrap it as
+        # untrusted data so prompt-injection inside a tool result is treated as
+        # data, not instructions — same hardening as skills (#788) and the
+        # web/RAG context. THREAT_MODEL.md lists tool output as a surface that
+        # must go through untrusted_context_message.
         messages.append(
-            {"role": "user", "content": f"[Tool execution results]\n\n{tool_output_text}"}
+            untrusted_context_message("tool execution results", tool_output_text)
         )
 
 

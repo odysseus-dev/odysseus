@@ -23,6 +23,22 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 
 
+# Strong references to in-flight fire-and-forget tasks scheduled from this
+# module. asyncio only keeps weak references to tasks created via
+# create_task, so without this the GC can collect a task mid-execution and
+# the background work (extraction, auto-naming) silently never runs.
+# Mirrors WebhookManager._spawn_tracked from src/webhook_manager.py.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    """Schedule a background task and hold a strong reference until it finishes."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
+
 # ── Data containers ────────────────────────────────────────────────────── #
 
 @dataclass
@@ -159,17 +175,9 @@ async def auto_name_session(session_manager, sess):
             return
 
         owner = getattr(sess, "owner", None)
-        t_url, t_model, t_headers = resolve_task_endpoint(owner=owner)
-        if not t_model:
-            # If no task/utility model is configured at all, fall back to
-            # the session's own model so auto-naming still works even on
-            # minimal setups.
-            from src.endpoint_resolver import resolve_endpoint
-            _fallback = resolve_endpoint("default", owner=owner)
-            if _fallback and _fallback[1]:
-                t_url, t_model, t_headers = _fallback
-            else:
-                t_url, t_model, t_headers = sess.endpoint_url, sess.model, sess.headers
+        t_url, t_model, t_headers = resolve_task_endpoint(
+            sess.endpoint_url, sess.model, sess.headers, owner=owner
+        )
         if not t_model:
             logger.debug("[auto-name] No model provided, skipping")
             return
@@ -576,7 +584,8 @@ async def build_chat_context(
     if not incognito:
         fire_message_event(request, webhook_manager, session_id, sess, message, compare_mode)
 
-    # Resolve user prefs
+    # Resolve owner-scoped prefs/context. Browser requests keep the cookie user;
+    # bearer-token chat requests use the token owner instead of the "api" sentinel.
     user = effective_user(request)
     uprefs = load_prefs_for_user(user)
 
@@ -1112,7 +1121,7 @@ def run_post_response_tasks(
             )))
 
     if _extraction_jobs:
-        asyncio.create_task(_run_extraction_jobs_sequentially(session_id, _extraction_jobs))
+        _spawn_bg(_run_extraction_jobs_sequentially(session_id, _extraction_jobs))
 
     # Token accumulation
     if last_metrics:
@@ -1127,4 +1136,4 @@ def run_post_response_tasks(
 
     # Auto-name
     if needs_auto_name(sess.name):
-        asyncio.create_task(auto_name_session(session_manager, sess))
+        _spawn_bg(auto_name_session(session_manager, sess))

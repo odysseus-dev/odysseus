@@ -28,13 +28,15 @@ def test_background_status_poll_reconciles_into_local_tasks():
     assert "completedDeps.forEach(t => _refreshDepsAfterInstall(t));" in source
 
 
-def test_local_windows_session_commands_use_local_powershell_log_dir():
+def test_windows_session_commands_use_shared_powershell_wrapper_and_local_log_dir():
     source = _read("static/js/cookbookRunning.js")
 
     assert "const host = task.remoteHost;" in source
     assert "host ? '$env:TEMP\\\\odysseus-sessions' : '$env:TEMP\\\\odysseus-tmux'" in source
-    assert "return host ? `ssh ${pf}${host}" in source
-    assert ": `powershell -Command \"${ps}\"`;" in source
+    assert "function _winPowerShellCmd(task, ps)" in source
+    assert "const command = `powershell -Command \"${ps}\"`;" in source
+    assert "if (!task.remoteHost) return command;" in source
+    assert "return `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} ${_shQuote(command)}`;" in source
 
 
 def test_dep_install_success_recognized_from_exit_sentinel():
