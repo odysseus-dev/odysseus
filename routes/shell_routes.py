@@ -1377,11 +1377,16 @@ def setup_shell_routes() -> APIRouter:
                     pkg["installed"] = False
                 except importlib_metadata.PackageNotFoundError:
                     pkg["installed"] = False
-                except Exception:
+                except (Exception, SystemExit):
                     # Installed but crashes on import — e.g. a CUDA build of
                     # llama-cpp-python raising FileNotFoundError when the CUDA
-                    # toolkit dir is absent. One broken optional package must not
-                    # 500 the entire packages panel; report it as not usable.
+                    # toolkit dir is absent, or rembg calling sys.exit(1) when no
+                    # onnxruntime backend can be loaded. SystemExit is a
+                    # BaseException, not Exception, so without catching it here a
+                    # single sys.exit-on-import package escapes and takes down the
+                    # whole packages panel / worker (the panel hangs forever). One
+                    # broken optional package must not 500 — or hang — the entire
+                    # panel; report it as not usable.
                     pkg["installed"] = False
 
             # llama_cpp partial-state probe: when the package is installed
