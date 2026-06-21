@@ -31,6 +31,8 @@ import numpy as np
 import httpx
 from typing import List, Optional
 
+from src.runtime_paths import get_app_root
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "all-minilm:l6-v2"

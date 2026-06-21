@@ -128,6 +128,17 @@ def validate_caldav_url(raw_url: str) -> str:
     return urlunparse(parsed._replace(fragment="")).rstrip("/")
 
 
+def _event_etag(obj) -> str:
+    """Best-effort ETag extraction from python-caldav resources."""
+    try:
+        etag = getattr(obj, "etag", None)
+        if callable(etag):
+            etag = etag()
+        return str(etag or "")
+    except Exception:
+        return ""
+
+
 def _stable_cal_id(remote_url: str, owner: str = "", account_id: str = "") -> str:
     """Deterministic local id for a remote CalDAV calendar, scoped to owner
     and account so two users — or one user with two accounts — pointing at
@@ -242,6 +253,20 @@ def _build_dav_client(url: str, username: str, password: str):
     return client
 
 
+def _should_prune_window(seen_uids: set, parse_failed: bool) -> bool:
+    """Whether the post-sync prune of vanished CalDAV events is safe to run.
+
+    The prune deletes local ``origin=="caldav"`` rows in the window whose UID the
+    server did not just return. Any parse failure (total or partial) makes
+    ``seen_uids`` an incomplete view of the server, so pruning against it can
+    delete events that still exist upstream but could not be read: a total
+    failure wipes the whole window, a partial failure deletes just the
+    unreadable ones. Only prune on a clean read. An empty ``seen_uids`` after a
+    clean read is a genuinely empty window, which is safe to prune.
+    """
+    return not parse_failed
+
+
 def _sync_blocking(owner: str, url: str, username: str, password: str, account_id: str = "") -> dict:
     """The actual sync — synchronous, intended to run in a threadpool.
     Returns counts: {calendars, events, deleted, errors}."""
@@ -302,17 +327,21 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                         color="#5b8abf",
                         source="caldav",
                         account_id=account_id or None,
+                        caldav_base_url=remote_url,
                     )
                     db.add(local_cal)
                     db.commit()
                 else:
-                    # Refresh display name and stamp account_id if missing.
+                    # Refresh display name and stamp CalDAV metadata if missing.
                     changed = False
                     if local_cal.name != display_name:
                         local_cal.name = display_name
                         changed = True
                     if account_id and not local_cal.account_id:
                         local_cal.account_id = account_id
+                        changed = True
+                    if local_cal.caldav_base_url != remote_url:
+                        local_cal.caldav_base_url = remote_url
                         changed = True
                     if changed:
                         db.commit()
@@ -328,6 +357,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 # duplicate UIDs within the same batch are updated, not re-inserted
                 # (which would violate the UNIQUE constraint on commit).
                 pending: dict = {}
+                parse_failed = False
                 try:
                     objs = remote_cal.date_search(start=start, end=end, expand=False)
                 except Exception as e:
@@ -339,6 +369,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                         ical = iCal.from_ical(obj.data)
                     except Exception as e:
                         result["errors"].append(f"{display_name}: parse failed ({e})")
+                        parse_failed = True
                         continue
 
                     for comp in ical.walk():
@@ -379,6 +410,9 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
 
                         existing = _find_existing_event(db, pending, uid_val, local_cal.id)
                         if existing:
+                            if existing.caldav_sync_pending in {"create", "update"}:
+                                result["events"] += 1
+                                continue
                             existing.calendar_id = local_cal.id
                             existing.summary = summary
                             existing.description = description
@@ -389,6 +423,9 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                             existing.is_utc = row_is_utc
                             existing.rrule = rrule
                             existing.origin = "caldav"
+                            existing.remote_href = str(getattr(obj, "url", "") or "") or None
+                            existing.remote_etag = _event_etag(obj) or None
+                            existing.caldav_sync_pending = None
                         else:
                             new_ev = CalendarEvent(
                                 uid=uid_val,
@@ -402,6 +439,8 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                                 is_utc=row_is_utc,
                                 rrule=rrule,
                                 origin="caldav",
+                                remote_href=str(getattr(obj, "url", "") or "") or None,
+                                remote_etag=_event_etag(obj) or None,
                             )
                             db.add(new_ev)
                             pending[uid_val] = new_ev
@@ -415,17 +454,25 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
                 # are prunable; locally-created events (agent / email triage / a
                 # UI event whose write-back failed) carry origin NULL and must
                 # never be deleted just because the server didn't return them.
-                stale = db.query(CalendarEvent).filter(
-                    CalendarEvent.calendar_id == local_cal.id,
-                    CalendarEvent.origin == "caldav",
-                    CalendarEvent.dtstart >= start,
-                    CalendarEvent.dtstart <= end,
-                    ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
-                ).all()
-                for ev in stale:
-                    db.delete(ev)
-                result["deleted"] += len(stale)
-                db.commit()
+                # Skip the prune on any parse failure: seen_uids is then an
+                # incomplete view of the server, so pruning against it would
+                # delete events that still exist upstream but could not be read
+                # (the empty-seen_uids case wipes the whole window; a partial
+                # failure deletes just the unreadable rows).
+                if _should_prune_window(seen_uids, parse_failed):
+                    stale = db.query(CalendarEvent).filter(
+                        CalendarEvent.calendar_id == local_cal.id,
+                        CalendarEvent.origin == "caldav",
+                        CalendarEvent.dtstart >= start,
+                        CalendarEvent.dtstart <= end,
+                        CalendarEvent.remote_href.isnot(None),
+                        CalendarEvent.caldav_sync_pending.is_(None),
+                        ~CalendarEvent.uid.in_(seen_uids) if seen_uids else CalendarEvent.uid.isnot(None),
+                    ).all()
+                    for ev in stale:
+                        db.delete(ev)
+                    result["deleted"] += len(stale)
+                    db.commit()
             except Exception as e:
                 logger.exception("CalDAV sync failed for one calendar")
                 result["errors"].append(str(e)[:200])
@@ -434,6 +481,92 @@ def _sync_blocking(owner: str, url: str, username: str, password: str, account_i
         db.close()
 
     return result
+
+
+def _event_payload(ev) -> dict:
+    return {
+        "uid": ev.uid,
+        "summary": ev.summary,
+        "description": ev.description,
+        "location": ev.location,
+        "dtstart": ev.dtstart,
+        "dtend": ev.dtend,
+        "all_day": ev.all_day,
+        "is_utc": ev.is_utc,
+        "rrule": ev.rrule or "",
+    }
+
+
+def _load_event_for_writeback(owner: str, uid: str) -> tuple[str, str, dict] | None:
+    from core.database import CalendarCal, CalendarEvent, SessionLocal
+
+    db = SessionLocal()
+    try:
+        ev = (
+            db.query(CalendarEvent)
+            .join(CalendarCal)
+            .filter(CalendarEvent.uid == uid, CalendarCal.owner == owner)
+            .first()
+        )
+        if not ev or not ev.calendar or ev.calendar.source != "caldav":
+            return None
+        return ev.calendar.source, ev.calendar.id, _event_payload(ev)
+    finally:
+        db.close()
+
+
+def _load_delete_for_writeback(owner: str, uid: str) -> tuple[str, str, dict] | None:
+    from core.database import CalendarCal, CalendarDeletedEvent, CalendarEvent, SessionLocal
+
+    db = SessionLocal()
+    try:
+        tombstone = db.query(CalendarDeletedEvent).filter(
+            CalendarDeletedEvent.uid == uid,
+            CalendarDeletedEvent.owner == owner,
+        ).first()
+        if tombstone:
+            return "caldav", tombstone.calendar_id, {"uid": uid}
+
+        ev = (
+            db.query(CalendarEvent)
+            .join(CalendarCal)
+            .filter(CalendarEvent.uid == uid, CalendarCal.owner == owner)
+            .first()
+        )
+        if not ev or not ev.calendar or ev.calendar.source != "caldav":
+            return None
+        return ev.calendar.source, ev.calendar.id, {"uid": uid}
+    finally:
+        db.close()
+
+
+def _pending_writeback_uids(owner: str) -> tuple[list[str], list[str]]:
+    from core.database import CalendarCal, CalendarDeletedEvent, CalendarEvent, SessionLocal
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(CalendarEvent.uid)
+            .join(CalendarCal)
+            .filter(
+                CalendarCal.owner == owner,
+                CalendarCal.source == "caldav",
+                CalendarEvent.status != "cancelled",
+                (
+                    (CalendarEvent.caldav_sync_pending.isnot(None))
+                    | (CalendarEvent.remote_href.is_(None))
+                ),
+            )
+            .all()
+        )
+        delete_rows = (
+            db.query(CalendarDeletedEvent.uid)
+            .filter(CalendarDeletedEvent.owner == owner)
+            .all()
+        )
+        return [row[0] for row in rows], [row[0] for row in delete_rows]
+    finally:
+        db.close()
 
 
 def _load_caldav_accounts(owner: str) -> list:
@@ -511,3 +644,69 @@ async def sync_caldav(owner: str) -> dict:
         for err in result.get("errors", []):
             totals["errors"].append(f"{label}: {err}")
     return totals
+
+
+async def push_event_create(owner: str, uid: str) -> dict:
+    loaded = _load_event_for_writeback(owner, uid)
+    if not loaded:
+        return {"ok": True, "skipped": True}
+    source, calendar_id, payload = loaded
+    from src.caldav_writeback import writeback_event
+    return await writeback_event(owner, source, calendar_id, payload)
+
+
+async def push_event_update(owner: str, uid: str) -> dict:
+    return await push_event_create(owner, uid)
+
+
+async def push_event_delete(owner: str, uid: str) -> dict:
+    loaded = _load_delete_for_writeback(owner, uid)
+    if not loaded:
+        return {"ok": True, "skipped": True}
+    source, calendar_id, payload = loaded
+    from src.caldav_writeback import writeback_event
+    return await writeback_event(owner, source, calendar_id, payload, delete=True)
+
+
+async def push_pending_events(owner: str) -> dict:
+    result = {"events": 0, "errors": []}
+    uids, delete_uids = _pending_writeback_uids(owner)
+    for event_uid in uids:
+        try:
+            out = await push_event_update(owner, event_uid)
+            if out.get("ok"):
+                result["events"] += 1
+            elif not out.get("skipped"):
+                result["errors"].append(f"{event_uid}: {str(out.get('error') or out)[:160]}")
+        except Exception as e:
+            logger.warning("CalDAV pending push failed for uid=%s: %s", event_uid, e)
+            result["errors"].append(f"{event_uid}: {str(e)[:160]}")
+    for event_uid in delete_uids:
+        try:
+            out = await push_event_delete(owner, event_uid)
+            if out.get("ok"):
+                result["events"] += 1
+            elif not out.get("skipped"):
+                result["errors"].append(f"{event_uid}: {str(out.get('error') or out)[:160]}")
+        except Exception as e:
+            logger.warning("CalDAV pending delete failed for uid=%s: %s", event_uid, e)
+            result["errors"].append(f"{event_uid}: {str(e)[:160]}")
+    return result
+
+
+async def sync_caldav_direction(owner: str, direction: str = "pull") -> dict:
+    direction = (direction or "pull").strip().lower()
+    if direction == "pull":
+        return await sync_caldav(owner)
+    if direction == "push":
+        return await push_pending_events(owner)
+    if direction == "both":
+        pushed = await push_pending_events(owner)
+        pulled = await sync_caldav(owner)
+        return {"push": pushed, "pull": pulled}
+    return {
+        "calendars": 0,
+        "events": 0,
+        "deleted": 0,
+        "errors": [f"Unsupported CalDAV sync direction: {direction}"],
+    }

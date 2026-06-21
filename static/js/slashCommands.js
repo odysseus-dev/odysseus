@@ -44,6 +44,7 @@ const PROVIDER_PATTERNS = [
   { re: /^gsk_/,             name: 'Groq',       url: 'https://api.groq.com/openai/v1' },
   { re: /^AIza/,             name: 'Gemini',     url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   { re: /^xai-/,             name: 'xAI',        url: 'https://api.x.ai/v1' },
+  { re: /^nvapi-/,           name: 'NVIDIA',     url: 'https://integrate.api.nvidia.com/v1' },
 ];
 const SETUP_PROVIDER_URLS = {
   deepseek: { name: 'DeepSeek', url: 'https://api.deepseek.com/v1' },
@@ -57,8 +58,9 @@ const SETUP_PROVIDER_URLS = {
   google: { name: 'Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai' },
   'opencode-zen': { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1' },
   'opencode-go': { name: 'OpenCode Go', url: 'https://opencode.ai/zen/go/v1' },
+  nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1' },
 };
-const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go'];
+const SETUP_PROVIDER_NAMES = ['deepseek', 'openai', 'openrouter', 'ollama', 'xai', 'anthropic', 'groq', 'gemini', 'opencode-zen', 'opencode-go', 'nvidia'];
 const SETUP_DEVICE_AUTH_PROVIDERS = [
   { key: 'copilot', name: 'GitHub Copilot', aliases: ['github'], command: '/setup copilot' },
   { key: 'chatgpt-subscription', name: 'ChatGPT Subscription', aliases: ['chatgptsubscription', 'chatgpt-sub', 'codex'], command: '/setup chatgpt-subscription' },
@@ -98,6 +100,7 @@ function _setupProviderFromInput(input) {
     google: 'gemini',
     xai: 'xai',
     grok: 'xai',
+    nvidia: 'nvidia',
   };
   return SETUP_PROVIDER_URLS[aliases[raw] || raw] || null;
 }
@@ -125,6 +128,7 @@ function _extractSetupProviderCredential(input) {
     ['groq', 'groq'],
     ['google', 'gemini'], ['gemini', 'gemini'],
     ['x ai', 'xai'], ['xai', 'xai'], ['grok', 'xai'],
+    ['nvidia', 'nvidia'],
   ];
   for (const [alias, key] of providerAliases) {
     const re = new RegExp('(^|\\s|[,;:])(' + alias.replace(/\s+/g, '\\s+') + ')(?=$|\\s|[,;:])', 'i');
@@ -335,10 +339,13 @@ function _submitComposedMessage(text) {
   const msgInput = document.getElementById('message');
   const form = document.getElementById('chat-form');
   if (!msgInput || !form) return false;
-  msgInput.value = text;
-  msgInput.dispatchEvent(new Event('input', { bubbles: true }));
-  if (typeof form.requestSubmit === 'function') form.requestSubmit();
-  else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  // The slash handler and app-level form debounce must both release before
+  // sending the pinned prompt, otherwise the follow-up submit is dropped.
+  setTimeout(() => {
+    msgInput.value = text;
+    msgInput.dispatchEvent(new Event('input', { bubbles: true }));
+    form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  }, 350);
   return true;
 }
 
@@ -377,7 +384,7 @@ function _slashFooter(msgEl) {
   copyBtn.innerHTML = _copySvg;
   copyBtn.onclick = (e) => {
     e.stopPropagation();
-    uiModule.copyToClipboard(msgEl.dataset.raw || msgEl.querySelector('.body')?.textContent || '');
+    uiModule.copyToClipboard(chatRenderer.copyMessageText(msgEl));
     copyBtn.innerHTML = _checkSvg;
     setTimeout(() => { copyBtn.innerHTML = _copySvg; }, 1500);
   };
@@ -1226,7 +1233,7 @@ async function _cmdToggleDoc(args, ctx) {
   return true;
 }
 
-// Workspace: confine the agent's file/shell tools to a folder. Not a boolean —
+// Workspace: confine the agent's file/shell tools to a folder. Not a boolean -
 // show / set <path> / clear / pick (open the directory browser).
 async function _cmdWorkspace(args, ctx) {
   const sub = (args[0] || '').toLowerCase();
@@ -1238,8 +1245,13 @@ async function _cmdWorkspace(args, ctx) {
   }
   if (sub === 'set' || sub === 'cd' || sub === 'use') {
     if (!rest) { slashReply('Usage: <code>/workspace set /absolute/path</code>'); return true; }
-    workspaceModule.setWorkspace(rest);
-    slashReply(`Workspace set: <code>${uiModule.esc(rest)}</code>`);
+    // Validate server-side before persisting so the pill never claims a
+    // workspace the backend will refuse to bind (typo, file path, deleted
+    // folder, sensitive dir, filesystem root).
+    workspaceModule.vetAndSetWorkspace(rest).then(({ ok, path }) => {
+      if (ok) slashReply(`Workspace set: <code>${uiModule.esc(path)}</code>`);
+      else slashReply(`Not a usable workspace folder: <code>${uiModule.esc(rest)}</code>. It must be an existing directory, not a filesystem root or sensitive path.`);
+    });
     return true;
   }
   if (sub === 'clear' || sub === 'off' || sub === 'none' || sub === 'unset') {
@@ -1252,22 +1264,6 @@ async function _cmdWorkspace(args, ctx) {
     return true;
   }
   slashReply('Usage: <code>/workspace</code> · <code>set /path</code> · <code>clear</code> · <code>pick</code>');
-  return true;
-}
-// Plan mode: drive the real toggle pill (#plan-toggle-btn) so its per-mode
-// persistence/UI logic runs. Only meaningful in agent mode.
-async function _cmdTogglePlan(args, ctx) {
-  const btn = document.getElementById('plan-toggle-btn');
-  const chk = document.getElementById('plan-toggle');
-  if (!btn || btn.style.display === 'none' || btn.offsetParent === null) {
-    slashReply('Plan mode is only available in agent mode — switch to Agent first.');
-    return true;
-  }
-  const cur = !!(chk && chk.checked);
-  const v = (args[0] || '').toLowerCase();
-  const target = v === 'on' ? true : v === 'off' ? false : !cur;
-  if (target !== cur) btn.click();
-  slashReply(`Plan mode: ${target ? 'on' : 'off'}`);
   return true;
 }
 
@@ -5769,7 +5765,6 @@ const COMMANDS = {
       'bash':      { handler: _cmdToggleBash,      alias: ['b','shell'],       help: 'Toggle bash/shell',       usage: '/toggle bash' },
       'research':  { handler: _cmdToggleResearch,  alias: ['r'],               help: 'Toggle deep research',    usage: '/toggle research' },
       'doc':       { handler: _cmdToggleDoc,       alias: [],     help: 'Toggle document editor',  usage: '/toggle doc' },
-      'plan':      { handler: _cmdTogglePlan,      alias: ['p'],  help: 'Toggle plan mode (agent)', usage: '/toggle plan' },
       'sidebar':   { handler: _cmdToggleSidebar,   alias: ['sb'], help: 'Cycle sidebar (full/mini/off)', usage: '/toggle sidebar [1|2|3]' },
       '_show':     { handler: _cmdToggleShow,      alias: [],     help: 'Show all toggle states',  usage: '/toggle' }
     }
@@ -5781,13 +5776,6 @@ const COMMANDS = {
     handler: _cmdWorkspace,
     noUserBubble: true,
     usage: '/workspace [set <path> | clear | pick]',
-  },
-  plan: {
-    alias: [],
-    category: 'Quick toggles',
-    help: 'Toggle plan mode (agent)',
-    handler: _cmdTogglePlan,
-    usage: '/plan [on|off]',
   },
   memory: {
     alias: ['m'],

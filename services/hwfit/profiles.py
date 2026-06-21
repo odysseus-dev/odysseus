@@ -188,12 +188,18 @@ def compute_serve_profiles(system, model, serve_weights_gb=None, serve_quant=Non
         # Shrink context if even the chosen KV won't fit alongside weights.
         # Start from the smaller of the profile's target and the model's limit.
         cur_ctx = min(ctx, model_ctx_max)
-        while cur_ctx >= 8192:
+        # Floor the context-shrink loop at 8192, but never above the model's own
+        # trained limit. A model with a sub-8192 context (e.g. a 2048-token
+        # SmolLM) starts below 8192, so a hard-coded 8192 guard skipped the loop
+        # entirely and produced NO profile — the serve UI then fell back to
+        # manual flags even though the model fits the GPU trivially.
+        ctx_floor = min(8192, model_ctx_max)
+        while cur_ctx >= ctx_floor:
             kv = _kv_gb(model, cur_ctx, kv_type)
             n_cpu_moe, fits = _cpu_moe_for_budget(model, quant, kv, budget, fixed_gb=serve_weights_gb)
             est = _weights_gb(model, quant, serve_weights_gb) + kv + 0.6
             # If a non-MoE model can't fit even fully offloaded, try less context.
-            if model.get("is_moe") or fits or cur_ctx <= 8192:
+            if model.get("is_moe") or fits or cur_ctx <= ctx_floor:
                 profiles.append({
                     "key": key,
                     "label": label,

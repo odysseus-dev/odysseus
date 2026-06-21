@@ -11,9 +11,9 @@ from pydantic import BaseModel
 from sqlalchemy import or_, and_
 from dateutil.rrule import rrulestr
 
-from core.database import SessionLocal, CalendarCal, CalendarEvent
+from core.database import SessionLocal, CalendarCal, CalendarDeletedEvent, CalendarEvent
 from src.auth_helpers import require_user
-from src.upload_limits import read_upload_limited
+from src.upload_limits import read_upload_limited, ICS_MAX_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,54 @@ def _resolve_base_uid(uid: str) -> str:
     if not base:
         raise ValueError("malformed compound UID: missing base before ::")
     return base
+
+
+async def _push_caldav_event_after_commit(owner: str, uid: str, action: str):
+    """Best-effort CalDAV write-through. Local writes stay authoritative if
+    the remote server is unreachable; pending flags let /sync retry later."""
+    try:
+        result = {"ok": True}
+        if action == "create":
+            from src.caldav_sync import push_event_create
+            result = await push_event_create(owner, uid)
+        elif action == "update":
+            from src.caldav_sync import push_event_update
+            result = await push_event_update(owner, uid)
+        elif action == "delete":
+            from src.caldav_sync import push_event_delete
+            result = await push_event_delete(owner, uid)
+        if result and not result.get("ok") and not result.get("skipped"):
+            raise RuntimeError(result.get("error") or result)
+    except Exception as e:
+        logger.warning("CalDAV %s push failed for uid=%s: %s", action, uid, e)
+        if action in {"create", "update"}:
+            db = SessionLocal()
+            try:
+                ev = _get_or_404_event(db, uid, owner)
+                ev.caldav_sync_pending = action
+                db.commit()
+            except Exception:
+                db.rollback()
+            finally:
+                db.close()
+
+
+def _record_caldav_delete_tombstone(db, ev: CalendarEvent, owner: str) -> None:
+    if not (ev.calendar and ev.calendar.source == "caldav"):
+        return
+    tombstone = db.query(CalendarDeletedEvent).filter(
+        CalendarDeletedEvent.uid == ev.uid,
+        CalendarDeletedEvent.owner == owner,
+    ).first()
+    if not tombstone:
+        tombstone = CalendarDeletedEvent(uid=ev.uid, owner=owner)
+        db.add(tombstone)
+    tombstone.calendar_id = ev.calendar_id
+    tombstone.remote_href = ev.remote_href
+    tombstone.remote_etag = ev.remote_etag
+    tombstone.caldav_base_url = getattr(ev.calendar, "caldav_base_url", None)
+    tombstone.summary = ev.summary or ""
+    tombstone.last_error = None
 
 # ── Pydantic models ──
 
@@ -843,35 +891,34 @@ def setup_calendar_routes() -> APIRouter:
             return {"ok": False, "error": str(e)[:200]}
 
     @router.post("/sync")
-    async def sync_caldav_endpoint(request: Request):
-        """Pull events from the configured CalDAV server into local DB.
+    async def sync_caldav_endpoint(request: Request, direction: str = "pull"):
+        """Sync events with the configured CalDAV server.
         Returns counts + any per-calendar errors. Called by the frontend
         on calendar open and by the periodic scheduler loop."""
         owner = _require_user(request)
-        from src.caldav_sync import sync_caldav
-        return await sync_caldav(owner)
+        from src.caldav_sync import sync_caldav_direction
+        return await sync_caldav_direction(owner, direction)
+
 
     @router.delete("/calendars/{cal_id}")
-    async def delete_calendar(cal_id: str, request: Request):
+    async def delete_calendar(request: Request, cal_id: str):
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            cal = db.query(CalendarCal).filter(
-                CalendarCal.id == cal_id,
-                CalendarCal.owner == owner,
-            ).first()
-            if not cal:
-                raise HTTPException(404, "Calendar not found")
+            cal = _get_or_404_calendar(db, cal_id, owner)
+            db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
             db.delete(cal)
             db.commit()
             return {"ok": True}
         except HTTPException:
             raise
         except Exception as e:
+            db.rollback()
             logger.error("Failed to delete calendar %s: %s", cal_id, e)
             raise HTTPException(500, "Failed to delete calendar")
         finally:
             db.close()
+
 
     @router.get("/calendars")
     async def list_calendars(request: Request):
@@ -1003,19 +1050,12 @@ def setup_calendar_routes() -> APIRouter:
                 is_utc=_is_utc and not data.all_day,
                 rrule=data.rrule or "",
                 color=data.color or None,
+                caldav_sync_pending="create" if cal.source == "caldav" else None,
             )
             db.add(ev)
             db.commit()
             if cal.source == "caldav":
-                # Push the new event to the remote so it appears on the user's
-                # other devices — the sync is otherwise pull-only (#800).
-                from src.caldav_writeback import writeback_event
-                await writeback_event(owner, cal.source, cal.id, {
-                    "uid": uid, "summary": data.summary, "description": data.description,
-                    "location": data.location, "dtstart": dtstart, "dtend": dtend,
-                    "all_day": data.all_day, "is_utc": _is_utc and not data.all_day,
-                    "rrule": data.rrule or "",
-                })
+                await _push_caldav_event_after_commit(owner, uid, "create")
             return {"ok": True, "uid": uid}
         except HTTPException:
             raise
@@ -1061,15 +1101,12 @@ def setup_calendar_routes() -> APIRouter:
                 ev.rrule = data.rrule
             if data.color is not None:
                 ev.color = data.color if data.color else None
+            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_caldav:
+                ev.caldav_sync_pending = "update"
             db.commit()
-            cal = db.query(CalendarCal).filter(CalendarCal.id == ev.calendar_id).first()
-            if cal and cal.source == "caldav":
-                from src.caldav_writeback import writeback_event
-                await writeback_event(owner, cal.source, cal.id, {
-                    "uid": ev.uid, "summary": ev.summary, "description": ev.description,
-                    "location": ev.location, "dtstart": ev.dtstart, "dtend": ev.dtend,
-                    "all_day": ev.all_day, "is_utc": ev.is_utc, "rrule": ev.rrule or "",
-                })
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "update")
             return {"ok": True}
         except HTTPException:
             raise
@@ -1090,15 +1127,13 @@ def setup_calendar_routes() -> APIRouter:
         db = SessionLocal()
         try:
             ev = _get_or_404_event(db, base_uid, owner)
-            # Capture what the remote push needs BEFORE the row is gone.
-            _cal = db.query(CalendarCal).filter(CalendarCal.id == ev.calendar_id).first()
-            _is_caldav = bool(_cal and _cal.source == "caldav")
-            _cal_id, _ev_uid = ev.calendar_id, ev.uid
+            is_caldav = ev.calendar and ev.calendar.source == "caldav"
+            if is_caldav:
+                _record_caldav_delete_tombstone(db, ev, owner)
             db.delete(ev)
             db.commit()
-            if _is_caldav:
-                from src.caldav_writeback import writeback_event
-                await writeback_event(owner, "caldav", _cal_id, {"uid": _ev_uid}, delete=True)
+            if is_caldav:
+                await _push_caldav_event_after_commit(owner, base_uid, "delete")
             return {"ok": True}
         except HTTPException:
             raise
@@ -1152,27 +1187,10 @@ def setup_calendar_routes() -> APIRouter:
         finally:
             db.close()
 
-    @router.delete("/calendars/{cal_id}")
-    async def delete_calendar(request: Request, cal_id: str):
-        owner = _require_user(request)
-        db = SessionLocal()
-        try:
-            cal = _get_or_404_calendar(db, cal_id, owner)
-            db.query(CalendarEvent).filter(CalendarEvent.calendar_id == cal_id).delete()
-            db.delete(cal)
-            db.commit()
-            return {"ok": True}
-        except HTTPException:
-            raise
-        except Exception as e:
-            db.rollback()
-            return {"error": str(e)}
-        finally:
-            db.close()
 
-    # 10 MB hard cap on ICS upload. Loading the whole file into memory is
-    # unavoidable with python-icalendar, so an unbounded upload would OOM.
-    _ICS_MAX_BYTES = 10 * 1024 * 1024
+    # Hard cap on ICS upload (ICS_MAX_BYTES, default 10 MB). Loading the whole
+    # file into memory is unavoidable with python-icalendar, so an unbounded
+    # upload would OOM.
 
     @router.post("/import")
     async def import_ics(request: Request, file: UploadFile = File(...), calendar_name: str = ""):
@@ -1182,7 +1200,7 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         db = SessionLocal()
         try:
-            content = await read_upload_limited(file, _ICS_MAX_BYTES, "ICS file")
+            content = await read_upload_limited(file, ICS_MAX_BYTES, "ICS file")
             try:
                 cal_data = iCal.from_ical(content)
             except Exception as e:
